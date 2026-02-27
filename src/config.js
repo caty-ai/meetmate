@@ -67,8 +67,8 @@ function getPipelineConfig(overrides = {}) {
     greeting:
       overrides.greeting ||
       (isJapanese
-        ? "こんにちは！ケイティです。よろしくお願いします！"
-        : "Hi! I'm Caty. Nice to meet you!"),
+        ? "(happy) こんにちは！ケイティです。よろしくお願いします！"
+        : "(happy) Hi! I'm Caty. Nice to meet you!"),
   };
 }
 
