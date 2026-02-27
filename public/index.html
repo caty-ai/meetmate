@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Meet Participant — Caty</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background-color: #1a1a2e;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 2rem 0;
+            color: #e0e0e0;
+        }
+        .container {
+            background: #16213e;
+            padding: 2.5rem;
+            border-radius: 16px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+            width: 100%;
+            max-width: 550px;
+            border: 1px solid #0f3460;
+        }
+        h1 {
+            text-align: center;
+            color: #e94560;
+            font-size: 1.8rem;
+            margin-bottom: 0.5rem;
+        }
+        .subtitle {
+            text-align: center;
+            color: #888;
+            margin-bottom: 2rem;
+            font-size: 0.95rem;
+        }
+        form {
+            display: flex;
+            flex-direction: column;
+        }
+        label {
+            margin-top: 1.2rem;
+            margin-bottom: 0.5rem;
+            color: #aaa;
+            font-size: 0.95rem;
+            font-weight: 500;
+        }
+        input, textarea, select {
+            padding: 0.85rem;
+            border: 1px solid #0f3460;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            font-family: inherit;
+            background-color: #1a1a2e;
+            color: #e0e0e0;
+        }
+        input:focus, textarea:focus, select:focus {
+            outline: none;
+            border-color: #e94560;
+        }
+        textarea {
+            min-height: 80px;
+            resize: vertical;
+        }
+        small {
+            color: #666;
+            margin-top: 0.3rem;
+            font-size: 0.85rem;
+        }
+        button {
+            margin-top: 2rem;
+            padding: 1rem;
+            background: linear-gradient(135deg, #e94560, #c23152);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 1.05rem;
+            font-weight: 600;
+            transition: transform 0.1s;
+        }
+        button:hover {
+            transform: translateY(-1px);
+        }
+        button:active {
+            transform: translateY(0);
+        }
+        .status {
+            margin-top: 1.5rem;
+            padding: 1rem;
+            border-radius: 8px;
+            text-align: center;
+            display: none;
+        }
+        .status.success {
+            background: #1a3a2a;
+            border: 1px solid #2d6a4f;
+            color: #95d5b2;
+            display: block;
+        }
+        .status.error {
+            background: #3a1a1a;
+            border: 1px solid #6a2d2d;
+            color: #d5959b;
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🐱 AI Meet Participant</h1>
+        <p class="subtitle">Caty（ケイティ）をGoogle Meetに参加させる</p>
+        
+        <form id="joinForm">
+            <label for="meetingUrl">📹 Meeting URL:</label>
+            <input type="url" id="meetingUrl" name="meetingUrl" placeholder="https://meet.google.com/xxx-xxxx-xxx" required>
+            
+            <label for="wsUrl">🔗 WebSocket Tunnel URL:</label>
+            <input type="text" id="wsUrl" name="wsUrl" placeholder="wss://xxxxx.ngrok-free.app" required>
+            <small>ngrok で生成した URL を入力（https:// → wss:// に変換）</small>
+            
+            <label for="botName">🤖 Bot名:</label>
+            <input type="text" id="botName" name="botName" value="Caty (ケイティ)">
+
+            <label for="voice">🎙️ 声モデル:</label>
+            <select id="voice" name="voice">
+                <option value="aura-2-thalia-en" selected>Aura 2 Thalia (女性・明るい)</option>
+                <option value="aura-2-luna-en">Aura 2 Luna (女性・落ち着き)</option>
+                <option value="aura-2-asteria-en">Aura 2 Asteria (女性・やわらか)</option>
+                <option value="aura-2-athena-en">Aura 2 Athena (女性・知的)</option>
+                <option value="aura-2-aurora-en">Aura 2 Aurora (女性・温かい)</option>
+                <option value="aura-2-iris-en">Aura 2 Iris (女性・優しい)</option>
+                <option value="aura-2-selene-en">Aura 2 Selene (女性・穏やか)</option>
+                <option value="aura-2-orion-en">Aura 2 Orion (男性)</option>
+                <option value="aura-2-apollo-en">Aura 2 Apollo (男性)</option>
+            </select>
+            
+            <button type="submit">🚀 Meetに参加させる</button>
+        </form>
+        
+        <div id="status" class="status"></div>
+    </div>
+    
+    <script>
+        const form = document.getElementById('joinForm');
+        const statusEl = document.getElementById('status');
+        
+        form.addEventListener('submit', async function(event) {
+            event.preventDefault();
+            
+            const wsUrl = document.getElementById('wsUrl').value.trim();
+            if (!wsUrl.startsWith('ws://') && !wsUrl.startsWith('wss://')) {
+                statusEl.className = 'status error';
+                statusEl.textContent = '❌ WebSocket URL は ws:// または wss:// で始めてください';
+                return;
+            }
+            
+            statusEl.className = 'status';
+            statusEl.style.display = 'block';
+            statusEl.style.background = '#1a2a3a';
+            statusEl.style.border = '1px solid #2d4a6a';
+            statusEl.style.color = '#95b5d5';
+            statusEl.textContent = '⏳ Botを起動中...';
+            
+            try {
+                const formData = new URLSearchParams(new FormData(form));
+                const response = await fetch('/join-meeting', {
+                    method: 'POST',
+                    body: formData,
+                });
+                
+                const text = await response.text();
+                if (response.ok) {
+                    statusEl.className = 'status success';
+                    statusEl.textContent = '✅ ' + text;
+                } else {
+                    statusEl.className = 'status error';
+                    statusEl.textContent = '❌ ' + text;
+                }
+            } catch (err) {
+                statusEl.className = 'status error';
+                statusEl.textContent = '❌ 接続エラー: ' + err.message;
+            }
+        });
+    </script>
+</body>
+</html>

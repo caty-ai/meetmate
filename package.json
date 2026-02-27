@@ -1,0 +1,19 @@
+{
+  "name": "ai-meet-participant",
+  "version": "0.1.0",
+  "description": "AIアシスタント(Caty)がGoogle Meetにリアルタイム参加し音声で対話するブリッジサーバー",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "@deepgram/sdk": "^4.7.0",
+    "dotenv": "^17.0.0",
+    "ws": "^8.18.3"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "license": "MIT"
+}
