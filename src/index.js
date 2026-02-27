@@ -54,6 +54,45 @@ if (TTS_PROVIDER === "fish-audio") {
   }
 }
 
+// Bot avatar image (loaded at startup, cached as base64)
+let botImageData = null;
+
+const BOT_IMAGE_PATH = path.join(__dirname, "..", "assets", "caty-avatar.png");
+const BOT_IMAGE_URL = process.env.BOT_IMAGE_URL
+  || "https://example.com/avatar.png";
+
+(async function loadBotImage() {
+  // Try local file first, then download from URL
+  try {
+    if (fs.existsSync(BOT_IMAGE_PATH)) {
+      const data = fs.readFileSync(BOT_IMAGE_PATH);
+      botImageData = { type: "image/png", data: data.toString("base64") };
+      console.log("🖼️  Bot avatar loaded (local)");
+      return;
+    }
+  } catch { /* fall through to download */ }
+
+  try {
+    const data = await new Promise((resolve, reject) => {
+      https.get(BOT_IMAGE_URL, (res) => {
+        if (res.statusCode !== 200) { reject(new Error(`HTTP ${res.statusCode}`)); return; }
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => resolve(Buffer.concat(chunks)));
+        res.on("error", reject);
+      }).on("error", reject);
+    });
+    botImageData = { type: "image/png", data: data.toString("base64") };
+    // Cache locally for next startup
+    const assetsDir = path.join(__dirname, "..", "assets");
+    if (!fs.existsSync(assetsDir)) fs.mkdirSync(assetsDir, { recursive: true });
+    fs.writeFileSync(BOT_IMAGE_PATH, data);
+    console.log("🖼️  Bot avatar downloaded and cached");
+  } catch (err) {
+    console.warn("⚠️  Bot avatar load failed:", err.message);
+  }
+})();
+
 // Auto-detect ngrok public URL for WebSocket
 let detectedNgrokUrl = "";
 (async function detectNgrok() {
@@ -497,20 +536,23 @@ const server = http.createServer(async (req, res) => {
       console.log("🔗  WebSocket URL:", wsWithSession.replace(/token=[^&]+/, "token=***"));
       console.log("🧾  Session ID:", sessionId);
 
-      const BOT_IMAGE_URL = process.env.BOT_IMAGE_URL
-        || "https://example.com/avatar.png";
-
-      const attendeePayload = JSON.stringify({
+      const botPayload = {
         meeting_url: meetingUrl,
         bot_name: toSafeString(formData.botName) || "Caty (ケイティ)",
-        bot_image: BOT_IMAGE_URL,
         websocket_settings: {
           audio: {
             url: wsWithSession,
             sample_rate: SAMPLE_RATE,
           },
         },
-      });
+      };
+
+      // Attach bot avatar if available (loaded at startup)
+      if (botImageData) {
+        botPayload.bot_image = botImageData;
+      }
+
+      const attendeePayload = JSON.stringify(botPayload);
 
       const attendeeResult = await createAttendeeBotWithRetry(attendeePayload);
       if (attendeeResult.statusCode >= 200 && attendeeResult.statusCode < 300) {
