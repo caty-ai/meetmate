@@ -20,6 +20,7 @@ const ATTENDEE_RETRY_ATTEMPTS = Number(process.env.ATTENDEE_RETRY_ATTEMPTS || 3)
 const ATTENDEE_RETRY_BASE_MS = Number(process.env.ATTENDEE_RETRY_BASE_MS || 800);
 const BODY_LIMIT_BYTES = Number(process.env.BODY_LIMIT_BYTES || 1_000_000);
 const SESSION_GRACE_CLOSE_MS = Number(process.env.SESSION_GRACE_CLOSE_MS || 15_000);
+const ECHO_LOOP_COOLDOWN_MS = Number(process.env.ECHO_LOOP_COOLDOWN_MS || 300);
 const JOIN_SHARED_TOKEN = process.env.JOIN_SHARED_TOKEN || "";
 const WS_SHARED_TOKEN = process.env.WS_SHARED_TOKEN || "";
 
@@ -291,7 +292,7 @@ function cancelFinalizeSession(sessionId) {
 }
 
 // ── Create Deepgram Voice Agent ────────────────────────────────────
-function createAgent(session, onAudio) {
+function createAgent(session, turnState, onAudio) {
   const deepgram = createClient(DG_KEY);
   const agent = deepgram.agent();
 
@@ -313,6 +314,8 @@ function createAgent(session, onAudio) {
   // Logging
   agent.on(AgentEvents.Error, (err) => console.error(`❌  Deepgram error (sid=${session.id}):`, err));
   agent.on(AgentEvents.Close, () => {
+    turnState.isAgentSpeaking = false;
+    turnState.inputCooldownUntil = 0;
     console.log(`🔴  Deepgram Voice Agent 切断 (sid=${session.id})`);
   });
   agent.on(AgentEvents.Welcome, (w) => console.log(`🙌  Agent ready (sid=${session.id}):`, w));
@@ -329,9 +332,17 @@ function createAgent(session, onAudio) {
   });
 
   agent.on(AgentEvents.AgentThinking, (t) => console.log(`🤔  Caty thinking… (sid=${session.id})`, t));
-  agent.on(AgentEvents.AgentStartedSpeaking, (s) => console.log(`🗣️  Caty speaking (sid=${session.id}):`, s));
+  agent.on(AgentEvents.AgentStartedSpeaking, (s) => {
+    turnState.isAgentSpeaking = true;
+    turnState.inputCooldownUntil = Date.now() + ECHO_LOOP_COOLDOWN_MS;
+    console.log(`🗣️  Caty speaking (sid=${session.id}):`, s);
+  });
   agent.on(AgentEvents.UserStartedSpeaking, (u) => console.log(`🎙️  User speaking (sid=${session.id}):`, u));
-  agent.on(AgentEvents.AgentAudioDone, (d) => console.log(`✅  Audio done (sid=${session.id}):`, d));
+  agent.on(AgentEvents.AgentAudioDone, (d) => {
+    turnState.isAgentSpeaking = false;
+    turnState.inputCooldownUntil = Date.now() + ECHO_LOOP_COOLDOWN_MS;
+    console.log(`✅  Audio done (sid=${session.id}):`, d);
+  });
 
   // Keep-alive
   const keepAlive = setInterval(() => {
@@ -497,8 +508,14 @@ wss.on("connection", (client, req) => {
 
   console.log(`⇦  Attendee Bot 接続: ${req.socket.remoteAddress} (sid=${sid})`);
 
+  const turnState = {
+    isAgentSpeaking: false,
+    inputCooldownUntil: 0,
+    droppedEchoFrames: 0,
+  };
+
   // Create Deepgram agent; wire response audio → Attendee
-  const agent = createAgent(session, (buffer) => {
+  const agent = createAgent(session, turnState, (buffer) => {
     if (client.readyState !== WebSocket.OPEN) return;
 
     const payload = {
@@ -540,6 +557,23 @@ wss.on("connection", (client, req) => {
     try {
       const parsed = JSON.parse(msg.toString());
       if (parsed.trigger === "realtime_audio.mixed" && parsed?.data?.chunk) {
+        const now = Date.now();
+        if (turnState.isAgentSpeaking || now < turnState.inputCooldownUntil) {
+          turnState.droppedEchoFrames += 1;
+          if (turnState.droppedEchoFrames % 50 === 0) {
+            console.log(
+              `🛡️  Echo gate active (sid=${sid}): dropped ${turnState.droppedEchoFrames} frames ` +
+              `(isSpeaking=${turnState.isAgentSpeaking}, cooldownLeft=${Math.max(0, turnState.inputCooldownUntil - now)}ms)`
+            );
+          }
+          return;
+        }
+
+        if (turnState.droppedEchoFrames > 0) {
+          console.log(`🛡️  Echo gate released (sid=${sid}), dropped total frames: ${turnState.droppedEchoFrames}`);
+          turnState.droppedEchoFrames = 0;
+        }
+
         const audio = Buffer.from(parsed.data.chunk, "base64");
         agent.send(audio);
       } else {
