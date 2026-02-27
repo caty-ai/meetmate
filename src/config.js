@@ -29,7 +29,10 @@ function buildAgentConfig(overrides = {}) {
           model_id: "sonic-2",
           voice: {
             mode: "id",
-            id: overrides.voiceId || "a167e0f3-df7e-4d52-a9c3-f949145efdab",
+            // Japanese Woman Conversational: 2b568345-1d48-4047-b25f-7baccf842eb0
+            // Anime Girl: 1001d611-b1a8-46bd-a5ca-551b23505334
+            // Sweet Lady: e3827ec5-697a-4b7c-9704-1a23041bbc51
+            id: overrides.voiceId || "2b568345-1d48-4047-b25f-7baccf842eb0",
           },
           language: "ja",
         },
