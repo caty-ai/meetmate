@@ -10,11 +10,37 @@ const CATY_PROMPT = fs.readFileSync(
 
 const SAMPLE_RATE = 16_000;
 
+// Language mode: "ja" for Japanese, "en" for English
+const LANG = process.env.AGENT_LANG || "ja";
+
 /**
  * Build the Deepgram Voice Agent configuration.
- * Keeps it simple: STT (Nova 3) → LLM (Claude) → TTS (Aura)
+ * STT (Nova 3) → LLM (Claude) → TTS (Cartesia Sonic / Deepgram Aura)
  */
 function buildAgentConfig(overrides = {}) {
+  const lang = overrides.lang || LANG;
+  const isJapanese = lang === "ja";
+
+  // TTS config: Cartesia managed for Japanese, Deepgram Aura for English
+  const speakConfig = isJapanese
+    ? {
+        provider: {
+          type: "cartesia",
+          model_id: "sonic-2",
+          voice: {
+            mode: "id",
+            id: overrides.voiceId || "a167e0f3-df7e-4d52-a9c3-f949145efdab",
+          },
+          language: "ja",
+        },
+      }
+    : {
+        provider: {
+          type: "deepgram",
+          model: overrides.voice || "aura-2-thalia-en",
+        },
+      };
+
   return {
     audio: {
       input:  { encoding: "linear16", sample_rate: SAMPLE_RATE },
@@ -22,7 +48,7 @@ function buildAgentConfig(overrides = {}) {
     },
     agent: {
       listen: {
-        provider: { type: "deepgram", model: "nova-3" },
+        provider: { type: "deepgram", model: "nova-3", language: lang },
       },
       think: {
         provider: {
@@ -32,13 +58,10 @@ function buildAgentConfig(overrides = {}) {
         },
         prompt: overrides.prompt || CATY_PROMPT,
       },
-      speak: {
-        provider: {
-          type: "deepgram",
-          model: overrides.voice || "aura-2-thalia-en",
-        },
-      },
-      greeting: overrides.greeting || "Hi! I'm Caty. Nice to meet you!",
+      speak: speakConfig,
+      greeting: overrides.greeting || (isJapanese
+        ? "こんにちは！ケイティです。よろしくお願いします！"
+        : "Hi! I'm Caty. Nice to meet you!"),
     },
   };
 }
