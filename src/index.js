@@ -54,6 +54,28 @@ if (TTS_PROVIDER === "fish-audio") {
   }
 }
 
+// Auto-detect ngrok public URL for WebSocket
+let detectedNgrokUrl = "";
+(async function detectNgrok() {
+  try {
+    const ngrokRes = await new Promise((resolve, reject) => {
+      http.get("http://localhost:4040/api/tunnels", (res) => {
+        let data = "";
+        res.on("data", (c) => (data += c));
+        res.on("end", () => resolve(data));
+      }).on("error", reject);
+    });
+    const tunnels = JSON.parse(ngrokRes);
+    const httpsTunnel = tunnels.tunnels?.find((t) => t.public_url?.startsWith("https://"));
+    if (httpsTunnel) {
+      detectedNgrokUrl = httpsTunnel.public_url.replace("https://", "wss://");
+      console.log(`🌐  ngrok WSS URL 検出: ${detectedNgrokUrl}`);
+    }
+  } catch {
+    // ngrok not running, that's fine
+  }
+})();
+
 if (!JOIN_SHARED_TOKEN) {
   console.warn("⚠️  JOIN_SHARED_TOKEN 未設定: /join-meeting はローカルネットワーク公開時に保護されません。");
 }
@@ -395,9 +417,21 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "GET" && req.url === "/info") {
+    // Compute public WSS URL: prefer detected ngrok, then env, then request host
+    let publicWsUrl = "";
+    const host = req.headers.host || "";
+    if (host.includes("ngrok")) {
+      publicWsUrl = `wss://${host}`;
+    } else if (detectedNgrokUrl) {
+      publicWsUrl = detectedNgrokUrl;
+    } else if (process.env.PUBLIC_WSS_URL) {
+      publicWsUrl = process.env.PUBLIC_WSS_URL;
+    }
+
     const info = {
       ttsProvider: TTS_PROVIDER,
       lang: process.env.AGENT_LANG || "ja",
+      publicWsUrl,
       ready: true,
     };
     res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });

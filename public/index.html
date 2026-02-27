@@ -208,8 +208,13 @@
             toggle.textContent = section.classList.contains('open') ? '▼ 詳細設定' : '▶ 詳細設定';
         }
 
+        // Public WSS URL from server (resolved via /info)
+        let serverPublicWsUrl = '';
+
         // Auto-compute WebSocket URL from current page host
         function getAutoWsUrl() {
+            // Prefer server-provided public WSS URL (ngrok)
+            if (serverPublicWsUrl) return serverPublicWsUrl;
             const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
             return `${proto}//${location.host}`;
         }
@@ -220,13 +225,16 @@
             if (saved) document.getElementById(id).value = saved;
         });
 
-        // Fetch server info for mode badge
+        // Fetch server info for mode badge + public WSS URL
         fetch('/info').then(r => r.json()).then(info => {
             const badge = document.getElementById('modeBadge');
             if (info.ttsProvider === 'fish-audio') {
                 badge.textContent = '🐟 Fish Audio TTS';
             } else {
                 badge.textContent = '🔊 Deepgram Voice Agent';
+            }
+            if (info.publicWsUrl) {
+                serverPublicWsUrl = info.publicWsUrl;
             }
         }).catch(() => {});
 
