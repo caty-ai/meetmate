@@ -29,6 +29,7 @@ const JOIN_SHARED_TOKEN = process.env.JOIN_SHARED_TOKEN || "";
 const WS_SHARED_TOKEN = process.env.WS_SHARED_TOKEN || "";
 
 const MEET_URL_RE = /^https:\/\/meet\.google\.com\/[a-z0-9-]+(?:\?.*)?$/i;
+const CONVERSATION_MODES = new Set(["one_to_one", "group"]);
 
 // ── Validate API keys ──────────────────────────────────────────────
 const DG_KEY = process.env.DEEPGRAM_API_KEY;
@@ -126,7 +127,7 @@ if (!WS_SHARED_TOKEN) {
  *   id: string,
  *   createdAt: string,
  *   meetingUrl: string,
- *   config: {prompt: string|null, greeting: string|null, model: string|null, voice: string|null},
+ *   config: {prompt: string|null, greeting: string|null, model: string|null, voice: string|null, wakeMode: "off"|"wake"},
  *   conversationLog: Array<{timestamp:string, role:string, content:string}>,
  *   closeTimer?: NodeJS.Timeout
  * }>} */
@@ -146,6 +147,10 @@ function shouldRetryStatus(code) {
 function toSafeString(v) {
   if (typeof v !== "string") return "";
   return v.trim();
+}
+
+function resolveWakeMode(conversationMode) {
+  return conversationMode === "group" ? "wake" : "off";
 }
 
 function buildWsUrlWithSession(baseWsUrl, sessionId) {
@@ -427,6 +432,7 @@ function createHandler(session, turnState, onAudio) {
       prompt: session.config.prompt,
       greeting: session.config.greeting,
       model: session.config.model,
+      wakeMode: session.config.wakeMode,
     });
     const pipeline = createPipeline(session, turnState, onAudio, config);
     return { send: (buf) => pipeline.sendAudio(buf), close: () => pipeline.close() };
@@ -492,9 +498,14 @@ const server = http.createServer(async (req, res) => {
 
       const meetingUrl = toSafeString(formData.meetingUrl);
       const wsUrl = toSafeString(formData.wsUrl);
+      const conversationMode = toSafeString(formData.conversationMode) || "one_to_one";
 
       if (!meetingUrl || !wsUrl) {
         writePlainResponse(res, 400, "meetingUrl と wsUrl は必須です。");
+        return;
+      }
+      if (!CONVERSATION_MODES.has(conversationMode)) {
+        writePlainResponse(res, 400, "conversationMode は one_to_one または group を指定してください。");
         return;
       }
 
@@ -525,6 +536,7 @@ const server = http.createServer(async (req, res) => {
           greeting: toSafeString(formData.greeting) || null,
           model: toSafeString(formData.model) || null,
           voice: toSafeString(formData.voice) || null,
+          wakeMode: resolveWakeMode(conversationMode),
         },
         conversationLog: [],
       };
@@ -535,6 +547,7 @@ const server = http.createServer(async (req, res) => {
       console.log("📹  Meeting URL:", meetingUrl);
       console.log("🔗  WebSocket URL:", wsWithSession.replace(/token=[^&]+/, "token=***"));
       console.log("🧾  Session ID:", sessionId);
+      console.log("💬  Conversation Mode:", conversationMode, `(${session.config.wakeMode})`);
 
       const botPayload = {
         meeting_url: meetingUrl,

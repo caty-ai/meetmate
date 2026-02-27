@@ -49,6 +49,7 @@ function getPipelineConfig(overrides = {}) {
     openclawUrl: process.env.OPENCLAW_GATEWAY_URL || null,
     openclawToken: process.env.OPENCLAW_GATEWAY_TOKEN || null,
     systemPrompt: overrides.prompt || CATY_PROMPT,
+    wakeMode: overrides.wakeMode || null,
     echoCooldownMs: ECHO_LOOP_COOLDOWN_MS,
     stt: {
       model: "nova-3",

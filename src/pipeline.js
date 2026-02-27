@@ -53,6 +53,7 @@ function createPipeline(session, turnState, onAudio, config) {
   const openrouterKey = config.openrouterKey;
   const fishKey = config.fishKey;
   const systemPrompt = config.systemPrompt;
+  const wakeMode = config.wakeMode || WAKE_MODE;
 
   // OpenClaw Gateway integration
   const useOpenClaw = !!(config.openclawUrl && config.openclawToken);
@@ -87,7 +88,7 @@ function createPipeline(session, turnState, onAudio, config) {
     console.log(`💬  [user] ${userText}`);
 
     // Wake word detection
-    if (WAKE_MODE === "wake") {
+    if (wakeMode === "wake") {
       if (!containsWakeWord(userText)) {
         console.log(`🔇  Wake word not detected, ignoring: "${userText.slice(0, 50)}..."`);
         // Still log for context, but don't respond

@@ -59,7 +59,8 @@
             font-size: 0.95rem;
             font-weight: 500;
         }
-        input {
+        input,
+        textarea {
             padding: 0.85rem;
             border: 1px solid #0f3460;
             border-radius: 8px;
@@ -68,10 +69,45 @@
             background-color: #1a1a2e;
             color: #e0e0e0;
         }
-        input:focus {
+        textarea {
+            min-height: 84px;
+            resize: vertical;
+            line-height: 1.5;
+        }
+        input:focus,
+        textarea:focus {
             outline: 2px solid #e94560;
             outline-offset: 2px;
             border-color: #e94560;
+        }
+        .field-status {
+            margin-top: 0.5rem;
+            font-size: 0.9rem;
+            color: #d5959b;
+            min-height: 1.2rem;
+        }
+        .field-status.success {
+            color: #95d5b2;
+        }
+        .conversation-mode {
+            margin-top: 1rem;
+            display: grid;
+            gap: 0.7rem;
+        }
+        .conversation-mode label {
+            margin: 0;
+            padding: 0.7rem 0.9rem;
+            border: 1px solid #0f3460;
+            border-radius: 8px;
+            cursor: pointer;
+            color: #d5d5d5;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .conversation-mode input[type="radio"] {
+            margin: 0;
+            accent-color: #e94560;
         }
         small {
             color: #666;
@@ -158,18 +194,29 @@
         <div class="mode-badge"><span id="modeBadge">🐟 Fish Audio TTS</span></div>
 
         <form id="joinForm">
-            <label for="meetingUrl">📹 Meeting URL:</label>
-            <input
-                type="url"
-                id="meetingUrl"
-                name="meetingUrl"
-                placeholder="https://meet.google.com/xxx-xxxx-xxx"
-                pattern="https://meet\.google\.com/.+"
-                title="Google Meet の URL を入力してください"
+            <label for="meetingText">📹 Meet情報（カレンダー/Slackの本文を貼り付け）:</label>
+            <textarea
+                id="meetingText"
+                name="meetingText"
+                placeholder="カレンダー招待文やSlackメッセージをそのまま貼り付けてください"
+                title="Google Meet を含むテキストを貼り付けてください"
                 autofocus
                 required
-            >
-            <small>Google Meet のURLを貼り付けるだけ！他は自動設定されます ✨</small>
+            ></textarea>
+            <div id="meetingUrlStatus" class="field-status"></div>
+            <small>貼り付けた内容から Google Meet URL を自動で検出します</small>
+
+            <label>💬 会話モード:</label>
+            <div class="conversation-mode">
+                <label for="modeOneToOne">
+                    <input type="radio" id="modeOneToOne" name="conversationMode" value="one_to_one" checked>
+                    👤 1対1モード（常時会話）
+                </label>
+                <label for="modeGroup">
+                    <input type="radio" id="modeGroup" name="conversationMode" value="group">
+                    👥 複数人モード（ウェイクワード必須）
+                </label>
+            </div>
 
             <div class="advanced-toggle" onclick="toggleAdvanced()">▶ 詳細設定</div>
             <div class="advanced" id="advancedSection">
@@ -191,6 +238,10 @@
         const form = document.getElementById('joinForm');
         const statusEl = document.getElementById('status');
         const submitBtn = form.querySelector('button[type="submit"]');
+        const meetingTextEl = document.getElementById('meetingText');
+        const meetingUrlStatusEl = document.getElementById('meetingUrlStatus');
+        let extractedMeetingUrl = '';
+        let isSubmitting = false;
 
         function setStatus(type, text, asHtml = false) {
             statusEl.className = `status ${type}`;
@@ -206,6 +257,79 @@
             const toggle = document.querySelector('.advanced-toggle');
             section.classList.toggle('open');
             toggle.textContent = section.classList.contains('open') ? '▼ 詳細設定' : '▶ 詳細設定';
+        }
+
+        function updateSubmitButtonState() {
+            const canSubmit = Boolean(extractedMeetingUrl) && !isSubmitting;
+            submitBtn.disabled = !canSubmit;
+            submitBtn.textContent = isSubmitting ? '⏳ 起動中...' : '🚀 Meetに参加させる';
+        }
+
+        function decodeEscapedAngles(text) {
+            let decoded = text || '';
+            const maxPasses = 5;
+
+            for (let i = 0; i < maxPasses; i += 1) {
+                const next = decoded
+                    .replace(/&amp;/gi, '&')
+                    .replace(/&lt;/gi, '<')
+                    .replace(/&gt;/gi, '>');
+                if (next === decoded) break;
+                decoded = next;
+            }
+
+            return decoded;
+        }
+
+        function isValidMeetPath(pathname) {
+            return /^\/[a-z0-9]{3}-[a-z0-9]{4}-[a-z0-9]{3}\/?$/i.test(pathname || '');
+        }
+
+        function normalizeMeetUrl(rawUrl) {
+            if (!rawUrl) return '';
+            let value = rawUrl.trim();
+            if (!/^https?:\/\//i.test(value)) {
+                value = `https://${value}`;
+            }
+            try {
+                const parsed = new URL(value);
+                parsed.protocol = 'https:';
+                if (parsed.hostname.toLowerCase() !== 'meet.google.com') {
+                    return '';
+                }
+                if (!isValidMeetPath(parsed.pathname)) {
+                    return '';
+                }
+                return parsed.toString();
+            } catch {
+                return '';
+            }
+        }
+
+        function extractMeetUrl(text) {
+            const decoded = decodeEscapedAngles(text || '');
+            const meetRegex = /(?:https?:\/\/)?meet\.google\.com\/[a-z0-9]{3}-[a-z0-9]{4}-[a-z0-9]{3}(?:\?[^\s<>"'|)]*)?/i;
+            const match = decoded.match(meetRegex);
+            if (!match) return '';
+            return normalizeMeetUrl(match[0]);
+        }
+
+        function updateMeetingUrlStatus() {
+            const text = meetingTextEl.value.trim();
+            extractedMeetingUrl = extractMeetUrl(text);
+
+            if (!text) {
+                meetingUrlStatusEl.textContent = '';
+                meetingUrlStatusEl.className = 'field-status';
+            } else if (extractedMeetingUrl) {
+                meetingUrlStatusEl.textContent = `✅ 検出した Meet URL: ${extractedMeetingUrl}`;
+                meetingUrlStatusEl.className = 'field-status success';
+            } else {
+                meetingUrlStatusEl.textContent = 'Meet URLが見つかりません';
+                meetingUrlStatusEl.className = 'field-status';
+            }
+
+            updateSubmitButtonState();
         }
 
         // Public WSS URL from server (resolved via /info)
@@ -238,22 +362,37 @@
             }
         }).catch(() => {});
 
+        meetingTextEl.addEventListener('input', updateMeetingUrlStatus);
+        meetingTextEl.addEventListener('paste', () => {
+            setTimeout(updateMeetingUrlStatus, 0);
+        });
+        updateMeetingUrlStatus();
+
         form.addEventListener('submit', async function(event) {
             event.preventDefault();
 
-            submitBtn.disabled = true;
-            submitBtn.textContent = '⏳ 起動中...';
+            updateMeetingUrlStatus();
+            if (!extractedMeetingUrl || isSubmitting) {
+                if (!extractedMeetingUrl) {
+                    setStatus('error', '❌ Meet URLが見つかりません');
+                }
+                return;
+            }
+
+            isSubmitting = true;
+            updateSubmitButtonState();
             setStatus('loading', '⏳ Botを起動中...');
 
             try {
-                const meetingUrl = document.getElementById('meetingUrl').value.trim();
                 const botName = document.getElementById('botName').value.trim();
                 const wsUrl = document.getElementById('wsUrl').value.trim() || getAutoWsUrl();
+                const conversationMode = (form.querySelector('input[name="conversationMode"]:checked') || {}).value || 'one_to_one';
 
                 const formData = new URLSearchParams({
-                    meetingUrl,
+                    meetingUrl: extractedMeetingUrl,
                     botName: botName || 'Caty (ケイティ)',
                     wsUrl,
+                    conversationMode,
                 });
 
                 const response = await fetch('/join-meeting', {
@@ -275,8 +414,8 @@
             } catch (err) {
                 setStatus('error', '❌ 接続エラー: ' + err.message);
             } finally {
-                submitBtn.disabled = false;
-                submitBtn.textContent = '🚀 Meetに参加させる';
+                isSubmitting = false;
+                updateSubmitButtonState();
             }
         });
     </script>
