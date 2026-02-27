@@ -370,7 +370,7 @@ const server = http.createServer(async (req, res) => {
 
       const wsWithSession = buildWsUrlWithSession(wsUrl, sessionId);
       console.log("📹  Meeting URL:", meetingUrl);
-      console.log("🔗  WebSocket URL:", wsWithSession);
+      console.log("🔗  WebSocket URL:", wsWithSession.replace(/token=[^&]+/, "token=***"));
       console.log("🧾  Session ID:", sessionId);
 
       const attendeePayload = JSON.stringify({
