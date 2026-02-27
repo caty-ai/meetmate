@@ -1,186 +1,142 @@
-# AI Meet Participant — Architecture & Requirements
+# AI Meet Participant — アーキテクチャ
 
 ## 概要
-AIアシスタント（Caty）がGoogle Meetにリアルタイム参加し、音声で対話できるシステム。
 
-## フェーズ
+AIアシスタントがGoogle Meetにリアルタイム参加し、音声で対話するシステム。
+OpenClaw Gateway 連携により、Slack等のチャットと**同一のエージェント体験**を音声で提供。
 
-| Phase | 目標 | 状態 |
-|-------|------|------|
-| 1 (MVP) | Catyが1人でMeetに参加し音声対話 | 🔨 今日完成目標 |
-| 2 | OpenClawセッション統合（ログ・メモリ連携） | 📋 計画中 |
-| 3 | マルチエージェント + 声の個性 | 📋 計画中 |
-| 4 | Googleカレンダー連携 + Slack呼び出し | 📋 計画中 |
-
----
-
-## Phase 1: MVP アーキテクチャ
-
-### システム構成図
+## システム構成図
 
 ```
-┌──────────────┐    ┌──────────────────┐    ┌─────────────────────┐
-│  Google Meet  │◄──►│  Attendee (hosted)│◄──►│  Bridge Server      │
-│  (ブラウザ)   │    │  app.attendee.dev │    │  (Node.js, port 5005)│
-└──────────────┘    │  Meeting Bot管理  │    │                     │
-                    │  音声I/O制御      │    │  WebSocket受信      │
-                    └──────────────────┘    │        ↕             │
-                         ↕ WebSocket         │  Deepgram Voice     │
-                         (audio stream)      │  Agent API          │
-                                             │  ├─ STT: Nova 3     │
-                                             │  ├─ LLM: Claude     │
-                                             │  └─ TTS: Aura/11Labs│
-                                             └─────────────────────┘
-                                                      ↕
-                                             ┌─────────────────────┐
-                                             │  ngrok tunnel       │
-                                             │  (WSS公開用)        │
-                                             └─────────────────────┘
+┌──────────────┐
+│  Google Meet  │  ← 人間が参加
+│  (ブラウザ)   │
+└──────┬───────┘
+       │ Meet内部プロトコル
+       ▼
+┌──────────────────┐
+│  Attendee (hosted)│  ← クラウドサービス (app.attendee.dev)
+│  Meeting Bot管理  │     Chrome (Puppeteer) でMeetに参加
+│  音声 I/O 制御    │     参加者の音声をキャプチャ
+└──────┬───────────┘
+       │ WebSocket (PCM audio stream)
+       │ ↕ realtime_audio.mixed / bot_output
+       ▼
+┌──────────────────────────────────────────────────┐
+│  Bridge Server (Node.js, port 5005)               │
+│                                                    │
+│  ┌──────────┐  ┌──────────┐  ┌──────────────────┐│
+│  │ stt.js   │  │ llm.js   │  │ tts-fish.js      ││
+│  │ Deepgram │→ │ OpenClaw │→ │ Fish Audio S1    ││
+│  │ Nova 3   │  │ Gateway  │  │ (REST streaming) ││
+│  │ (stream) │  │ (SSE)    │  │                  ││
+│  └──────────┘  └──────────┘  └──────────────────┘│
+│                                                    │
+│  pipeline.js — オーケストレーター                    │
+│  ├─ STT → LLM → TTS パイプライン管理               │
+│  ├─ 文ごとの分割＆即時 TTS 送出（低遅延）            │
+│  ├─ 割り込み検出＆処理                              │
+│  ├─ ウェイクワード検出                              │
+│  └─ エコーループ防止                                │
+│                                                    │
+│  index.js — HTTP サーバー + WebSocket + セッション    │
+│  ├─ /join-meeting — Meet 参加 API                   │
+│  ├─ /info — サーバー情報（TTS provider, WSS URL等）  │
+│  └─ WebSocket ↔ Attendee 音声中継                   │
+└──────────────────────────────────────────────────┘
+       │
+       │ ngrok tunnel (WSS 公開)
+       ▼
+  インターネット ← Attendee からの接続
 ```
 
-### コンポーネント説明
+## コンポーネント詳細
 
-#### 1. Attendee（ホスト版: app.attendee.dev）
-- **役割**: Google Meetにbotとして参加し、音声ストリームをWebSocket経由で送受信
-- **仕組み**: Chrome (Puppeteer) でMeetに参加、参加者の音声をキャプチャ
-- **API**: REST API (`POST /api/v1/bots`) でbot作成・管理
-- **必要**: Attendee API Key
+### 1. Attendee（クラウドサービス）
+- **役割**: Google Meet に Bot として参加、音声ストリーム送受信
+- **仕組み**: Chrome (Puppeteer) で Meet に参加、参加者音声をキャプチャ
+- **API**: REST (`POST /api/v1/bots`) で Bot 作成・管理
+- **データ形式**: PCM 16-bit signed LE, 16kHz
 
-#### 2. Bridge Server（自作 Node.js サーバー）
-- **役割**: Attendeeからの音声ストリームとDeepgram Voice Agent APIを中継
-- **ベース**: [voice-agent-example](https://github.com/attendee-labs/voice-agent-example)
-- **ポート**: 5005
-- **プロトコル**: WebSocket
-  - Attendeeから受信: `realtime_audio.mixed`（meeting音声）
-  - Attendeeへ送信: `realtime_audio.bot_output`（AI応答音声）
+### 2. Bridge Server（自作 Node.js）
+分解パイプラインで構成:
 
-#### 3. Deepgram Voice Agent API
-- **役割**: STT → LLM → TTS のパイプラインを1つのAPIで管理
-- **STT**: Nova 3（リアルタイム音声認識）
-- **LLM**: Anthropic Claude Sonnet 4.5（Deepgramがmanaged LLMとして提供）
-- **TTS**: Deepgram Aura（MVP）→ ElevenLabs（Phase 3で切替）
-- **必要**: Deepgram API Key
+#### stt.js — 音声認識
+- Deepgram Nova 3 ストリーミング STT
+- WebSocket でリアルタイム transcription
+- `smart_format: true` で自然な句読点付与
 
-#### 4. ngrok
-- **役割**: ローカルのBridge ServerをインターネットにWSS公開
-- **理由**: Attendee（クラウド）がローカルのWebSocketに接続するため
+#### llm.js — LLM（デュアルバックエンド）
+- **Primary**: OpenClaw Gateway (`/v1/chat/completions`, SSE streaming)
+  - SOUL.md / AGENTS.md が自動注入
+  - memory_search, Slack, Web検索, GitHub, Todoist 等の全ツール利用可能
+  - 会話履歴は OpenClaw が自動管理
+  - `VOICE_SYSTEM_ADDENDUM` で音声固有の指示（短く話す、感情タグ付与等）を追加
+- **Fallback**: OpenRouter（直接 Claude API）
+  - `OPENCLAW_GATEWAY_TOKEN` 未設定時に自動切替
+  - `src/prompts/caty-system.md` のローカルプロンプトを使用
+  - 会話履歴はローカル管理
 
-### データフロー（1発話サイクル）
+#### tts-fish.js — 音声合成
+- Fish Audio S1 REST API（ストリーミング）
+- PCM 16-bit signed LE, 16kHz 出力
+- **PCM バイトアラインメントバッファ**: 奇数バイトチャンクによるノイズ防止
+- 感情タグ（`(happy)`, `(nervous)` 等）を自動解釈
+
+#### pipeline.js — オーケストレーター
+- STT → LLM → TTS パイプラインの全体制御
+- **文ごとの分割**: 最初の文が完成した時点で即 TTS 開始（低遅延）
+- **割り込み対応**: ユーザーが発話を始めたら現在の応答を中断
+- **ウェイクワード検出**: `WAKE_MODE=wake` で名前呼び応答
+- **エコーループ防止**: エコークールダウン + 無音検出
+- **文間ポーズ**: `SENTENCE_PAUSE_MS` で自然なリズム
+
+### 3. ngrok
+- ローカルの Bridge Server を WSS でインターネット公開
+- Attendee（クラウド）がローカル WebSocket に接続するために必要
+- サーバー起動時に `localhost:4040/api/tunnels` から URL 自動取得
+
+## データフロー（1発話サイクル）
 
 ```
-1. 人間がMeetで発話
+1. 人間が Meet で発話
 2. Google Meet → Attendee: 音声データキャプチャ
-3. Attendee → Bridge Server: WebSocket (realtime_audio.mixed, base64 PCM)
-4. Bridge Server → Deepgram: 音声ストリーム送信
-5. Deepgram STT (Nova 3): 音声 → テキスト変換
-6. Deepgram LLM (Claude Sonnet): テキスト → AI応答テキスト生成
-7. Deepgram TTS (Aura): AI応答テキスト → 音声変換
-8. Deepgram → Bridge Server: 応答音声ストリーム
-9. Bridge Server → Attendee: WebSocket (realtime_audio.bot_output, base64 PCM)
-10. Attendee → Google Meet: 音声出力（Catyが喋る）
+3. Attendee → Bridge: WebSocket (realtime_audio.mixed, PCM)
+4. Bridge (stt.js): PCM → Deepgram → テキスト
+5. Bridge (pipeline.js): ウェイクワード判定 → テキストを LLM に送信
+6. Bridge (llm.js): OpenClaw Gateway に SSE リクエスト
+   └─ OpenClaw: SOUL.md 注入 → memory検索 → ツール実行 → 応答生成
+7. Bridge (pipeline.js): SSE チャンクを文ごとに分割
+8. Bridge (tts-fish.js): 文 → Fish Audio → PCM 音声（文ごとに即時開始）
+9. Bridge → Attendee: WebSocket (realtime_audio.bot_output, PCM)
+10. Attendee → Google Meet: 音声出力（エージェントが喋る）
 ```
 
-### 設定（Deepgram Voice Agent Configuration）
+## セキュリティ
 
-```json
-{
-  "audio": {
-    "input":  { "encoding": "linear16", "sample_rate": 16000 },
-    "output": { "encoding": "linear16", "sample_rate": 16000, "container": "none" }
-  },
-  "agent": {
-    "listen": {
-      "provider": { "type": "deepgram", "model": "nova-3" }
-    },
-    "think": {
-      "provider": { "type": "anthropic", "model": "claude-sonnet-4-5" },
-      "prompt": "You are Caty, a friendly AI meeting assistant. For MVP, always respond in concise natural English because the selected TTS voice is English-first."
-    },
-    "speak": {
-      "provider": { "type": "deepgram", "model": "aura-2-thalia-en" }
-    },
-    "greeting": "Hi! I'm Caty. Nice to meet you all."
-  }
-}
-```
+| 対策 | 説明 |
+|------|------|
+| WebSocket Token | `WS_SHARED_TOKEN` で認証 |
+| Join Token | `JOIN_SHARED_TOKEN` で `/join-meeting` を保護 |
+| Gateway Token | `OPENCLAW_GATEWAY_TOKEN` で OpenClaw API を保護 |
+| ログマスク | トークンをコンソールログに出力しない |
+| `.gitignore` | `.env` / `logs/` / `assets/` を Git に含めない |
 
----
+## 音声フォーマット
 
-## 必要なAPIキー・サービス
+全コンポーネントで統一:
+- **エンコーディング**: PCM 16-bit signed little-endian
+- **サンプルレート**: 16,000 Hz
+- **チャンネル**: モノラル
 
-| サービス | 用途 | 取得方法 | 必須/任意 |
-|---------|------|---------|----------|
-| Deepgram | STT + LLM管理 + TTS | https://console.deepgram.com/signup | 必須 |
-| Attendee | Meeting Bot管理 | https://app.attendee.dev/accounts/signup/ | 必須 |
-| ngrok | WebSocketトンネル | `brew install ngrok` | 必須 |
-| ElevenLabs | カスタム声（Phase 3） | https://elevenlabs.io | 任意 |
+## 進化の経緯
 
-### ユーザーが事前に取得するもの
-1. **Deepgram API Key** — サインアップ後、Console → API Keys
-2. **Attendee API Key** — サインアップ後、Dashboard → API Keys
+| 段階 | 構成 | 状態 |
+|------|------|------|
+| MVP | Deepgram Voice Agent（オールインワン STT+LLM+TTS） | ✅ 完了・廃止 |
+| Pipeline v1 | 分解パイプライン（STT + OpenRouter + Fish Audio） | ✅ 完了 |
+| Pipeline v2 | 分解パイプライン（STT + **OpenClaw Gateway** + Fish Audio） | ✅ **現行** |
 
-### 我々が事前準備するもの
-1. ✅ ngrok インストール
-2. ✅ Bridge Server実装（voice-agent-exampleベース）
-3. ✅ システムプロンプト作成
-4. ✅ `.env.example` テンプレート
-5. ✅ セットアップ手順書
+**MVP → Pipeline v1 の理由**: Deepgram Voice Agent は 4 TTS プロバイダしかサポートしておらず、Fish Audio が使えなかった
 
----
-
-## ファイル構成
-
-```
-meetmate/
-├── docs/
-│   ├── architecture.md          # このファイル
-│   └── setup-guide.md           # セットアップ手順書
-├── src/
-│   ├── index.js                 # Bridge Server（メインエントリ）
-│   ├── config.js                # 設定管理
-│   └── prompts/
-│       └── caty-system.md       # Catyのシステムプロンプト
-├── public/
-│   └── index.html               # Web UI（Meeting URL入力）
-├── .env.example                 # 環境変数テンプレート
-├── package.json
-└── README.md
-```
-
----
-
-## Phase 2: OpenClawセッション統合（計画）
-
-### 目標
-- 1 Meet = 1 OpenClawセッション
-- 会話ログをメモリに保存（MEMORY.md / daily memory）
-- Catyが会話内容を記憶・理解
-
-### アプローチ
-- Deepgram Voice Agent の `ConversationText` イベントで全発話をキャプチャ
-- ミーティング終了時に会話ログを `memory/YYYY-MM-DD.md` に追記
-- OpenClawセッションAPIとの統合で、既存のメモリシステムと連携
-
----
-
-## Phase 3: マルチエージェント + 声の個性（計画）
-
-### 目標
-- Claire/Alec/Zoe/Eidra も参加可能
-- エージェントごとに異なるElevenLabs声
-
-### アプローチ
-- TTS を ElevenLabs に切替
-- エージェントごとに voice_id を設定
-- 複数Bridge Serverインスタンス or 動的切替
-
----
-
-## 設計原則（ユーザーの方針）
-
-> 極限まで洗練させた「シンプルかつストレートに話せる仕組み」
-
-1. **最小限のコード**: voice-agent-example をベースに必要最小限の変更のみ
-2. **設定で制御**: コードの複雑化を避け、設定ファイルで挙動を変更
-3. **段階的拡張**: Phase 1は「喋れる」だけ、機能追加は後のPhaseで
-4. **既存OSS活用**: Attendee + Deepgram の組み合わせで車輪の再発明を回避
+**Pipeline v1 → v2 の理由**: OpenRouter 直接呼び出しでは SOUL.md・memory・ツールが使えず、Meet の Caty と Slack の Caty が別人になってしまう
