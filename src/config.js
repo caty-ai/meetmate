@@ -13,6 +13,12 @@ const SAMPLE_RATE = 16_000;
 // Language mode: "ja" for Japanese, "en" for English
 const LANG = process.env.AGENT_LANG || "ja";
 
+// Cartesia voice ID (override via env)
+// Japanese Woman Conversational: 2b568345-1d48-4047-b25f-7baccf842eb0
+// Anime Girl: 1001d611-b1a8-46bd-a5ca-551b23505334
+// Sweet Lady: e3827ec5-697a-4b7c-9704-1a23041bbc51
+const CARTESIA_VOICE_ID = process.env.CARTESIA_VOICE_ID || "1001d611-b1a8-46bd-a5ca-551b23505334";
+
 /**
  * Build the Deepgram Voice Agent configuration.
  * STT (Nova 3) → LLM (Claude) → TTS (Cartesia Sonic / Deepgram Aura)
@@ -29,10 +35,7 @@ function buildAgentConfig(overrides = {}) {
           model_id: "sonic-2",
           voice: {
             mode: "id",
-            // Japanese Woman Conversational: 2b568345-1d48-4047-b25f-7baccf842eb0
-            // Anime Girl: 1001d611-b1a8-46bd-a5ca-551b23505334
-            // Sweet Lady: e3827ec5-697a-4b7c-9704-1a23041bbc51
-            id: overrides.voiceId || "2b568345-1d48-4047-b25f-7baccf842eb0",
+            id: overrides.voiceId || CARTESIA_VOICE_ID,
           },
           language: "ja",
         },
