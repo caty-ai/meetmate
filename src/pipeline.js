@@ -13,6 +13,19 @@ const MIN_SENTENCE_LEN = 8;
 // Inter-sentence pause: insert silence between sentences for natural rhythm
 const SENTENCE_PAUSE_MS = Number(process.env.SENTENCE_PAUSE_MS || 500);
 
+// Wake word detection: only respond when addressed
+// Modes: "off" (respond to everything), "wake" (require wake word), "context" (LLM decides)
+const WAKE_MODE = process.env.WAKE_MODE || "off";
+const WAKE_WORDS = (process.env.WAKE_WORDS || "ケイティ,けいてぃ,caty,katie,ケイケイ").toLowerCase().split(",").map(w => w.trim());
+
+/**
+ * Check if utterance contains a wake word.
+ */
+function containsWakeWord(text) {
+  const lower = text.toLowerCase();
+  return WAKE_WORDS.some(w => lower.includes(w));
+}
+
 /**
  * Generate a Buffer of PCM silence (16-bit LE zeros) for a given duration.
  */
@@ -72,6 +85,21 @@ function createPipeline(session, turnState, onAudio, config) {
 
   stt.on("utterance_end", async (userText) => {
     console.log(`💬  [user] ${userText}`);
+
+    // Wake word detection
+    if (WAKE_MODE === "wake") {
+      if (!containsWakeWord(userText)) {
+        console.log(`🔇  Wake word not detected, ignoring: "${userText.slice(0, 50)}..."`);
+        // Still log for context, but don't respond
+        session.conversationLog.push({
+          timestamp: new Date().toISOString(),
+          role: "user",
+          content: `[会議音声・未指名] ${userText}`,
+        });
+        return;
+      }
+      console.log("🔔  Wake word detected!");
+    }
 
     // Log to session
     session.conversationLog.push({

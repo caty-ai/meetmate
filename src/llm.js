@@ -56,7 +56,7 @@ async function* streamOpenClaw(messages, options) {
   ];
 
   const body = JSON.stringify({
-    model: options.model || "anthropic/claude-opus-4-6",
+    model: options.model || "anthropic/claude-sonnet-4-6",
     stream: true,
     temperature,
     max_tokens: maxTokens,
