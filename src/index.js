@@ -497,9 +497,13 @@ const server = http.createServer(async (req, res) => {
       console.log("🔗  WebSocket URL:", wsWithSession.replace(/token=[^&]+/, "token=***"));
       console.log("🧾  Session ID:", sessionId);
 
+      const BOT_IMAGE_URL = process.env.BOT_IMAGE_URL
+        || "https://example.com/avatar.png";
+
       const attendeePayload = JSON.stringify({
         meeting_url: meetingUrl,
         bot_name: toSafeString(formData.botName) || "Caty (ケイティ)",
+        bot_image: BOT_IMAGE_URL,
         websocket_settings: {
           audio: {
             url: wsWithSession,

@@ -10,6 +10,17 @@ const { synthesize } = require("./tts-fish");
 const SENTENCE_RE = /[。！？!?\n]+/;
 const MIN_SENTENCE_LEN = 8;
 
+// Inter-sentence pause: insert silence between sentences for natural rhythm
+const SENTENCE_PAUSE_MS = Number(process.env.SENTENCE_PAUSE_MS || 500);
+
+/**
+ * Generate a Buffer of PCM silence (16-bit LE zeros) for a given duration.
+ */
+function generateSilence(durationMs, sampleRate) {
+  const numSamples = Math.floor((sampleRate * durationMs) / 1000);
+  return Buffer.alloc(numSamples * 2); // 2 bytes per int16 sample
+}
+
 function splitSentences(text) {
   const parts = text.split(SENTENCE_RE).filter((s) => s.trim().length > 0);
   return parts.map((s) => s.trim());
@@ -121,10 +132,18 @@ function createPipeline(session, turnState, onAudio, config) {
           if (sentence.length >= MIN_SENTENCE_LEN) {
             sentencesToSpeak.push(sentence);
 
+            // Insert pause between sentences (not before the first one)
+            if (sentencesToSpeak.length > 1 && SENTENCE_PAUSE_MS > 0) {
+              const silence = generateSilence(SENTENCE_PAUSE_MS, config.stt.sampleRate);
+              onAudio(silence);
+            }
+
             // Start TTS for this sentence immediately (first one triggers speaking state)
             if (sentencesToSpeak.length === 1) {
               turnState.isAgentSpeaking = true;
               console.log(`🗣️  Caty speaking: "${sentence}"`);
+            } else {
+              console.log(`🗣️  Caty continue: "${sentence}"`);
             }
 
             await speakSentence(sentence, abort.signal);
