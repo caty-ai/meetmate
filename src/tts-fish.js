@@ -68,13 +68,41 @@ async function synthesize(text, options = {}) {
           return;
         }
 
+        // PCM int16 alignment buffer: ensure we only emit even-byte chunks
+        // Fish Audio can return odd-byte chunks which misalign 16-bit samples
+        let leftover = null;
+
         res.on("data", (chunk) => {
           if (options.signal?.aborted) return;
-          // Fish Audio returns raw PCM bytes in chunked transfer
-          onAudio(chunk);
+
+          let data = chunk;
+          // Prepend leftover byte from previous chunk
+          if (leftover) {
+            data = Buffer.concat([leftover, chunk]);
+            leftover = null;
+          }
+
+          // If odd length, hold the last byte for next chunk
+          if (data.length % 2 !== 0) {
+            leftover = data.subarray(data.length - 1);
+            data = data.subarray(0, data.length - 1);
+          }
+
+          if (data.length > 0) {
+            onAudio(data);
+          }
         });
 
-        res.on("end", () => resolve());
+        res.on("end", () => {
+          // Flush any leftover byte (pad with zero)
+          if (leftover && leftover.length > 0) {
+            const padded = Buffer.alloc(2);
+            leftover.copy(padded);
+            onAudio(padded);
+          }
+          resolve();
+        });
+
         res.on("error", reject);
       }
     );
