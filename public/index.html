@@ -22,57 +22,81 @@
             border-radius: 16px;
             box-shadow: 0 8px 32px rgba(0,0,0,0.3);
             width: 100%;
-            max-width: 550px;
+            max-width: 500px;
             border: 1px solid #0f3460;
         }
         h1 {
             text-align: center;
             color: #e94560;
             font-size: 1.8rem;
-            margin-bottom: 0.5rem;
+            margin-bottom: 0.3rem;
         }
         .subtitle {
             text-align: center;
             color: #888;
-            margin-bottom: 2rem;
+            margin-bottom: 1.5rem;
             font-size: 0.95rem;
+        }
+        .mode-badge {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+        .mode-badge span {
+            background: #0f3460;
+            padding: 0.3rem 0.8rem;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            color: #95b5d5;
         }
         form {
             display: flex;
             flex-direction: column;
         }
         label {
-            margin-top: 1.2rem;
+            margin-top: 1rem;
             margin-bottom: 0.5rem;
             color: #aaa;
             font-size: 0.95rem;
             font-weight: 500;
         }
-        input, textarea, select {
+        input {
             padding: 0.85rem;
             border: 1px solid #0f3460;
             border-radius: 8px;
-            font-size: 0.95rem;
+            font-size: 1rem;
             font-family: inherit;
             background-color: #1a1a2e;
             color: #e0e0e0;
         }
-        input:focus, textarea:focus, select:focus {
+        input:focus {
             outline: 2px solid #e94560;
             outline-offset: 2px;
             border-color: #e94560;
-        }
-        textarea {
-            min-height: 80px;
-            resize: vertical;
         }
         small {
             color: #666;
             margin-top: 0.3rem;
             font-size: 0.85rem;
         }
+        .advanced-toggle {
+            margin-top: 1.5rem;
+            color: #666;
+            font-size: 0.85rem;
+            cursor: pointer;
+            text-align: center;
+            user-select: none;
+        }
+        .advanced-toggle:hover {
+            color: #aaa;
+        }
+        .advanced {
+            display: none;
+        }
+        .advanced.open {
+            display: block;
+        }
         button {
-            margin-top: 2rem;
+            margin-top: 1.5rem;
             padding: 1rem;
             background: linear-gradient(135deg, #e94560, #c23152);
             color: white;
@@ -131,6 +155,7 @@
     <div class="container">
         <h1>🐱 AI Meet Participant</h1>
         <p class="subtitle">Caty（ケイティ）をGoogle Meetに参加させる</p>
+        <div class="mode-badge"><span id="modeBadge">🐟 Fish Audio TTS</span></div>
 
         <form id="joinForm">
             <label for="meetingUrl">📹 Meeting URL:</label>
@@ -141,32 +166,20 @@
                 placeholder="https://meet.google.com/xxx-xxxx-xxx"
                 pattern="https://meet\.google\.com/.+"
                 title="Google Meet の URL を入力してください"
+                autofocus
                 required
             >
+            <small>Google Meet のURLを貼り付けるだけ！他は自動設定されます ✨</small>
 
-            <label for="wsUrl">🔗 WebSocket Tunnel URL:</label>
-            <input
-                type="text"
-                id="wsUrl"
-                name="wsUrl"
-                placeholder="wss://xxxxx.ngrok-free.app"
-                aria-describedby="wsUrlHint"
-                required
-            >
-            <small id="wsUrlHint">ngrok で生成した URL を入力（https:// / http:// は自動で ws:// 系に変換）</small>
+            <div class="advanced-toggle" onclick="toggleAdvanced()">▶ 詳細設定</div>
+            <div class="advanced" id="advancedSection">
+                <label for="botName">🤖 Bot名:</label>
+                <input type="text" id="botName" name="botName" value="Caty (ケイティ)">
 
-            <label for="botName">🤖 Bot名:</label>
-            <input type="text" id="botName" name="botName" value="Caty (ケイティ)">
-
-            <label for="voice">🎙️ 声モデル（Cartesia / 日本語）:</label>
-            <select id="voice" name="voice">
-                <option value="1001d611-b1a8-46bd-a5ca-551b23505334" selected>Anime Girl（日本語・女性 / Default）</option>
-                <option value="2b568345-1d48-4047-b25f-7baccf842eb0">Japanese Woman Conversational（日本語・女性）</option>
-                <option value="e3827ec5-697a-4b7c-9704-1a23041bbc51">Sweet Lady（日本語・女性）</option>
-            </select>
-
-            <label for="joinToken">🔐 Join Token（任意）:</label>
-            <input type="password" id="joinToken" name="joinToken" placeholder="JOIN_SHARED_TOKEN を使う時だけ入力">
+                <label for="wsUrl">🔗 WebSocket URL（自動設定）:</label>
+                <input type="text" id="wsUrl" name="wsUrl" placeholder="自動設定されます">
+                <small>空欄の場合、現在のホストから自動生成されます</small>
+            </div>
 
             <button type="submit">🚀 Meetに参加させる</button>
         </form>
@@ -177,7 +190,6 @@
     <script>
         const form = document.getElementById('joinForm');
         const statusEl = document.getElementById('status');
-        const wsUrlEl = document.getElementById('wsUrl');
         const submitBtn = form.querySelector('button[type="submit"]');
 
         function setStatus(type, text, asHtml = false) {
@@ -189,35 +201,53 @@
             }
         }
 
-        wsUrlEl.addEventListener('blur', function () {
-            const v = this.value.trim();
-            if (v.startsWith('https://')) {
-                this.value = v.replace('https://', 'wss://');
-            } else if (v.startsWith('http://')) {
-                this.value = v.replace('http://', 'ws://');
-            }
-        });
+        function toggleAdvanced() {
+            const section = document.getElementById('advancedSection');
+            const toggle = document.querySelector('.advanced-toggle');
+            section.classList.toggle('open');
+            toggle.textContent = section.classList.contains('open') ? '▼ 詳細設定' : '▶ 詳細設定';
+        }
 
-        ['wsUrl', 'botName', 'voice'].forEach((id) => {
+        // Auto-compute WebSocket URL from current page host
+        function getAutoWsUrl() {
+            const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            return `${proto}//${location.host}`;
+        }
+
+        // Restore saved values
+        ['botName'].forEach((id) => {
             const saved = localStorage.getItem('caty_' + id);
             if (saved) document.getElementById(id).value = saved;
         });
 
+        // Fetch server info for mode badge
+        fetch('/info').then(r => r.json()).then(info => {
+            const badge = document.getElementById('modeBadge');
+            if (info.ttsProvider === 'fish-audio') {
+                badge.textContent = '🐟 Fish Audio TTS';
+            } else {
+                badge.textContent = '🔊 Deepgram Voice Agent';
+            }
+        }).catch(() => {});
+
         form.addEventListener('submit', async function(event) {
             event.preventDefault();
-
-            const wsUrl = wsUrlEl.value.trim();
-            if (!wsUrl.startsWith('ws://') && !wsUrl.startsWith('wss://')) {
-                setStatus('error', '❌ WebSocket URL は ws:// または wss:// で始めてください');
-                return;
-            }
 
             submitBtn.disabled = true;
             submitBtn.textContent = '⏳ 起動中...';
             setStatus('loading', '⏳ Botを起動中...');
 
             try {
-                const formData = new URLSearchParams(new FormData(form));
+                const meetingUrl = document.getElementById('meetingUrl').value.trim();
+                const botName = document.getElementById('botName').value.trim();
+                const wsUrl = document.getElementById('wsUrl').value.trim() || getAutoWsUrl();
+
+                const formData = new URLSearchParams({
+                    meetingUrl,
+                    botName: botName || 'Caty (ケイティ)',
+                    wsUrl,
+                });
+
                 const response = await fetch('/join-meeting', {
                     method: 'POST',
                     body: formData,
@@ -225,10 +255,12 @@
 
                 const text = await response.text();
                 if (response.ok) {
-                    ['wsUrl', 'botName', 'voice'].forEach((id) => {
-                        localStorage.setItem('caty_' + id, document.getElementById(id).value);
-                    });
-                    setStatus('success', '✅ ' + text + '<br><small style="opacity:0.9">Google Meet画面でBotの参加を確認してください。</small>', true);
+                    localStorage.setItem('caty_botName', botName);
+                    setStatus('success',
+                        '✅ ' + text +
+                        '<br><small style="opacity:0.9">Google Meet画面でBotの参加を確認してください 🐱</small>',
+                        true
+                    );
                 } else {
                     setStatus('error', '❌ ' + text);
                 }

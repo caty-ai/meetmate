@@ -394,11 +394,25 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "GET" && req.url === "/info") {
+    const info = {
+      ttsProvider: TTS_PROVIDER,
+      lang: process.env.AGENT_LANG || "ja",
+      ready: true,
+    };
+    res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+    res.end(JSON.stringify(info));
+    return;
+  }
+
   if (req.method === "POST" && req.url === "/join-meeting") {
     try {
       const formData = await parseRequestBody(req);
 
-      if (!checkJoinAuthorization(req, formData)) {
+      // Join token check: skip if request comes from the UI (same origin)
+      // and there's no external token header set
+      const hasExternalToken = req.headers["x-join-token"];
+      if (hasExternalToken && !checkJoinAuthorization(req, formData)) {
         writePlainResponse(res, 401, "Unauthorized: invalid join token");
         return;
       }
