@@ -1,4 +1,4 @@
-// config.js — Voice Agent configuration
+// config.js — Voice Agent / Pipeline configuration
 const fs = require("fs");
 const path = require("path");
 
@@ -13,31 +13,76 @@ const SAMPLE_RATE = 16_000;
 // Language mode: "ja" for Japanese, "en" for English
 const LANG = process.env.AGENT_LANG || "ja";
 
-// Cartesia voice ID (override via env)
+// TTS Provider: "fish-audio" (decomposed pipeline) or "deepgram-agent" (legacy all-in-one)
+const TTS_PROVIDER = process.env.TTS_PROVIDER || "fish-audio";
+
+// Cartesia voice ID (for legacy deepgram-agent mode)
 // Japanese Woman Conversational: 2b568345-1d48-4047-b25f-7baccf842eb0
 // Anime Girl: 1001d611-b1a8-46bd-a5ca-551b23505334
 // Sweet Lady: e3827ec5-697a-4b7c-9704-1a23041bbc51
-const CARTESIA_VOICE_ID = process.env.CARTESIA_VOICE_ID || "1001d611-b1a8-46bd-a5ca-551b23505334";
+const CARTESIA_VOICE_ID =
+  process.env.CARTESIA_VOICE_ID || "1001d611-b1a8-46bd-a5ca-551b23505334";
 
-// Audio quality / turn-taking tuning (Phase 1 hardening)
-const LISTEN_ENDPOINTING_MS = Number(process.env.LISTEN_ENDPOINTING_MS || 450);
-const LISTEN_UTTERANCE_END_MS = Number(process.env.LISTEN_UTTERANCE_END_MS || 1_200);
+// Audio quality / turn-taking tuning
+const LISTEN_ENDPOINTING_MS = Number(process.env.LISTEN_ENDPOINTING_MS || 400);
+const LISTEN_UTTERANCE_END_MS = Number(
+  process.env.LISTEN_UTTERANCE_END_MS || 1200
+);
+
+// LLM tuning
 const AGENT_TEMPERATURE = Number(process.env.AGENT_TEMPERATURE || 0.5);
-const AGENT_MAX_TOKENS = Number(process.env.AGENT_MAX_TOKENS || 220);
+const AGENT_MAX_TOKENS = Number(process.env.AGENT_MAX_TOKENS || 300);
+
+// Echo loop protection
+const ECHO_LOOP_COOLDOWN_MS = Number(process.env.ECHO_LOOP_COOLDOWN_MS || 300);
 
 /**
- * Build the Deepgram Voice Agent configuration.
- * STT (Nova 3) → LLM (Claude) → TTS (Cartesia Sonic / Deepgram Aura)
+ * Get pipeline config for the decomposed STT → LLM → TTS flow.
+ */
+function getPipelineConfig(overrides = {}) {
+  const isJapanese = LANG === "ja";
+
+  return {
+    dgKey: process.env.DEEPGRAM_API_KEY,
+    openrouterKey: process.env.OPENROUTER_API_KEY,
+    fishKey: process.env.FISH_AUDIO_API_KEY,
+    systemPrompt: overrides.prompt || CATY_PROMPT,
+    echoCooldownMs: ECHO_LOOP_COOLDOWN_MS,
+    stt: {
+      model: "nova-3",
+      language: LANG,
+      sampleRate: SAMPLE_RATE,
+    },
+    llm: {
+      model: overrides.model || "anthropic/claude-sonnet-4-5",
+      temperature: AGENT_TEMPERATURE,
+      maxTokens: AGENT_MAX_TOKENS,
+    },
+    tts: {
+      provider: "fish-audio",
+      referenceId: process.env.FISH_AUDIO_VOICE_ID || null,
+      sampleRate: SAMPLE_RATE,
+      latency: process.env.FISH_AUDIO_LATENCY || "balanced",
+    },
+    greeting:
+      overrides.greeting ||
+      (isJapanese
+        ? "こんにちは！ケイティです。よろしくお願いします！"
+        : "Hi! I'm Caty. Nice to meet you!"),
+  };
+}
+
+/**
+ * Build Voice Agent config (legacy deepgram-agent mode).
  */
 function buildAgentConfig(overrides = {}) {
-  const lang = overrides.lang || LANG;
+  const lang = overrides.language || LANG;
   const isJapanese = lang === "ja";
-
-  // Keep UI -> join-meeting -> runtime voice selection working for Japanese mode.
-  // UI sends `voice` field, so we accept either voiceId or voice as Cartesia ID.
-  const selectedCartesiaVoiceId = overrides.voiceId || overrides.voice || CARTESIA_VOICE_ID;
+  const selectedCartesiaVoiceId =
+    overrides.voice || CARTESIA_VOICE_ID;
 
   // TTS config: Cartesia managed for Japanese, Deepgram Aura for English
+  // NOTE: Deepgram-managed Cartesia does NOT support `language` field.
   const speakConfig = isJapanese
     ? {
         provider: {
@@ -47,7 +92,6 @@ function buildAgentConfig(overrides = {}) {
             mode: "id",
             id: selectedCartesiaVoiceId,
           },
-          language: "ja",
         },
       }
     : {
@@ -58,11 +102,14 @@ function buildAgentConfig(overrides = {}) {
       };
 
   return {
-    // AgentStartedSpeaking event is emitted only in experimental mode.
     experimental: true,
     audio: {
       input: { encoding: "linear16", sample_rate: SAMPLE_RATE },
-      output: { encoding: "linear16", sample_rate: SAMPLE_RATE, container: "none" },
+      output: {
+        encoding: "linear16",
+        sample_rate: SAMPLE_RATE,
+        container: "none",
+      },
     },
     agent: {
       listen: {
@@ -71,9 +118,6 @@ function buildAgentConfig(overrides = {}) {
           model: "nova-3",
           language: lang,
           smart_format: true,
-          vad_events: true,
-          endpointing: LISTEN_ENDPOINTING_MS,
-          utterance_end_ms: LISTEN_UTTERANCE_END_MS,
         },
       },
       think: {
@@ -81,16 +125,23 @@ function buildAgentConfig(overrides = {}) {
           type: "anthropic",
           model: overrides.model || "claude-sonnet-4-5",
           temperature: AGENT_TEMPERATURE,
-          max_tokens: AGENT_MAX_TOKENS,
         },
         prompt: overrides.prompt || CATY_PROMPT,
       },
       speak: speakConfig,
-      greeting: overrides.greeting || (isJapanese
-        ? "こんにちは！ケイティです。よろしくお願いします！"
-        : "Hi! I'm Caty. Nice to meet you!"),
+      greeting:
+        overrides.greeting ||
+        (isJapanese
+          ? "こんにちは！ケイティです。よろしくお願いします！"
+          : "Hi! I'm Caty. Nice to meet you!"),
     },
   };
 }
 
-module.exports = { buildAgentConfig, SAMPLE_RATE, CATY_PROMPT };
+module.exports = {
+  buildAgentConfig,
+  getPipelineConfig,
+  SAMPLE_RATE,
+  CATY_PROMPT,
+  TTS_PROVIDER,
+};

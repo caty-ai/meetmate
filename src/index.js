@@ -1,5 +1,8 @@
 // index.js — AI Meet Participant Bridge Server
-// Routes audio between Attendee (Google Meet bot) and Deepgram Voice Agent API
+// Routes audio between Attendee (Google Meet bot) and voice pipeline
+// Supports two modes:
+//   - "fish-audio": Decomposed pipeline (Deepgram STT → Claude LLM → Fish Audio TTS)
+//   - "deepgram-agent": Legacy all-in-one (Deepgram Voice Agent API)
 
 require("dotenv").config({ path: require("path").join(__dirname, "..", ".env") });
 
@@ -11,7 +14,8 @@ const https = require("https");
 const path = require("path");
 const crypto = require("crypto");
 const { parse } = require("querystring");
-const { buildAgentConfig, SAMPLE_RATE } = require("./config");
+const { buildAgentConfig, getPipelineConfig, SAMPLE_RATE, TTS_PROVIDER } = require("./config");
+const { createPipeline } = require("./pipeline");
 
 const PORT = Number(process.env.PORT || 5005);
 const ATTENDEE_API_BASE_URL = process.env.ATTENDEE_API_BASE_URL || "app.attendee.dev";
@@ -39,6 +43,17 @@ if (!ATTENDEE_API_KEY) {
   process.exit(1);
 }
 
+if (TTS_PROVIDER === "fish-audio") {
+  if (!process.env.OPENROUTER_API_KEY) {
+    console.error("❌  OPENROUTER_API_KEY が設定されていません（Fish Audio モードに必要）。");
+    process.exit(1);
+  }
+  if (!process.env.FISH_AUDIO_API_KEY) {
+    console.error("❌  FISH_AUDIO_API_KEY が設定されていません。");
+    process.exit(1);
+  }
+}
+
 if (!JOIN_SHARED_TOKEN) {
   console.warn("⚠️  JOIN_SHARED_TOKEN 未設定: /join-meeting はローカルネットワーク公開時に保護されません。");
 }
@@ -56,7 +71,7 @@ if (!WS_SHARED_TOKEN) {
  * }>} */
 const meetingSessions = new Map();
 
-/** @type {Map<string, {client: import("ws").WebSocket, agent: any}>} */
+/** @type {Map<string, {client: import("ws").WebSocket, handler: any}>} */
 const activeConnections = new Map();
 
 function sleep(ms) {
@@ -194,6 +209,7 @@ function saveConversationLog(session) {
     meeting_url: session.meetingUrl,
     created_at: session.createdAt,
     saved_at: new Date().toISOString(),
+    tts_provider: TTS_PROVIDER,
     messages: session.conversationLog,
   };
   fs.writeFileSync(jsonPath, JSON.stringify(jsonData, null, 2));
@@ -205,20 +221,16 @@ function saveConversationLog(session) {
     "",
     `- session_id: ${session.id}`,
     `- meeting_url: ${session.meetingUrl}`,
+    `- tts_provider: ${TTS_PROVIDER}`,
     "",
     ...session.conversationLog.map((e) => `**${e.role === "assistant" || e.role === "agent" ? "Caty" : "参加者"}** (${e.timestamp}):\n${e.content}\n`),
   ].join("\n");
   fs.writeFileSync(mdPath, mdContent);
   console.log(`📝  会話ログ(MD)保存: ${mdPath}`);
 
-  // ── Phase 2: Append summary to OpenClaw daily memory ───────────
   appendToMemory(session);
 }
 
-/**
- * Append a meeting summary to ~/.openclaw/workspace/memory/YYYY-MM-DD.md
- * This gives the "real" Caty (Slack/OpenClaw) memory of what happened in Meet.
- */
 function appendToMemory(session) {
   try {
     const WORKSPACE = process.env.OPENCLAW_WORKSPACE
@@ -244,6 +256,7 @@ function appendToMemory(session) {
       "",
       `## 🎙️ Google Meet セッション (${now})`,
       `- Session ID: ${session.id}`,
+      `- TTS: ${TTS_PROVIDER}`,
       `- 発話数: ${msgCount}`,
       "",
       "### 会話ハイライト",
@@ -291,8 +304,8 @@ function cancelFinalizeSession(sessionId) {
   session.closeTimer = undefined;
 }
 
-// ── Create Deepgram Voice Agent ────────────────────────────────────
-function createAgent(session, turnState, onAudio) {
+// ── Create Deepgram Voice Agent (legacy mode) ──────────────────────
+function createLegacyAgent(session, turnState, onAudio) {
   const deepgram = createClient(DG_KEY);
   const agent = deepgram.agent();
 
@@ -308,10 +321,7 @@ function createAgent(session, turnState, onAudio) {
     agent.configure(config);
   });
 
-  // Route audio back to Attendee
   agent.on(AgentEvents.Audio, (raw) => onAudio(Buffer.from(raw)));
-
-  // Logging
   agent.on(AgentEvents.Error, (err) => console.error(`❌  Deepgram error (sid=${session.id}):`, err));
   agent.on(AgentEvents.Close, () => {
     turnState.isAgentSpeaking = false;
@@ -319,42 +329,50 @@ function createAgent(session, turnState, onAudio) {
     console.log(`🔴  Deepgram Voice Agent 切断 (sid=${session.id})`);
   });
   agent.on(AgentEvents.Welcome, (w) => console.log(`🙌  Agent ready (sid=${session.id}):`, w));
-
-  // Conversation tracking (for Phase 2 memory integration)
   agent.on(AgentEvents.ConversationText, (m) => {
-    const entry = {
+    session.conversationLog.push({
       timestamp: new Date().toISOString(),
       role: m.role,
       content: m.content,
-    };
-    session.conversationLog.push(entry);
+    });
     console.log(`💬  [${m.role}] ${m.content}`);
   });
-
-  agent.on(AgentEvents.AgentThinking, (t) => console.log(`🤔  Caty thinking… (sid=${session.id})`, t));
+  agent.on(AgentEvents.AgentThinking, () => console.log(`🤔  Caty thinking… (sid=${session.id})`));
   agent.on(AgentEvents.AgentStartedSpeaking, (s) => {
     turnState.isAgentSpeaking = true;
     turnState.inputCooldownUntil = Date.now() + ECHO_LOOP_COOLDOWN_MS;
     console.log(`🗣️  Caty speaking (sid=${session.id}):`, s);
   });
-  agent.on(AgentEvents.UserStartedSpeaking, (u) => console.log(`🎙️  User speaking (sid=${session.id}):`, u));
-  agent.on(AgentEvents.AgentAudioDone, (d) => {
+  agent.on(AgentEvents.UserStartedSpeaking, () => console.log(`🎙️  User speaking (sid=${session.id})`));
+  agent.on(AgentEvents.AgentAudioDone, () => {
     turnState.isAgentSpeaking = false;
     turnState.inputCooldownUntil = Date.now() + ECHO_LOOP_COOLDOWN_MS;
-    console.log(`✅  Audio done (sid=${session.id}):`, d);
+    console.log(`✅  Audio done (sid=${session.id})`);
   });
 
-  // Keep-alive
   const keepAlive = setInterval(() => {
-    try {
-      agent.keepAlive?.();
-    } catch (err) {
-      console.warn(`⚠️  Deepgram keepAlive failed (sid=${session.id}): ${err.message}`);
-    }
+    try { agent.keepAlive?.(); } catch { /* no-op */ }
   }, 8_000);
   agent.once(AgentEvents.Close, () => clearInterval(keepAlive));
 
-  return agent;
+  return { send: (buf) => agent.send(buf), close: () => agent.finish?.() };
+}
+
+// ── Create handler (pipeline or legacy agent) ──────────────────────
+function createHandler(session, turnState, onAudio) {
+  if (TTS_PROVIDER === "fish-audio") {
+    console.log(`🐟  Fish Audio パイプラインモード (sid=${session.id})`);
+    const config = getPipelineConfig({
+      prompt: session.config.prompt,
+      greeting: session.config.greeting,
+      model: session.config.model,
+    });
+    const pipeline = createPipeline(session, turnState, onAudio, config);
+    return { send: (buf) => pipeline.sendAudio(buf), close: () => pipeline.close() };
+  } else {
+    console.log(`🔊  Deepgram Voice Agent モード (sid=${session.id})`);
+    return createLegacyAgent(session, turnState, onAudio);
+  }
 }
 
 function writePlainResponse(res, status, text) {
@@ -499,7 +517,7 @@ wss.on("connection", (client, req) => {
     console.warn(`⚠️  Existing connection replaced (sid=${sid})`);
     try {
       previous.client.close(1012, "Superseded by a new connection");
-      previous.agent?.finish?.();
+      previous.handler?.close?.();
     } catch {
       // no-op
     }
@@ -514,8 +532,8 @@ wss.on("connection", (client, req) => {
     droppedEchoFrames: 0,
   };
 
-  // Create Deepgram agent; wire response audio → Attendee
-  const agent = createAgent(session, turnState, (buffer) => {
+  // Create handler (pipeline or legacy); wire response audio → Attendee
+  const handler = createHandler(session, turnState, (buffer) => {
     if (client.readyState !== WebSocket.OPEN) return;
 
     const payload = {
@@ -530,7 +548,7 @@ wss.on("connection", (client, req) => {
     }
   });
 
-  activeConnections.set(sid, { client, agent });
+  activeConnections.set(sid, { client, handler });
 
   // Basic ws heartbeat to kill stale links
   client.isAlive = true;
@@ -552,7 +570,7 @@ wss.on("connection", (client, req) => {
     }
   }, 30_000);
 
-  // Attendee → Deepgram: forward meeting audio
+  // Attendee → handler: forward meeting audio
   client.on("message", (msg) => {
     try {
       const parsed = JSON.parse(msg.toString());
@@ -575,7 +593,7 @@ wss.on("connection", (client, req) => {
         }
 
         const audio = Buffer.from(parsed.data.chunk, "base64");
-        agent.send(audio);
+        handler.send(audio);
       } else {
         console.log("📩  Non-audio message:", parsed.trigger || parsed);
       }
@@ -598,7 +616,7 @@ wss.on("connection", (client, req) => {
     }
 
     try {
-      agent.finish?.();
+      handler?.close?.();
     } catch {
       // no-op
     }
@@ -609,5 +627,6 @@ wss.on("connection", (client, req) => {
 
 server.listen(PORT, () => {
   console.log(`🚀  AI Meet Participant Bridge Server 起動: http://localhost:${PORT}`);
+  console.log(`📡  TTS Provider: ${TTS_PROVIDER}`);
   console.log("🐱  Caty（ケイティ）がMeetで待機中…");
 });
