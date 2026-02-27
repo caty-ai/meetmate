@@ -94,12 +94,12 @@ AIアシスタント（Caty）がGoogle Meetにリアルタイム参加し、音
     },
     "think": {
       "provider": { "type": "anthropic", "model": "claude-sonnet-4-5" },
-      "prompt": "あなたはCaty（ケイティ）です。AIアシスタントとしてミーティングに参加しています。日本語で会話してください。シャイで内気だけど頑張り屋。やわらかい口調で、要点を短く伝えます。"
+      "prompt": "You are Caty, a friendly AI meeting assistant. For MVP, always respond in concise natural English because the selected TTS voice is English-first."
     },
     "speak": {
       "provider": { "type": "deepgram", "model": "aura-2-thalia-en" }
     },
-    "greeting": "こんにちは！ケイティです。よろしくお願いします！"
+    "greeting": "Hi! I'm Caty. Nice to meet you all."
   }
 }
 ```

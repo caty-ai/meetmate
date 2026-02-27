@@ -20,7 +20,7 @@ Slackセッションと同等の体験を実現する。
 
 ## Phases
 
-1. MVP: Caty 1人が Meet で音声対話
+1. MVP: Caty 1人が Meet で音声対話（TTS制約により英語運用）
 2. OpenClawセッション統合（ログ・メモリ連携）
 3. マルチエージェント + 声の個性
 4. Googleカレンダー連携 + Slack呼び出し

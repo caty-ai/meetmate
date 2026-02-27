@@ -1,11 +1,14 @@
-# Dependencies
+# dependencies
 node_modules/
 
-# Environment (API keys)
+# local env
 .env
+.env.*
+!.env.example
 
-# Conversation logs (local only)
+# runtime logs and artifacts
 logs/
+*.log
 
 # OS
 .DS_Store
