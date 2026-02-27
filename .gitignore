@@ -1,0 +1,11 @@
+# Dependencies
+node_modules/
+
+# Environment (API keys)
+.env
+
+# Conversation logs (local only)
+logs/
+
+# OS
+.DS_Store

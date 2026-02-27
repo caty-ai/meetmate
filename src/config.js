@@ -38,7 +38,7 @@ function buildAgentConfig(overrides = {}) {
           model: overrides.voice || "aura-2-thalia-en",
         },
       },
-      greeting: overrides.greeting || "こんにちは！ケイティです。よろしくお願いします！",
+      greeting: overrides.greeting || "Hi! I'm Caty. Nice to meet you!",
     },
   };
 }
