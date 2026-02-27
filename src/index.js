@@ -209,6 +209,53 @@ function saveConversationLog(session) {
   ].join("\n");
   fs.writeFileSync(mdPath, mdContent);
   console.log(`📝  会話ログ(MD)保存: ${mdPath}`);
+
+  // ── Phase 2: Append summary to OpenClaw daily memory ───────────
+  appendToMemory(session);
+}
+
+/**
+ * Append a meeting summary to ~/.openclaw/workspace/memory/YYYY-MM-DD.md
+ * This gives the "real" Caty (Slack/OpenClaw) memory of what happened in Meet.
+ */
+function appendToMemory(session) {
+  try {
+    const WORKSPACE = process.env.OPENCLAW_WORKSPACE
+      || path.join(require("os").homedir(), ".openclaw", "workspace");
+    const memoryDir = path.join(WORKSPACE, "memory");
+    if (!fs.existsSync(memoryDir)) fs.mkdirSync(memoryDir, { recursive: true });
+
+    const today = new Date().toISOString().slice(0, 10);
+    const memoryFile = path.join(memoryDir, `${today}.md`);
+
+    const msgCount = session.conversationLog.length;
+    const userMsgs = session.conversationLog
+      .filter((e) => e.role !== "assistant" && e.role !== "agent")
+      .map((e) => e.content)
+      .slice(0, 10);
+    const catyMsgs = session.conversationLog
+      .filter((e) => e.role === "assistant" || e.role === "agent")
+      .map((e) => e.content)
+      .slice(0, 10);
+
+    const now = new Date().toLocaleString("ja-JP", { timeZone: "Asia/Bangkok" });
+    const summary = [
+      "",
+      `## 🎙️ Google Meet セッション (${now})`,
+      `- Session ID: ${session.id}`,
+      `- 発話数: ${msgCount}`,
+      "",
+      "### 会話ハイライト",
+      ...userMsgs.slice(0, 5).map((m) => `- 参加者: 「${m.slice(0, 80)}${m.length > 80 ? "..." : ""}」`),
+      ...catyMsgs.slice(0, 5).map((m) => `- Caty: 「${m.slice(0, 80)}${m.length > 80 ? "..." : ""}」`),
+      "",
+    ].join("\n");
+
+    fs.appendFileSync(memoryFile, summary);
+    console.log(`🧠  メモリに追記: ${memoryFile}`);
+  } catch (err) {
+    console.error("⚠️  メモリ追記失敗:", err.message);
+  }
 }
 
 function finalizeSessionIfInactive(sessionId) {
