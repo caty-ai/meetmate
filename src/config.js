@@ -46,6 +46,8 @@ function getPipelineConfig(overrides = {}) {
     dgKey: process.env.DEEPGRAM_API_KEY,
     openrouterKey: process.env.OPENROUTER_API_KEY,
     fishKey: process.env.FISH_AUDIO_API_KEY,
+    openclawUrl: process.env.OPENCLAW_GATEWAY_URL || null,
+    openclawToken: process.env.OPENCLAW_GATEWAY_TOKEN || null,
     systemPrompt: overrides.prompt || CATY_PROMPT,
     echoCooldownMs: ECHO_LOOP_COOLDOWN_MS,
     stt: {

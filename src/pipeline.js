@@ -41,7 +41,15 @@ function createPipeline(session, turnState, onAudio, config) {
   const fishKey = config.fishKey;
   const systemPrompt = config.systemPrompt;
 
-  // Conversation history (for LLM context)
+  // OpenClaw Gateway integration
+  const useOpenClaw = !!(config.openclawUrl && config.openclawToken);
+  if (useOpenClaw) {
+    console.log("🔗  OpenClaw Gateway モード: フルCaty体験 ✨");
+  } else {
+    console.log("📡  OpenRouter モード: 直接Claude API");
+  }
+
+  // Conversation history (for OpenRouter fallback; OpenClaw manages its own)
   const MAX_HISTORY = 20;
   const history = []; // {role: "user"|"assistant", content: string}
 
@@ -95,7 +103,7 @@ function createPipeline(session, turnState, onAudio, config) {
     const abort = new AbortController();
     currentAbort = abort;
 
-    // Add to history
+    // Add to history (used by OpenRouter fallback; OpenClaw manages its own)
     history.push({ role: "user", content: userText });
     if (history.length > MAX_HISTORY) {
       history.splice(0, history.length - MAX_HISTORY);
@@ -109,13 +117,28 @@ function createPipeline(session, turnState, onAudio, config) {
 
       console.log("🤔  Caty thinking…");
 
-      for await (const chunk of streamChat(systemPrompt, history, {
-        apiKey: openrouterKey,
-        model: config.llm.model,
-        temperature: config.llm.temperature,
-        maxTokens: config.llm.maxTokens,
-        signal: abort.signal,
-      })) {
+      // Build LLM options based on mode
+      const llmMessages = useOpenClaw
+        ? [{ role: "user", content: userText }] // OpenClaw manages history
+        : history; // OpenRouter needs full history
+
+      for await (const chunk of streamChat(
+        useOpenClaw ? null : systemPrompt,
+        llmMessages,
+        {
+          // OpenClaw Gateway
+          openclawUrl: config.openclawUrl,
+          openclawToken: config.openclawToken,
+          sessionUser: `meet-${session.id}`,
+          // OpenRouter fallback
+          apiKey: openrouterKey,
+          // Shared
+          model: config.llm.model,
+          temperature: config.llm.temperature,
+          maxTokens: config.llm.maxTokens,
+          signal: abort.signal,
+        }
+      )) {
         if (abort.signal.aborted) break;
 
         fullResponse += chunk;
