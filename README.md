@@ -1,10 +1,24 @@
 # 🐱 AI Meet Participant — Caty Voice
 
 AIアシスタント「Caty（ケイティ）」がGoogle Meetにリアルタイム参加して音声で対話するアプリ。
+加えて、**Twilio経由の電話発信**（Phone Transport）にも対応。
 OpenClaw Gateway 連携により、Slack の Caty と **まったく同じ体験** を音声で提供。
+
+## プロジェクト状況
+
+| Phase | 内容 | ステータス |
+|-------|------|-----------|
+| v1 | Google Meet 音声対話（MVP） | ✅ 完了 |
+| v2 Phase 1 | Twilio 電話発信（outbound call） | ✅ 完了 (2026-02-28) |
+| v2 Phase 2 | Slack UI + 通話サマリー | 🔜 次 |
+| v2 Phase 3 | マルチエージェント展開（スキル化） | 📋 計画中 |
+| v2 Phase 4 | 着信対応 + IVR | 📋 計画中 |
+
+**最新タグ:** `v1-phase1-stable` → `2a193b7`
 
 ## アーキテクチャ
 
+### Google Meet Transport (port 5005)
 ```
 Google Meet ←→ Attendee Bot (hosted)
                     ↕ WebSocket (PCM audio)
@@ -12,6 +26,21 @@ Google Meet ←→ Attendee Bot (hosted)
               ├── Deepgram STT (Nova 3) — 音声認識
               ├── OpenClaw Gateway — LLM + ツール + メモリ
               └── Fish Audio TTS (S1) — 音声合成 + 感情表現
+```
+
+### Twilio Phone Transport (port 5006) — Phase 1 完了
+```
+Twilio (PSTN) ←→ ngrok (https/wss)
+                       ↕
+              Twilio Bridge (Node.js, port 5006)
+              ├── /call-me — 発信 API (Bearer auth)
+              ├── /twilio/voice — TwiML 応答 (署名検証)
+              ├── /twilio/stream/<stoken> — Media Stream WS
+              │     ├── stoken: 短TTL + 単回消費 (upgrade gate)
+              │     └── callSid: activeCalls照合 (start event gate)
+              ├── Deepgram STT (Nova 3, keywords fallback)
+              ├── OpenClaw Gateway — LLM + ツール + メモリ
+              └── Fish Audio TTS → μ-law 変換 → Twilio
 ```
 
 ### OpenClaw Gateway 連携
@@ -142,6 +171,17 @@ node src/index.js
 | `WAKE_MODE` | `off`（全発話に応答） / `wake`（名前呼び応答） | `off` |
 | `WAKE_WORDS` | ウェイクワード（カンマ区切り） | `ケイティ,けいてぃ,caty,katie,ケイケイ` |
 
+### Twilio Phone Transport
+
+| 変数 | 説明 | 必須 |
+|------|------|------|
+| `TWILIO_ACCOUNT_SID` | Twilio Account SID | ✅ |
+| `TWILIO_AUTH_TOKEN` | Twilio Auth Token | ✅ |
+| `TWILIO_PHONE_NUMBER` | Twilio 発信元番号（E.164） | ✅ |
+| `TWILIO_CALL_SECRET` | `/call-me` API Bearer トークン | ✅ |
+| `TWILIO_PUBLIC_URL` | ngrok 等の公開 HTTPS URL | ✅ |
+| `TWILIO_ALLOWED_NUMBERS` | 発信先許可番号（カンマ区切り、E.164） | ✅ |
+
 ### セキュリティ
 
 | 変数 | 説明 |
@@ -149,17 +189,30 @@ node src/index.js
 | `JOIN_SHARED_TOKEN` | `/join-meeting` 認証トークン |
 | `WS_SHARED_TOKEN` | WebSocket 認証トークン |
 
+### Twilio セキュリティモデル
+
+| レイヤー | 保護対象 | 方式 |
+|---------|---------|------|
+| `/call-me` | 発信API | Bearer token (`TWILIO_CALL_SECRET`) |
+| `/twilio/voice` | TwiML応答 | Twilio署名検証 + `vtoken`(短TTL/単回) + `Direction=outbound-api` + `callSid` activeCalls照合 |
+| `/twilio/stream/<stoken>` | WS接続 | `stoken`(短TTL/単回/callSid紐付け) — path-based |
+| WS `start` event | 通話紐付け | `callSid` activeCalls照合 + token.meta.callSid一致（2段ガード） |
+
 ## ファイル構成
 
 ```
 meetmate/
 ├── src/
-│   ├── index.js          # HTTP サーバー + WebSocket + セッション管理
+│   ├── index.js          # Meet Bridge: HTTP + WebSocket + セッション管理 (port 5005)
 │   ├── config.js         # 設定管理（環境変数読み込み）
-│   ├── pipeline.js       # オーケストレーター（STT → LLM → TTS）
-│   ├── stt.js            # Deepgram Nova 3 ストリーミング STT
+│   ├── pipeline.js       # オーケストレーター（STT → LLM → TTS）— 両トランスポート共有
+│   ├── stt.js            # Deepgram Nova 3 ストリーミング STT（keywords fallback付き）
 │   ├── llm.js            # LLM（OpenClaw Gateway / OpenRouter デュアル）
 │   ├── tts-fish.js       # Fish Audio REST TTS（PCM ストリーミング）
+│   ├── transport-twilio/
+│   │   ├── twilio-bridge.js    # Twilio Bridge: HTTP + WS (port 5006) — 発信専用
+│   │   ├── call-manager.js     # Twilio REST API 発信管理
+│   │   └── twilio-adapter.js   # μ-law ↔ PCM 変換
 │   └── prompts/
 │       └── caty-system.md  # 音声用システムプロンプト（フォールバック用）
 ├── public/
@@ -168,8 +221,9 @@ meetmate/
 │   └── caty-avatar.png   # Caty アバター（自動ダウンロード/キャッシュ）
 ├── logs/                 # 会話ログ（自動生成）
 ├── docs/
-│   ├── architecture.md   # 詳細アーキテクチャ
-│   ├── setup-guide.md    # セットアップ手順書
+│   ├── architecture.md             # 詳細アーキテクチャ
+│   ├── setup-guide.md              # セットアップ手順書
+│   ├── twilio-phase1-spec.md       # Twilio Phase 1 仕様書
 │   └── phase2-openclaw-gateway-integration.md  # Gateway 連携仕様
 ├── .env.example          # 環境変数テンプレート
 ├── package.json
@@ -208,29 +262,46 @@ WAKE_WORDS=ケイティ,けいてぃ,caty,katie,ケイケイ
 
 ## ロードマップ
 
-### ✅ 完了（v1）
+### ✅ 完了
 
-| # | 内容 |
-|---|------|
-| 1 | MVP: Google Meet に参加して音声対話 |
-| 2 | Fish Audio S1 TTS（自然な日本語音声） |
-| 3 | 感情表現（64種類以上の感情タグ） |
-| 4 | OpenClaw Gateway 連携（フル Caty 体験） |
-| 5 | ウェイクワード検出（名前呼び応答） |
-| 6 | アバター表示・会話ログ保存・エコー防止 |
+| Phase | 内容 | 完了日 |
+|-------|------|--------|
+| v1 | MVP: Google Meet 音声対話 | — |
+| v1 | Fish Audio S1 TTS（感情表現 64種類以上） | — |
+| v1 | OpenClaw Gateway 連携（フル Caty 体験） | — |
+| v1 | ウェイクワード検出（fuzzy matching） | — |
+| v1 | アバター表示・会話ログ保存・エコー防止 | — |
+| v2 Phase 1 | **Twilio 電話発信**（outbound call） | 2026-02-28 |
+| v2 Phase 1 | Deepgram STT keywords fallback | 2026-02-28 |
+| v2 Phase 1 | Path-based stream token（セキュリティ強化） | 2026-02-28 |
 
-### 🔜 次のステップ（v2）
+### 🔜 v2 Phase 2 — Slack UI + 通話サマリー
 
-| # | 内容 | 説明 |
+| # | 内容 | 詳細 |
 |---|------|------|
-| 1 | **マルチエージェント対応** | agents.json で全エージェント（Claire/Alec/Zoe/Eidra/Sebas）の Voice ID・OpenClaw ポート・アバターを定義。Agent Router が名前呼びで振り分け |
-| 2 | **共有 Voice Bridge** | 1つのブリッジサーバーで全エージェント対応。個別セットアップ不要 |
-| 3 | **エージェント選択 UI** | Meet 参加時にどのエージェントを招待するか選択可能 |
-| 4 | **同時参加** | 複数 AI が1つの Meet に同時参加（ターン管理付き） |
-| 5 | **VOICEVOX 対応** | ローカル TTS として VOICEVOX をサポート（Fish Audio と切替可能） |
-| 6 | **ボイスクローニング** | Fish Audio で各エージェント固有の声を作成（15秒サンプルで生成可能） |
+| 1 | **Slack 発信 UI** | Slackメッセージで発信トリガー。1メッセージ上書きでステータス表示（📞発信中→🔊通話中→✅終了） |
+| 2 | **通話後サマリー自動投稿** | 通話終了後に会話要約・所要時間・参加者をSlackチャンネルに自動投稿 |
+| 3 | **通話イベントフック** | Twilioステータスコールバック → ログ保存・状態管理・conversationLog連携 |
 
-### マルチエージェント構成（v2 目標）
+### 📋 v2 Phase 3 — マルチエージェント展開
+
+| # | 内容 | 詳細 |
+|---|------|------|
+| 1 | **スキル化** | Twilio電話機能をOpenClawスキルとして切り出し（全エージェント共用） |
+| 2 | **全エージェント対応** | Claire / Alec / Zoe / Eidra もそれぞれ独自の声で電話可能 |
+| 3 | **ボイスクローニング** | Fish Audio で各エージェント固有の声を作成（15秒サンプルで生成） |
+| 4 | **Agent Router** | 共有 Voice Bridge + 名前呼びでエージェント自動振り分け |
+
+### 📋 v2 Phase 4 — 着信対応 + 拡張
+
+| # | 内容 | 詳細 |
+|---|------|------|
+| 1 | **着信対応** | Twilio番号への着信 → 適切なエージェントにルーティング |
+| 2 | **IVR** | 音声メニュー（「ケイティに繋ぐ」等） |
+| 3 | **スケジュール発信** | cronやSlackコマンドで定時発信 |
+| 4 | **VOICEVOX 対応** | ローカル TTS として VOICEVOX をサポート |
+
+### マルチエージェント構成（v2 Phase 3 目標）
 
 ```
 ┌─────────────────────────────────────────┐
@@ -247,7 +318,7 @@ WAKE_WORDS=ケイティ,けいてぃ,caty,katie,ケイケイ
     ┌──────────┐ ┌──────────┐ ┌──────────┐
     │ Caty     │ │ Claire   │ │ Alec     │ ...
     │ OpenClaw │ │ OpenClaw │ │ OpenClaw │
-    │ :18788   │ │ :18789   │ │ :19009   │
+    │ :18789   │ │ :18789   │ │ :19009   │
     └──────────┘ └──────────┘ └──────────┘
 ```
 
