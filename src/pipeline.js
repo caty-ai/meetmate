@@ -1,6 +1,8 @@
 // pipeline.js — Orchestrates STT → LLM → TTS pipeline
 // Replaces Deepgram Voice Agent (all-in-one) with decomposed components
 
+const http = require("http");
+const https = require("https");
 const { createSTT } = require("./stt");
 const { streamChat } = require("./llm");
 const { synthesize } = require("./tts-fish");
@@ -208,6 +210,7 @@ function createPipeline(session, turnState, onAudio, config) {
   // Current LLM/TTS abort controller (for interruption)
   let currentAbort = null;
   let isProcessing = false;
+  let lastUserTranscript = "";
 
   // ── STT ──────────────────────────────────────────────────────────
   const stt = createSTT(dgKey, {
@@ -303,6 +306,9 @@ function createPipeline(session, turnState, onAudio, config) {
       console.log("🔔  Wake word detected!");
     }
 
+    // Keep the latest user transcript for timeout handoff fallback.
+    lastUserTranscript = cleanedText;
+
     // Log to session
     session.conversationLog.push({
       timestamp: new Date().toISOString(),
@@ -341,6 +347,7 @@ function createPipeline(session, turnState, onAudio, config) {
     let firstChunkSeen = false;
     let llmFirstResponseTimedOut = false;
     let llmTimeoutFallbackPlayed = false;
+    let handoffAttempted = false;
 
     const stopProgressTimer = () => {
       if (progressTimer) {
@@ -366,6 +373,82 @@ function createPipeline(session, turnState, onAudio, config) {
       });
     };
 
+    const fireAndForgetTimeoutHandoff = (transcript) => {
+      const trimmed = String(transcript || "").trim();
+      if (!trimmed) {
+        console.log("⏭️  Timeout handoff skipped (empty transcript)");
+        return;
+      }
+
+      if (!useOpenClaw || !config.openclawUrl || !config.openclawToken) {
+        console.log("⏭️  Timeout handoff skipped (OpenClaw Gateway unavailable)");
+        return;
+      }
+
+      try {
+        const gatewayUrl = new URL(config.openclawUrl);
+        const isHttps = gatewayUrl.protocol === "https:";
+        const transport = isHttps ? https : http;
+        const handoffPrompt = [
+          "ユーザーの音声通話中に依頼処理がタイムアウトしました。",
+          "必ず sessions_spawn を使って作業を委譲し、結果をSlackに投稿してください。",
+          "まずユーザー依頼を短く要約し、実行計画を立ててからサブエージェントを起動してください。",
+          "",
+          `ユーザー依頼: ${trimmed}`,
+        ].join("\n");
+
+        const body = JSON.stringify({
+          model: config.llm.model || "anthropic/claude-sonnet-4-6",
+          stream: false,
+          temperature: 0.2,
+          max_tokens: 700,
+          messages: [
+            {
+              role: "system",
+              content: "あなたは音声タイムアウト時の自動委譲ハンドラーです。結果は必ずSlackに共有してください。",
+            },
+            { role: "user", content: handoffPrompt },
+          ],
+          user: `meet-${session.id}`,
+        });
+
+        const req = transport.request(
+          {
+            hostname: gatewayUrl.hostname,
+            port: gatewayUrl.port || (isHttps ? 443 : 80),
+            path: "/v1/chat/completions",
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${config.openclawToken}`,
+              "Content-Type": "application/json",
+              "Content-Length": Buffer.byteLength(body),
+            },
+          },
+          (res) => {
+            res.resume();
+            if (res.statusCode >= 400) {
+              console.error(`❌  Timeout handoff failed: HTTP ${res.statusCode}`);
+            }
+          }
+        );
+
+        req.on("error", (err) => {
+          console.error("❌  Timeout handoff request error:", err.message);
+        });
+
+        req.setTimeout(5_000, () => {
+          req.destroy(new Error("Timeout handoff request timeout"));
+        });
+
+        req.write(body);
+        req.end();
+
+        console.log(`🔄  Timeout handoff spawned for: "${trimmed.slice(0, 80)}${trimmed.length > 80 ? "…" : ""}"`);
+      } catch (err) {
+        console.error("❌  Timeout handoff setup error:", err.message);
+      }
+    };
+
     const maybeSpeakLlmTimeoutFallback = async () => {
       if (!llmFirstResponseTimedOut || llmTimeoutFallbackPlayed) return;
       llmTimeoutFallbackPlayed = true;
@@ -375,6 +458,16 @@ function createPipeline(session, turnState, onAudio, config) {
       await speakSentence(LLM_TIMEOUT_FALLBACK_VOICE, null);
       appendAssistantLog(LLM_TIMEOUT_FALLBACK_VOICE);
       turnState.isAgentSpeaking = false;
+
+      if (!handoffAttempted) {
+        const transcriptForHandoff = String(lastUserTranscript || "").trim();
+        if (transcriptForHandoff) {
+          handoffAttempted = true;
+          fireAndForgetTimeoutHandoff(transcriptForHandoff);
+        } else {
+          console.log("⏭️  Timeout handoff skipped (no transcript)");
+        }
+      }
     };
 
     const startLlmTimeoutTimer = () => {

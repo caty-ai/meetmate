@@ -773,7 +773,11 @@ wss.on("connection", (ws, req) => {
           lifecycle.setConversationLog(session.conversationLog);
         }
 
-        const config = getPipelineConfig({ wakeMode: "off", exitDetection: false });
+        const config = getPipelineConfig({
+          wakeMode: "off",
+          exitDetection: false,
+          responseTimeoutMs: 25_000,
+        });
         ctx.pipeline = createPipeline(session, turnState, (pcmChunk) => {
           if (ws.readyState !== WebSocket.OPEN || !ctx.streamSid) return;
 
