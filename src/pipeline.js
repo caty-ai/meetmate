@@ -9,9 +9,18 @@ const { synthesize } = require("./tts-fish");
 // Splits on: 。！？!?\n and also on 、when the segment is long enough
 const SENTENCE_RE = /[。！？!?\n]+/;
 const MIN_SENTENCE_LEN = 8;
+const FIRST_CHUNK_MIN_CHARS = Number(process.env.FIRST_CHUNK_MIN_CHARS || 12);
 
 // Inter-sentence pause: insert silence between sentences for natural rhythm
 const SENTENCE_PAUSE_MS = Number(process.env.SENTENCE_PAUSE_MS || 500);
+
+// UX controls
+const POST_UTTERANCE_BUFFER_MS = Number(process.env.POST_UTTERANCE_BUFFER_MS || 500);
+const PROGRESS_PING_INTERVAL_MS = Number(process.env.PROGRESS_PING_INTERVAL_MS || 10_000);
+const BARGE_IN_MIN_CHARS = Number(process.env.BARGE_IN_MIN_CHARS || 2);
+const ENABLE_BARGE_IN = String(process.env.ENABLE_BARGE_IN || "true").toLowerCase() !== "false";
+const ENABLE_IMMEDIATE_ACK = String(process.env.ENABLE_IMMEDIATE_ACK || "true").toLowerCase() !== "false";
+const ENABLE_PROGRESS_GUARD = String(process.env.ENABLE_PROGRESS_GUARD || "true").toLowerCase() !== "false";
 
 // Wake word detection: only respond when addressed
 // Modes: "off" (respond to everything), "wake" (require wake word), "context" (LLM decides)
@@ -104,6 +113,46 @@ function splitSentences(text) {
   return parts.map((s) => s.trim());
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+const IMMEDIATE_ACK_PATTERNS = [
+  /お願い|やって|して|調べ|確認|探し|実装|作業|対応|予約|連絡|電話|送って|まとめ/i,
+  /can you|please|check|find|implement|do this|call|book|summarize/i,
+];
+
+const IMMEDIATE_ACK_VARIANTS = [
+  "(calm) 了解、すぐ取りかかるね。",
+  "(calm) 了解です。ちょっと待ってね。",
+  "(calm) はい、今確認するね。",
+];
+
+const PROGRESS_PING_VARIANTS = [
+  "(soft tone) いま処理中だよ、もう少し待ってね。",
+  "(calm) 進めてるよ、あと少しで返せそう。",
+  "(empathetic) ごめん、もう少しだけ待ってね。",
+];
+
+function shouldSendImmediateAck(text) {
+  if (!ENABLE_IMMEDIATE_ACK) return false;
+  const t = String(text || "").trim();
+  if (!t) return false;
+  return IMMEDIATE_ACK_PATTERNS.some((re) => re.test(t));
+}
+
+function pickImmediateAck(text) {
+  // Slightly prefer task-oriented wording when user asks for work.
+  if (/調べ|確認|探し|予約|連絡|call|check|find|book/i.test(String(text || ""))) {
+    return "(calm) 了解、いま確認するね。";
+  }
+  return IMMEDIATE_ACK_VARIANTS[Math.floor(Math.random() * IMMEDIATE_ACK_VARIANTS.length)];
+}
+
+function pickProgressPing(index) {
+  return PROGRESS_PING_VARIANTS[index % PROGRESS_PING_VARIANTS.length];
+}
+
 /**
  * Create the decomposed voice pipeline.
  *
@@ -149,19 +198,44 @@ function createPipeline(session, turnState, onAudio, config) {
   stt.on("transcript", (text, isFinal) => {
     if (isFinal) {
       console.log(`🎤  [interim→final] ${text}`);
+      return;
+    }
+
+    // #8 Barge-in: if user starts speaking while agent is speaking, abort immediately.
+    if (
+      ENABLE_BARGE_IN &&
+      text &&
+      text.trim().length >= BARGE_IN_MIN_CHARS &&
+      turnState.isAgentSpeaking &&
+      currentAbort &&
+      !currentAbort.signal?.aborted
+    ) {
+      console.log(`🛑  Barge-in detected: "${text.trim().slice(0, 50)}" — aborting TTS/LLM`);
+      currentAbort.abort();
+      currentAbort = null;
+      turnState.isAgentSpeaking = false;
+      turnState.inputCooldownUntil = 0;
     }
   });
 
   stt.on("utterance_end", async (userText) => {
-    console.log(`💬  [user] ${userText}`);
+    const cleanedText = String(userText || "").trim();
+    if (!cleanedText) return;
+
+    // #8 Barge-in companion: small post-utterance buffer to reduce premature turn-taking.
+    if (POST_UTTERANCE_BUFFER_MS > 0) {
+      await sleep(POST_UTTERANCE_BUFFER_MS);
+    }
+
+    console.log(`💬  [user] ${cleanedText}`);
 
     // Exit command detection (Meet sessions only, not Twilio)
-    if (config.exitDetection !== false && isExitCommand(userText)) {
+    if (config.exitDetection !== false && isExitCommand(cleanedText)) {
       console.log("🚪  Exit command detected!");
       session.conversationLog.push({
         timestamp: new Date().toISOString(),
         role: "user",
-        content: userText,
+        content: cleanedText,
       });
 
       // Speak farewell and emit exit event
@@ -179,19 +253,19 @@ function createPipeline(session, turnState, onAudio, config) {
         content: "了解です！退出しますね。お疲れさまでした！",
       });
 
-      emitter.emit("exit_requested", { sessionId: session.id, trigger: "voice_command", text: userText });
+      emitter.emit("exit_requested", { sessionId: session.id, trigger: "voice_command", text: cleanedText });
       return;
     }
 
     // Wake word detection
     if (wakeMode === "wake") {
-      if (!containsWakeWord(userText)) {
-        console.log(`🔇  Wake word not detected, ignoring: "${userText.slice(0, 50)}..."`);
+      if (!containsWakeWord(cleanedText)) {
+        console.log(`🔇  Wake word not detected, ignoring: "${cleanedText.slice(0, 50)}..."`);
         // Still log for context, but don't respond
         session.conversationLog.push({
           timestamp: new Date().toISOString(),
           role: "user",
-          content: `[会議音声・未指名] ${userText}`,
+          content: `[会議音声・未指名] ${cleanedText}`,
         });
         return;
       }
@@ -202,7 +276,7 @@ function createPipeline(session, turnState, onAudio, config) {
     session.conversationLog.push({
       timestamp: new Date().toISOString(),
       role: "user",
-      content: userText,
+      content: cleanedText,
     });
 
     // If agent is currently speaking/processing, interrupt
@@ -215,7 +289,7 @@ function createPipeline(session, turnState, onAudio, config) {
     }
 
     // Process user input
-    await processUserInput(userText);
+    await processUserInput(cleanedText);
   });
 
   stt.on("error", (err) => {
@@ -228,6 +302,41 @@ function createPipeline(session, turnState, onAudio, config) {
     const abort = new AbortController();
     currentAbort = abort;
 
+    let progressTimer = null;
+    let progressPingIndex = 0;
+    let mainResponseStarted = false;
+    let spokenSentenceCount = 0;
+
+    const stopProgressTimer = () => {
+      if (progressTimer) {
+        clearInterval(progressTimer);
+        progressTimer = null;
+      }
+    };
+
+    const appendAssistantLog = (text) => {
+      session.conversationLog.push({
+        timestamp: new Date().toISOString(),
+        role: "assistant",
+        content: text,
+      });
+    };
+
+    const maybeProgressPing = async () => {
+      if (!ENABLE_PROGRESS_GUARD) return;
+      if (abort.signal.aborted || !isProcessing || mainResponseStarted) return;
+      if (turnState.isAgentSpeaking) return;
+
+      const ping = pickProgressPing(progressPingIndex++);
+      turnState.isAgentSpeaking = true;
+      console.log(`⏳  Progress ping: "${ping}"`);
+      await speakSentence(ping, abort.signal);
+      if (!abort.signal.aborted) {
+        appendAssistantLog(ping.replace(/^\([^)]*\)\s*/, ""));
+        turnState.isAgentSpeaking = false;
+      }
+    };
+
     // Add to history (used by OpenRouter fallback; OpenClaw manages its own)
     history.push({ role: "user", content: userText });
     if (history.length > MAX_HISTORY) {
@@ -235,10 +344,27 @@ function createPipeline(session, turnState, onAudio, config) {
     }
 
     try {
+      // #9 Immediate ack for request-like utterances
+      if (shouldSendImmediateAck(userText) && !abort.signal.aborted) {
+        const ack = pickImmediateAck(userText);
+        turnState.isAgentSpeaking = true;
+        console.log(`⚡  Immediate ack: "${ack}"`);
+        await speakSentence(ack, abort.signal);
+        if (!abort.signal.aborted) {
+          appendAssistantLog(ack.replace(/^\([^)]*\)\s*/, ""));
+          turnState.isAgentSpeaking = false;
+        }
+      }
+
+      if (ENABLE_PROGRESS_GUARD && PROGRESS_PING_INTERVAL_MS > 0) {
+        progressTimer = setInterval(() => {
+          maybeProgressPing().catch(() => {});
+        }, PROGRESS_PING_INTERVAL_MS);
+      }
+
       // ── LLM streaming ──
       let fullResponse = "";
       let sentenceBuffer = "";
-      const sentencesToSpeak = [];
 
       console.log("🤔  Caty thinking…");
 
@@ -269,7 +395,21 @@ function createPipeline(session, turnState, onAudio, config) {
         fullResponse += chunk;
         sentenceBuffer += chunk;
 
-        // Check for complete sentences
+        // #9 First chunk fast path: speak early even before punctuation.
+        if (!mainResponseStarted && sentenceBuffer.trim().length >= FIRST_CHUNK_MIN_CHARS && !SENTENCE_RE.test(sentenceBuffer)) {
+          mainResponseStarted = true;
+          stopProgressTimer();
+          turnState.isAgentSpeaking = true;
+          const firstChunk = sentenceBuffer.trim();
+          sentenceBuffer = "";
+          console.log(`🗣️  Caty speaking (first chunk): "${firstChunk}"`);
+          await speakSentence(firstChunk, abort.signal);
+          if (abort.signal.aborted) break;
+          spokenSentenceCount += 1;
+          continue;
+        }
+
+        // Check for complete sentence
         const match = sentenceBuffer.match(SENTENCE_RE);
         if (match) {
           const idx = sentenceBuffer.search(SENTENCE_RE);
@@ -278,17 +418,19 @@ function createPipeline(session, turnState, onAudio, config) {
           sentenceBuffer = sentenceBuffer.slice(idx + punctuation.length);
 
           if (sentence.length >= MIN_SENTENCE_LEN) {
-            sentencesToSpeak.push(sentence);
+            if (!mainResponseStarted) {
+              mainResponseStarted = true;
+              stopProgressTimer();
+              turnState.isAgentSpeaking = true;
+            }
 
             // Insert pause between sentences (not before the first one)
-            if (sentencesToSpeak.length > 1 && SENTENCE_PAUSE_MS > 0) {
+            if (spokenSentenceCount > 0 && SENTENCE_PAUSE_MS > 0) {
               const silence = generateSilence(SENTENCE_PAUSE_MS, config.stt.sampleRate);
               onAudio(silence);
             }
 
-            // Start TTS for this sentence immediately (first one triggers speaking state)
-            if (sentencesToSpeak.length === 1) {
-              turnState.isAgentSpeaking = true;
+            if (spokenSentenceCount === 0) {
               console.log(`🗣️  Caty speaking: "${sentence}"`);
             } else {
               console.log(`🗣️  Caty continue: "${sentence}"`);
@@ -296,6 +438,7 @@ function createPipeline(session, turnState, onAudio, config) {
 
             await speakSentence(sentence, abort.signal);
             if (abort.signal.aborted) break;
+            spokenSentenceCount += 1;
           }
         }
       }
@@ -307,6 +450,10 @@ function createPipeline(session, turnState, onAudio, config) {
 
       // Flush remaining text
       if (sentenceBuffer.trim() && sentenceBuffer.trim().length >= 3) {
+        if (!mainResponseStarted) {
+          mainResponseStarted = true;
+          stopProgressTimer();
+        }
         if (!turnState.isAgentSpeaking) {
           turnState.isAgentSpeaking = true;
         }
@@ -339,6 +486,7 @@ function createPipeline(session, turnState, onAudio, config) {
         // give up
       }
     } finally {
+      stopProgressTimer();
       turnState.isAgentSpeaking = false;
       turnState.inputCooldownUntil = Date.now() + (config.echoCooldownMs || 300);
       isProcessing = false;
