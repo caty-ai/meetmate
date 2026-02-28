@@ -114,7 +114,9 @@ function createSTT(dgKey, options = {}) {
         useKeywords &&
         !opened &&
         !retriedWithoutKeywords &&
-        /non-101|ready state: connecting/i.test(String(err?.message || ""));
+        /non-101|ready\s*state\s*:\s*(?:0|connecting)|readystate\s*:\s*(?:0|connecting)/i.test(
+          String(err?.message || "")
+        );
 
       if (canFallback) {
         retriedWithoutKeywords = true;
