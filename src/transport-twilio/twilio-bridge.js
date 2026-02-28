@@ -55,8 +55,8 @@ if (!CALL_SECRET) {
   process.exit(1);
 }
 
-if (!PUBLIC_URL || !/^https?:\/\//.test(PUBLIC_URL)) {
-  console.error("❌  TWILIO_PUBLIC_URL is required (https://...)");
+if (!PUBLIC_URL || !/^https:\/\//.test(PUBLIC_URL)) {
+  console.error("❌  TWILIO_PUBLIC_URL is required and must be https://...");
   process.exit(1);
 }
 
@@ -343,11 +343,14 @@ const server = http.createServer(async (req, res) => {
     const voiceToken = String(url.searchParams.get("vtoken") || "").trim();
     const consumedVoiceToken = voiceToken ? consumeEphemeralToken(voiceToken, "voice") : null;
     const direction = String(params.Direction || "").toLowerCase();
+    const callSid = String(params.CallSid || "").trim();
+    const knownCall = Boolean(callSid) && getActiveCalls().some((c) => c.sid === callSid);
 
     // Outbound-only guarantee:
     // - must include short-lived token minted at /call-me
     // - must be Twilio outbound-api direction
-    if (!consumedVoiceToken || direction !== "outbound-api") {
+    // - callSid must match our active outbound calls
+    if (!consumedVoiceToken || direction !== "outbound-api" || !knownCall) {
       const rejectTwiml = makeRejectTwiml();
       res.writeHead(200, { "Content-Type": "text/xml; charset=utf-8" });
       res.end(rejectTwiml);
@@ -355,11 +358,11 @@ const server = http.createServer(async (req, res) => {
     }
 
     const streamToken = issueEphemeralToken("stream", STREAM_TOKEN_TTL_MS, {
-      callSid: params.CallSid || consumedVoiceToken.meta?.callSid || null,
+      callSid,
     });
 
     const publicWsUrl = PUBLIC_URL.replace(/^https:/, "wss:").replace(/^http:/, "ws:");
-    const streamWsUrl = `${publicWsUrl}/twilio/stream?stoken=${encodeURIComponent(streamToken)}`;
+    const streamWsUrl = `${publicWsUrl}/twilio/stream?callSid=${encodeURIComponent(callSid)}&stoken=${encodeURIComponent(streamToken)}`;
 
     const twiml = makeTwimlResponse(streamWsUrl);
     res.writeHead(200, { "Content-Type": "text/xml; charset=utf-8" });
@@ -393,9 +396,21 @@ server.on("upgrade", (req, socket, head) => {
     return;
   }
 
+  const callSid = String(url.searchParams.get("callSid") || "").trim();
+  const knownCall = Boolean(callSid) && getActiveCalls().some((c) => c.sid === callSid);
+  if (!knownCall) {
+    socket.destroy();
+    return;
+  }
+
   const streamToken = String(url.searchParams.get("stoken") || "").trim();
   const consumedStreamToken = streamToken ? consumeEphemeralToken(streamToken, "stream") : null;
   if (!consumedStreamToken) {
+    socket.destroy();
+    return;
+  }
+
+  if (consumedStreamToken.meta?.callSid && consumedStreamToken.meta.callSid !== callSid) {
     socket.destroy();
     return;
   }
@@ -410,7 +425,7 @@ server.on("upgrade", (req, socket, head) => {
     }
   }
 
-  req.twilioMeta = consumedStreamToken.meta || {};
+  req.twilioMeta = { ...(consumedStreamToken.meta || {}), callSid };
 
   wss.handleUpgrade(req, socket, head, (ws) => {
     wss.emit("connection", ws, req);
