@@ -425,6 +425,27 @@ function appendToMemory(session) {
 
     fs.appendFileSync(memoryFile, summary);
     console.log(`🧠  メモリに追記: ${memoryFile}`);
+
+    // Also save full conversation log to memory/calls/ for memory_search indexing
+    const callsDir = path.join(memoryDir, "calls");
+    if (!fs.existsSync(callsDir)) fs.mkdirSync(callsDir, { recursive: true });
+    const callLogPath = path.join(callsDir, `meet-${today}-${session.id.slice(0, 12)}.md`);
+    const fullLog = [
+      `# Google Meet ログ — ${now}`,
+      "",
+      `- Session ID: ${session.id}`,
+      `- Meeting URL: ${session.meetingUrl || "—"}`,
+      `- 発話数: ${msgCount}`,
+      "",
+      "## 全文",
+      "",
+      ...session.conversationLog.map((e) => {
+        const speaker = e.role === "assistant" || e.role === "agent" ? "Caty" : "参加者";
+        return `**${speaker}**: ${e.content}\n`;
+      }),
+    ].join("\n");
+    fs.writeFileSync(callLogPath, fullLog);
+    console.log(`🧠  Meetログ memory/calls/ 保存: ${callLogPath}`);
   } catch (err) {
     console.error("⚠️  メモリ追記失敗:", err.message);
   }

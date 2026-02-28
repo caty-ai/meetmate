@@ -10,11 +10,11 @@ OpenClaw Gateway 連携により、Slack の Caty と **まったく同じ体験
 |-------|------|-----------|
 | v1 | Google Meet 音声対話（MVP） | ✅ 完了 |
 | v2 Phase 1 | Twilio 電話発信（outbound call） | ✅ 完了 (2026-02-28) |
-| v2 Phase 2 | Slack UI + 通話サマリー | 🔜 次 |
+| v2 Phase 2 | Slack UI + 通話サマリー | ✅ 完了 (2026-02-28) |
 | v2 Phase 3 | マルチエージェント展開（スキル化） | 📋 計画中 |
 | v2 Phase 4 | 着信対応 + IVR | 📋 計画中 |
 
-**最新タグ:** `v1-phase1-stable` → `2a193b7`
+**最新コミット:** `18007ab` (Phase 2 complete)
 
 ## アーキテクチャ
 
@@ -66,7 +66,11 @@ Gateway 未設定時は OpenRouter（直接 Claude API）にフォールバッ�
 - 🔔 ウェイクワード検出（名前呼びで反応、ミーティング中の選択的応答）
 - 🖼️ Caty アバター表示（Slack アイコンを自動使用）
 - 🛡️ エコーループ防止 + 割り込み対応
-- 📝 会話ログ自動保存 (`logs/` + `memory/`)
+- 📝 会話ログ自動保存 (`logs/` + `memory/` + `memory/calls/`)
+- 📊 Slack 1メッセージ上書きステータス（受付→発信中→通話中→完了）
+- 📋 通話後サマリー自動投稿（要約+決定事項+TODO）
+- 📜 全文ログ Slack スレッド投稿
+- 🚪 Meet 退出コマンド検知（「退出して」「今日はここまで」等）
 - 🔄 OpenRouter フォールバック（Gateway 未設定時）
 
 ## クイックスタート
@@ -182,6 +186,15 @@ node src/index.js
 | `TWILIO_PUBLIC_URL` | ngrok 等の公開 HTTPS URL | ✅ |
 | `TWILIO_ALLOWED_NUMBERS` | 発信先許可番号（カンマ区切り、E.164） | ✅ |
 
+### Slack 通知（Phase 2）
+
+| 変数 | 説明 | デフォルト |
+|------|------|-----------|
+| `SLACK_BOT_TOKEN` | Slack Bot Token (xoxb-...) | — |
+| `SLACK_NOTIFY_CHANNEL` | 通知先チャンネル ID | — |
+| `SLACK_NOTIFY_ENABLED` | Slack 通知の有効/無効 | `true` |
+| `SUMMARY_ENABLED` | 通話後サマリーの有効/無効 | `true` |
+
 ### セキュリティ
 
 | 変数 | 説明 |
@@ -205,7 +218,10 @@ meetmate/
 ├── src/
 │   ├── index.js          # Meet Bridge: HTTP + WebSocket + セッション管理 (port 5005)
 │   ├── config.js         # 設定管理（環境変数読み込み）
-│   ├── pipeline.js       # オーケストレーター（STT → LLM → TTS）— 両トランスポート共有
+│   ├── pipeline.js       # オーケストレーター（STT → LLM → TTS + 退出コマンド検知）
+│   ├── session-events.js # セッションライフサイクル状態機械（Phase 2）
+│   ├── slack-notifier.js # Slack ステータス通知 + サマリー投稿（Phase 2）
+│   ├── summarizer.js     # LLM 会話サマリー生成（Phase 2）
 │   ├── stt.js            # Deepgram Nova 3 ストリーミング STT（keywords fallback付き）
 │   ├── llm.js            # LLM（OpenClaw Gateway / OpenRouter デュアル）
 │   ├── tts-fish.js       # Fish Audio REST TTS（PCM ストリーミング）
@@ -274,14 +290,40 @@ WAKE_WORDS=ケイティ,けいてぃ,caty,katie,ケイケイ
 | v2 Phase 1 | **Twilio 電話発信**（outbound call） | 2026-02-28 |
 | v2 Phase 1 | Deepgram STT keywords fallback | 2026-02-28 |
 | v2 Phase 1 | Path-based stream token（セキュリティ強化） | 2026-02-28 |
+| v2 Phase 2 | **Slack 1メッセージ上書きステータス** | 2026-02-28 |
+| v2 Phase 2 | **通話後サマリー自動投稿** | 2026-02-28 |
+| v2 Phase 2 | **全文ログ Slack スレッド投稿** | 2026-02-28 |
+| v2 Phase 2 | **Meet 退出コマンド検知** | 2026-02-28 |
+| v2 Phase 2 | **通話ログファイル保存 + memory_search 対応** | 2026-02-28 |
 
-### 🔜 v2 Phase 2 — Slack UI + 通話サマリー
+### ✅ v2 Phase 2 — Slack UI + 通話サマリー（完了 2026-02-28）
 
-| # | 内容 | 詳細 |
-|---|------|------|
-| 1 | **Slack 発信 UI** | Slackメッセージで発信トリガー。1メッセージ上書きでステータス表示（📞発信中→🔊通話中→✅終了） |
-| 2 | **通話後サマリー自動投稿** | 通話終了後に会話要約・所要時間・参加者をSlackチャンネルに自動投稿 |
-| 3 | **通話イベントフック** | Twilioステータスコールバック → ログ保存・状態管理・conversationLog連携 |
+| # | 内容 | ステータス |
+|---|------|-----------|
+| 1 | **セッションライフサイクル状態機械** | ✅ `session-events.js` |
+| 2 | **Slack 1メッセージ上書きステータス** | ✅ `slack-notifier.js` |
+| 3 | **通話後サマリー自動投稿** | ✅ `summarizer.js` |
+| 4 | **Twilio統合（lifecycle + Slack + summary）** | ✅ |
+| 5 | **Meet統合（lifecycle + Slack + 退出コマンド検知）** | ✅ |
+| 6 | **全文ログ Slack スレッド投稿** | ✅ |
+| 7 | **通話ログファイル保存（JSON + MD）** | ✅ |
+| 8 | **memory/calls/ 保存（memory_search 対応）** | ✅ |
+
+### 🔜 次のステップ
+
+| # | 内容 | 優先度 |
+|---|------|--------|
+| 1 | **専用チャンネル化** — 通話サマリー/ログの投稿先を専用チャンネルに分離 | 高（軽め） |
+| 2 | **UX改善** — 割り込み抑制(barge-in) + 即レスパターン + 無音ガード | 高（重め） |
+| 3 | **Phase 3: スキル化** — 全エージェント展開 | 中 |
+
+### UX改善 Issue（#8〜#10）
+
+| Issue | 内容 | 詳細 |
+|-------|------|------|
+| #8 | **Barge-in** | ユーザー発話検知でTTS即停止 + 発話終了後0.5秒バッファ |
+| #9 | **即レスパターン** | 0.5秒以内に「了解！」→ 処理中フィードバック → 本回答 |
+| #10 | **無音ガード** | 長時間処理中に10秒ごとの生存メッセージ |
 
 ### 📋 v2 Phase 3 — マルチエージェント展開
 

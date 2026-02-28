@@ -143,6 +143,29 @@ function saveCallLog(lifecycle) {
 
     fs.appendFileSync(memoryFile, summary);
     console.log(`🧠  メモリに追記: ${memoryFile}`);
+
+    // Also save full conversation log to memory/calls/ for memory_search indexing
+    const callsDir = require("path").join(memoryDir, "calls");
+    if (!fs.existsSync(callsDir)) fs.mkdirSync(callsDir, { recursive: true });
+    const callLogPath = require("path").join(callsDir, `twilio-${today}-${lifecycle.sessionId.slice(0, 12)}.md`);
+    const fullLog = [
+      `# Twilio 通話ログ — ${now}`,
+      "",
+      `- Call SID: ${lifecycle.sessionId}`,
+      `- 発信先: ${lifecycle.meta.to || "—"}`,
+      `- 発信元: ${lifecycle.meta.from || "—"}`,
+      `- 通話時間: ${lifecycle.durationFormatted}`,
+      `- 発話数: ${log.length}`,
+      "",
+      "## 全文",
+      "",
+      ...log.map(e => {
+        const speaker = e.role === "assistant" || e.role === "agent" ? "Caty" : "参加者";
+        return `**${speaker}**: ${e.content}\n`;
+      }),
+    ].join("\n");
+    fs.writeFileSync(callLogPath, fullLog);
+    console.log(`🧠  通話ログ memory/calls/ 保存: ${callLogPath}`);
   } catch (err) {
     console.error("⚠️  メモリ追記失敗:", err.message);
   }
