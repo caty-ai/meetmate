@@ -149,9 +149,11 @@ const meetLifecycles = new Map();
 let meetSlackNotifier = null;
 function getMeetSlackNotifier() {
   if (!meetSlackNotifier) {
+    const notifyEnabled = String(process.env.SLACK_NOTIFY_ENABLED || "true").toLowerCase() !== "false";
     meetSlackNotifier = new SlackNotifier(
       process.env.SLACK_BOT_TOKEN || "",
-      process.env.SLACK_NOTIFY_CHANNEL || ""
+      process.env.SLACK_NOTIFY_CHANNEL || "",
+      { enabled: notifyEnabled }
     );
     if (meetSlackNotifier.enabled) {
       console.log("📢  Meet Slack通知有効");

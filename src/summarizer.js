@@ -33,18 +33,40 @@ const SUMMARY_PROMPT = `以下の音声通話/会議の会話ログから、簡�
  * @param {string} [options.model]
  * @returns {Promise<{summary: string[], decisions: string[], todos: string[]}>}
  */
+// Safety: max utterances and characters for summary input
+const MAX_SUMMARY_UTTERANCES = 100;
+const MAX_SUMMARY_CHARS = 8000;
+
+// Mask phone numbers (e.g. +81-xxx → +81-***-***-****)
+const PHONE_RE = /(\+?\d{1,4}[-\s]?)\d[\d\-\s]{5,}\d/g;
+
+function maskSensitive(text) {
+  return text.replace(PHONE_RE, (match, prefix) => {
+    return prefix + "***-***-****";
+  });
+}
+
 async function summarizeConversation(conversationLog, options = {}) {
   if (!conversationLog || conversationLog.length === 0) {
     return { summary: [], decisions: [], todos: [] };
   }
 
-  // Format conversation log
-  const logText = conversationLog
+  // Clip to last N utterances, then limit by character count
+  const clipped = conversationLog.slice(-MAX_SUMMARY_UTTERANCES);
+
+  // Format and mask sensitive data
+  let logText = clipped
     .map((e) => {
       const speaker = e.role === "assistant" || e.role === "agent" ? "Caty" : "参加者";
-      return `${speaker}: ${e.content}`;
+      return `${speaker}: ${maskSensitive(e.content || "")}`;
     })
     .join("\n");
+
+  // Truncate if still too long
+  if (logText.length > MAX_SUMMARY_CHARS) {
+    logText = logText.slice(-MAX_SUMMARY_CHARS);
+    logText = "...(前半省略)\n" + logText;
+  }
 
   const prompt = SUMMARY_PROMPT + logText;
 

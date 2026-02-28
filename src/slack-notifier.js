@@ -25,17 +25,20 @@ class SlackNotifier {
   /**
    * @param {string} botToken — Slack bot token (xoxb-...)
    * @param {string} channelId — Channel ID to post to
+   * @param {object} [options]
+   * @param {boolean} [options.enabled=true] — Master enable switch (SLACK_NOTIFY_ENABLED)
    */
-  constructor(botToken, channelId) {
+  constructor(botToken, channelId, options = {}) {
     this._botToken = botToken || "";
     this._channelId = channelId || "";
+    this._masterEnabled = options.enabled !== false; // default true
     this._messageTs = new Map(); // sessionId → message ts
     this._updateTimers = new Map(); // sessionId → interval
   }
 
-  /** Returns false if token or channel is missing. */
+  /** Returns false if disabled, or token/channel is missing. */
   get enabled() {
-    return !!(this._botToken && this._channelId);
+    return this._masterEnabled && !!(this._botToken && this._channelId);
   }
 
   /**

@@ -57,7 +57,8 @@ function getSlackNotifier() {
   if (!slackNotifier) {
     const slackToken = process.env.SLACK_BOT_TOKEN || "";
     const slackChannel = process.env.SLACK_NOTIFY_CHANNEL || "";
-    slackNotifier = new SlackNotifier(slackToken, slackChannel);
+    const notifyEnabled = String(process.env.SLACK_NOTIFY_ENABLED || "true").toLowerCase() !== "false";
+    slackNotifier = new SlackNotifier(slackToken, slackChannel, { enabled: notifyEnabled });
     if (slackNotifier.enabled) {
       console.log(`📢  Slack通知有効: channel=${slackChannel}`);
     } else {
