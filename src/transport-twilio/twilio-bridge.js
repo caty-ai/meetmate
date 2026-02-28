@@ -68,13 +68,96 @@ function getSlackNotifier() {
   return slackNotifier;
 }
 
-/** Handle session end: summarize + post to Slack. */
+/** Save conversation log to disk (same format as Meet bridge). */
+function saveCallLog(lifecycle) {
+  const log = lifecycle._conversationLog;
+  if (!log || log.length === 0) return;
+
+  const fs = require("fs");
+  const path = require("path");
+  const logDir = path.join(__dirname, "..", "..", "logs");
+  if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const baseName = `twilio-${timestamp}-${lifecycle.sessionId}`;
+
+  // JSON log
+  const jsonPath = path.join(logDir, `${baseName}.json`);
+  const jsonData = {
+    session_id: lifecycle.sessionId,
+    transport: "twilio",
+    to: lifecycle.meta.to || null,
+    from: lifecycle.meta.from || null,
+    created_at: new Date(lifecycle._createdAt).toISOString(),
+    saved_at: new Date().toISOString(),
+    duration: lifecycle.duration,
+    duration_formatted: lifecycle.durationFormatted,
+    messages: log,
+  };
+  fs.writeFileSync(jsonPath, JSON.stringify(jsonData, null, 2));
+  console.log(`📝  通話ログ保存: ${jsonPath}`);
+
+  // Markdown log
+  const mdPath = path.join(logDir, `${baseName}.md`);
+  const mdContent = [
+    `# Twilio Call Log — ${new Date().toLocaleString("ja-JP")}`,
+    "",
+    `- session_id: ${lifecycle.sessionId}`,
+    `- transport: twilio`,
+    `- to: ${lifecycle.meta.to || "—"}`,
+    `- from: ${lifecycle.meta.from || "—"}`,
+    `- duration: ${lifecycle.durationFormatted}`,
+    "",
+    ...log.map((e) => `**${e.role === "assistant" || e.role === "agent" ? "Caty" : "参加者"}** (${e.timestamp}):\n${e.content}\n`),
+  ].join("\n");
+  fs.writeFileSync(mdPath, mdContent);
+  console.log(`📝  通話ログ(MD)保存: ${mdPath}`);
+
+  // Append to daily memory
+  try {
+    const WORKSPACE = process.env.OPENCLAW_WORKSPACE
+      || require("path").join(require("os").homedir(), ".openclaw", "workspace");
+    const memoryDir = require("path").join(WORKSPACE, "memory");
+    if (!fs.existsSync(memoryDir)) fs.mkdirSync(memoryDir, { recursive: true });
+
+    const today = new Date().toISOString().slice(0, 10);
+    const memoryFile = require("path").join(memoryDir, `${today}.md`);
+
+    const userMsgs = log.filter(e => e.role !== "assistant" && e.role !== "agent").map(e => e.content).slice(0, 5);
+    const catyMsgs = log.filter(e => e.role === "assistant" || e.role === "agent").map(e => e.content).slice(0, 5);
+
+    const now = new Date().toLocaleString("ja-JP", { timeZone: "Asia/Bangkok" });
+    const summary = [
+      "",
+      `## 📞 Twilio 通話セッション (${now})`,
+      `- Call SID: ${lifecycle.sessionId}`,
+      `- 発信先: ${lifecycle.meta.to || "—"}`,
+      `- 通話時間: ${lifecycle.durationFormatted}`,
+      `- 発話数: ${log.length}`,
+      "",
+      "### 会話ハイライト",
+      ...userMsgs.slice(0, 3).map(m => `- 参加者: 「${m.slice(0, 80)}${m.length > 80 ? "..." : ""}」`),
+      ...catyMsgs.slice(0, 3).map(m => `- Caty: 「${m.slice(0, 80)}${m.length > 80 ? "..." : ""}」`),
+      "",
+    ].join("\n");
+
+    fs.appendFileSync(memoryFile, summary);
+    console.log(`🧠  メモリに追記: ${memoryFile}`);
+  } catch (err) {
+    console.error("⚠️  メモリ追記失敗:", err.message);
+  }
+}
+
+/** Handle session end: save log + summarize + post to Slack. */
 async function handleSessionEnd(lifecycle) {
   const notifier = getSlackNotifier();
   notifier.stopElapsedUpdates(lifecycle.sessionId);
 
   // Final status update
   await notifier.postStatus(lifecycle);
+
+  // Save conversation log to disk
+  saveCallLog(lifecycle);
 
   // Summarize conversation
   const summaryEnabled = String(process.env.SUMMARY_ENABLED || "true").toLowerCase() !== "false";
@@ -87,6 +170,9 @@ async function handleSessionEnd(lifecycle) {
       });
       await notifier.postSummary(lifecycle, summary);
       console.log("📋  通話サマリー投稿完了");
+
+      // Post full transcript to Slack thread
+      await postFullTranscript(notifier, lifecycle);
     } catch (err) {
       console.error("⚠️  サマリー生成/投稿失敗:", err.message);
     }
@@ -94,6 +180,52 @@ async function handleSessionEnd(lifecycle) {
 
   // Cleanup
   sessionLifecycles.delete(lifecycle.sessionId);
+}
+
+/** Post full conversation transcript as Slack thread reply. */
+async function postFullTranscript(notifier, lifecycle) {
+  if (!notifier.enabled) return;
+  const log = lifecycle._conversationLog;
+  if (!log || log.length === 0) return;
+
+  const lines = [
+    "📜 全文ログ",
+    "━━━━━━━━━━━━━━━",
+    "",
+  ];
+
+  for (const entry of log) {
+    const speaker = entry.role === "assistant" || entry.role === "agent" ? "🤖 Caty" : "👤 参加者";
+    const time = entry.timestamp ? `(${new Date(entry.timestamp).toLocaleTimeString("ja-JP")})` : "";
+    lines.push(`${speaker} ${time}`);
+    lines.push(entry.content);
+    lines.push("");
+  }
+
+  const text = lines.join("\n");
+
+  // Split into chunks if too long (Slack limit ~4000 chars per message)
+  const MAX_CHUNK = 3800;
+  const chunks = [];
+  let current = "";
+  for (const line of text.split("\n")) {
+    if ((current + "\n" + line).length > MAX_CHUNK && current.length > 0) {
+      chunks.push(current);
+      current = line;
+    } else {
+      current = current ? current + "\n" + line : line;
+    }
+  }
+  if (current) chunks.push(current);
+
+  try {
+    for (const chunk of chunks) {
+      await notifier.postTranscript(lifecycle, chunk);
+    }
+    console.log("📜  全文ログSlack投稿完了");
+  } catch (err) {
+    console.error("⚠️  全文ログSlack投稿失敗:", err.message);
+  }
 }
 
 if (!ACCOUNT_SID || !AUTH_TOKEN || !FROM_NUMBER) {

@@ -178,12 +178,54 @@ async function handleMeetSessionEnd(lifecycle) {
       });
       await notifier.postSummary(lifecycle, summary);
       console.log("📋  Meetサマリー投稿完了");
+
+      // Post full transcript to Slack thread
+      await postMeetFullTranscript(notifier, lifecycle);
     } catch (err) {
       console.error("⚠️  Meetサマリー生成/投稿失敗:", err.message);
     }
   }
 
   meetLifecycles.delete(lifecycle.sessionId);
+}
+
+/** Post full conversation transcript as Slack thread reply. */
+async function postMeetFullTranscript(notifier, lifecycle) {
+  if (!notifier.enabled) return;
+  const log = lifecycle._conversationLog;
+  if (!log || log.length === 0) return;
+
+  const lines = ["📜 全文ログ", "━━━━━━━━━━━━━━━", ""];
+  for (const entry of log) {
+    const speaker = entry.role === "assistant" || entry.role === "agent" ? "🤖 Caty" : "👤 参加者";
+    const time = entry.timestamp ? `(${new Date(entry.timestamp).toLocaleTimeString("ja-JP")})` : "";
+    lines.push(`${speaker} ${time}`);
+    lines.push(entry.content);
+    lines.push("");
+  }
+
+  const text = lines.join("\n");
+  const MAX_CHUNK = 3800;
+  const chunks = [];
+  let current = "";
+  for (const line of text.split("\n")) {
+    if ((current + "\n" + line).length > MAX_CHUNK && current.length > 0) {
+      chunks.push(current);
+      current = line;
+    } else {
+      current = current ? current + "\n" + line : line;
+    }
+  }
+  if (current) chunks.push(current);
+
+  try {
+    for (const chunk of chunks) {
+      await notifier.postTranscript(lifecycle, chunk);
+    }
+    console.log("📜  Meet全文ログSlack投稿完了");
+  } catch (err) {
+    console.error("⚠️  Meet全文ログSlack投稿失敗:", err.message);
+  }
 }
 
 function sleep(ms) {

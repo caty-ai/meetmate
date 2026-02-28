@@ -128,6 +128,27 @@ class SlackNotifier {
     }
   }
 
+  /**
+   * Post a full transcript as thread reply.
+   * @param {import("./session-events").SessionLifecycle} lifecycle
+   * @param {string} text — transcript text (may be a chunk)
+   */
+  async postTranscript(lifecycle, text) {
+    if (!this.enabled) return;
+    if (!text) return;
+
+    try {
+      const threadTs = this._messageTs.get(lifecycle.sessionId);
+      await this._slackApi("chat.postMessage", {
+        channel: this._channelId,
+        text,
+        ...(threadTs ? { thread_ts: threadTs } : {}),
+      });
+    } catch (err) {
+      console.error(`⚠️  Slack postTranscript error (session=${lifecycle.sessionId}):`, err.message);
+    }
+  }
+
   /** Cleanup all timers. */
   destroy() {
     for (const timer of this._updateTimers.values()) {
