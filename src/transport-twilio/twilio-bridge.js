@@ -609,7 +609,7 @@ wss.on("connection", (ws, req) => {
           lifecycle.setConversationLog(session.conversationLog);
         }
 
-        const config = getPipelineConfig({ wakeMode: "off" });
+        const config = getPipelineConfig({ wakeMode: "off", exitDetection: false });
         ctx.pipeline = createPipeline(session, turnState, (pcmChunk) => {
           if (ws.readyState !== WebSocket.OPEN || !ctx.streamSid) return;
 
