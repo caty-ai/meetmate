@@ -30,14 +30,25 @@ function createSTT(dgKey, options = {}) {
 
   let accumulated = "";
   let connection = null;
+  let opened = false;
+  let closedByUser = false;
+  let retriedWithoutKeywords = false;
 
-  function start() {
-    // Wake word keyword boosting: help Deepgram recognize "ケイティ" variants
-    const wakeKeywords = (process.env.WAKE_WORDS || "ケイティ,けいてぃ,caty,katie,ケイケイ")
+  function buildWakeKeywords() {
+    const enabled = String(process.env.STT_ENABLE_KEYWORDS || "true").toLowerCase() !== "false";
+    if (!enabled) return [];
+
+    return (process.env.WAKE_WORDS || "ケイティ,けいてぃ,caty,katie,ケイケイ")
       .split(",")
-      .map((w) => `${w.trim()}:2`);
+      .map((w) => w.trim())
+      .filter(Boolean)
+      .map((w) => `${w}:2`);
+  }
 
-    connection = deepgram.listen.live({
+  function connect({ withKeywords = true } = {}) {
+    if (closedByUser) return;
+
+    const baseOptions = {
       model,
       language,
       sample_rate: sampleRate,
@@ -48,11 +59,20 @@ function createSTT(dgKey, options = {}) {
       utterance_end_ms: Number(process.env.LISTEN_UTTERANCE_END_MS || 1800),
       endpointing: Number(process.env.LISTEN_ENDPOINTING_MS || 700),
       vad_events: true,
-      keywords: wakeKeywords,
+    };
+
+    const wakeKeywords = buildWakeKeywords();
+    const useKeywords = withKeywords && wakeKeywords.length > 0;
+
+    connection = deepgram.listen.live({
+      ...baseOptions,
+      ...(useKeywords ? { keywords: wakeKeywords } : {}),
     });
 
     connection.on(LiveTranscriptionEvents.Open, () => {
-      console.log("🎤  STT: 接続完了");
+      opened = true;
+      const modeText = useKeywords ? "(keywords enabled)" : "(keywords disabled)";
+      console.log(`🎤  STT: 接続完了 ${modeText}`);
       emitter.emit("open");
     });
 
@@ -88,6 +108,26 @@ function createSTT(dgKey, options = {}) {
     });
 
     connection.on(LiveTranscriptionEvents.Error, (err) => {
+      // Recovery path: if handshake fails before open with keywords,
+      // retry once without keywords (some DG setups reject keywords param).
+      const canFallback =
+        useKeywords &&
+        !opened &&
+        !retriedWithoutKeywords &&
+        /non-101|ready state: connecting/i.test(String(err?.message || ""));
+
+      if (canFallback) {
+        retriedWithoutKeywords = true;
+        console.warn("⚠️  STT keyword handshake failed. Retrying without keywords...");
+        try {
+          connection?.requestClose?.();
+        } catch {
+          // no-op
+        }
+        setTimeout(() => connect({ withKeywords: false }), 150);
+        return;
+      }
+
       console.error("❌  STT error:", err);
       emitter.emit("error", err);
     });
@@ -99,7 +139,7 @@ function createSTT(dgKey, options = {}) {
   }
 
   // Start immediately
-  start();
+  connect({ withKeywords: true });
 
   // Keep alive
   const keepAlive = setInterval(() => {
@@ -119,6 +159,7 @@ function createSTT(dgKey, options = {}) {
   };
 
   emitter.close = function () {
+    closedByUser = true;
     clearInterval(keepAlive);
     accumulated = "";
     try {
