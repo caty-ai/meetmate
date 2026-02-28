@@ -28,7 +28,10 @@ const ECHO_LOOP_COOLDOWN_MS = Number(process.env.ECHO_LOOP_COOLDOWN_MS || 300);
 const JOIN_SHARED_TOKEN = process.env.JOIN_SHARED_TOKEN || "";
 const WS_SHARED_TOKEN = process.env.WS_SHARED_TOKEN || "";
 
-const MEET_URL_RE = /^https:\/\/meet\.google\.com\/[a-z0-9-]+(?:\?.*)?$/i;
+// Supported meeting URL patterns:
+//   Google Meet: https://meet.google.com/abc-defg-hij
+//   Zoom:        https://us04web.zoom.us/j/12345678 or https://zoom.us/j/12345678
+const MEETING_URL_RE = /^https:\/\/(meet\.google\.com\/[a-z0-9-]+|[\w.-]*zoom\.us\/(j|my)\/[a-zA-Z0-9?=&._%-]+)(?:\?.*)?$/i;
 const CONVERSATION_MODES = new Set(["one_to_one", "group"]);
 
 // ── Validate API keys ──────────────────────────────────────────────
@@ -509,8 +512,8 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      if (!MEET_URL_RE.test(meetingUrl)) {
-        writePlainResponse(res, 400, "meetingUrl が Google Meet URL 形式ではありません。");
+      if (!MEETING_URL_RE.test(meetingUrl)) {
+        writePlainResponse(res, 400, "meetingUrl が Google Meet または Zoom の URL 形式ではありません。");
         return;
       }
 

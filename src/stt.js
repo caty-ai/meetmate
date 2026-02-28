@@ -32,6 +32,11 @@ function createSTT(dgKey, options = {}) {
   let connection = null;
 
   function start() {
+    // Wake word keyword boosting: help Deepgram recognize "ケイティ" variants
+    const wakeKeywords = (process.env.WAKE_WORDS || "ケイティ,けいてぃ,caty,katie,ケイケイ")
+      .split(",")
+      .map((w) => `${w.trim()}:2`);
+
     connection = deepgram.listen.live({
       model,
       language,
@@ -43,6 +48,7 @@ function createSTT(dgKey, options = {}) {
       utterance_end_ms: Number(process.env.LISTEN_UTTERANCE_END_MS || 1800),
       endpointing: Number(process.env.LISTEN_ENDPOINTING_MS || 700),
       vad_events: true,
+      keywords: wakeKeywords,
     });
 
     connection.on(LiveTranscriptionEvents.Open, () => {

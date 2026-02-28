@@ -18,12 +18,44 @@ const SENTENCE_PAUSE_MS = Number(process.env.SENTENCE_PAUSE_MS || 500);
 const WAKE_MODE = process.env.WAKE_MODE || "off";
 const WAKE_WORDS = (process.env.WAKE_WORDS || "ケイティ,けいてぃ,caty,katie,ケイケイ").toLowerCase().split(",").map(w => w.trim());
 
+// Extended wake word variants to handle STT transcription inaccuracies
+// Deepgram may output: けいてい, ケーティー, ケイティー, キーティ, テイティー, けーてぃ, etc.
+const EXTENDED_WAKE_VARIANTS = [
+  "けいてい", "けーてぃ", "けーてい", "けいてぃー", "けいていー",
+  "キーティ", "ケーティ", "ケーティー", "ケイティー", "テイティー",
+  "keity", "katy", "kaity", "keithi", "keiti",
+];
+
+/**
+ * Normalize katakana: strip long vowel marks (ー) and normalize common variations.
+ */
+function normalizeKana(text) {
+  return text
+    .replace(/ー/g, "")        // Remove long vowel marks
+    .replace(/ッ/g, "")        // Remove small tsu
+    .replace(/っ/g, "")        // Remove small tsu (hiragana)
+    .replace(/\s+/g, "");      // Remove spaces
+}
+
 /**
  * Check if utterance contains a wake word.
+ * Uses both exact matching and fuzzy katakana-normalized matching.
  */
 function containsWakeWord(text) {
   const lower = text.toLowerCase();
-  return WAKE_WORDS.some(w => lower.includes(w));
+  const normalized = normalizeKana(lower);
+
+  // Exact substring match against configured wake words
+  if (WAKE_WORDS.some(w => lower.includes(w))) return true;
+
+  // Extended variants match
+  if (EXTENDED_WAKE_VARIANTS.some(v => lower.includes(v))) return true;
+
+  // Normalized match (strips ー and ッ from both sides)
+  const normalizedWake = WAKE_WORDS.map(w => normalizeKana(w));
+  if (normalizedWake.some(w => normalized.includes(w))) return true;
+
+  return false;
 }
 
 /**

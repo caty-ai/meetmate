@@ -190,7 +190,7 @@
 <body>
     <div class="container">
         <h1>🐱 AI Meet Participant</h1>
-        <p class="subtitle">Caty（ケイティ）をGoogle Meetに参加させる</p>
+        <p class="subtitle">Caty（ケイティ）をGoogle Meet / Zoomに参加させる</p>
         <div class="mode-badge"><span id="modeBadge">🐟 Fish Audio TTS</span></div>
 
         <form id="joinForm">
@@ -199,12 +199,12 @@
                 id="meetingText"
                 name="meetingText"
                 placeholder="カレンダー招待文やSlackメッセージをそのまま貼り付けてください"
-                title="Google Meet を含むテキストを貼り付けてください"
+                title="Google Meet / Zoom URL を含むテキストを貼り付けてください"
                 autofocus
                 required
             ></textarea>
             <div id="meetingUrlStatus" class="field-status"></div>
-            <small>貼り付けた内容から Google Meet URL を自動で検出します</small>
+            <small>貼り付けた内容から Google Meet / Zoom URL を自動で検出します</small>
 
             <label>💬 会話モード:</label>
             <div class="conversation-mode">
@@ -285,7 +285,7 @@
             return /^\/[a-z0-9]{3}-[a-z0-9]{4}-[a-z0-9]{3}\/?$/i.test(pathname || '');
         }
 
-        function normalizeMeetUrl(rawUrl) {
+        function normalizeMeetingUrl(rawUrl) {
             if (!rawUrl) return '';
             let value = rawUrl.trim();
             if (!/^https?:\/\//i.test(value)) {
@@ -294,38 +294,49 @@
             try {
                 const parsed = new URL(value);
                 parsed.protocol = 'https:';
-                if (parsed.hostname.toLowerCase() !== 'meet.google.com') {
-                    return '';
+                const host = parsed.hostname.toLowerCase();
+
+                // Google Meet
+                if (host === 'meet.google.com' && isValidMeetPath(parsed.pathname)) {
+                    return parsed.toString();
                 }
-                if (!isValidMeetPath(parsed.pathname)) {
-                    return '';
+                // Zoom (*.zoom.us)
+                if (host.endsWith('zoom.us') && /^\/(j|my)\/[a-zA-Z0-9]+/.test(parsed.pathname)) {
+                    return parsed.toString();
                 }
-                return parsed.toString();
+                return '';
             } catch {
                 return '';
             }
         }
 
-        function extractMeetUrl(text) {
+        function extractMeetingUrl(text) {
             const decoded = decodeEscapedAngles(text || '');
+            // Try Google Meet first
             const meetRegex = /(?:https?:\/\/)?meet\.google\.com\/[a-z0-9]{3}-[a-z0-9]{4}-[a-z0-9]{3}(?:\?[^\s<>"'|)]*)?/i;
-            const match = decoded.match(meetRegex);
-            if (!match) return '';
-            return normalizeMeetUrl(match[0]);
+            const meetMatch = decoded.match(meetRegex);
+            if (meetMatch) return normalizeMeetingUrl(meetMatch[0]);
+
+            // Try Zoom
+            const zoomRegex = /(?:https?:\/\/)?[\w.-]*zoom\.us\/(j|my)\/[a-zA-Z0-9?=&._%-]+/i;
+            const zoomMatch = decoded.match(zoomRegex);
+            if (zoomMatch) return normalizeMeetingUrl(zoomMatch[0]);
+
+            return '';
         }
 
         function updateMeetingUrlStatus() {
             const text = meetingTextEl.value.trim();
-            extractedMeetingUrl = extractMeetUrl(text);
+            extractedMeetingUrl = extractMeetingUrl(text);
 
             if (!text) {
                 meetingUrlStatusEl.textContent = '';
                 meetingUrlStatusEl.className = 'field-status';
             } else if (extractedMeetingUrl) {
-                meetingUrlStatusEl.textContent = `✅ 検出した Meet URL: ${extractedMeetingUrl}`;
+                meetingUrlStatusEl.textContent = `✅ 検出した URL: ${extractedMeetingUrl}`;
                 meetingUrlStatusEl.className = 'field-status success';
             } else {
-                meetingUrlStatusEl.textContent = 'Meet URLが見つかりません';
+                meetingUrlStatusEl.textContent = 'Meet / Zoom URLが見つかりません';
                 meetingUrlStatusEl.className = 'field-status';
             }
 
@@ -374,7 +385,7 @@
             updateMeetingUrlStatus();
             if (!extractedMeetingUrl || isSubmitting) {
                 if (!extractedMeetingUrl) {
-                    setStatus('error', '❌ Meet URLが見つかりません');
+                    setStatus('error', '❌ Meet / Zoom URLが見つかりません');
                 }
                 return;
             }
@@ -405,7 +416,7 @@
                     localStorage.setItem('caty_botName', botName);
                     setStatus('success',
                         '✅ ' + text +
-                        '<br><small style="opacity:0.9">Google Meet画面でBotの参加を確認してください 🐱</small>',
+                        '<br><small style="opacity:0.9">ミーティング画面でBotの参加を確認してください 🐱</small>',
                         true
                     );
                 } else {
