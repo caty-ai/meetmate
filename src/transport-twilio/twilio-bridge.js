@@ -39,8 +39,11 @@ const ALLOWED_NUMBERS = new Set(
 const RATE_LIMIT_MS = 5 * 60 * 1000;
 const MAX_CONCURRENT_CALLS = 1;
 const JITTER_MAX_MS = Number(process.env.TWILIO_JITTER_MAX_MS || 200);
+const VOICE_TOKEN_TTL_MS = Number(process.env.TWILIO_VOICE_TOKEN_TTL_MS || 60_000);
+const STREAM_TOKEN_TTL_MS = Number(process.env.TWILIO_STREAM_TOKEN_TTL_MS || 60_000);
 
 let lastCallAt = 0;
+const ephemeralTokens = new Map();
 
 if (!ACCOUNT_SID || !AUTH_TOKEN || !FROM_NUMBER) {
   console.error("❌  Missing Twilio credentials. Check TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_PHONE_NUMBER");
@@ -69,6 +72,45 @@ function normalizePhone(input) {
   if (trimmed.startsWith("+")) return `+${trimmed.slice(1).replace(/\D/g, "")}`;
   if (trimmed.startsWith("00")) return `+${trimmed.slice(2).replace(/\D/g, "")}`;
   return `+${trimmed.replace(/\D/g, "")}`;
+}
+
+function cleanupExpiredTokens() {
+  const now = Date.now();
+  for (const [token, entry] of ephemeralTokens.entries()) {
+    if (!entry || entry.expiresAt <= now) {
+      ephemeralTokens.delete(token);
+    }
+  }
+}
+
+function issueEphemeralToken(kind, ttlMs, meta = {}) {
+  cleanupExpiredTokens();
+  const token = crypto.randomBytes(24).toString("base64url");
+  ephemeralTokens.set(token, {
+    kind,
+    createdAt: Date.now(),
+    expiresAt: Date.now() + Math.max(1_000, ttlMs),
+    used: false,
+    meta,
+  });
+  return token;
+}
+
+function consumeEphemeralToken(token, expectedKind) {
+  cleanupExpiredTokens();
+
+  const entry = ephemeralTokens.get(token);
+  if (!entry) return null;
+  if (entry.kind !== expectedKind) return null;
+  if (entry.used) return null;
+  if (entry.expiresAt <= Date.now()) {
+    ephemeralTokens.delete(token);
+    return null;
+  }
+
+  entry.used = true;
+  ephemeralTokens.set(token, entry);
+  return entry;
 }
 
 function writeJson(res, status, body) {
@@ -187,6 +229,10 @@ function makeTwimlResponse(streamWsUrl) {
   return `<?xml version="1.0" encoding="UTF-8"?>\n<Response>\n  <Connect>\n    <Stream url="${streamWsUrl}" />\n  </Connect>\n</Response>`;
 }
 
+function makeRejectTwiml() {
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<Response>\n  <Reject />\n</Response>`;
+}
+
 function splitMulawFrames(mulawBuffer, frameSize = 160) {
   const out = [];
   for (let i = 0; i < mulawBuffer.length; i += frameSize) {
@@ -248,7 +294,8 @@ const server = http.createServer(async (req, res) => {
     }
 
     try {
-      const twimlUrl = `${PUBLIC_URL}/twilio/voice`;
+      const voiceToken = issueEphemeralToken("voice", VOICE_TOKEN_TTL_MS, { to });
+      const twimlUrl = `${PUBLIC_URL}/twilio/voice?vtoken=${encodeURIComponent(voiceToken)}`;
       const statusCallback = `${PUBLIC_URL}/twilio/status`;
 
       const result = await initiateCall(to, {
@@ -259,6 +306,12 @@ const server = http.createServer(async (req, res) => {
         statusCallback,
         maxConcurrent: MAX_CONCURRENT_CALLS,
       });
+
+      const tokenEntry = ephemeralTokens.get(voiceToken);
+      if (tokenEntry) {
+        tokenEntry.meta.callSid = result.sid || null;
+        ephemeralTokens.set(voiceToken, tokenEntry);
+      }
 
       lastCallAt = now;
 
@@ -287,8 +340,26 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    const voiceToken = String(url.searchParams.get("vtoken") || "").trim();
+    const consumedVoiceToken = voiceToken ? consumeEphemeralToken(voiceToken, "voice") : null;
+    const direction = String(params.Direction || "").toLowerCase();
+
+    // Outbound-only guarantee:
+    // - must include short-lived token minted at /call-me
+    // - must be Twilio outbound-api direction
+    if (!consumedVoiceToken || direction !== "outbound-api") {
+      const rejectTwiml = makeRejectTwiml();
+      res.writeHead(200, { "Content-Type": "text/xml; charset=utf-8" });
+      res.end(rejectTwiml);
+      return;
+    }
+
+    const streamToken = issueEphemeralToken("stream", STREAM_TOKEN_TTL_MS, {
+      callSid: params.CallSid || consumedVoiceToken.meta?.callSid || null,
+    });
+
     const publicWsUrl = PUBLIC_URL.replace(/^https:/, "wss:").replace(/^http:/, "ws:");
-    const streamWsUrl = `${publicWsUrl}/twilio/stream`;
+    const streamWsUrl = `${publicWsUrl}/twilio/stream?stoken=${encodeURIComponent(streamToken)}`;
 
     const twiml = makeTwimlResponse(streamWsUrl);
     res.writeHead(200, { "Content-Type": "text/xml; charset=utf-8" });
@@ -322,7 +393,14 @@ server.on("upgrade", (req, socket, head) => {
     return;
   }
 
-  // WebSocket upgrade may include Twilio signature header. If present, verify.
+  const streamToken = String(url.searchParams.get("stoken") || "").trim();
+  const consumedStreamToken = streamToken ? consumeEphemeralToken(streamToken, "stream") : null;
+  if (!consumedStreamToken) {
+    socket.destroy();
+    return;
+  }
+
+  // Optional extra guard if Twilio includes signature header for WS handshake.
   const signature = req.headers["x-twilio-signature"];
   if (signature) {
     const queryParams = Object.fromEntries(url.searchParams.entries());
@@ -332,6 +410,8 @@ server.on("upgrade", (req, socket, head) => {
     }
   }
 
+  req.twilioMeta = consumedStreamToken.meta || {};
+
   wss.handleUpgrade(req, socket, head, (ws) => {
     wss.emit("connection", ws, req);
   });
@@ -340,7 +420,7 @@ server.on("upgrade", (req, socket, head) => {
 wss.on("connection", (ws, req) => {
   const ctx = {
     streamSid: null,
-    callSid: null,
+    callSid: req.twilioMeta?.callSid || null,
     pipeline: null,
     jitter: createJitterBuffer(JITTER_MAX_MS, 16000, 2),
   };
