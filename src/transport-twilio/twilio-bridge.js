@@ -225,8 +225,12 @@ function getDefaultToNumber() {
   return normalizePhone(process.env.TWILIO_DEFAULT_TO || "") || Array.from(ALLOWED_NUMBERS)[0] || "";
 }
 
+function escapeXmlAttr(str) {
+  return str.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 function makeTwimlResponse(streamWsUrl) {
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<Response>\n  <Connect>\n    <Stream url="${streamWsUrl}" />\n  </Connect>\n</Response>`;
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<Response>\n  <Connect>\n    <Stream url="${escapeXmlAttr(streamWsUrl)}" />\n  </Connect>\n</Response>`;
 }
 
 function makeRejectTwiml() {
@@ -350,7 +354,9 @@ const server = http.createServer(async (req, res) => {
     // - must include short-lived token minted at /call-me
     // - must be Twilio outbound-api direction
     // - callSid must match our active outbound calls
+    console.log(`📞  /twilio/voice: CallSid=${callSid}, Direction=${direction}, knownCall=${knownCall}, vtokenOK=${!!consumedVoiceToken}`);
     if (!consumedVoiceToken || direction !== "outbound-api" || !knownCall) {
+      console.log(`🚫  /twilio/voice: REJECTED (vtoken=${!!consumedVoiceToken}, dir=${direction}, known=${knownCall})`);
       const rejectTwiml = makeRejectTwiml();
       res.writeHead(200, { "Content-Type": "text/xml; charset=utf-8" });
       res.end(rejectTwiml);
@@ -362,9 +368,10 @@ const server = http.createServer(async (req, res) => {
     });
 
     const publicWsUrl = PUBLIC_URL.replace(/^https:/, "wss:").replace(/^http:/, "ws:");
-    const streamWsUrl = `${publicWsUrl}/twilio/stream?callSid=${encodeURIComponent(callSid)}&stoken=${encodeURIComponent(streamToken)}`;
+    const streamWsUrl = `${publicWsUrl}/twilio/stream/${encodeURIComponent(streamToken)}`;
 
     const twiml = makeTwimlResponse(streamWsUrl);
+    console.log(`✅  /twilio/voice: Stream URL = ${streamWsUrl.replace(/\/twilio\/stream\/.+$/, "/twilio/stream/***")}`);
     res.writeHead(200, { "Content-Type": "text/xml; charset=utf-8" });
     res.end(twiml);
     return;
@@ -390,27 +397,28 @@ const server = http.createServer(async (req, res) => {
 const wss = new WebSocketServer({ noServer: true });
 
 server.on("upgrade", (req, socket, head) => {
+  console.log(`🔌  WS upgrade request: ${req.url}`);
   const url = new URL(req.url || "/", "http://localhost");
-  if (url.pathname !== "/twilio/stream") {
+
+  const pathMatch = url.pathname.match(/^\/twilio\/stream\/([^/]+)$/);
+  if (!pathMatch) {
+    console.log(`🚫  WS upgrade: wrong path ${url.pathname}`);
     socket.destroy();
     return;
   }
 
-  const callSid = String(url.searchParams.get("callSid") || "").trim();
-  const knownCall = Boolean(callSid) && getActiveCalls().some((c) => c.sid === callSid);
-  if (!knownCall) {
+  let streamToken = "";
+  try {
+    streamToken = decodeURIComponent(pathMatch[1] || "").trim();
+  } catch {
+    console.log("🚫  WS upgrade: invalid token encoding");
     socket.destroy();
     return;
   }
 
-  const streamToken = String(url.searchParams.get("stoken") || "").trim();
   const consumedStreamToken = streamToken ? consumeEphemeralToken(streamToken, "stream") : null;
   if (!consumedStreamToken) {
-    socket.destroy();
-    return;
-  }
-
-  if (consumedStreamToken.meta?.callSid && consumedStreamToken.meta.callSid !== callSid) {
+    console.log("🚫  WS upgrade: invalid/expired stream token");
     socket.destroy();
     return;
   }
@@ -420,12 +428,14 @@ server.on("upgrade", (req, socket, head) => {
   if (signature) {
     const queryParams = Object.fromEntries(url.searchParams.entries());
     if (!validateTwilioSignature(req, queryParams)) {
+      console.log("🚫  WS upgrade: Twilio signature invalid");
       socket.destroy();
       return;
     }
   }
 
-  req.twilioMeta = { ...(consumedStreamToken.meta || {}), callSid };
+  req.twilioMeta = consumedStreamToken.meta || {};
+  console.log("🔌  WS upgrade: stream token accepted (callSid will be validated on start)");
 
   wss.handleUpgrade(req, socket, head, (ws) => {
     wss.emit("connection", ws, req);
@@ -467,6 +477,21 @@ wss.on("connection", (ws, req) => {
     if (message.event === "start") {
       ctx.streamSid = message.start?.streamSid || null;
       ctx.callSid = message.start?.callSid || null;
+      console.log(`📞  Twilio stream start: callSid=${ctx.callSid}, streamSid=${ctx.streamSid}`);
+
+      // Validate callSid against activeCalls + stream token binding.
+      const knownCall = Boolean(ctx.callSid) && getActiveCalls().some((c) => c.sid === ctx.callSid);
+      const tokenCallSid = req.twilioMeta?.callSid || null;
+      const tokenMatchesCall = !tokenCallSid || tokenCallSid === ctx.callSid;
+
+      if (!knownCall || !tokenMatchesCall) {
+        console.log(
+          `🚫  Twilio stream: invalid start (knownCall=${knownCall}, tokenMatchesCall=${tokenMatchesCall}, callSid=${ctx.callSid}, tokenCallSid=${tokenCallSid})`
+        );
+        ws.close(1008, "Unknown call");
+        return;
+      }
+
       if (ctx.callSid) {
         updateCallStatus(ctx.callSid, "in-progress", message.start);
       }
