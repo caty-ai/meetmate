@@ -56,11 +56,19 @@ let slackNotifier = null;
 function getSlackNotifier() {
   if (!slackNotifier) {
     const slackToken = process.env.SLACK_BOT_TOKEN || "";
-    const slackChannel = process.env.SLACK_NOTIFY_CHANNEL || "";
+    const fallback = process.env.SLACK_NOTIFY_CHANNEL || "";
+    const summaryChannel = process.env.SLACK_SUMMARY_CHANNEL || fallback;
+    const statusChannel = process.env.SLACK_STATUS_CHANNEL || summaryChannel || fallback;
     const notifyEnabled = String(process.env.SLACK_NOTIFY_ENABLED || "true").toLowerCase() !== "false";
-    slackNotifier = new SlackNotifier(slackToken, slackChannel, { enabled: notifyEnabled });
+
+    slackNotifier = new SlackNotifier(slackToken, fallback, {
+      enabled: notifyEnabled,
+      statusChannelId: statusChannel,
+      summaryChannelId: summaryChannel,
+    });
+
     if (slackNotifier.enabled) {
-      console.log(`📢  Slack通知有効: channel=${slackChannel}`);
+      console.log(`📢  Slack通知有効: status=${statusChannel}, summary=${summaryChannel}`);
     } else {
       console.log("📢  Slack通知無効（SLACK_BOT_TOKEN/SLACK_NOTIFY_CHANNEL未設定）");
     }

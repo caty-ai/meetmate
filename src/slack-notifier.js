@@ -4,18 +4,18 @@
 const https = require("https");
 
 const STATE_EMOJI = {
-  idle:           "⬜ 待機",
-  initiating:     "⏳ 受付",
-  ringing:        "🔔 発信中",
-  "in-progress":  "🟢 通話中",
-  ending:         "🔄 終了処理中",
-  completed:      "✅ 完了",
-  failed:         "❌ 失敗",
+  idle: "⬜ 待機",
+  initiating: "⏳ 受付",
+  ringing: "🔔 発信中",
+  "in-progress": "🟢 通話中",
+  ending: "🔄 終了処理中",
+  completed: "✅ 完了",
+  failed: "❌ 失敗",
 };
 
 const TRANSPORT_LABEL = {
   twilio: "📞 Twilio 通話",
-  meet:   "🎥 Google Meet",
+  meet: "🎥 Google Meet",
 };
 
 /**
@@ -24,21 +24,41 @@ const TRANSPORT_LABEL = {
 class SlackNotifier {
   /**
    * @param {string} botToken — Slack bot token (xoxb-...)
-   * @param {string} channelId — Channel ID to post to
+   * @param {string} channelId — Default channel ID (fallback)
    * @param {object} [options]
    * @param {boolean} [options.enabled=true] — Master enable switch (SLACK_NOTIFY_ENABLED)
+   * @param {string} [options.statusChannelId] — Status post channel
+   * @param {string} [options.summaryChannelId] — Summary/transcript post channel
    */
   constructor(botToken, channelId, options = {}) {
     this._botToken = botToken || "";
-    this._channelId = channelId || "";
+    this._defaultChannelId = channelId || "";
     this._masterEnabled = options.enabled !== false; // default true
-    this._messageTs = new Map(); // sessionId → message ts
+
+    // Channel resolution:
+    // status: explicit statusChannel -> summaryChannel -> default
+    // summary/transcript: explicit summaryChannel -> default
+    this._summaryChannelId =
+      options.summaryChannelId || this._defaultChannelId;
+    this._statusChannelId =
+      options.statusChannelId || this._summaryChannelId || this._defaultChannelId;
+
+    /** @type {Map<string, {ts: string, channel: string}>} */
+    this._statusMessageRef = new Map();
     this._updateTimers = new Map(); // sessionId → interval
   }
 
   /** Returns false if disabled, or token/channel is missing. */
   get enabled() {
-    return this._masterEnabled && !!(this._botToken && this._channelId);
+    return this._masterEnabled && !!(this._botToken && this._statusChannelId);
+  }
+
+  get statusChannelId() {
+    return this._statusChannelId;
+  }
+
+  get summaryChannelId() {
+    return this._summaryChannelId || this._statusChannelId;
   }
 
   /**
@@ -50,24 +70,25 @@ class SlackNotifier {
 
     const text = this._buildStatusText(lifecycle);
     const sessionId = lifecycle.sessionId;
+    const targetChannel = this.statusChannelId;
 
     try {
-      const existingTs = this._messageTs.get(sessionId);
-      if (existingTs) {
+      const existing = this._statusMessageRef.get(sessionId);
+      if (existing && existing.channel === targetChannel) {
         // Update existing message
         await this._slackApi("chat.update", {
-          channel: this._channelId,
-          ts: existingTs,
+          channel: existing.channel,
+          ts: existing.ts,
           text,
         });
       } else {
         // Post new message
         const result = await this._slackApi("chat.postMessage", {
-          channel: this._channelId,
+          channel: targetChannel,
           text,
         });
         if (result?.ts) {
-          this._messageTs.set(sessionId, result.ts);
+          this._statusMessageRef.set(sessionId, { ts: result.ts, channel: targetChannel });
         }
       }
     } catch (err) {
@@ -116,12 +137,15 @@ class SlackNotifier {
     const text = this._buildSummaryText(lifecycle, summary);
 
     try {
-      // Post as thread reply to the status message if available
-      const threadTs = this._messageTs.get(lifecycle.sessionId);
+      const summaryChannel = this.summaryChannelId;
+      const statusRef = this._statusMessageRef.get(lifecycle.sessionId);
+      const sameChannel = statusRef && statusRef.channel === summaryChannel;
+
+      // Post as thread reply only when status & summary channels are same
       await this._slackApi("chat.postMessage", {
-        channel: this._channelId,
+        channel: summaryChannel,
         text,
-        ...(threadTs ? { thread_ts: threadTs } : {}),
+        ...(sameChannel ? { thread_ts: statusRef.ts } : {}),
       });
     } catch (err) {
       console.error(`⚠️  Slack postSummary error (session=${lifecycle.sessionId}):`, err.message);
@@ -138,11 +162,14 @@ class SlackNotifier {
     if (!text) return;
 
     try {
-      const threadTs = this._messageTs.get(lifecycle.sessionId);
+      const summaryChannel = this.summaryChannelId;
+      const statusRef = this._statusMessageRef.get(lifecycle.sessionId);
+      const sameChannel = statusRef && statusRef.channel === summaryChannel;
+
       await this._slackApi("chat.postMessage", {
-        channel: this._channelId,
+        channel: summaryChannel,
         text,
-        ...(threadTs ? { thread_ts: threadTs } : {}),
+        ...(sameChannel ? { thread_ts: statusRef.ts } : {}),
       });
     } catch (err) {
       console.error(`⚠️  Slack postTranscript error (session=${lifecycle.sessionId}):`, err.message);
@@ -266,7 +293,9 @@ class SlackNotifier {
         },
         (res) => {
           let responseBody = "";
-          res.on("data", (chunk) => { responseBody += chunk; });
+          res.on("data", (chunk) => {
+            responseBody += chunk;
+          });
           res.on("end", () => {
             try {
               const parsed = JSON.parse(responseBody);

@@ -191,7 +191,9 @@ node src/index.js
 | 変数 | 説明 | デフォルト |
 |------|------|-----------|
 | `SLACK_BOT_TOKEN` | Slack Bot Token (xoxb-...) | — |
-| `SLACK_NOTIFY_CHANNEL` | 通知先チャンネル ID | — |
+| `SLACK_NOTIFY_CHANNEL` | 既定の通知先チャンネル ID（フォールバック） | — |
+| `SLACK_SUMMARY_CHANNEL` | サマリー/全文ログ投稿先（未設定時は `SLACK_NOTIFY_CHANNEL`） | — |
+| `SLACK_STATUS_CHANNEL` | ステータス投稿先（未設定時は `SLACK_SUMMARY_CHANNEL` → `SLACK_NOTIFY_CHANNEL`） | — |
 | `SLACK_NOTIFY_ENABLED` | Slack 通知の有効/無効 | `true` |
 | `SUMMARY_ENABLED` | 通話後サマリーの有効/無効 | `true` |
 

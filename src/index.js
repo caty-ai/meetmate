@@ -150,13 +150,22 @@ let meetSlackNotifier = null;
 function getMeetSlackNotifier() {
   if (!meetSlackNotifier) {
     const notifyEnabled = String(process.env.SLACK_NOTIFY_ENABLED || "true").toLowerCase() !== "false";
+    const fallback = process.env.SLACK_NOTIFY_CHANNEL || "";
+    const summaryChannel = process.env.SLACK_SUMMARY_CHANNEL || fallback;
+    const statusChannel = process.env.SLACK_STATUS_CHANNEL || summaryChannel || fallback;
+
     meetSlackNotifier = new SlackNotifier(
       process.env.SLACK_BOT_TOKEN || "",
-      process.env.SLACK_NOTIFY_CHANNEL || "",
-      { enabled: notifyEnabled }
+      fallback,
+      {
+        enabled: notifyEnabled,
+        statusChannelId: statusChannel,
+        summaryChannelId: summaryChannel,
+      }
     );
+
     if (meetSlackNotifier.enabled) {
-      console.log("📢  Meet Slack通知有効");
+      console.log(`📢  Meet Slack通知有効: status=${statusChannel}, summary=${summaryChannel}`);
     }
   }
   return meetSlackNotifier;

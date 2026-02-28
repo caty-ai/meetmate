@@ -39,6 +39,8 @@ const ECHO_LOOP_COOLDOWN_MS = Number(process.env.ECHO_LOOP_COOLDOWN_MS || 300);
 // Slack integration
 const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN || "";
 const SLACK_NOTIFY_CHANNEL = process.env.SLACK_NOTIFY_CHANNEL || "";
+const SLACK_SUMMARY_CHANNEL = process.env.SLACK_SUMMARY_CHANNEL || "";
+const SLACK_STATUS_CHANNEL = process.env.SLACK_STATUS_CHANNEL || "";
 const SLACK_NOTIFY_ENABLED = String(process.env.SLACK_NOTIFY_ENABLED || "true").toLowerCase() !== "false";
 const SUMMARY_ENABLED = String(process.env.SUMMARY_ENABLED || "true").toLowerCase() !== "false";
 
@@ -81,6 +83,8 @@ function getPipelineConfig(overrides = {}) {
     slack: {
       botToken: SLACK_BOT_TOKEN,
       channelId: SLACK_NOTIFY_CHANNEL,
+      statusChannelId: SLACK_STATUS_CHANNEL || SLACK_SUMMARY_CHANNEL || SLACK_NOTIFY_CHANNEL,
+      summaryChannelId: SLACK_SUMMARY_CHANNEL || SLACK_NOTIFY_CHANNEL,
       enabled: SLACK_NOTIFY_ENABLED,
     },
     summary: {
@@ -164,5 +168,7 @@ module.exports = {
   SLACK_BOT_TOKEN,
   SLACK_NOTIFY_CHANNEL,
   SLACK_NOTIFY_ENABLED,
+  SLACK_SUMMARY_CHANNEL,
+  SLACK_STATUS_CHANNEL,
   SUMMARY_ENABLED,
 };
