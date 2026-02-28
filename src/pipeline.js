@@ -18,6 +18,13 @@ const SENTENCE_PAUSE_MS = Number(process.env.SENTENCE_PAUSE_MS || 500);
 const WAKE_MODE = process.env.WAKE_MODE || "off";
 const WAKE_WORDS = (process.env.WAKE_WORDS || "ケイティ,けいてぃ,caty,katie,ケイケイ").toLowerCase().split(",").map(w => w.trim());
 
+// Exit commands (for Meet sessions — triggers bot exit)
+const EXIT_COMMANDS = [
+  "退出して", "退出していいよ", "今日はここまで",
+  "もういいよ", "終わりにして", "退出", "終了して",
+  "ありがとう退出", "おつかれ退出",
+];
+
 // Extended wake word variants to handle STT transcription inaccuracies
 // Deepgram may output: けいてい, ケーティー, ケイティー, キーティ, テイティー, けーてぃ, etc.
 const EXTENDED_WAKE_VARIANTS = [
@@ -35,6 +42,32 @@ function normalizeKana(text) {
     .replace(/ッ/g, "")        // Remove small tsu
     .replace(/っ/g, "")        // Remove small tsu (hiragana)
     .replace(/\s+/g, "");      // Remove spaces
+}
+
+/**
+ * Check if utterance is an exit command.
+ * Only active in Meet sessions (not Twilio calls).
+ */
+function isExitCommand(text) {
+  const lower = text.toLowerCase().trim();
+  const normalized = normalizeKana(lower);
+
+  // Check exit commands
+  for (const cmd of EXIT_COMMANDS) {
+    const cmdNorm = normalizeKana(cmd.toLowerCase());
+    if (normalized.includes(cmdNorm) || lower.includes(cmd)) {
+      return true;
+    }
+  }
+
+  // Also check wake word + exit pattern: "ケイティ、退出して"
+  if (containsWakeWord(text)) {
+    for (const cmd of EXIT_COMMANDS) {
+      if (lower.includes(cmd.toLowerCase())) return true;
+    }
+  }
+
+  return false;
 }
 
 /**
@@ -81,6 +114,9 @@ function splitSentences(text) {
  * @returns {{ sendAudio(buf: Buffer): void, close(): void }}
  */
 function createPipeline(session, turnState, onAudio, config) {
+  const { EventEmitter } = require("events");
+  const emitter = new EventEmitter();
+
   const dgKey = config.dgKey;
   const openrouterKey = config.openrouterKey;
   const fishKey = config.fishKey;
@@ -118,6 +154,34 @@ function createPipeline(session, turnState, onAudio, config) {
 
   stt.on("utterance_end", async (userText) => {
     console.log(`💬  [user] ${userText}`);
+
+    // Exit command detection (Meet sessions only, not Twilio)
+    if (config.exitDetection !== false && isExitCommand(userText)) {
+      console.log("🚪  Exit command detected!");
+      session.conversationLog.push({
+        timestamp: new Date().toISOString(),
+        role: "user",
+        content: userText,
+      });
+
+      // Speak farewell and emit exit event
+      turnState.isAgentSpeaking = true;
+      try {
+        await speakSentence("(happy) 了解です！退出しますね。お疲れさまでした！", null);
+      } catch {
+        // ignore TTS error during exit
+      }
+      turnState.isAgentSpeaking = false;
+
+      session.conversationLog.push({
+        timestamp: new Date().toISOString(),
+        role: "assistant",
+        content: "了解です！退出しますね。お疲れさまでした！",
+      });
+
+      emitter.emit("exit_requested", { sessionId: session.id, trigger: "voice_command", text: userText });
+      return;
+    }
 
     // Wake word detection
     if (wakeMode === "wake") {
@@ -340,6 +404,10 @@ function createPipeline(session, turnState, onAudio, config) {
       }
       stt.close();
     },
+    /** EventEmitter for exit_requested and other pipeline events. */
+    on: emitter.on.bind(emitter),
+    once: emitter.once.bind(emitter),
+    removeListener: emitter.removeListener.bind(emitter),
   };
 }
 

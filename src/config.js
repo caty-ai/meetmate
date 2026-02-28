@@ -36,6 +36,12 @@ const AGENT_MAX_TOKENS = Number(process.env.AGENT_MAX_TOKENS || 300);
 // Echo loop protection
 const ECHO_LOOP_COOLDOWN_MS = Number(process.env.ECHO_LOOP_COOLDOWN_MS || 300);
 
+// Slack integration
+const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN || "";
+const SLACK_NOTIFY_CHANNEL = process.env.SLACK_NOTIFY_CHANNEL || "";
+const SLACK_NOTIFY_ENABLED = String(process.env.SLACK_NOTIFY_ENABLED || "true").toLowerCase() !== "false";
+const SUMMARY_ENABLED = String(process.env.SUMMARY_ENABLED || "true").toLowerCase() !== "false";
+
 /**
  * Get pipeline config for the decomposed STT → LLM → TTS flow.
  */
@@ -72,6 +78,14 @@ function getPipelineConfig(overrides = {}) {
       (isJapanese
         ? "(happy) こんにちは！ケイティです。よろしくお願いします！"
         : "(happy) Hi! I'm Caty. Nice to meet you!"),
+    slack: {
+      botToken: SLACK_BOT_TOKEN,
+      channelId: SLACK_NOTIFY_CHANNEL,
+      enabled: SLACK_NOTIFY_ENABLED,
+    },
+    summary: {
+      enabled: SUMMARY_ENABLED,
+    },
   };
 }
 
@@ -147,4 +161,8 @@ module.exports = {
   SAMPLE_RATE,
   CATY_PROMPT,
   TTS_PROVIDER,
+  SLACK_BOT_TOKEN,
+  SLACK_NOTIFY_CHANNEL,
+  SLACK_NOTIFY_ENABLED,
+  SUMMARY_ENABLED,
 };

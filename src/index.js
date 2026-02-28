@@ -16,6 +16,9 @@ const crypto = require("crypto");
 const { parse } = require("querystring");
 const { buildAgentConfig, getPipelineConfig, SAMPLE_RATE, TTS_PROVIDER } = require("./config");
 const { createPipeline } = require("./pipeline");
+const { SessionLifecycle } = require("./session-events");
+const { SlackNotifier } = require("./slack-notifier");
+const { summarizeConversation } = require("./summarizer");
 
 const PORT = Number(process.env.PORT || 5005);
 const ATTENDEE_API_BASE_URL = process.env.ATTENDEE_API_BASE_URL || "app.attendee.dev";
@@ -138,6 +141,48 @@ const meetingSessions = new Map();
 
 /** @type {Map<string, {client: import("ws").WebSocket, handler: any}>} */
 const activeConnections = new Map();
+
+/** @type {Map<string, import("./session-events").SessionLifecycle>} */
+const meetLifecycles = new Map();
+
+// Slack notifier for Meet sessions
+let meetSlackNotifier = null;
+function getMeetSlackNotifier() {
+  if (!meetSlackNotifier) {
+    meetSlackNotifier = new SlackNotifier(
+      process.env.SLACK_BOT_TOKEN || "",
+      process.env.SLACK_NOTIFY_CHANNEL || ""
+    );
+    if (meetSlackNotifier.enabled) {
+      console.log("📢  Meet Slack通知有効");
+    }
+  }
+  return meetSlackNotifier;
+}
+
+/** Handle Meet session end: summarize + Slack. */
+async function handleMeetSessionEnd(lifecycle) {
+  const notifier = getMeetSlackNotifier();
+  notifier.stopElapsedUpdates(lifecycle.sessionId);
+  await notifier.postStatus(lifecycle);
+
+  const summaryEnabled = String(process.env.SUMMARY_ENABLED || "true").toLowerCase() !== "false";
+  if (summaryEnabled && lifecycle._conversationLog && lifecycle._conversationLog.length > 0) {
+    try {
+      const summary = await summarizeConversation(lifecycle._conversationLog, {
+        openclawUrl: process.env.OPENCLAW_GATEWAY_URL,
+        openclawToken: process.env.OPENCLAW_GATEWAY_TOKEN,
+        openrouterKey: process.env.OPENROUTER_API_KEY,
+      });
+      await notifier.postSummary(lifecycle, summary);
+      console.log("📋  Meetサマリー投稿完了");
+    } catch (err) {
+      console.error("⚠️  Meetサマリー生成/投稿失敗:", err.message);
+    }
+  }
+
+  meetLifecycles.delete(lifecycle.sessionId);
+}
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -546,6 +591,16 @@ const server = http.createServer(async (req, res) => {
 
       meetingSessions.set(sessionId, session);
 
+      // Create session lifecycle for Meet
+      const lifecycle = new SessionLifecycle(sessionId, "meet", {
+        meetingUrl,
+        conversationMode,
+      });
+      lifecycle.on("session_end", () => handleMeetSessionEnd(lifecycle));
+      lifecycle.transition("initiating");
+      meetLifecycles.set(sessionId, lifecycle);
+      getMeetSlackNotifier().postStatus(lifecycle).catch(() => {});
+
       const wsWithSession = buildWsUrlWithSession(wsUrl, sessionId);
       console.log("📹  Meeting URL:", meetingUrl);
       console.log("🔗  WebSocket URL:", wsWithSession.replace(/token=[^&]+/, "token=***"));
@@ -582,6 +637,11 @@ const server = http.createServer(async (req, res) => {
       }
 
       console.error("❌  Bot起動失敗:", attendeeResult.statusCode, attendeeResult.body);
+      // Mark lifecycle as failed
+      const failedLifecycle = meetLifecycles.get(sessionId);
+      if (failedLifecycle && !failedLifecycle.isTerminal) {
+        failedLifecycle.transition("failed", { reason: "bot_launch_failed", statusCode: attendeeResult.statusCode });
+      }
       meetingSessions.delete(sessionId);
       writePlainResponse(res, 502, `Bot起動エラー: ${attendeeResult.statusCode} - ${attendeeResult.body}`);
       return;
@@ -636,6 +696,17 @@ wss.on("connection", (client, req) => {
 
   console.log(`⇦  Attendee Bot 接続: ${req.socket.remoteAddress} (sid=${sid})`);
 
+  // Transition lifecycle to in-progress
+  const lifecycle = meetLifecycles.get(sid);
+  if (lifecycle && lifecycle.state !== "in-progress") {
+    lifecycle.transition("in-progress", { remoteAddress: req.socket.remoteAddress });
+    getMeetSlackNotifier().postStatus(lifecycle).catch(() => {});
+    getMeetSlackNotifier().startElapsedUpdates(lifecycle);
+
+    // Bind conversation log for summary
+    lifecycle.setConversationLog(session.conversationLog);
+  }
+
   const turnState = {
     isAgentSpeaking: false,
     inputCooldownUntil: 0,
@@ -659,6 +730,19 @@ wss.on("connection", (client, req) => {
   });
 
   activeConnections.set(sid, { client, handler });
+
+  // Listen for exit_requested from pipeline (Meet exit command detection)
+  if (handler.on) {
+    handler.on("exit_requested", (evt) => {
+      console.log(`🚪  Exit requested for session ${sid}: ${evt.trigger}`);
+      // Close the Attendee bot connection, which triggers cleanup
+      try {
+        client.close(1000, "Exit requested by user");
+      } catch {
+        client.terminate();
+      }
+    });
+  }
 
   // Basic ws heartbeat to kill stale links
   client.isAlive = true;
@@ -729,6 +813,12 @@ wss.on("connection", (client, req) => {
       handler?.close?.();
     } catch {
       // no-op
+    }
+
+    // Transition lifecycle to completed (triggers summary + Slack)
+    const lc = meetLifecycles.get(sid);
+    if (lc && !lc.isTerminal) {
+      lc.transition("completed", { reason: "ws_close" });
     }
 
     scheduleFinalizeSession(sid);

@@ -11,6 +11,9 @@ const { WebSocketServer, WebSocket } = require("ws");
 
 const { createPipeline } = require("../pipeline");
 const { getPipelineConfig } = require("../config");
+const { SessionLifecycle } = require("../session-events");
+const { SlackNotifier } = require("../slack-notifier");
+const { summarizeConversation } = require("../summarizer");
 const {
   initiateCall,
   updateCallStatus,
@@ -44,6 +47,53 @@ const STREAM_TOKEN_TTL_MS = Number(process.env.TWILIO_STREAM_TOKEN_TTL_MS || 60_
 
 let lastCallAt = 0;
 const ephemeralTokens = new Map();
+
+// Session lifecycle tracking
+const sessionLifecycles = new Map(); // callSid → SessionLifecycle
+
+// Slack notifier (initialized lazily)
+let slackNotifier = null;
+function getSlackNotifier() {
+  if (!slackNotifier) {
+    const slackToken = process.env.SLACK_BOT_TOKEN || "";
+    const slackChannel = process.env.SLACK_NOTIFY_CHANNEL || "";
+    slackNotifier = new SlackNotifier(slackToken, slackChannel);
+    if (slackNotifier.enabled) {
+      console.log(`📢  Slack通知有効: channel=${slackChannel}`);
+    } else {
+      console.log("📢  Slack通知無効（SLACK_BOT_TOKEN/SLACK_NOTIFY_CHANNEL未設定）");
+    }
+  }
+  return slackNotifier;
+}
+
+/** Handle session end: summarize + post to Slack. */
+async function handleSessionEnd(lifecycle) {
+  const notifier = getSlackNotifier();
+  notifier.stopElapsedUpdates(lifecycle.sessionId);
+
+  // Final status update
+  await notifier.postStatus(lifecycle);
+
+  // Summarize conversation
+  const summaryEnabled = String(process.env.SUMMARY_ENABLED || "true").toLowerCase() !== "false";
+  if (summaryEnabled && lifecycle._conversationLog && lifecycle._conversationLog.length > 0) {
+    try {
+      const summary = await summarizeConversation(lifecycle._conversationLog, {
+        openclawUrl: process.env.OPENCLAW_GATEWAY_URL,
+        openclawToken: process.env.OPENCLAW_GATEWAY_TOKEN,
+        openrouterKey: process.env.OPENROUTER_API_KEY,
+      });
+      await notifier.postSummary(lifecycle, summary);
+      console.log("📋  通話サマリー投稿完了");
+    } catch (err) {
+      console.error("⚠️  サマリー生成/投稿失敗:", err.message);
+    }
+  }
+
+  // Cleanup
+  sessionLifecycles.delete(lifecycle.sessionId);
+}
 
 if (!ACCOUNT_SID || !AUTH_TOKEN || !FROM_NUMBER) {
   console.error("❌  Missing Twilio credentials. Check TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_PHONE_NUMBER");
@@ -319,6 +369,18 @@ const server = http.createServer(async (req, res) => {
 
       lastCallAt = now;
 
+      // Create session lifecycle and post initial status
+      if (result.sid) {
+        const lifecycle = new SessionLifecycle(result.sid, "twilio", {
+          to,
+          from: FROM_NUMBER,
+        });
+        lifecycle.on("session_end", () => handleSessionEnd(lifecycle));
+        lifecycle.transition("initiating");
+        sessionLifecycles.set(result.sid, lifecycle);
+        getSlackNotifier().postStatus(lifecycle).catch(() => {});
+      }
+
       writeJson(res, 200, {
         status: "calling",
         callSid: result.sid,
@@ -387,6 +449,34 @@ const server = http.createServer(async (req, res) => {
     }
 
     updateCallStatus(params.CallSid, params.CallStatus, params);
+
+    // Update session lifecycle based on Twilio status
+    const callSid = String(params.CallSid || "");
+    const callStatus = String(params.CallStatus || "").toLowerCase();
+    const lifecycle = sessionLifecycles.get(callSid);
+    if (lifecycle) {
+      const stateMap = {
+        initiated: "initiating",
+        ringing: "ringing",
+        "in-progress": "in-progress",
+        completed: "completed",
+        busy: "failed",
+        "no-answer": "failed",
+        canceled: "failed",
+        failed: "failed",
+      };
+      const newState = stateMap[callStatus];
+      if (newState && newState !== lifecycle.state) {
+        lifecycle.transition(newState, { twilioStatus: callStatus });
+        getSlackNotifier().postStatus(lifecycle).catch(() => {});
+
+        // Start elapsed updates when call connects
+        if (newState === "in-progress") {
+          getSlackNotifier().startElapsedUpdates(lifecycle);
+        }
+      }
+    }
+
     writeText(res, 204, "");
     return;
   }
@@ -487,6 +577,14 @@ wss.on("connection", (ws, req) => {
 
       if (ctx.callSid) {
         updateCallStatus(ctx.callSid, "in-progress", message.start);
+
+        // Ensure lifecycle is in-progress
+        const lifecycle = sessionLifecycles.get(ctx.callSid);
+        if (lifecycle && lifecycle.state !== "in-progress") {
+          lifecycle.transition("in-progress", { streamSid: ctx.streamSid });
+          getSlackNotifier().postStatus(lifecycle).catch(() => {});
+          getSlackNotifier().startElapsedUpdates(lifecycle);
+        }
       }
 
       if (!ctx.pipeline) {
@@ -504,6 +602,12 @@ wss.on("connection", (ws, req) => {
           inputCooldownUntil: 0,
           droppedEchoFrames: 0,
         };
+
+        // Bind conversation log to lifecycle for summary generation
+        const lifecycle = sessionLifecycles.get(ctx.callSid);
+        if (lifecycle) {
+          lifecycle.setConversationLog(session.conversationLog);
+        }
 
         const config = getPipelineConfig({ wakeMode: "off" });
         ctx.pipeline = createPipeline(session, turnState, (pcmChunk) => {
@@ -552,6 +656,11 @@ wss.on("connection", (ws, req) => {
     if (message.event === "stop") {
       if (ctx.callSid) {
         updateCallStatus(ctx.callSid, "completed", message.stop || message);
+        // Transition lifecycle to completed (triggers summary + Slack)
+        const lifecycle = sessionLifecycles.get(ctx.callSid);
+        if (lifecycle && !lifecycle.isTerminal) {
+          lifecycle.transition("completed", { reason: "stream_stop" });
+        }
       }
       closePipeline();
       return;
@@ -562,6 +671,11 @@ wss.on("connection", (ws, req) => {
     closePipeline();
     if (ctx.callSid) {
       updateCallStatus(ctx.callSid, "completed");
+      // Transition lifecycle to completed if not already
+      const lifecycle = sessionLifecycles.get(ctx.callSid);
+      if (lifecycle && !lifecycle.isTerminal) {
+        lifecycle.transition("completed", { reason: "ws_close" });
+      }
     }
     console.log(`📴  Twilio stream closed: ${ctx.callSid || ctx.streamSid || "unknown"}`);
   });

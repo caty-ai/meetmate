@@ -1,0 +1,202 @@
+// summarizer.js — LLM-based conversation summarizer
+// Uses OpenClaw Gateway if available, fallback to OpenRouter
+
+const http = require("http");
+const https = require("https");
+
+const SUMMARY_PROMPT = `以下の音声通話/会議の会話ログから、簡潔なサマリーをJSON形式で生成してください。
+
+出力フォーマット（必ずこのJSONのみ出力すること）:
+{
+  "summary": ["要約1", "要約2", "要約3"],
+  "decisions": ["決定事項1"],
+  "todos": ["TODO1"]
+}
+
+ルール:
+- summaryは最大3項目の箇条書き
+- decisionsは決定事項があれば記載（なければ空配列）
+- todosはTODOがあれば記載（なければ空配列）
+- JSONのみ出力。説明やマークダウンは不要
+
+会話ログ:
+`;
+
+/**
+ * Summarize a conversation log using LLM.
+ *
+ * @param {Array<{role: string, content: string, timestamp?: string}>} conversationLog
+ * @param {object} options
+ * @param {string} [options.openclawUrl]
+ * @param {string} [options.openclawToken]
+ * @param {string} [options.openrouterKey]
+ * @param {string} [options.model]
+ * @returns {Promise<{summary: string[], decisions: string[], todos: string[]}>}
+ */
+async function summarizeConversation(conversationLog, options = {}) {
+  if (!conversationLog || conversationLog.length === 0) {
+    return { summary: [], decisions: [], todos: [] };
+  }
+
+  // Format conversation log
+  const logText = conversationLog
+    .map((e) => {
+      const speaker = e.role === "assistant" || e.role === "agent" ? "Caty" : "参加者";
+      return `${speaker}: ${e.content}`;
+    })
+    .join("\n");
+
+  const prompt = SUMMARY_PROMPT + logText;
+
+  try {
+    const useOpenClaw = !!(options.openclawUrl && options.openclawToken);
+    let responseText;
+
+    if (useOpenClaw) {
+      responseText = await callOpenClaw(prompt, options);
+    } else if (options.openrouterKey) {
+      responseText = await callOpenRouter(prompt, options);
+    } else {
+      console.warn("⚠️  Summarizer: no LLM backend configured");
+      return { summary: [], decisions: [], todos: [] };
+    }
+
+    // Parse JSON from response (handle potential markdown wrapping)
+    return parseJsonResponse(responseText);
+  } catch (err) {
+    console.error("⚠️  Summarizer error:", err.message);
+    return { summary: [], decisions: [], todos: [] };
+  }
+}
+
+function parseJsonResponse(text) {
+  // Strip markdown code blocks if present
+  let cleaned = text.trim();
+  if (cleaned.startsWith("```")) {
+    cleaned = cleaned.replace(/^```(?:json)?\s*\n?/, "").replace(/\n?```\s*$/, "");
+  }
+
+  try {
+    const parsed = JSON.parse(cleaned);
+    return {
+      summary: Array.isArray(parsed.summary) ? parsed.summary : [],
+      decisions: Array.isArray(parsed.decisions) ? parsed.decisions : [],
+      todos: Array.isArray(parsed.todos) ? parsed.todos : [],
+    };
+  } catch {
+    // Try to extract JSON from text
+    const match = cleaned.match(/\{[\s\S]*\}/);
+    if (match) {
+      try {
+        const parsed = JSON.parse(match[0]);
+        return {
+          summary: Array.isArray(parsed.summary) ? parsed.summary : [],
+          decisions: Array.isArray(parsed.decisions) ? parsed.decisions : [],
+          todos: Array.isArray(parsed.todos) ? parsed.todos : [],
+        };
+      } catch {
+        // give up
+      }
+    }
+    console.warn("⚠️  Summarizer: failed to parse JSON response");
+    return { summary: [cleaned.slice(0, 200)], decisions: [], todos: [] };
+  }
+}
+
+async function callOpenClaw(prompt, options) {
+  const gatewayUrl = new URL(options.openclawUrl);
+  const isHttps = gatewayUrl.protocol === "https:";
+  const transport = isHttps ? https : http;
+
+  const body = JSON.stringify({
+    model: options.model || "anthropic/claude-sonnet-4-6",
+    stream: false,
+    temperature: 0.3,
+    max_tokens: 500,
+    messages: [{ role: "user", content: prompt }],
+  });
+
+  const response = await new Promise((resolve, reject) => {
+    const req = transport.request(
+      {
+        hostname: gatewayUrl.hostname,
+        port: gatewayUrl.port || (isHttps ? 443 : 80),
+        path: "/v1/chat/completions",
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${options.openclawToken}`,
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(body),
+        },
+      },
+      (res) => {
+        let data = "";
+        res.on("data", (chunk) => { data += chunk; });
+        res.on("end", () => {
+          if (res.statusCode !== 200) {
+            reject(new Error(`OpenClaw summarizer error (${res.statusCode}): ${data.slice(0, 200)}`));
+            return;
+          }
+          resolve(data);
+        });
+      }
+    );
+
+    req.on("error", reject);
+    req.setTimeout(30_000, () => req.destroy(new Error("Summarizer timeout")));
+    req.write(body);
+    req.end();
+  });
+
+  const parsed = JSON.parse(response);
+  return parsed.choices?.[0]?.message?.content || "";
+}
+
+async function callOpenRouter(prompt, options) {
+  const body = JSON.stringify({
+    model: options.model || "anthropic/claude-sonnet-4-6",
+    stream: false,
+    temperature: 0.3,
+    max_tokens: 500,
+    messages: [{ role: "user", content: prompt }],
+  });
+
+  const response = await new Promise((resolve, reject) => {
+    const req = https.request(
+      {
+        hostname: "openrouter.ai",
+        port: 443,
+        path: "/api/v1/chat/completions",
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${options.openrouterKey}`,
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(body),
+          "HTTP-Referer": "https://github.com/caty-ai/meetmate",
+          "X-Title": "AI Meet Participant Summarizer",
+        },
+      },
+      (res) => {
+        let data = "";
+        res.on("data", (chunk) => { data += chunk; });
+        res.on("end", () => {
+          if (res.statusCode !== 200) {
+            reject(new Error(`OpenRouter summarizer error (${res.statusCode}): ${data.slice(0, 200)}`));
+            return;
+          }
+          resolve(data);
+        });
+      }
+    );
+
+    req.on("error", reject);
+    req.setTimeout(30_000, () => req.destroy(new Error("Summarizer timeout")));
+    req.write(body);
+    req.end();
+  });
+
+  const parsed = JSON.parse(response);
+  return parsed.choices?.[0]?.message?.content || "";
+}
+
+module.exports = { summarizeConversation };
