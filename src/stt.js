@@ -14,7 +14,7 @@ const { EventEmitter } = require("events");
  * @returns {EventEmitter & { send(buf: Buffer): void, close(): void }}
  *
  * Events:
- *   'transcript' (text: string, isFinal: boolean) — interim/final transcripts
+ *   'transcript' (text: string, isFinal: boolean, confidence: number|null) — interim/final transcripts
  *   'utterance_end' (text: string) — user finished speaking, accumulated text
  *   'error' (err: Error)
  *   'open' ()
@@ -84,7 +84,8 @@ function createSTT(dgKey, options = {}) {
       if (!text) return;
 
       const isFinal = data.is_final === true;
-      emitter.emit("transcript", text, isFinal);
+      const confidence = Number.isFinite(alt.confidence) ? alt.confidence : null;
+      emitter.emit("transcript", text, isFinal, confidence);
 
       if (isFinal) {
         accumulated += text;

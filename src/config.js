@@ -32,6 +32,7 @@ const LISTEN_UTTERANCE_END_MS = Number(
 // LLM tuning
 const AGENT_TEMPERATURE = Number(process.env.AGENT_TEMPERATURE || 0.5);
 const AGENT_MAX_TOKENS = Number(process.env.AGENT_MAX_TOKENS || 300);
+const LLM_RESPONSE_TIMEOUT_MS = Number(process.env.LLM_RESPONSE_TIMEOUT_MS || 0);
 
 // Echo loop protection
 const ECHO_LOOP_COOLDOWN_MS = Number(process.env.ECHO_LOOP_COOLDOWN_MS || 300);
@@ -58,6 +59,7 @@ function getPipelineConfig(overrides = {}) {
     openclawToken: process.env.OPENCLAW_GATEWAY_TOKEN || null,
     systemPrompt: overrides.prompt || CATY_PROMPT,
     wakeMode: overrides.wakeMode || null,
+    exitDetection: overrides.exitDetection,
     echoCooldownMs: ECHO_LOOP_COOLDOWN_MS,
     stt: {
       model: "nova-3",
@@ -66,8 +68,13 @@ function getPipelineConfig(overrides = {}) {
     },
     llm: {
       model: overrides.model || "anthropic/claude-sonnet-4-5",
-      temperature: AGENT_TEMPERATURE,
-      maxTokens: AGENT_MAX_TOKENS,
+      temperature: overrides.temperature ?? AGENT_TEMPERATURE,
+      maxTokens: overrides.maxTokens ?? AGENT_MAX_TOKENS,
+      responseTimeoutMs: overrides.responseTimeoutMs ?? LLM_RESPONSE_TIMEOUT_MS,
+      openclawSystemAddendum:
+        Object.prototype.hasOwnProperty.call(overrides, "openclawSystemAddendum")
+          ? overrides.openclawSystemAddendum
+          : null,
     },
     tts: {
       provider: "fish-audio",

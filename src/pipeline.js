@@ -17,7 +17,9 @@ const SENTENCE_PAUSE_MS = Number(process.env.SENTENCE_PAUSE_MS || 500);
 // UX controls
 const POST_UTTERANCE_BUFFER_MS = Number(process.env.POST_UTTERANCE_BUFFER_MS || 500);
 const PROGRESS_PING_INTERVAL_MS = Number(process.env.PROGRESS_PING_INTERVAL_MS || 10_000);
+const PROGRESS_PING_MAX = Number(process.env.PROGRESS_PING_MAX || 3);
 const BARGE_IN_MIN_CHARS = Number(process.env.BARGE_IN_MIN_CHARS || 2);
+const BARGE_IN_CONFIDENCE_MIN = Number(process.env.BARGE_IN_CONFIDENCE_MIN || 0.45);
 const ENABLE_BARGE_IN = String(process.env.ENABLE_BARGE_IN || "true").toLowerCase() !== "false";
 const ENABLE_IMMEDIATE_ACK = String(process.env.ENABLE_IMMEDIATE_ACK || "true").toLowerCase() !== "false";
 const ENABLE_PROGRESS_GUARD = String(process.env.ENABLE_PROGRESS_GUARD || "true").toLowerCase() !== "false";
@@ -117,6 +119,23 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function getAlphaNumericRatio(text) {
+  const compact = String(text || "").replace(/\s+/g, "");
+  if (!compact) return 0;
+
+  const meaningfulChars = compact.match(/[A-Za-z0-9\uFF10-\uFF19\uFF21-\uFF3A\uFF41-\uFF5A\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF]/g) || [];
+  return meaningfulChars.length / compact.length;
+}
+
+function isNoiseInterim(text) {
+  const compact = String(text || "").trim().replace(/\s+/g, "");
+  if (!compact) return true;
+  if (/^[A-Za-z]{1,4}$/.test(compact)) return true;
+  if (/^[0-9０-９]+$/.test(compact)) return true;
+  if (getAlphaNumericRatio(compact) < 0.5) return true;
+  return false;
+}
+
 const IMMEDIATE_ACK_PATTERNS = [
   /お願い|やって|して|調べ|確認|探し|実装|作業|対応|予約|連絡|電話|送って|まとめ/i,
   /can you|please|check|find|implement|do this|call|book|summarize/i,
@@ -133,6 +152,8 @@ const PROGRESS_PING_VARIANTS = [
   "(calm) 進めてるよ、あと少しで返せそう。",
   "(empathetic) ごめん、もう少しだけ待ってね。",
 ];
+
+const LLM_TIMEOUT_FALLBACK_VOICE = "ちょっと時間がかかってるから、詳細はあとでSlackで共有するね。";
 
 function shouldSendImmediateAck(text) {
   if (!ENABLE_IMMEDIATE_ACK) return false;
@@ -195,22 +216,32 @@ function createPipeline(session, turnState, onAudio, config) {
     sampleRate: config.stt.sampleRate,
   });
 
-  stt.on("transcript", (text, isFinal) => {
+  stt.on("transcript", (text, isFinal, confidence) => {
     if (isFinal) {
       console.log(`🎤  [interim→final] ${text}`);
       return;
     }
 
+    const interim = String(text || "").trim();
+
     // #8 Barge-in: if user starts speaking while agent is speaking, abort immediately.
     if (
       ENABLE_BARGE_IN &&
-      text &&
-      text.trim().length >= BARGE_IN_MIN_CHARS &&
+      interim &&
+      interim.length >= BARGE_IN_MIN_CHARS &&
       turnState.isAgentSpeaking &&
       currentAbort &&
       !currentAbort.signal?.aborted
     ) {
-      console.log(`🛑  Barge-in detected: "${text.trim().slice(0, 50)}" — aborting TTS/LLM`);
+      const hasLowConfidence = Number.isFinite(confidence) && confidence < BARGE_IN_CONFIDENCE_MIN;
+      const isNoise = isNoiseInterim(interim);
+
+      if (hasLowConfidence || isNoise) {
+        console.log("🧹  Barge-in ignored (noise/conf)");
+        return;
+      }
+
+      console.log(`🛑  Barge-in detected: "${interim.slice(0, 50)}" — aborting TTS/LLM`);
       currentAbort.abort();
       currentAbort = null;
       turnState.isAgentSpeaking = false;
@@ -303,9 +334,13 @@ function createPipeline(session, turnState, onAudio, config) {
     currentAbort = abort;
 
     let progressTimer = null;
+    let llmTimeoutTimer = null;
     let progressPingIndex = 0;
     let mainResponseStarted = false;
     let spokenSentenceCount = 0;
+    let firstChunkSeen = false;
+    let llmFirstResponseTimedOut = false;
+    let llmTimeoutFallbackPlayed = false;
 
     const stopProgressTimer = () => {
       if (progressTimer) {
@@ -313,6 +348,15 @@ function createPipeline(session, turnState, onAudio, config) {
         progressTimer = null;
       }
     };
+
+    const stopLlmTimeoutTimer = () => {
+      if (llmTimeoutTimer) {
+        clearTimeout(llmTimeoutTimer);
+        llmTimeoutTimer = null;
+      }
+    };
+
+    abort.signal.addEventListener("abort", stopLlmTimeoutTimer, { once: true });
 
     const appendAssistantLog = (text) => {
       session.conversationLog.push({
@@ -322,18 +366,51 @@ function createPipeline(session, turnState, onAudio, config) {
       });
     };
 
+    const maybeSpeakLlmTimeoutFallback = async () => {
+      if (!llmFirstResponseTimedOut || llmTimeoutFallbackPlayed) return;
+      llmTimeoutFallbackPlayed = true;
+
+      stopProgressTimer();
+      turnState.isAgentSpeaking = true;
+      await speakSentence(LLM_TIMEOUT_FALLBACK_VOICE, null);
+      appendAssistantLog(LLM_TIMEOUT_FALLBACK_VOICE);
+      turnState.isAgentSpeaking = false;
+    };
+
+    const startLlmTimeoutTimer = () => {
+      const timeoutMs = Number(config?.llm?.responseTimeoutMs || 0);
+      if (!(timeoutMs > 0)) return;
+
+      llmTimeoutTimer = setTimeout(() => {
+        if (firstChunkSeen || abort.signal.aborted || !isProcessing) return;
+        llmFirstResponseTimedOut = true;
+        console.warn(`⏱️  LLM first-response timeout (${timeoutMs}ms) — aborting`);
+        stopLlmTimeoutTimer();
+        abort.abort();
+      }, timeoutMs);
+    };
+
     const maybeProgressPing = async () => {
       if (!ENABLE_PROGRESS_GUARD) return;
       if (abort.signal.aborted || !isProcessing || mainResponseStarted) return;
       if (turnState.isAgentSpeaking) return;
+      if (progressPingIndex >= PROGRESS_PING_MAX) {
+        stopProgressTimer();
+        return;
+      }
 
-      const ping = pickProgressPing(progressPingIndex++);
+      const ping = pickProgressPing(progressPingIndex);
+      progressPingIndex += 1;
       turnState.isAgentSpeaking = true;
       console.log(`⏳  Progress ping: "${ping}"`);
       await speakSentence(ping, abort.signal);
       if (!abort.signal.aborted) {
         appendAssistantLog(ping.replace(/^\([^)]*\)\s*/, ""));
         turnState.isAgentSpeaking = false;
+      }
+
+      if (progressPingIndex >= PROGRESS_PING_MAX) {
+        stopProgressTimer();
       }
     };
 
@@ -356,7 +433,7 @@ function createPipeline(session, turnState, onAudio, config) {
         }
       }
 
-      if (ENABLE_PROGRESS_GUARD && PROGRESS_PING_INTERVAL_MS > 0) {
+      if (ENABLE_PROGRESS_GUARD && PROGRESS_PING_INTERVAL_MS > 0 && PROGRESS_PING_MAX > 0) {
         progressTimer = setInterval(() => {
           maybeProgressPing().catch(() => {});
         }, PROGRESS_PING_INTERVAL_MS);
@@ -373,6 +450,8 @@ function createPipeline(session, turnState, onAudio, config) {
         ? [{ role: "user", content: userText }] // OpenClaw manages history
         : history; // OpenRouter needs full history
 
+      startLlmTimeoutTimer();
+
       for await (const chunk of streamChat(
         useOpenClaw ? null : systemPrompt,
         llmMessages,
@@ -380,6 +459,7 @@ function createPipeline(session, turnState, onAudio, config) {
           // OpenClaw Gateway
           openclawUrl: config.openclawUrl,
           openclawToken: config.openclawToken,
+          openclawSystemAddendum: config.llm.openclawSystemAddendum,
           sessionUser: `meet-${session.id}`,
           // OpenRouter fallback
           apiKey: openrouterKey,
@@ -391,6 +471,11 @@ function createPipeline(session, turnState, onAudio, config) {
         }
       )) {
         if (abort.signal.aborted) break;
+
+        if (!firstChunkSeen) {
+          firstChunkSeen = true;
+          stopLlmTimeoutTimer();
+        }
 
         fullResponse += chunk;
         sentenceBuffer += chunk;
@@ -443,7 +528,10 @@ function createPipeline(session, turnState, onAudio, config) {
         }
       }
 
+      stopLlmTimeoutTimer();
+
       if (abort.signal.aborted) {
+        await maybeSpeakLlmTimeoutFallback();
         console.log("⚡  Response aborted");
         return;
       }
@@ -475,7 +563,10 @@ function createPipeline(session, turnState, onAudio, config) {
         }
       }
     } catch (err) {
-      if (abort.signal.aborted) return;
+      if (abort.signal.aborted) {
+        await maybeSpeakLlmTimeoutFallback();
+        return;
+      }
       console.error("❌  Pipeline error:", err.message);
 
       // Speak error message
@@ -487,6 +578,7 @@ function createPipeline(session, turnState, onAudio, config) {
       }
     } finally {
       stopProgressTimer();
+      stopLlmTimeoutTimer();
       turnState.isAgentSpeaking = false;
       turnState.inputCooldownUntil = Date.now() + (config.echoCooldownMs || 300);
       isProcessing = false;

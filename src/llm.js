@@ -24,6 +24,7 @@ const VOICE_SYSTEM_ADDENDUM = `あなたは今Google Meetで音声会話中で�
  * @param {string} [options.openclawUrl] - OpenClaw Gateway URL (e.g., "http://localhost:18789")
  * @param {string} [options.openclawToken] - OpenClaw Gateway token
  * @param {string} [options.sessionUser] - User/session ID for OpenClaw session isolation
+ * @param {string} [options.openclawSystemAddendum] - System addendum override for OpenClaw voice mode
  * @param {string} [options.model] - Model ID
  * @param {number} [options.temperature] - Temperature (default: 0.5)
  * @param {number} [options.maxTokens] - Max tokens (default: 300)
@@ -50,8 +51,13 @@ async function* streamOpenClaw(messages, options) {
 
   // Build messages: voice addendum as system + user messages only
   // (OpenClaw injects SOUL.md/AGENTS.md/memory automatically)
+  const systemAddendum =
+    typeof options.openclawSystemAddendum === "string"
+      ? options.openclawSystemAddendum
+      : VOICE_SYSTEM_ADDENDUM;
+
   const apiMessages = [
-    { role: "system", content: VOICE_SYSTEM_ADDENDUM },
+    { role: "system", content: systemAddendum },
     ...messages,
   ];
 
