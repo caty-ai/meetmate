@@ -423,16 +423,9 @@ server.on("upgrade", (req, socket, head) => {
     return;
   }
 
-  // Optional extra guard if Twilio includes signature header for WS handshake.
-  const signature = req.headers["x-twilio-signature"];
-  if (signature) {
-    const queryParams = Object.fromEntries(url.searchParams.entries());
-    if (!validateTwilioSignature(req, queryParams)) {
-      console.log("🚫  WS upgrade: Twilio signature invalid");
-      socket.destroy();
-      return;
-    }
-  }
+  // Note: Twilio signature validation is skipped for WS upgrades because
+  // the path-based token URL doesn't match what Twilio signs.
+  // The stoken (TTL + single-use + callSid binding) is the primary WS gate.
 
   req.twilioMeta = consumedStreamToken.meta || {};
   console.log("🔌  WS upgrade: stream token accepted (callSid will be validated on start)");
