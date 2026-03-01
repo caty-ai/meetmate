@@ -16,6 +16,7 @@ const crypto = require("crypto");
 const { parse } = require("querystring");
 const { buildAgentConfig, getPipelineConfig, SAMPLE_RATE, TTS_PROVIDER } = require("./config");
 const { createPipeline } = require("./pipeline");
+const { warmUpGatewaySession } = require("./gateway-warmup");
 const { SessionLifecycle } = require("./session-events");
 const { SlackNotifier } = require("./slack-notifier");
 const { summarizeConversation } = require("./summarizer");
@@ -621,6 +622,7 @@ const server = http.createServer(async (req, res) => {
       const meetingUrl = toSafeString(formData.meetingUrl);
       const wsUrl = toSafeString(formData.wsUrl);
       const conversationMode = toSafeString(formData.conversationMode) || "one_to_one";
+      const briefing = toSafeString(formData.briefing) || null;
 
       if (!meetingUrl || !wsUrl) {
         writePlainResponse(res, 400, "meetingUrl と wsUrl は必須です。");
@@ -674,6 +676,14 @@ const server = http.createServer(async (req, res) => {
       lifecycle.transition("initiating");
       meetLifecycles.set(sessionId, lifecycle);
       getMeetSlackNotifier().postStatus(lifecycle).catch(() => {});
+
+      const warmupConfig = getPipelineConfig({
+        prompt: session.config.prompt,
+        model: session.config.model,
+        wakeMode: session.config.wakeMode,
+        exitDetection: conversationMode !== "group",
+      });
+      warmUpGatewaySession(`meet-${sessionId}`, warmupConfig, briefing);
 
       const wsWithSession = buildWsUrlWithSession(wsUrl, sessionId);
       console.log("📹  Meeting URL:", meetingUrl);

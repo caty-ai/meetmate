@@ -11,6 +11,7 @@ const { WebSocketServer, WebSocket } = require("ws");
 
 const { createPipeline } = require("../pipeline");
 const { getPipelineConfig } = require("../config");
+const { warmUpGatewaySession } = require("../gateway-warmup");
 const { SessionLifecycle } = require("../session-events");
 const { SlackNotifier } = require("../slack-notifier");
 const { summarizeConversation } = require("../summarizer");
@@ -500,6 +501,8 @@ const server = http.createServer(async (req, res) => {
     const body = parseJsonSafe(text) || {};
     const requestedTo = normalizePhone(body.to || "");
     const to = requestedTo || getDefaultToNumber();
+    const briefing = typeof body.briefing === "string" ? body.briefing.trim() : "";
+    const warmupSessionId = crypto.randomUUID();
 
     if (!to) {
       writeJson(res, 400, { error: "missing_to_number" });
@@ -512,7 +515,17 @@ const server = http.createServer(async (req, res) => {
     }
 
     try {
-      const voiceToken = issueEphemeralToken("voice", VOICE_TOKEN_TTL_MS, { to });
+      const warmupConfig = getPipelineConfig({
+        wakeMode: "off",
+        exitDetection: false,
+        responseTimeoutMs: 25_000,
+      });
+      warmUpGatewaySession(`meet-${warmupSessionId}`, warmupConfig, briefing || null);
+
+      const voiceToken = issueEphemeralToken("voice", VOICE_TOKEN_TTL_MS, {
+        to,
+        warmupSessionId,
+      });
       const twimlUrl = `${PUBLIC_URL}/twilio/voice?vtoken=${encodeURIComponent(voiceToken)}`;
       const statusCallback = `${PUBLIC_URL}/twilio/status`;
 
@@ -549,6 +562,7 @@ const server = http.createServer(async (req, res) => {
         status: "calling",
         callSid: result.sid,
         to,
+        warmupSessionId,
       });
       return;
     } catch (err) {
@@ -591,6 +605,7 @@ const server = http.createServer(async (req, res) => {
 
     const streamToken = issueEphemeralToken("stream", STREAM_TOKEN_TTL_MS, {
       callSid,
+      warmupSessionId: consumedVoiceToken?.meta?.warmupSessionId || null,
     });
 
     const publicWsUrl = PUBLIC_URL.replace(/^https:/, "wss:").replace(/^http:/, "ws:");
@@ -693,6 +708,7 @@ wss.on("connection", (ws, req) => {
   const ctx = {
     streamSid: null,
     callSid: req.twilioMeta?.callSid || null,
+    warmupSessionId: req.twilioMeta?.warmupSessionId || null,
     pipeline: null,
     jitter: createJitterBuffer(JITTER_MAX_MS, 16000, 2),
   };
@@ -752,7 +768,7 @@ wss.on("connection", (ws, req) => {
       }
 
       if (!ctx.pipeline) {
-        const sessionId = ctx.callSid || ctx.streamSid || crypto.randomUUID();
+        const sessionId = ctx.warmupSessionId || ctx.callSid || ctx.streamSid || crypto.randomUUID();
         const session = {
           id: sessionId,
           createdAt: new Date().toISOString(),
