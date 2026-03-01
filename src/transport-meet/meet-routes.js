@@ -912,6 +912,26 @@ function handleWsConnection(client, req) {
   if (handler.on) {
     handler.on("exit_requested", (evt) => {
       console.log(`🚪  Exit requested for session ${sid}: ${evt.trigger}`);
+
+      // Remove bot from meeting via Attendee API
+      const botId = sessionBotIds.get(sid);
+      if (botId) {
+        const options = {
+          hostname: ATTENDEE_API_BASE_URL,
+          port: 443,
+          path: `/api/v1/bots/${botId}`,
+          method: "DELETE",
+          headers: { Authorization: `Token ${ATTENDEE_API_KEY}` },
+        };
+        const delReq = https.request(options, (delRes) => {
+          console.log(`🚪  Attendee bot DELETE (exit_requested): ${botId} → ${delRes.statusCode}`);
+          delRes.resume(); // drain response
+        });
+        delReq.on("error", (err) => console.error(`❌  Attendee bot DELETE error: ${err.message}`));
+        delReq.setTimeout(10_000, () => delReq.destroy());
+        delReq.end();
+      }
+
       try {
         client.close(1000, "Exit requested by user");
       } catch {

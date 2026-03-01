@@ -16,7 +16,14 @@ const STATE_EMOJI = {
 const TRANSPORT_LABEL = {
   twilio: "📞 Twilio 通話",
   meet: "🎥 Google Meet",
+  zoom: "🎥 Zoom Meeting",
 };
+
+function detectMeetingPlatform(meetingUrl) {
+  if (!meetingUrl) return "meet";
+  if (/zoom\.us/i.test(meetingUrl)) return "zoom";
+  return "meet";
+}
 
 /**
  * Slack notifier — creates and updates status messages, posts summaries.
@@ -187,7 +194,11 @@ class SlackNotifier {
   // ── Internal ──────────────────────────────────────────────────
 
   _buildStatusText(lifecycle) {
-    const transport = TRANSPORT_LABEL[lifecycle.transport] || lifecycle.transport;
+    let transportKey = lifecycle.transport;
+    if (transportKey === "meet") {
+      transportKey = detectMeetingPlatform(lifecycle.meta.meetingUrl);
+    }
+    const transport = TRANSPORT_LABEL[transportKey] || lifecycle.transport;
     const state = STATE_EMOJI[lifecycle.state] || lifecycle.state;
     const to = lifecycle.meta.to || lifecycle.meta.meetingUrl || "—";
     const elapsed = lifecycle.state === "in-progress"
@@ -225,7 +236,11 @@ class SlackNotifier {
   }
 
   _buildSummaryText(lifecycle, summary) {
-    const transport = TRANSPORT_LABEL[lifecycle.transport] || lifecycle.transport;
+    let transportKey = lifecycle.transport;
+    if (transportKey === "meet") {
+      transportKey = detectMeetingPlatform(lifecycle.meta.meetingUrl);
+    }
+    const transport = TRANSPORT_LABEL[transportKey] || lifecycle.transport;
     const lines = [
       `📋 ${transport} サマリー`,
       "━━━━━━━━━━━━━━━",
