@@ -684,8 +684,15 @@ async function handleHttp(req, res) {
         lc.transition("completed", { reason: "leave_requested" });
       }
 
-      // Cleanup
-      scheduleFinalizeSession(sid);
+      // Immediate cleanup (not scheduled — manual leave should be instant)
+      const session = meetingSessions.get(sid);
+      if (session) {
+        if (session.closeTimer) clearTimeout(session.closeTimer);
+        saveConversationLog(session);
+        meetingSessions.delete(sid);
+        sessionBotIds.delete(sid);
+        console.log(`🧹  Session closed (leave): ${sid}`);
+      }
 
       writePlainResponse(res, 200, `退出リクエスト送信: session=${sid}, bot=${botId || "unknown"}`);
       return;
