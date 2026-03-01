@@ -12,10 +12,11 @@ OpenClaw Gateway 連携により、Slack の Caty と **まったく同じ体験
 | v2 Phase 1 | Twilio 電話発信（outbound call） | ✅ 完了 (2026-02-28) |
 | v2 Phase 2 | Slack UI + 通話サマリー | ✅ 完了 (2026-02-28) |
 | v2 UX | Barge-in + タイムアウト + Warm-up + 統合サーバー | ✅ 完了 (2026-03-01) |
+| v2 Zoom | Zoom Meeting 対応 + Web UI 改善 | ✅ 完了 (2026-03-01) |
 | v2 Phase 3 | マルチエージェント展開（スキル化） | 📋 計画中 |
 | v2 Phase 4 | 着信対応 + IVR | 📋 計画中 |
 
-**最新コミット:** `9ce77a3` (unified server)
+**最新コミット:** `829fbea` (leave reconnection fix)
 
 ## アーキテクチャ
 
@@ -88,11 +89,22 @@ Gateway 未設定時は OpenRouter（直接 Claude API）にフォールバッ�
 - 💬 **処理中 Ping**: 長時間処理中のつなぎフィードバック（上限 `PROGRESS_PING_MAX`）
 - 🛡️ エコーループ防止
 
+### Zoom 対応
+- 🎥 **Zoom Meeting 参加**: Attendee Bot 経由で Zoom にもリアルタイム音声参加
+- 🏷️ **プラットフォーム自動検出**: Slack ステータスが Meet / Zoom で自動切り替え
+
+### Web UI 改善
+- 🚪 **退出ボタン**: Web UI からワンクリックでボットをミーティングから退出（Attendee `/leave` API）
+- 🔒 **重複参加防止**: アクティブセッション中は参加ボタン無効化 + サーバー側 409 ブロック
+- 📡 **ステータス自動更新**: 3秒ポーリングで通話状態をリアルタイム表示
+- 🚫 **再接続ガード**: 退出処理中の Attendee 再接続を拒否（挨拶の二重再生防止）
+
 ### Slack 連携（Phase 2）
 - 📊 Slack 1メッセージ上書きステータス（受付→発信中→通話中→完了）
 - 📋 通話後サマリー自動投稿（要約+決定事項+TODO）
 - 📜 全文ログ Slack スレッド投稿
-- 🚪 Meet 退出コマンド検知（「退出して」「今日はここまで」等）
+- 🚪 Meet/Zoom 退出コマンド検知（「退出して」「今日はここまで」等）
+- 🏷️ プラットフォーム別ラベル（Google Meet / Zoom Meeting 自動判定）
 
 ### ツール委譲（音声通話中）
 - 軽い処理（memory_search, 天気, 単発検索）→ 直接実行
@@ -314,16 +326,21 @@ meetmate/
 Fish Audio S1 の感情タグにより、Caty は文脈に応じて声のトーンを変化。
 OpenClaw の VOICE_SYSTEM_ADDENDUM で自動的に感情タグ付与を指示。
 
-### 基本感情（24種類）
-`(happy)` `(sad)` `(angry)` `(excited)` `(calm)` `(nervous)` `(confident)` `(surprised)` `(satisfied)` `(delighted)` `(scared)` `(worried)` `(upset)` `(frustrated)` `(depressed)` `(empathetic)` `(embarrassed)` `(disgusted)` `(moved)` `(proud)` `(relaxed)` `(grateful)` `(curious)` `(sarcastic)`
+### 使用中のタグ（動作確認済み 9種類）
 
-### 上級感情（25種類）
-`(disdainful)` `(unhappy)` `(anxious)` `(hysterical)` `(indifferent)` `(uncertain)` `(doubtful)` `(confused)` `(disappointed)` `(regretful)` `(guilty)` `(ashamed)` `(jealous)` `(envious)` `(hopeful)` `(optimistic)` `(pessimistic)` `(nostalgic)` `(lonely)` `(bored)` `(contemptuous)` `(sympathetic)` `(compassionate)` `(determined)` `(resigned)`
+| タグ | 意味 | 使用頻度 |
+|------|------|---------|
+| `(calm)` | 穏やか・落ち着いた | ★★★★★ (33%) |
+| `(happy)` | 嬉しい・楽しい | ★★★★★ (27%) |
+| `(curious)` | 興味津々・好奇心 | ★★★★ (16%) |
+| `(soft tone)` | やわらかい声 | ★★★ (10%) |
+| `(excited)` | 興奮・テンション高い | ★★★ (8%) |
+| `(nervous)` | 緊張・ドキドキ | ★★ (3%) |
+| `(grateful)` | 感謝 | ★ (2%) |
+| `(laughing)` | 笑いながら話す | ★ (<1%) |
+| `(confident)` | 自信・力強い | ★ (<1%) |
 
-### トーン・エフェクト
-`(in a hurry tone)` `(shouting)` `(screaming)` `(whispering)` `(soft tone)` `(laughing)` `(chuckling)` `(sobbing)` `(crying loudly)` `(sighing)` `(groaning)` `(panting)` `(gasping)` `(yawning)` `(snoring)`
-
-> ⚠️ **注意**: ボイスモデルによっては一部のタグが音声に反映されず、テキストとして読み上げられる場合があります。使用するボイスモデルでの動作確認を推奨します。
+> **テスト結果（2026-03-01）**: 64種類以上ある Fish Audio タグの中から、現在のボイスモデルで実際に動作する9種類に絞り込み。`(empathetic)`, `(whispering)`, `(surprised)`, `(determined)` 等は読み上げてしまうため除外。
 
 ## ウェイクワード検出
 
@@ -339,9 +356,15 @@ WAKE_WORDS=ケイティ,けいてぃ,caty,katie,ケイケイ
 
 マルチエージェント参加時に必須の機能。
 
-## コミット履歴（v2 UX 改善）
+## コミット履歴（v2 改善）
 
 ```
+829fbea  fix: prevent greeting replay on reconnection during leave
+4238bd7  fix: use Attendee POST /leave API + expand wake word variants
+198bc82  fix: proper bot exit via Attendee API + Zoom label + emotion tag cleanup
+244800f  fix: immediate session cleanup on manual leave (no 15s delay)
+0a3be00  feat: Web UI leave button + duplicate join prevention
+1bb6ed8  docs: update README for unified server + v2 UX improvements
 9ce77a3  feat: unified server - single port for Meet + Twilio
 e6362ac  feat: sequential warm-up for Twilio
 04ebaf6  feat: Gateway session pre-warmup for faster first response
@@ -370,16 +393,20 @@ b431262  feat: add barge-in, immediate ack, processing keepalive pings
 | v2 UX | Gateway Warm-up（初回応答高速化） | 2026-03-01 |
 | v2 UX | ツール委譲ルール（軽い→直接、重い→spawn） | 2026-03-01 |
 | v2 UX | 統合サーバー（Meet+Twilio 1ポート） | 2026-03-01 |
+| v2 Zoom | Zoom Meeting 参加対応 | 2026-03-01 |
+| v2 Zoom | 感情タグ精査（64→9種類に最適化） | 2026-03-01 |
+| v2 Zoom | Web UI 退出ボタン + 重複参加防止 | 2026-03-01 |
+| v2 Zoom | Attendee /leave API + 再接続ガード | 2026-03-01 |
+| v2 Zoom | プラットフォーム別 Slack ラベル（Meet/Zoom 自動判定） | 2026-03-01 |
 
 ### 🔜 次のステップ
 
 | # | 内容 | 優先度 |
 |---|------|--------|
-| 1 | **感情タグ精査** — 現ボイスモデルで使えるタグの確認・最適化 | 高 |
-| 2 | **Zoom テスト** — Zoom meeting 参加の動作確認 | 高 |
+| 1 | **ウェイクワード精度向上** — STT 認識精度の改善（Deepgram keywords 設定等） | 高 |
+| 2 | **プロアクティブ通知** — サブエージェント完了時の自発音声通知 | 中 |
 | 3 | **Phase 3: スキル化** — 全エージェント展開（ボイスクローニング） | 中 |
-| 4 | **プロアクティブ通知** — サブエージェント完了時の自発音声通知 | 中 |
-| 5 | **Phase 4: 着信対応 + IVR** | 低 |
+| 4 | **Phase 4: 着信対応 + IVR** | 低 |
 
 ### 📋 v2 Phase 3 — マルチエージェント展開
 
