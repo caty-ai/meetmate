@@ -44,6 +44,7 @@ const meetingSessions = new Map();
 const activeConnections = new Map();
 const meetLifecycles = new Map();
 const sessionBotIds = new Map(); // sessionId → attendee bot id
+const leavingSessionIds = new Set(); // sessions that have been requested to leave (reject reconnections)
 
 let meetSlackNotifier = null;
 
@@ -396,6 +397,7 @@ function finalizeSessionIfInactive(sessionId) {
   saveConversationLog(session);
   meetingSessions.delete(sessionId);
   sessionBotIds.delete(sessionId);
+  leavingSessionIds.delete(sessionId);
   console.log(`🧹  Session closed: ${sessionId}`);
 }
 
@@ -686,6 +688,9 @@ async function handleHttp(req, res) {
         try { conn.client.close(1000, "leave_requested"); } catch { /* ignore */ }
       }
 
+      // Mark as leaving to prevent reconnection greeting
+      leavingSessionIds.add(sid);
+
       // Call Attendee API to leave the meeting
       if (botId) {
         requestBotLeave(botId, "web_ui_leave");
@@ -869,6 +874,13 @@ function handleWsConnection(client, req) {
     return;
   }
 
+  // Reject reconnections for sessions that are leaving
+  if (leavingSessionIds.has(sid)) {
+    console.log(`🚫  Rejected reconnection for leaving session (sid=${sid})`);
+    client.close(1000, "Session is leaving");
+    return;
+  }
+
   if (WS_SHARED_TOKEN && token !== WS_SHARED_TOKEN) {
     client.close(1008, "Unauthorized websocket token");
     return;
@@ -925,6 +937,9 @@ function handleWsConnection(client, req) {
   if (handler.on) {
     handler.on("exit_requested", (evt) => {
       console.log(`🚪  Exit requested for session ${sid}: ${evt.trigger}`);
+
+      // Mark as leaving to prevent reconnection greeting
+      leavingSessionIds.add(sid);
 
       // Remove bot from meeting via Attendee API (POST /leave)
       const botId = sessionBotIds.get(sid);
