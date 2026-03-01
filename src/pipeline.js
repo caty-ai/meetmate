@@ -757,7 +757,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         await processUserInput(userText, true);
         return;
       }
-      console.error("❌  Pipeline error:", err.message);
+      console.error("❌  Pipeline error:", err.message || err.code || JSON.stringify(err));
 
       // Speak error message
       try {

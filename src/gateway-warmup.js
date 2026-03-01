@@ -98,7 +98,7 @@ function warmUpGatewaySession(sessionId, config, briefing = null) {
       );
 
       req.on("error", (err) => {
-        console.error(`❌  Gateway warm-up request error (session=${sessionUser}):`, err.message);
+        console.error(`❌  Gateway warm-up request error (session=${sessionUser}):`, err.message || err.code || err);
         done("request_error");
       });
 

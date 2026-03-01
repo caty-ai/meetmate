@@ -81,6 +81,7 @@ function loadAgents() {
     resolved[id] = {
       ...agent,
       id,
+      gatewayUrl: resolveEnvToken(agent?.gatewayUrl, `${id}.gatewayUrl`) || agent?.gatewayUrl || null,
       gatewayToken: token,
       attendeeApiKey: resolveEnvToken(agent?.attendeeApiKey, `${id}.attendeeApiKey`) || null,
     };

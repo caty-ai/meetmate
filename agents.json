@@ -98,7 +98,7 @@
   "claire": {
     "name": "Claire",
     "displayName": "クレア",
-    "gatewayUrl": "http://localhost:28789",
+    "gatewayUrl": "${CLAIRE_GATEWAY_URL}",
     "gatewayToken": "${CLAIRE_GATEWAY_TOKEN}",
     "attendeeApiKey": "${CLAIRE_ATTENDEE_API_KEY}",
     "voiceId": "your-fish-audio-voice-id",
@@ -121,7 +121,7 @@
   "sebas": {
     "name": "Sebas",
     "displayName": "セバス",
-    "gatewayUrl": "http://localhost:29011",
+    "gatewayUrl": "${SEBAS_GATEWAY_URL}",
     "gatewayToken": "${SEBAS_GATEWAY_TOKEN}",
     "attendeeApiKey": "${SEBAS_ATTENDEE_API_KEY}",
     "voiceId": "your-fish-audio-voice-id",
