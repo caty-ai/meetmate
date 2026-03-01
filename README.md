@@ -16,7 +16,7 @@ OpenClaw Gateway 連携により、Slack の Caty と **まったく同じ体験
 | v2 Phase 3 | マルチエージェント展開（スキル化） | 📋 計画中 |
 | v2 Phase 4 | 着信対応 + IVR | 📋 計画中 |
 
-**最新コミット:** `829fbea` (leave reconnection fix)
+**最新コミット:** `1e69176` (keyterm prompting for Nova-3)
 
 ## アーキテクチャ
 
@@ -356,9 +356,40 @@ WAKE_WORDS=ケイティ,けいてぃ,caty,katie,ケイケイ
 
 マルチエージェント参加時に必須の機能。
 
+### Keyterm Prompting（Nova-3）
+
+Deepgram Nova-3 の **Keyterm Prompting** 機能で、ウェイクワードの認識精度を大幅向上。
+
+> ⚠️ **重要**: Nova-3 は旧来の `keywords` パラメータをサポートしていません。`keyterm` を使う必要があります。
+> `keywords` を指定するとハンドシェイクが失敗し、キーワードブーストなしにフォールバックします。
+
+```
+# Nova-3: keyterm パラメータ（ブースト値不要、用語のみ指定）
+keyterm: ["ケイティ", "けいてぃ", "Caty", "Katie", "ケイケイ"]
+
+# Nova-2: keywords パラメータ（ブースト値付き）
+keywords: ["ケイティ:5", "caty:5"]
+```
+
+STT 接続ログで確認:
+```
+🎤  STT: 接続完了 (keyterm: ケイティ, けいてぃ, caty...)  ← ✅ 正常
+🎤  STT: 接続完了 (no keyterms)                           ← ❌ ブーストなし
+⚠️  STT keyword handshake failed. Retrying without keywords... ← ❌ Nova-2パラメータ使用中
+```
+
+### ウェイクワード マッチング
+
+STT の認識結果に対して多段マッチング:
+
+1. **完全一致**: `WAKE_WORDS` のいずれかが含まれるか
+2. **拡張バリアント**: Deepgram が「ケイティ」を「セイティ」「エイティ」「KT」等に変換した場合もキャッチ
+3. **カナ正規化**: 長音記号（ー）、促音（ッ）を除去して比較
+
 ## コミット履歴（v2 改善）
 
 ```
+1e69176  feat: switch from keywords to keyterm prompting for Nova-3 STT
 829fbea  fix: prevent greeting replay on reconnection during leave
 4238bd7  fix: use Attendee POST /leave API + expand wake word variants
 198bc82  fix: proper bot exit via Attendee API + Zoom label + emotion tag cleanup
@@ -398,15 +429,15 @@ b431262  feat: add barge-in, immediate ack, processing keepalive pings
 | v2 Zoom | Web UI 退出ボタン + 重複参加防止 | 2026-03-01 |
 | v2 Zoom | Attendee /leave API + 再接続ガード | 2026-03-01 |
 | v2 Zoom | プラットフォーム別 Slack ラベル（Meet/Zoom 自動判定） | 2026-03-01 |
+| v2 STT | Keyterm Prompting（Nova-3 ウェイクワード認識精度向上） | 2026-03-01 |
 
 ### 🔜 次のステップ
 
 | # | 内容 | 優先度 |
 |---|------|--------|
-| 1 | **ウェイクワード精度向上** — STT 認識精度の改善（Deepgram keywords 設定等） | 高 |
+| 1 | **Phase 3: スキル化** — 全エージェント展開（ボイスクローニング） | 高 |
 | 2 | **プロアクティブ通知** — サブエージェント完了時の自発音声通知 | 中 |
-| 3 | **Phase 3: スキル化** — 全エージェント展開（ボイスクローニング） | 中 |
-| 4 | **Phase 4: 着信対応 + IVR** | 低 |
+| 3 | **Phase 4: 着信対応 + IVR** | 低 |
 
 ### 📋 v2 Phase 3 — マルチエージェント展開
 
