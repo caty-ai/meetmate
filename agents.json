@@ -2,7 +2,7 @@
   "caty": {
     "name": "Caty",
     "displayName": "ケイティ",
-    "gatewayUrl": "http://localhost:18788",
+    "gatewayUrl": "http://localhost:18789",
     "gatewayToken": "${OPENCLAW_GATEWAY_TOKEN}",
     "voiceId": "your-fish-audio-voice-id",
     "wakeWords": ["ケイティ", "けいてぃ", "caty", "katie", "ケイケイ"],
