@@ -356,6 +356,36 @@ function appendToMemory(session) {
   }
 }
 
+/**
+ * Request bot to leave the meeting via Attendee API (POST /api/v1/bots/{id}/leave).
+ * Fire-and-forget — logs result but does not throw.
+ */
+function requestBotLeave(botId, reason) {
+  const body = JSON.stringify({});
+  const options = {
+    hostname: ATTENDEE_API_BASE_URL,
+    port: 443,
+    path: `/api/v1/bots/${botId}/leave`,
+    method: "POST",
+    headers: {
+      Authorization: `Token ${ATTENDEE_API_KEY}`,
+      "Content-Type": "application/json",
+      "Content-Length": Buffer.byteLength(body),
+    },
+  };
+  const req = https.request(options, (res) => {
+    let data = "";
+    res.on("data", (c) => (data += c));
+    res.on("end", () => {
+      console.log(`🚪  Attendee bot leave (${reason}): ${botId} → ${res.statusCode} ${data.slice(0, 200)}`);
+    });
+  });
+  req.on("error", (err) => console.error(`❌  Attendee bot leave error (${reason}): ${err.message}`));
+  req.setTimeout(10_000, () => req.destroy());
+  req.write(body);
+  req.end();
+}
+
 function finalizeSessionIfInactive(sessionId) {
   const active = activeConnections.get(sessionId);
   if (active) return;
@@ -656,26 +686,9 @@ async function handleHttp(req, res) {
         try { conn.client.close(1000, "leave_requested"); } catch { /* ignore */ }
       }
 
-      // Call Attendee API to remove the bot
+      // Call Attendee API to leave the meeting
       if (botId) {
-        const deleteResult = await new Promise((resolve) => {
-          const options = {
-            hostname: ATTENDEE_API_BASE_URL,
-            port: 443,
-            path: `/api/v1/bots/${botId}`,
-            method: "DELETE",
-            headers: { Authorization: `Token ${ATTENDEE_API_KEY}` },
-          };
-          const delReq = https.request(options, (delRes) => {
-            let data = "";
-            delRes.on("data", (c) => (data += c));
-            delRes.on("end", () => resolve({ statusCode: delRes.statusCode, body: data }));
-          });
-          delReq.on("error", (err) => resolve({ statusCode: 0, body: err.message }));
-          delReq.setTimeout(10_000, () => { delReq.destroy(); resolve({ statusCode: 0, body: "timeout" }); });
-          delReq.end();
-        });
-        console.log(`🚪  Bot退出リクエスト: ${botId} → ${deleteResult.statusCode}`);
+        requestBotLeave(botId, "web_ui_leave");
       }
 
       // Transition lifecycle
@@ -913,23 +926,10 @@ function handleWsConnection(client, req) {
     handler.on("exit_requested", (evt) => {
       console.log(`🚪  Exit requested for session ${sid}: ${evt.trigger}`);
 
-      // Remove bot from meeting via Attendee API
+      // Remove bot from meeting via Attendee API (POST /leave)
       const botId = sessionBotIds.get(sid);
       if (botId) {
-        const options = {
-          hostname: ATTENDEE_API_BASE_URL,
-          port: 443,
-          path: `/api/v1/bots/${botId}`,
-          method: "DELETE",
-          headers: { Authorization: `Token ${ATTENDEE_API_KEY}` },
-        };
-        const delReq = https.request(options, (delRes) => {
-          console.log(`🚪  Attendee bot DELETE (exit_requested): ${botId} → ${delRes.statusCode}`);
-          delRes.resume(); // drain response
-        });
-        delReq.on("error", (err) => console.error(`❌  Attendee bot DELETE error: ${err.message}`));
-        delReq.setTimeout(10_000, () => delReq.destroy());
-        delReq.end();
+        requestBotLeave(botId, "exit_requested");
       }
 
       try {

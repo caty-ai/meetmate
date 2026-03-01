@@ -41,9 +41,17 @@ const EXIT_COMMANDS = [
 // Extended wake word variants to handle STT transcription inaccuracies
 // Deepgram may output: けいてい, ケーティー, ケイティー, キーティ, テイティー, けーてぃ, etc.
 const EXTENDED_WAKE_VARIANTS = [
+  // Hiragana variants
   "けいてい", "けーてぃ", "けーてい", "けいてぃー", "けいていー",
+  "せいてぃ", "せいてい", "せーてぃ",
+  // Katakana variants
   "キーティ", "ケーティ", "ケーティー", "ケイティー", "テイティー",
+  "セイティ", "セーティ", "エイティ", "エイティー",
+  "キャティ", "キャティー", "ケィティ",
+  "ティーティー",
+  // Romaji / English STT output
   "keity", "katy", "kaity", "keithi", "keiti",
+  "kt", "k.t.", "katy", "katey", "catey",
 ];
 
 /**
