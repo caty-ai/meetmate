@@ -41,9 +41,25 @@ const ATTENDEE_API_KEY = process.env.ATTENDEE_API_KEY;
 // Single-agent mode: when AGENT_ID is set, this server operates as that agent only
 const FIXED_AGENT_ID = process.env.AGENT_ID || null;
 
-const BOT_IMAGE_PATH = path.join(__dirname, "..", "..", "assets", "caty-avatar.png");
-const BOT_IMAGE_URL = process.env.BOT_IMAGE_URL
+const DEFAULT_BOT_IMAGE_URL = process.env.BOT_IMAGE_URL
   || "https://example.com/avatar.png";
+
+function getBotImageConfig() {
+  if (FIXED_AGENT_ID) {
+    const agents = loadAgents();
+    const agent = agents[FIXED_AGENT_ID];
+    if (agent?.avatarUrl) {
+      return {
+        path: path.join(__dirname, "..", "..", "assets", `${FIXED_AGENT_ID}-avatar.png`),
+        url: agent.avatarUrl,
+      };
+    }
+  }
+  return {
+    path: path.join(__dirname, "..", "..", "assets", "caty-avatar.png"),
+    url: DEFAULT_BOT_IMAGE_URL,
+  };
+}
 
 let botImageData = null;
 let detectedNgrokUrl = "";
@@ -587,12 +603,14 @@ function startBotImageLoad() {
   if (botImageLoadStarted) return;
   botImageLoadStarted = true;
 
+  const imgConfig = getBotImageConfig();
+
   (async () => {
     try {
-      if (fs.existsSync(BOT_IMAGE_PATH)) {
-        const data = fs.readFileSync(BOT_IMAGE_PATH);
+      if (fs.existsSync(imgConfig.path)) {
+        const data = fs.readFileSync(imgConfig.path);
         botImageData = { type: "image/png", data: data.toString("base64") };
-        console.log("🖼️  Bot avatar loaded (local)");
+        console.log(`🖼️  Bot avatar loaded (local): ${path.basename(imgConfig.path)}`);
         return;
       }
     } catch {
@@ -601,7 +619,7 @@ function startBotImageLoad() {
 
     try {
       const data = await new Promise((resolve, reject) => {
-        https.get(BOT_IMAGE_URL, (res) => {
+        https.get(imgConfig.url, (res) => {
           if (res.statusCode !== 200) {
             reject(new Error(`HTTP ${res.statusCode}`));
             return;
@@ -615,8 +633,8 @@ function startBotImageLoad() {
       botImageData = { type: "image/png", data: data.toString("base64") };
       const assetsDir = path.join(__dirname, "..", "..", "assets");
       if (!fs.existsSync(assetsDir)) fs.mkdirSync(assetsDir, { recursive: true });
-      fs.writeFileSync(BOT_IMAGE_PATH, data);
-      console.log("🖼️  Bot avatar downloaded and cached");
+      fs.writeFileSync(imgConfig.path, data);
+      console.log(`🖼️  Bot avatar downloaded and cached: ${path.basename(imgConfig.path)}`);
     } catch (err) {
       console.warn("⚠️  Bot avatar load failed:", err.message);
     }
@@ -838,7 +856,10 @@ async function handleHttp(req, res) {
         selectedAgentNames = [allAgents[FIXED_AGENT_ID].name || FIXED_AGENT_ID];
         hasAgentSelection = true;
         console.log(`🔒  Single-agent mode: ${FIXED_AGENT_ID}`);
-      } else {
+      } else if (FIXED_AGENT_ID && !allAgents[FIXED_AGENT_ID]) {
+        console.warn(`⚠️  AGENT_ID="${FIXED_AGENT_ID}" not found in agents.json — falling back to multi-agent mode`);
+      }
+      if (!hasAgentSelection) {
         const requestedAgentIds = parseAgentIdsInput(formData.agentIds);
         hasAgentSelection = requestedAgentIds.length > 0;
         const validRequestedAgentIds = requestedAgentIds.filter((id) => !!allAgents[id]);
@@ -897,6 +918,7 @@ async function handleHttp(req, res) {
           defaultAgentId,
         },
         conversationLog: [],
+        // Per-agent conversation logs (scaffolding for future multi-agent log separation)
         conversationLogs: selectedAgentIds.reduce((acc, id) => {
           acc[id] = [];
           return acc;

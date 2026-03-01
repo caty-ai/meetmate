@@ -29,7 +29,20 @@ const ENABLE_PROGRESS_GUARD = String(process.env.ENABLE_PROGRESS_GUARD || "true"
 // Wake word detection: only respond when addressed
 // Modes: "off" (respond to everything), "wake" (require wake word), "context" (LLM decides)
 const WAKE_MODE = process.env.WAKE_MODE || "off";
-const WAKE_WORDS = (process.env.WAKE_WORDS || "ケイティ,けいてぃ,caty,katie,ケイケイ").toLowerCase().split(",").map(w => w.trim());
+// In single-agent mode, use the agent's wakeWords as default; otherwise fall back to Caty's
+const _defaultWakeWords = (() => {
+  if (process.env.WAKE_WORDS) return process.env.WAKE_WORDS;
+  if (process.env.AGENT_ID) {
+    try {
+      const { loadAgents } = require("./config");
+      const agents = loadAgents();
+      const agent = agents[process.env.AGENT_ID];
+      if (agent?.wakeWords?.length) return agent.wakeWords.join(",");
+    } catch { /* fall through */ }
+  }
+  return "ケイティ,けいてぃ,caty,katie,ケイケイ";
+})();
+const WAKE_WORDS = _defaultWakeWords.toLowerCase().split(",").map(w => w.trim());
 
 // Exit commands (for Meet sessions — triggers bot exit)
 const EXIT_COMMANDS = [

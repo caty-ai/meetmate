@@ -6,12 +6,24 @@
     "gatewayToken": "${OPENCLAW_GATEWAY_TOKEN}",
     "attendeeApiKey": "${ATTENDEE_API_KEY}",
     "voiceId": "your-fish-audio-voice-id",
-    "wakeWords": ["ケイティ", "けいてぃ", "caty", "katie", "ケイケイ"],
-    "keyterms": ["ケイティ", "けいてぃ", "Caty", "Katie"],
+    "wakeWords": [
+      "ケイティ",
+      "けいてぃ",
+      "caty",
+      "katie",
+      "ケイケイ"
+    ],
+    "keyterms": [
+      "ケイティ",
+      "けいてぃ",
+      "Caty",
+      "Katie"
+    ],
     "greeting": "(happy) こんにちは！ケイティです。よろしくお願いします！",
     "model": "anthropic/claude-sonnet-4-6",
     "default": true,
-    "openclawSystemAddendum": null
+    "openclawSystemAddendum": null,
+    "avatarUrl": "https://example.com/avatar.png"
   },
   "alec": {
     "name": "Alec",
@@ -20,12 +32,21 @@
     "gatewayToken": "${ALEC_GATEWAY_TOKEN}",
     "attendeeApiKey": "${ALEC_ATTENDEE_API_KEY}",
     "voiceId": "your-fish-audio-voice-id",
-    "wakeWords": ["アレク", "あれく", "alec"],
-    "keyterms": ["アレク", "あれく", "Alec"],
+    "wakeWords": [
+      "アレク",
+      "あれく",
+      "alec"
+    ],
+    "keyterms": [
+      "アレク",
+      "あれく",
+      "Alec"
+    ],
     "greeting": "(calm) …アレクだ。よろ。",
     "model": "openai-codex/gpt-5.3-codex",
     "default": false,
-    "openclawSystemAddendum": null
+    "openclawSystemAddendum": null,
+    "avatarUrl": "https://example.com/avatar.png"
   },
   "zoe": {
     "name": "Zoe",
@@ -34,12 +55,22 @@
     "gatewayToken": "${ZOE_GATEWAY_TOKEN}",
     "attendeeApiKey": "${ZOE_ATTENDEE_API_KEY}",
     "voiceId": "your-fish-audio-voice-id",
-    "wakeWords": ["ゾーイ", "ぞーい", "zoe", "ゾエ"],
-    "keyterms": ["ゾーイ", "ぞーい", "Zoe"],
+    "wakeWords": [
+      "ゾーイ",
+      "ぞーい",
+      "zoe",
+      "ゾエ"
+    ],
+    "keyterms": [
+      "ゾーイ",
+      "ぞーい",
+      "Zoe"
+    ],
     "greeting": "(excited) ゾーイだよ〜！よろしくね！",
     "model": "anthropic/claude-opus-4-6",
     "default": false,
-    "openclawSystemAddendum": null
+    "openclawSystemAddendum": null,
+    "avatarUrl": "https://example.com/avatar.png"
   },
   "eidra": {
     "name": "Eidra",
@@ -48,12 +79,21 @@
     "gatewayToken": "${EIDRA_GATEWAY_TOKEN}",
     "attendeeApiKey": "${EIDRA_ATTENDEE_API_KEY}",
     "voiceId": "your-fish-audio-voice-id",
-    "wakeWords": ["アイドラ", "あいどら", "eidra"],
-    "keyterms": ["アイドラ", "あいどら", "Eidra"],
+    "wakeWords": [
+      "アイドラ",
+      "あいどら",
+      "eidra"
+    ],
+    "keyterms": [
+      "アイドラ",
+      "あいどら",
+      "Eidra"
+    ],
     "greeting": "(soft tone) アイドラです。よろしくね。",
     "model": "anthropic/claude-sonnet-4-6",
     "default": false,
-    "openclawSystemAddendum": null
+    "openclawSystemAddendum": null,
+    "avatarUrl": "https://example.com/avatar.png"
   },
   "claire": {
     "name": "Claire",
@@ -62,12 +102,21 @@
     "gatewayToken": "${CLAIRE_GATEWAY_TOKEN}",
     "attendeeApiKey": "${CLAIRE_ATTENDEE_API_KEY}",
     "voiceId": "your-fish-audio-voice-id",
-    "wakeWords": ["クレア", "くれあ", "claire"],
-    "keyterms": ["クレア", "くれあ", "Claire"],
+    "wakeWords": [
+      "クレア",
+      "くれあ",
+      "claire"
+    ],
+    "keyterms": [
+      "クレア",
+      "くれあ",
+      "Claire"
+    ],
     "greeting": "(happy) クレアです！よろしくお願いします！",
     "model": "openai/gpt-5.2",
     "default": false,
-    "openclawSystemAddendum": null
+    "openclawSystemAddendum": null,
+    "avatarUrl": "https://example.com/avatar.png"
   },
   "sebas": {
     "name": "Sebas",
@@ -76,11 +125,20 @@
     "gatewayToken": "${SEBAS_GATEWAY_TOKEN}",
     "attendeeApiKey": "${SEBAS_ATTENDEE_API_KEY}",
     "voiceId": "your-fish-audio-voice-id",
-    "wakeWords": ["セバス", "せばす", "sebas"],
-    "keyterms": ["セバス", "せばす", "Sebas"],
+    "wakeWords": [
+      "セバス",
+      "せばす",
+      "sebas"
+    ],
+    "keyterms": [
+      "セバス",
+      "せばす",
+      "Sebas"
+    ],
     "greeting": "(calm) セバスです。よろしくお願いいたします。",
     "model": "anthropic/claude-opus-4-6",
     "default": false,
-    "openclawSystemAddendum": null
+    "openclawSystemAddendum": null,
+    "avatarUrl": "https://example.com/avatar.png"
   }
 }
