@@ -34,15 +34,37 @@ function createSTT(dgKey, options = {}) {
   let closedByUser = false;
   let retriedWithoutKeywords = false;
 
-  function buildWakeKeywords() {
+  /**
+   * Build keyterm prompts for Nova-3.
+   * Nova-3 uses `keyterm` (not `keywords`). No intensifier needed — just the term.
+   * See: https://developers.deepgram.com/docs/keyterm
+   */
+  function buildKeyterms() {
     const enabled = String(process.env.STT_ENABLE_KEYWORDS || "true").toLowerCase() !== "false";
     if (!enabled) return [];
 
-    return (process.env.WAKE_WORDS || "ケイティ,けいてぃ,caty,katie,ケイケイ")
+    // Base wake words + common STT misrecognition targets
+    const baseTerms = (process.env.WAKE_WORDS || "ケイティ,けいてぃ,caty,katie,ケイケイ")
       .split(",")
       .map((w) => w.trim())
-      .filter(Boolean)
-      .map((w) => `${w}:2`);
+      .filter(Boolean);
+
+    // Additional keyterms to improve recognition
+    const extraTerms = [
+      "ケイティ",     // primary (katakana)
+      "けいてぃ",     // hiragana
+      "Caty",         // romaji
+      "Katie",        // English
+    ];
+
+    // Deduplicate
+    const all = [...new Set([...baseTerms, ...extraTerms])];
+    return all;
+  }
+
+  // Legacy: build keywords for Nova-2 fallback (with intensifier)
+  function buildWakeKeywords() {
+    return buildKeyterms().map((w) => `${w}:5`);
   }
 
   function connect({ withKeywords = true } = {}) {
@@ -61,18 +83,31 @@ function createSTT(dgKey, options = {}) {
       vad_events: true,
     };
 
+    const keyterms = buildKeyterms();
     const wakeKeywords = buildWakeKeywords();
-    const useKeywords = withKeywords && wakeKeywords.length > 0;
+    const isNova3 = model.includes("nova-3");
+
+    // Nova-3: use `keyterm` parameter; Nova-2/earlier: use `keywords` parameter
+    let keytermConfig = {};
+    let keytermLabel = "(no keyterms)";
+    if (withKeywords && keyterms.length > 0) {
+      if (isNova3) {
+        keytermConfig = { keyterm: keyterms };
+        keytermLabel = `(keyterm: ${keyterms.slice(0, 3).join(", ")}...)`;
+      } else if (wakeKeywords.length > 0) {
+        keytermConfig = { keywords: wakeKeywords };
+        keytermLabel = `(keywords: ${wakeKeywords.slice(0, 3).join(", ")}...)`;
+      }
+    }
 
     connection = deepgram.listen.live({
       ...baseOptions,
-      ...(useKeywords ? { keywords: wakeKeywords } : {}),
+      ...keytermConfig,
     });
 
     connection.on(LiveTranscriptionEvents.Open, () => {
       opened = true;
-      const modeText = useKeywords ? "(keywords enabled)" : "(keywords disabled)";
-      console.log(`🎤  STT: 接続完了 ${modeText}`);
+      console.log(`🎤  STT: 接続完了 ${keytermLabel}`);
       emitter.emit("open");
     });
 
@@ -111,13 +146,13 @@ function createSTT(dgKey, options = {}) {
     connection.on(LiveTranscriptionEvents.Error, (err) => {
       // Recovery path: if handshake fails before open with keywords,
       // retry once without keywords (some DG setups reject keywords param).
+      const hasKeyterms = Object.keys(keytermConfig).length > 0;
+      const errMsg = String(err?.message || "");
       const canFallback =
-        useKeywords &&
+        hasKeyterms &&
         !opened &&
         !retriedWithoutKeywords &&
-        /non-101|ready\s*state\s*:\s*(?:0|connecting)|readystate\s*:\s*(?:0|connecting)/i.test(
-          String(err?.message || "")
-        );
+        /non-101|ready\s*state|readystate|error|failed/i.test(errMsg);
 
       if (canFallback) {
         retriedWithoutKeywords = true;
