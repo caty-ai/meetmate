@@ -4,8 +4,10 @@
   "description": "AIアシスタント(Caty)がGoogle Meetにリアルタイム参加し音声で対話するブリッジサーバー",
   "main": "src/index.js",
   "scripts": {
-    "start": "node src/index.js",
-    "dev": "node --watch src/index.js"
+    "start": "node src/server.js",
+    "start:meet": "node src/index.js",
+    "start:twilio": "node src/transport-twilio/twilio-bridge.js",
+    "dev": "node --watch src/server.js"
   },
   "dependencies": {
     "@deepgram/sdk": "^4.7.0",
