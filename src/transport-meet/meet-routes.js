@@ -82,8 +82,13 @@ function getMeetSlackNotifier() {
     const summaryChannel = process.env.SLACK_SUMMARY_CHANNEL || fallback;
     const statusChannel = process.env.SLACK_STATUS_CHANNEL || summaryChannel || fallback;
 
+    // Per-agent Slack bot token: ${AGENT_ID}_SLACK_BOT_TOKEN → SLACK_BOT_TOKEN
+    const agentSlackToken = FIXED_AGENT_ID
+      ? (process.env[`${FIXED_AGENT_ID.toUpperCase()}_SLACK_BOT_TOKEN`] || process.env.SLACK_BOT_TOKEN || "")
+      : (process.env.SLACK_BOT_TOKEN || "");
+
     meetSlackNotifier = new SlackNotifier(
-      process.env.SLACK_BOT_TOKEN || "",
+      agentSlackToken,
       fallback,
       {
         enabled: notifyEnabled,

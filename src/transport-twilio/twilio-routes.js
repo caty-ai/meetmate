@@ -52,7 +52,11 @@ let connectionHandlerAttached = false;
 
 function getSlackNotifier() {
   if (!slackNotifier) {
-    const slackToken = process.env.SLACK_BOT_TOKEN || "";
+    // Per-agent Slack bot token: ${AGENT_ID}_SLACK_BOT_TOKEN → SLACK_BOT_TOKEN
+    const agentId = process.env.AGENT_ID || null;
+    const slackToken = agentId
+      ? (process.env[`${agentId.toUpperCase()}_SLACK_BOT_TOKEN`] || process.env.SLACK_BOT_TOKEN || "")
+      : (process.env.SLACK_BOT_TOKEN || "");
     const fallback = process.env.SLACK_NOTIFY_CHANNEL || "";
     const summaryChannel = process.env.SLACK_SUMMARY_CHANNEL || fallback;
     const statusChannel = process.env.SLACK_STATUS_CHANNEL || summaryChannel || fallback;
