@@ -51,7 +51,7 @@ let botImageLoadStarted = false;
 const meetingSessions = new Map();
 const activeConnections = new Map();
 const meetLifecycles = new Map();
-const sessionBotIds = new Map(); // sessionId → attendee bot id
+const sessionBotIds = new Map(); // sessionId → { botId, attendeeKey }
 const leavingSessionIds = new Set(); // sessions that have been requested to leave (reject reconnections)
 
 let meetSlackNotifier = null;
@@ -217,7 +217,8 @@ function parseRequestBody(req) {
   });
 }
 
-function createAttendeeBot(attendeePayload) {
+function createAttendeeBot(attendeePayload, agentAttendeeKey) {
+  const apiKey = agentAttendeeKey || ATTENDEE_API_KEY;
   return new Promise((resolve, reject) => {
     const options = {
       hostname: ATTENDEE_API_BASE_URL,
@@ -225,7 +226,7 @@ function createAttendeeBot(attendeePayload) {
       path: "/api/v1/bots",
       method: "POST",
       headers: {
-        Authorization: `Token ${ATTENDEE_API_KEY}`,
+        Authorization: `Token ${apiKey}`,
         "Content-Type": "application/json",
         "Content-Length": Buffer.byteLength(attendeePayload),
       },
@@ -251,13 +252,13 @@ function createAttendeeBot(attendeePayload) {
   });
 }
 
-async function createAttendeeBotWithRetry(attendeePayload) {
+async function createAttendeeBotWithRetry(attendeePayload, agentAttendeeKey) {
   let lastResult = null;
   let lastError = null;
 
   for (let attempt = 1; attempt <= ATTENDEE_RETRY_ATTEMPTS; attempt++) {
     try {
-      const result = await createAttendeeBot(attendeePayload);
+      const result = await createAttendeeBot(attendeePayload, agentAttendeeKey);
       lastResult = result;
 
       if (result.statusCode >= 200 && result.statusCode < 300) {
@@ -397,7 +398,8 @@ function appendToMemory(session) {
  * Request bot to leave the meeting via Attendee API (POST /api/v1/bots/{id}/leave).
  * Fire-and-forget — logs result but does not throw.
  */
-function requestBotLeave(botId, reason) {
+function requestBotLeave(botId, reason, attendeeKey) {
+  const apiKey = attendeeKey || ATTENDEE_API_KEY;
   const body = JSON.stringify({});
   const options = {
     hostname: ATTENDEE_API_BASE_URL,
@@ -405,7 +407,7 @@ function requestBotLeave(botId, reason) {
     path: `/api/v1/bots/${botId}/leave`,
     method: "POST",
     headers: {
-      Authorization: `Token ${ATTENDEE_API_KEY}`,
+      Authorization: `Token ${apiKey}`,
       "Content-Type": "application/json",
       "Content-Length": Buffer.byteLength(body),
     },
@@ -714,7 +716,7 @@ async function handleHttp(req, res) {
         meetingUrl: session.meetingUrl,
         startedAt: session.startedAt,
         state: lc?.state || "unknown",
-        botId: sessionBotIds.get(sid) || null,
+        botId: sessionBotIds.get(sid)?.botId || null,
         hasConnection: activeConnections.has(sid),
         agentIds: session.config?.agentIds || [],
         agentDisplayNames: session.agents || [],
@@ -742,7 +744,8 @@ async function handleHttp(req, res) {
       }
 
       const sid = toSafeString(formData.sessionId);
-      const botId = sessionBotIds.get(sid);
+      const botInfo = sessionBotIds.get(sid);
+      const botId = botInfo?.botId;
 
       // Close the WebSocket connection
       const conn = activeConnections.get(sid);
@@ -755,7 +758,7 @@ async function handleHttp(req, res) {
 
       // Call Attendee API to leave the meeting
       if (botId) {
-        requestBotLeave(botId, "web_ui_leave");
+        requestBotLeave(botId, "web_ui_leave", botInfo?.attendeeKey);
       }
 
       // Transition lifecycle
@@ -914,13 +917,17 @@ async function handleHttp(req, res) {
         botPayload.bot_image = botImageData;
       }
 
+      // Use the default/first agent's Attendee API key if available
+      const primaryAgent = defaultAgentId ? allAgents[defaultAgentId] : null;
+      const agentAttendeeKey = primaryAgent?.attendeeApiKey || null;
+
       const attendeePayload = JSON.stringify(botPayload);
-      const attendeeResult = await createAttendeeBotWithRetry(attendeePayload);
+      const attendeeResult = await createAttendeeBotWithRetry(attendeePayload, agentAttendeeKey);
       if (attendeeResult.statusCode >= 200 && attendeeResult.statusCode < 300) {
         console.log("✅  Bot起動成功:", attendeeResult.body);
         try {
           const botData = JSON.parse(attendeeResult.body);
-          if (botData.id) sessionBotIds.set(sessionId, botData.id);
+          if (botData.id) sessionBotIds.set(sessionId, { botId: botData.id, attendeeKey: agentAttendeeKey });
         } catch { /* ignore parse errors */ }
         writePlainResponse(
           res,
@@ -1033,9 +1040,9 @@ function handleWsConnection(client, req) {
       leavingSessionIds.add(sid);
 
       // Remove bot from meeting via Attendee API (POST /leave)
-      const botId = sessionBotIds.get(sid);
-      if (botId) {
-        requestBotLeave(botId, "exit_requested");
+      const botInfo = sessionBotIds.get(sid);
+      if (botInfo?.botId) {
+        requestBotLeave(botInfo.botId, "exit_requested", botInfo.attendeeKey);
       }
 
       try {

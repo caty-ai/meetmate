@@ -76,6 +76,7 @@ function loadAgents() {
       ...agent,
       id,
       gatewayToken: token,
+      attendeeApiKey: resolveEnvToken(agent?.attendeeApiKey) || null,
     };
   }
 
