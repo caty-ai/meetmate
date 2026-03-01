@@ -688,11 +688,28 @@ async function handleHttp(req, res) {
       publicWsUrl = process.env.PUBLIC_WSS_URL;
     }
 
+    // Resolve primary agent info for single-agent mode branding
+    let primaryAgent = null;
+    if (FIXED_AGENT_ID) {
+      const agents = loadAgents();
+      const a = agents[FIXED_AGENT_ID];
+      if (a) {
+        primaryAgent = {
+          id: FIXED_AGENT_ID,
+          name: a.name || FIXED_AGENT_ID,
+          displayName: a.displayName || a.name || FIXED_AGENT_ID,
+          greeting: a.greeting || null,
+        };
+      }
+    }
+
     const info = {
       ttsProvider: TTS_PROVIDER,
       lang: process.env.AGENT_LANG || "ja",
       publicWsUrl,
       ready: true,
+      fixedAgentId: FIXED_AGENT_ID || null,
+      primaryAgent,
     };
     res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
     res.end(JSON.stringify(info));
@@ -814,14 +831,16 @@ async function handleHttp(req, res) {
       let selectedAgentIds;
       let defaultAgentId;
       let selectedAgentNames;
+      let hasAgentSelection = false;
       if (FIXED_AGENT_ID && allAgents[FIXED_AGENT_ID]) {
         selectedAgentIds = [FIXED_AGENT_ID];
         defaultAgentId = FIXED_AGENT_ID;
         selectedAgentNames = [allAgents[FIXED_AGENT_ID].name || FIXED_AGENT_ID];
+        hasAgentSelection = true;
         console.log(`🔒  Single-agent mode: ${FIXED_AGENT_ID}`);
       } else {
         const requestedAgentIds = parseAgentIdsInput(formData.agentIds);
-        const hasAgentSelection = requestedAgentIds.length > 0;
+        hasAgentSelection = requestedAgentIds.length > 0;
         const validRequestedAgentIds = requestedAgentIds.filter((id) => !!allAgents[id]);
         selectedAgentIds = hasAgentSelection ? validRequestedAgentIds : [];
         defaultAgentId = selectedAgentIds.length > 0

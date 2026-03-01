@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Meet Participant — Caty</title>
+    <title>AI Meet Participant</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -283,8 +283,8 @@
 </head>
 <body>
     <div class="container">
-        <h1>🐱 AI Meet Participant</h1>
-        <p class="subtitle">Caty（ケイティ）をGoogle Meet / Zoomに参加させる</p>
+        <h1 id="pageTitle">🐱 AI Meet Participant</h1>
+        <p class="subtitle" id="pageSubtitle">AIエージェントをGoogle Meet / Zoomに参加させる</p>
         <div class="mode-badge"><span id="modeBadge">🐟 Fish Audio TTS</span></div>
 
         <!-- Active session banner -->
@@ -506,17 +506,16 @@
             populateAgents();
             renderAgentSelector();
 
-            // In single-agent mode, hide agent selection and mode toggle
+            // In single-agent mode, hide agent selection but KEEP conversation mode toggle
             if (fixedAgentId && availableAgents.length === 1) {
                 const agentLabel = document.getElementById('agentSelectionSection');
                 if (agentLabel) agentLabel.style.display = 'none';
                 const agentDiv = document.getElementById('agentSectionDiv');
                 if (agentDiv) agentDiv.style.display = 'none';
-                const modeSection = document.getElementById('modeSection');
-                if (modeSection) modeSection.style.display = 'none';
+                // Keep conversation mode visible — needed for wake mode in group meetings
                 // Update page title
                 const agent = availableAgents[0];
-                document.title = `AI Meet Participant — ${agent.name}`;
+                document.title = `AI Meet Participant — ${agent.displayName || agent.name}`;
             }
         }
 
@@ -684,7 +683,7 @@
             if (saved) document.getElementById(id).value = saved;
         });
 
-        // Fetch server info for mode badge + public WSS URL
+        // Fetch server info for mode badge + public WSS URL + agent branding
         fetch('/info').then(r => r.json()).then(info => {
             const badge = document.getElementById('modeBadge');
             if (info.ttsProvider === 'fish-audio') {
@@ -694,6 +693,21 @@
             }
             if (info.publicWsUrl) {
                 serverPublicWsUrl = info.publicWsUrl;
+            }
+            // Dynamic branding for single-agent mode
+            if (info.primaryAgent) {
+                const agent = info.primaryAgent;
+                const dn = agent.displayName || agent.name;
+                document.title = `AI Meet Participant — ${dn}`;
+                const titleEl = document.getElementById('pageTitle');
+                if (titleEl) titleEl.textContent = `🎙️ AI Meet Participant — ${dn}`;
+                const subtitleEl = document.getElementById('pageSubtitle');
+                if (subtitleEl) subtitleEl.textContent = `${dn}をGoogle Meet / Zoomに参加させる`;
+                // Update bot name default
+                const botNameEl = document.getElementById('botName');
+                if (botNameEl && !localStorage.getItem('caty_botName')) {
+                    botNameEl.value = `${agent.name} (${dn})`;
+                }
             }
         }).catch(() => {});
 

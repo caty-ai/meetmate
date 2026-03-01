@@ -207,6 +207,10 @@ class SlackNotifier {
         ? lifecycle.durationFormatted
         : "—";
 
+    const agentNames = Array.isArray(lifecycle.meta.agents) && lifecycle.meta.agents.length
+      ? lifecycle.meta.agents.join(", ")
+      : null;
+
     const header = lifecycle.isTerminal && lifecycle.state === "completed"
       ? `${transport} 完了`
       : `${transport} ステータス`;
@@ -215,6 +219,10 @@ class SlackNotifier {
       header,
       "━━━━━━━━━━━━━━━",
     ];
+
+    if (agentNames) {
+      lines.push(`🤖 エージェント: ${agentNames}`);
+    }
 
     if (lifecycle.transport === "twilio") {
       lines.push(`📱 発信先: ${to}`);
@@ -277,10 +285,13 @@ class SlackNotifier {
     const userMsgs = log.filter(
       (e) => e.role !== "assistant" && e.role !== "agent"
     ).length;
-    const catyMsgs = log.filter(
+    const agentMsgs = log.filter(
       (e) => e.role === "assistant" || e.role === "agent"
     ).length;
-    lines.push(`💬 発話数: ${log.length}（ユーザー: ${userMsgs}, Caty: ${catyMsgs}）`);
+    const agentNames = Array.isArray(lifecycle.meta.agents) && lifecycle.meta.agents.length
+      ? lifecycle.meta.agents.join("/")
+      : "AI";
+    lines.push(`💬 発話数: ${log.length}（ユーザー: ${userMsgs}, ${agentNames}: ${agentMsgs}）`);
 
     return lines.join("\n");
   }
