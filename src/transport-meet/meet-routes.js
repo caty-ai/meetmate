@@ -43,6 +43,7 @@ let botImageLoadStarted = false;
 const meetingSessions = new Map();
 const activeConnections = new Map();
 const meetLifecycles = new Map();
+const sessionBotIds = new Map(); // sessionId → attendee bot id
 
 let meetSlackNotifier = null;
 
@@ -364,6 +365,7 @@ function finalizeSessionIfInactive(sessionId) {
 
   saveConversationLog(session);
   meetingSessions.delete(sessionId);
+  sessionBotIds.delete(sessionId);
   console.log(`🧹  Session closed: ${sessionId}`);
 }
 
@@ -610,6 +612,90 @@ async function handleHttp(req, res) {
     return;
   }
 
+  // Active session status (for Web UI polling)
+  if (req.method === "GET" && url.pathname === "/active-session") {
+    const sessions = [];
+    for (const [sid, session] of meetingSessions) {
+      const lc = meetLifecycles.get(sid);
+      sessions.push({
+        sessionId: sid,
+        meetingUrl: session.meetingUrl,
+        startedAt: session.startedAt,
+        state: lc?.state || "unknown",
+        botId: sessionBotIds.get(sid) || null,
+        hasConnection: activeConnections.has(sid),
+      });
+    }
+    res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+    res.end(JSON.stringify({ active: sessions.length > 0, sessions }));
+    return;
+  }
+
+  // Leave meeting (force-remove bot via Attendee API)
+  if (req.method === "POST" && url.pathname === "/leave-meeting") {
+    try {
+      const formData = await parseRequestBody(req);
+      const targetSid = toSafeString(formData.sessionId);
+
+      if (!targetSid || !meetingSessions.has(targetSid)) {
+        // If no specific session, try to leave the first active one
+        const firstSid = meetingSessions.keys().next().value;
+        if (!firstSid) {
+          writePlainResponse(res, 404, "アクティブなセッションがありません。");
+          return;
+        }
+        formData.sessionId = firstSid;
+      }
+
+      const sid = toSafeString(formData.sessionId);
+      const botId = sessionBotIds.get(sid);
+
+      // Close the WebSocket connection
+      const conn = activeConnections.get(sid);
+      if (conn?.client) {
+        try { conn.client.close(1000, "leave_requested"); } catch { /* ignore */ }
+      }
+
+      // Call Attendee API to remove the bot
+      if (botId) {
+        const deleteResult = await new Promise((resolve) => {
+          const options = {
+            hostname: ATTENDEE_API_BASE_URL,
+            port: 443,
+            path: `/api/v1/bots/${botId}`,
+            method: "DELETE",
+            headers: { Authorization: `Token ${ATTENDEE_API_KEY}` },
+          };
+          const delReq = https.request(options, (delRes) => {
+            let data = "";
+            delRes.on("data", (c) => (data += c));
+            delRes.on("end", () => resolve({ statusCode: delRes.statusCode, body: data }));
+          });
+          delReq.on("error", (err) => resolve({ statusCode: 0, body: err.message }));
+          delReq.setTimeout(10_000, () => { delReq.destroy(); resolve({ statusCode: 0, body: "timeout" }); });
+          delReq.end();
+        });
+        console.log(`🚪  Bot退出リクエスト: ${botId} → ${deleteResult.statusCode}`);
+      }
+
+      // Transition lifecycle
+      const lc = meetLifecycles.get(sid);
+      if (lc && !lc.isTerminal) {
+        lc.transition("completed", { reason: "leave_requested" });
+      }
+
+      // Cleanup
+      scheduleFinalizeSession(sid);
+
+      writePlainResponse(res, 200, `退出リクエスト送信: session=${sid}, bot=${botId || "unknown"}`);
+      return;
+    } catch (err) {
+      console.error("❌  /leave-meeting error:", err);
+      writePlainResponse(res, 500, `leave-meeting エラー: ${err.message}`);
+      return;
+    }
+  }
+
   if (req.method === "POST" && url.pathname === "/join-meeting") {
     try {
       const formData = await parseRequestBody(req);
@@ -623,6 +709,13 @@ async function handleHttp(req, res) {
       const wsUrl = toSafeString(formData.wsUrl);
       const conversationMode = toSafeString(formData.conversationMode) || "one_to_one";
       const briefing = toSafeString(formData.briefing) || null;
+
+      // Prevent duplicate joins — block if there's already an active session
+      if (meetingSessions.size > 0) {
+        const activeSids = [...meetingSessions.keys()];
+        writePlainResponse(res, 409, `既にアクティブなセッションがあります（${activeSids.join(", ")}）。退出してから再度参加してください。`);
+        return;
+      }
 
       if (!meetingUrl || !wsUrl) {
         writePlainResponse(res, 400, "meetingUrl と wsUrl は必須です。");
@@ -709,6 +802,10 @@ async function handleHttp(req, res) {
       const attendeeResult = await createAttendeeBotWithRetry(attendeePayload);
       if (attendeeResult.statusCode >= 200 && attendeeResult.statusCode < 300) {
         console.log("✅  Bot起動成功:", attendeeResult.body);
+        try {
+          const botData = JSON.parse(attendeeResult.body);
+          if (botData.id) sessionBotIds.set(sessionId, botData.id);
+        } catch { /* ignore parse errors */ }
         writePlainResponse(
           res,
           200,

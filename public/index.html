@@ -185,6 +185,61 @@
             0%, 100% { opacity: 1; }
             50% { opacity: 0.5; }
         }
+
+        /* Active session banner */
+        .active-banner {
+            display: none;
+            background: #1a3a2a;
+            border: 1px solid #2d6a4f;
+            border-radius: 12px;
+            padding: 1.2rem;
+            margin-bottom: 1.5rem;
+            text-align: center;
+        }
+        .active-banner.visible {
+            display: block;
+        }
+        .active-banner .active-icon {
+            font-size: 1.5rem;
+            margin-bottom: 0.5rem;
+        }
+        .active-banner .active-label {
+            color: #95d5b2;
+            font-weight: 600;
+            font-size: 1rem;
+            margin-bottom: 0.3rem;
+        }
+        .active-banner .active-url {
+            color: #6dba8a;
+            font-size: 0.85rem;
+            word-break: break-all;
+            margin-bottom: 0.3rem;
+        }
+        .active-banner .active-state {
+            color: #888;
+            font-size: 0.8rem;
+            margin-bottom: 0.8rem;
+        }
+        .leave-btn {
+            margin-top: 0.5rem;
+            padding: 0.7rem 1.5rem;
+            background: linear-gradient(135deg, #e94560, #c23152);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.95rem;
+            font-weight: 600;
+            transition: transform 0.1s;
+        }
+        .leave-btn:hover {
+            transform: translateY(-1px);
+        }
+        .leave-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
     </style>
 </head>
 <body>
@@ -192,6 +247,15 @@
         <h1>🐱 AI Meet Participant</h1>
         <p class="subtitle">Caty（ケイティ）をGoogle Meet / Zoomに参加させる</p>
         <div class="mode-badge"><span id="modeBadge">🐟 Fish Audio TTS</span></div>
+
+        <!-- Active session banner -->
+        <div id="activeBanner" class="active-banner">
+            <div class="active-icon">🎙️</div>
+            <div class="active-label">通話中</div>
+            <div id="activeUrl" class="active-url"></div>
+            <div id="activeState" class="active-state"></div>
+            <button id="leaveBtn" class="leave-btn" onclick="leaveMeeting()">🚪 退出する</button>
+        </div>
 
         <form id="joinForm">
             <label for="meetingText">📹 Meet情報（カレンダー/Slackの本文を貼り付け）:</label>
@@ -228,7 +292,7 @@
                 <small>空欄の場合、現在のホストから自動生成されます</small>
             </div>
 
-            <button type="submit">🚀 Meetに参加させる</button>
+            <button type="submit" id="joinBtn">🚀 Meetに参加させる</button>
         </form>
 
         <div id="status" class="status"></div>
@@ -237,11 +301,19 @@
     <script>
         const form = document.getElementById('joinForm');
         const statusEl = document.getElementById('status');
-        const submitBtn = form.querySelector('button[type="submit"]');
+        const submitBtn = document.getElementById('joinBtn');
         const meetingTextEl = document.getElementById('meetingText');
         const meetingUrlStatusEl = document.getElementById('meetingUrlStatus');
+        const activeBanner = document.getElementById('activeBanner');
+        const activeUrlEl = document.getElementById('activeUrl');
+        const activeStateEl = document.getElementById('activeState');
+        const leaveBtn = document.getElementById('leaveBtn');
         let extractedMeetingUrl = '';
         let isSubmitting = false;
+        let isLeaving = false;
+        let hasActiveSession = false;
+        let activeSessionId = null;
+        let pollTimer = null;
 
         function setStatus(type, text, asHtml = false) {
             statusEl.className = `status ${type}`;
@@ -260,9 +332,91 @@
         }
 
         function updateSubmitButtonState() {
-            const canSubmit = Boolean(extractedMeetingUrl) && !isSubmitting;
+            const canSubmit = Boolean(extractedMeetingUrl) && !isSubmitting && !hasActiveSession;
             submitBtn.disabled = !canSubmit;
-            submitBtn.textContent = isSubmitting ? '⏳ 起動中...' : '🚀 Meetに参加させる';
+            if (hasActiveSession) {
+                submitBtn.textContent = '🔒 通話中（退出してから再参加）';
+            } else if (isSubmitting) {
+                submitBtn.textContent = '⏳ 起動中...';
+            } else {
+                submitBtn.textContent = '🚀 Meetに参加させる';
+            }
+        }
+
+        function stateLabel(state) {
+            const labels = {
+                initiating: '🔄 起動中...',
+                joining: '🔄 参加中...',
+                active: '🟢 通話中',
+                speaking: '🎙️ 発話中',
+                listening: '👂 聴取中',
+                unknown: '🟡 接続中...',
+            };
+            return labels[state] || `🟡 ${state}`;
+        }
+
+        function updateActiveBanner(sessions) {
+            if (sessions && sessions.length > 0) {
+                const s = sessions[0];
+                hasActiveSession = true;
+                activeSessionId = s.sessionId;
+                activeUrlEl.textContent = s.meetingUrl || '';
+                activeStateEl.textContent = stateLabel(s.state) + (s.hasConnection ? '' : ' (WS未接続)');
+                activeBanner.classList.add('visible');
+            } else {
+                hasActiveSession = false;
+                activeSessionId = null;
+                activeBanner.classList.remove('visible');
+            }
+            updateSubmitButtonState();
+        }
+
+        async function pollActiveSession() {
+            try {
+                const res = await fetch('/active-session');
+                const data = await res.json();
+                updateActiveBanner(data.sessions);
+            } catch {
+                // ignore
+            }
+        }
+
+        function startPolling() {
+            pollActiveSession();
+            pollTimer = setInterval(pollActiveSession, 3000);
+        }
+
+        function stopPolling() {
+            if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+        }
+
+        async function leaveMeeting() {
+            if (isLeaving) return;
+            isLeaving = true;
+            leaveBtn.disabled = true;
+            leaveBtn.textContent = '⏳ 退出中...';
+
+            try {
+                const body = new URLSearchParams({
+                    sessionId: activeSessionId || '',
+                });
+                const res = await fetch('/leave-meeting', { method: 'POST', body });
+                const text = await res.text();
+
+                if (res.ok) {
+                    setStatus('success', '🚪 ' + text);
+                    // Force refresh after a moment
+                    setTimeout(pollActiveSession, 1000);
+                } else {
+                    setStatus('error', '❌ ' + text);
+                }
+            } catch (err) {
+                setStatus('error', '❌ 退出エラー: ' + err.message);
+            } finally {
+                isLeaving = false;
+                leaveBtn.disabled = false;
+                leaveBtn.textContent = '🚪 退出する';
+            }
         }
 
         function decodeEscapedAngles(text) {
@@ -379,12 +533,17 @@
         });
         updateMeetingUrlStatus();
 
+        // Start polling for active sessions
+        startPolling();
+
         form.addEventListener('submit', async function(event) {
             event.preventDefault();
 
             updateMeetingUrlStatus();
-            if (!extractedMeetingUrl || isSubmitting) {
-                if (!extractedMeetingUrl) {
+            if (!extractedMeetingUrl || isSubmitting || hasActiveSession) {
+                if (hasActiveSession) {
+                    setStatus('error', '🔒 既にアクティブなセッションがあります。退出してから再参加してください。');
+                } else if (!extractedMeetingUrl) {
                     setStatus('error', '❌ Meet / Zoom URLが見つかりません');
                 }
                 return;
@@ -419,6 +578,8 @@
                         '<br><small style="opacity:0.9">ミーティング画面でBotの参加を確認してください 🐱</small>',
                         true
                     );
+                    // Immediately poll to show active banner
+                    setTimeout(pollActiveSession, 500);
                 } else {
                     setStatus('error', '❌ ' + text);
                 }
