@@ -46,11 +46,17 @@ const SLACK_STATUS_CHANNEL = process.env.SLACK_STATUS_CHANNEL || "";
 const SLACK_NOTIFY_ENABLED = String(process.env.SLACK_NOTIFY_ENABLED || "true").toLowerCase() !== "false";
 const SUMMARY_ENABLED = String(process.env.SUMMARY_ENABLED || "true").toLowerCase() !== "false";
 
-function resolveEnvToken(value) {
+function resolveEnvToken(value, fieldName = "token") {
   if (!value) return null;
   const raw = String(value).trim();
   const match = raw.match(/^\$\{(.+)\}$/);
-  if (!match) return raw;
+  if (!match) {
+    // Plaintext token — warn about security risk
+    if (raw.length > 8) {
+      console.warn(`⚠️  SECURITY: ${fieldName} appears to be a plaintext token in agents.json. Use \${ENV_VAR} syntax instead.`);
+    }
+    return raw;
+  }
   return process.env[match[1]] || null;
 }
 
@@ -67,7 +73,7 @@ function loadAgents() {
 
   const resolved = {};
   for (const [id, agent] of Object.entries(raw || {})) {
-    const token = resolveEnvToken(agent?.gatewayToken);
+    const token = resolveEnvToken(agent?.gatewayToken, `${id}.gatewayToken`);
     if (!token) {
       console.warn(`⚠️  Agent "${id}" skipped: gateway token not available`);
       continue;
@@ -76,7 +82,7 @@ function loadAgents() {
       ...agent,
       id,
       gatewayToken: token,
-      attendeeApiKey: resolveEnvToken(agent?.attendeeApiKey) || null,
+      attendeeApiKey: resolveEnvToken(agent?.attendeeApiKey, `${id}.attendeeApiKey`) || null,
     };
   }
 

@@ -507,7 +507,8 @@
             renderAgentSelector();
 
             // In single-agent mode, hide agent selection but KEEP conversation mode toggle
-            if (fixedAgentId && availableAgents.length === 1) {
+            // Use fixedAgentId alone (not agent count) — tokens for other agents may exist
+            if (fixedAgentId) {
                 const agentLabel = document.getElementById('agentSelectionSection');
                 if (agentLabel) agentLabel.style.display = 'none';
                 const agentDiv = document.getElementById('agentSectionDiv');
