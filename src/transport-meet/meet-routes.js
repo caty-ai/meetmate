@@ -38,6 +38,9 @@ const CONVERSATION_MODES = new Set(["one_to_one", "group"]);
 const DG_KEY = process.env.DEEPGRAM_API_KEY;
 const ATTENDEE_API_KEY = process.env.ATTENDEE_API_KEY;
 
+// Single-agent mode: when AGENT_ID is set, this server operates as that agent only
+const FIXED_AGENT_ID = process.env.AGENT_ID || null;
+
 const BOT_IMAGE_PATH = path.join(__dirname, "..", "..", "assets", "caty-avatar.png");
 const BOT_IMAGE_URL = process.env.BOT_IMAGE_URL
   || "https://example.com/avatar.png";
@@ -698,8 +701,13 @@ async function handleHttp(req, res) {
 
   if (req.method === "GET" && url.pathname === "/agents") {
     const agents = loadAgents();
+    // In single-agent mode, only return the fixed agent
+    const filteredAgents = FIXED_AGENT_ID
+      ? Object.fromEntries(Object.entries(agents).filter(([id]) => id === FIXED_AGENT_ID))
+      : agents;
     const response = {
-      agents: buildAgentsResponseList(agents),
+      agents: buildAgentsResponseList(filteredAgents),
+      fixedAgentId: FIXED_AGENT_ID || null,
     };
     res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
     res.end(JSON.stringify(response));
@@ -799,16 +807,28 @@ async function handleHttp(req, res) {
       const wsUrl = toSafeString(formData.wsUrl);
       const conversationMode = toSafeString(formData.conversationMode) || "one_to_one";
       const briefing = toSafeString(formData.briefing) || null;
-      const requestedAgentIds = parseAgentIdsInput(formData.agentIds);
       const allAgents = loadAgents();
       const configuredDefault = getDefaultAgent(allAgents);
-      const hasAgentSelection = requestedAgentIds.length > 0;
-      const validRequestedAgentIds = requestedAgentIds.filter((id) => !!allAgents[id]);
-      const selectedAgentIds = hasAgentSelection ? validRequestedAgentIds : [];
-      const defaultAgentId = selectedAgentIds.length > 0
-        ? (selectedAgentIds[0] || configuredDefault?.id || null)
-        : null;
-      const selectedAgentNames = selectedAgentIds.map((id) => allAgents[id]?.name || id);
+
+      // Single-agent mode: override agent selection
+      let selectedAgentIds;
+      let defaultAgentId;
+      let selectedAgentNames;
+      if (FIXED_AGENT_ID && allAgents[FIXED_AGENT_ID]) {
+        selectedAgentIds = [FIXED_AGENT_ID];
+        defaultAgentId = FIXED_AGENT_ID;
+        selectedAgentNames = [allAgents[FIXED_AGENT_ID].name || FIXED_AGENT_ID];
+        console.log(`🔒  Single-agent mode: ${FIXED_AGENT_ID}`);
+      } else {
+        const requestedAgentIds = parseAgentIdsInput(formData.agentIds);
+        const hasAgentSelection = requestedAgentIds.length > 0;
+        const validRequestedAgentIds = requestedAgentIds.filter((id) => !!allAgents[id]);
+        selectedAgentIds = hasAgentSelection ? validRequestedAgentIds : [];
+        defaultAgentId = selectedAgentIds.length > 0
+          ? (selectedAgentIds[0] || configuredDefault?.id || null)
+          : null;
+        selectedAgentNames = selectedAgentIds.map((id) => allAgents[id]?.name || id);
+      }
 
       // Prevent duplicate joins — block if there's already an active session
       if (meetingSessions.size > 0) {

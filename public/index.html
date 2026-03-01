@@ -310,8 +310,8 @@
             <div id="meetingUrlStatus" class="field-status"></div>
             <small>貼り付けた内容から Google Meet / Zoom URL を自動で検出します</small>
 
-            <label>🤖 エージェント選択:</label>
-            <div class="agent-section">
+            <label id="agentSelectionSection">🤖 エージェント選択:</label>
+            <div class="agent-section" id="agentSectionDiv">
                 <div id="agentSingleWrap">
                     <select id="agentSelect"></select>
                 </div>
@@ -322,7 +322,7 @@
             </div>
 
             <label>💬 会話モード:</label>
-            <div class="conversation-mode">
+            <div class="conversation-mode" id="modeSection">
                 <label for="modeOneToOne">
                     <input type="radio" id="modeOneToOne" name="conversationMode" value="one_to_one" checked>
                     👤 1対1モード（常時会話）
@@ -492,16 +492,32 @@
             updateGreetingPreview();
         }
 
+        let fixedAgentId = null;
+
         async function loadAgents() {
             try {
                 const res = await fetch('/agents');
                 const data = await res.json();
                 availableAgents = Array.isArray(data.agents) ? data.agents : [];
+                fixedAgentId = data.fixedAgentId || null;
             } catch {
                 availableAgents = [];
             }
             populateAgents();
             renderAgentSelector();
+
+            // In single-agent mode, hide agent selection and mode toggle
+            if (fixedAgentId && availableAgents.length === 1) {
+                const agentLabel = document.getElementById('agentSelectionSection');
+                if (agentLabel) agentLabel.style.display = 'none';
+                const agentDiv = document.getElementById('agentSectionDiv');
+                if (agentDiv) agentDiv.style.display = 'none';
+                const modeSection = document.getElementById('modeSection');
+                if (modeSection) modeSection.style.display = 'none';
+                // Update page title
+                const agent = availableAgents[0];
+                document.title = `AI Meet Participant — ${agent.name}`;
+            }
         }
 
         function updateActiveBanner(sessions) {
