@@ -520,7 +520,7 @@ const server = http.createServer(async (req, res) => {
         exitDetection: false,
         responseTimeoutMs: 25_000,
       });
-      warmUpGatewaySession(`meet-${warmupSessionId}`, warmupConfig, briefing || null);
+      await warmUpGatewaySession(`meet-${warmupSessionId}`, warmupConfig, briefing || null);
 
       const voiceToken = issueEphemeralToken("voice", VOICE_TOKEN_TTL_MS, {
         to,
