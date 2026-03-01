@@ -119,4 +119,30 @@ function warmUpGatewaySession(sessionId, config, briefing = null) {
   });
 }
 
-module.exports = { warmUpGatewaySession };
+function warmUpMultipleAgents(sessionId, agents, selectedAgentIds, baseConfig, briefing = null) {
+  const ids = Array.isArray(selectedAgentIds) ? selectedAgentIds : [];
+  if (!sessionId || ids.length === 0) return;
+
+  const promises = ids.map((agentId) => {
+    const agent = agents?.[agentId];
+    if (!agent) return Promise.resolve("skipped_unknown");
+
+    const agentConfig = {
+      ...baseConfig,
+      openclawUrl: agent.gatewayUrl || baseConfig?.openclawUrl || null,
+      openclawToken: agent.gatewayToken || baseConfig?.openclawToken || null,
+      llm: {
+        ...(baseConfig?.llm || {}),
+        model: agent.model || baseConfig?.llm?.model,
+      },
+    };
+
+    return warmUpGatewaySession(`meet-${sessionId}-${agentId}`, agentConfig, briefing);
+  });
+
+  Promise.all(promises).catch((err) => {
+    console.error("⚠️  Multi-agent warm-up partial failure:", err.message);
+  });
+}
+
+module.exports = { warmUpGatewaySession, warmUpMultipleAgents };

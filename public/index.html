@@ -109,6 +109,40 @@
             margin: 0;
             accent-color: #e94560;
         }
+        .agent-section {
+            margin-top: 1rem;
+            border: 1px solid #0f3460;
+            border-radius: 10px;
+            padding: 0.8rem;
+            background: rgba(15, 52, 96, 0.2);
+        }
+        .agent-section select {
+            width: 100%;
+        }
+        .agent-checklist {
+            display: grid;
+            gap: 0.5rem;
+        }
+        .agent-checklist label {
+            margin: 0;
+            padding: 0.55rem 0.7rem;
+            border: 1px solid #0f3460;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            cursor: pointer;
+            color: #d5d5d5;
+        }
+        .agent-checklist input[type="checkbox"] {
+            accent-color: #e94560;
+        }
+        .agent-greeting {
+            margin-top: 0.6rem;
+            color: #95b5d5;
+            font-size: 0.9rem;
+            min-height: 1.2rem;
+        }
         small {
             color: #666;
             margin-top: 0.3rem;
@@ -220,6 +254,11 @@
             font-size: 0.8rem;
             margin-bottom: 0.8rem;
         }
+        .active-banner .active-agents {
+            color: #95d5b2;
+            font-size: 0.85rem;
+            margin-bottom: 0.6rem;
+        }
         .leave-btn {
             margin-top: 0.5rem;
             padding: 0.7rem 1.5rem;
@@ -254,6 +293,7 @@
             <div class="active-label">通話中</div>
             <div id="activeUrl" class="active-url"></div>
             <div id="activeState" class="active-state"></div>
+            <div id="activeAgents" class="active-agents"></div>
             <button id="leaveBtn" class="leave-btn" onclick="leaveMeeting()">🚪 退出する</button>
         </div>
 
@@ -269,6 +309,17 @@
             ></textarea>
             <div id="meetingUrlStatus" class="field-status"></div>
             <small>貼り付けた内容から Google Meet / Zoom URL を自動で検出します</small>
+
+            <label>🤖 エージェント選択:</label>
+            <div class="agent-section">
+                <div id="agentSingleWrap">
+                    <select id="agentSelect"></select>
+                </div>
+                <div id="agentGroupWrap" style="display:none;">
+                    <div id="agentCheckboxes" class="agent-checklist"></div>
+                </div>
+                <div id="agentGreetingPreview" class="agent-greeting"></div>
+            </div>
 
             <label>💬 会話モード:</label>
             <div class="conversation-mode">
@@ -307,13 +358,20 @@
         const activeBanner = document.getElementById('activeBanner');
         const activeUrlEl = document.getElementById('activeUrl');
         const activeStateEl = document.getElementById('activeState');
+        const activeAgentsEl = document.getElementById('activeAgents');
         const leaveBtn = document.getElementById('leaveBtn');
+        const agentSelectEl = document.getElementById('agentSelect');
+        const agentSingleWrapEl = document.getElementById('agentSingleWrap');
+        const agentGroupWrapEl = document.getElementById('agentGroupWrap');
+        const agentCheckboxesEl = document.getElementById('agentCheckboxes');
+        const agentGreetingPreviewEl = document.getElementById('agentGreetingPreview');
         let extractedMeetingUrl = '';
         let isSubmitting = false;
         let isLeaving = false;
         let hasActiveSession = false;
         let activeSessionId = null;
         let pollTimer = null;
+        let availableAgents = [];
 
         function setStatus(type, text, asHtml = false) {
             statusEl.className = `status ${type}`;
@@ -355,6 +413,97 @@
             return labels[state] || `🟡 ${state}`;
         }
 
+        function getConversationMode() {
+            return (form.querySelector('input[name="conversationMode"]:checked') || {}).value || 'one_to_one';
+        }
+
+        function getSelectedAgentIds() {
+            if (getConversationMode() === 'group') {
+                return Array.from(agentCheckboxesEl.querySelectorAll('input[type="checkbox"]:checked'))
+                    .map((el) => el.value)
+                    .filter(Boolean);
+            }
+            const value = agentSelectEl.value;
+            return value ? [value] : [];
+        }
+
+        function updateGreetingPreview() {
+            if (!availableAgents.length) {
+                agentGreetingPreviewEl.textContent = '利用可能なエージェントがありません（token未設定の可能性）。';
+                return;
+            }
+            const selected = getSelectedAgentIds()
+                .map((id) => availableAgents.find((a) => a.id === id))
+                .filter(Boolean);
+            if (!selected.length) {
+                agentGreetingPreviewEl.textContent = 'エージェントを選択してください。';
+                return;
+            }
+            const first = selected[0];
+            if (selected.length === 1) {
+                agentGreetingPreviewEl.textContent = `挨拶: ${first.greeting || '（未設定）'}`;
+                return;
+            }
+            const names = selected.slice(1).map((a) => a.displayName || a.name).join('・');
+            agentGreetingPreviewEl.textContent = `挨拶: ${first.greeting || '（未設定）'}（+ ${names} 参加）`;
+        }
+
+        function renderAgentSelector() {
+            const mode = getConversationMode();
+            agentSingleWrapEl.style.display = mode === 'group' ? 'none' : 'block';
+            agentGroupWrapEl.style.display = mode === 'group' ? 'block' : 'none';
+            updateGreetingPreview();
+        }
+
+        function populateAgents() {
+            agentSelectEl.innerHTML = '';
+            agentCheckboxesEl.innerHTML = '';
+
+            if (!availableAgents.length) {
+                const option = document.createElement('option');
+                option.value = '';
+                option.textContent = '利用可能なエージェントなし';
+                agentSelectEl.appendChild(option);
+                updateGreetingPreview();
+                return;
+            }
+
+            for (const agent of availableAgents) {
+                const option = document.createElement('option');
+                option.value = agent.id;
+                option.textContent = `${agent.displayName || agent.name} (${agent.name})`;
+                if (agent.default) option.selected = true;
+                agentSelectEl.appendChild(option);
+
+                const label = document.createElement('label');
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.value = agent.id;
+                checkbox.checked = !!agent.default;
+                checkbox.addEventListener('change', updateGreetingPreview);
+                label.appendChild(checkbox);
+                label.append(` ${(agent.displayName || agent.name)} (${agent.name})`);
+                agentCheckboxesEl.appendChild(label);
+            }
+
+            if (!agentSelectEl.value) {
+                agentSelectEl.value = availableAgents[0].id;
+            }
+            updateGreetingPreview();
+        }
+
+        async function loadAgents() {
+            try {
+                const res = await fetch('/agents');
+                const data = await res.json();
+                availableAgents = Array.isArray(data.agents) ? data.agents : [];
+            } catch {
+                availableAgents = [];
+            }
+            populateAgents();
+            renderAgentSelector();
+        }
+
         function updateActiveBanner(sessions) {
             if (sessions && sessions.length > 0) {
                 const s = sessions[0];
@@ -362,11 +511,16 @@
                 activeSessionId = s.sessionId;
                 activeUrlEl.textContent = s.meetingUrl || '';
                 activeStateEl.textContent = stateLabel(s.state) + (s.hasConnection ? '' : ' (WS未接続)');
+                const names = Array.isArray(s.agentDisplayNames) && s.agentDisplayNames.length
+                    ? s.agentDisplayNames.join(', ')
+                    : 'Caty';
+                activeAgentsEl.textContent = `Agents: ${names}`;
                 activeBanner.classList.add('visible');
             } else {
                 hasActiveSession = false;
                 activeSessionId = null;
                 activeBanner.classList.remove('visible');
+                activeAgentsEl.textContent = '';
             }
             updateSubmitButtonState();
         }
@@ -527,6 +681,13 @@
             }
         }).catch(() => {});
 
+        loadAgents();
+
+        Array.from(form.querySelectorAll('input[name="conversationMode"]')).forEach((el) => {
+            el.addEventListener('change', renderAgentSelector);
+        });
+        agentSelectEl.addEventListener('change', updateGreetingPreview);
+
         meetingTextEl.addEventListener('input', updateMeetingUrlStatus);
         meetingTextEl.addEventListener('paste', () => {
             setTimeout(updateMeetingUrlStatus, 0);
@@ -557,12 +718,18 @@
                 const botName = document.getElementById('botName').value.trim();
                 const wsUrl = document.getElementById('wsUrl').value.trim() || getAutoWsUrl();
                 const conversationMode = (form.querySelector('input[name="conversationMode"]:checked') || {}).value || 'one_to_one';
+                const selectedAgentIds = getSelectedAgentIds();
+                if (conversationMode === 'group' && selectedAgentIds.length === 0) {
+                    setStatus('error', '❌ 複数人モードでは最低1つのエージェントを選択してください');
+                    return;
+                }
 
                 const formData = new URLSearchParams({
                     meetingUrl: extractedMeetingUrl,
                     botName: botName || 'Caty (ケイティ)',
                     wsUrl,
                     conversationMode,
+                    agentIds: selectedAgentIds.join(','),
                 });
 
                 const response = await fetch('/join-meeting', {

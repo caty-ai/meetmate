@@ -125,6 +125,7 @@ class SessionLifecycle extends EventEmitter {
         transport: this._transport,
         to: this._meta.to || null,
         from: this._meta.from || null,
+        agents: this._meta.agents || null,
         timestamp: now,
       });
     }
@@ -138,6 +139,7 @@ class SessionLifecycle extends EventEmitter {
         duration: this.duration,
         durationFormatted: this.durationFormatted,
         conversationLog: this._conversationLog,
+        agents: this._meta.agents || null,
         timestamp: now,
       });
     }

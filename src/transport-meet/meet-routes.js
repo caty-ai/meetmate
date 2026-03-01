@@ -7,9 +7,17 @@ const path = require("path");
 const crypto = require("crypto");
 const { parse } = require("querystring");
 
-const { buildAgentConfig, getPipelineConfig, SAMPLE_RATE, TTS_PROVIDER } = require("../config");
+const {
+  buildAgentConfig,
+  getPipelineConfig,
+  SAMPLE_RATE,
+  TTS_PROVIDER,
+  loadAgents,
+  getDefaultAgent,
+  getAgentById,
+} = require("../config");
 const { createPipeline } = require("../pipeline");
-const { warmUpGatewaySession } = require("../gateway-warmup");
+const { warmUpGatewaySession, warmUpMultipleAgents } = require("../gateway-warmup");
 const { SessionLifecycle } = require("../session-events");
 const { SlackNotifier } = require("../slack-notifier");
 const { summarizeConversation } = require("../summarizer");
@@ -104,7 +112,9 @@ async function postMeetFullTranscript(notifier, lifecycle) {
 
   const lines = ["📜 全文ログ", "━━━━━━━━━━━━━━━", ""];
   for (const entry of log) {
-    const speaker = entry.role === "assistant" || entry.role === "agent" ? "🤖 Caty" : "👤 参加者";
+    const speaker = entry.role === "assistant" || entry.role === "agent"
+      ? `🤖 ${entry.agentId || "Caty"}`
+      : "👤 参加者";
     const time = entry.timestamp ? `(${new Date(entry.timestamp).toLocaleTimeString("ja-JP")})` : "";
     lines.push(`${speaker} ${time}`);
     lines.push(entry.content);
@@ -150,6 +160,23 @@ function toSafeString(v) {
 
 function resolveWakeMode(conversationMode) {
   return conversationMode === "group" ? "wake" : "off";
+}
+
+function parseAgentIdsInput(rawValue) {
+  const raw = Array.isArray(rawValue) ? rawValue.join(",") : toSafeString(rawValue);
+  if (!raw) return [];
+  return [...new Set(raw.split(",").map((v) => v.trim()).filter(Boolean))];
+}
+
+function buildAgentsResponseList(agents) {
+  return Object.values(agents || {}).map((agent) => ({
+    id: agent.id,
+    name: agent.name,
+    displayName: agent.displayName || agent.name || agent.id,
+    default: !!agent.default,
+    available: true,
+    greeting: agent.greeting || "",
+  }));
 }
 
 function buildWsUrlWithSession(baseWsUrl, sessionId) {
@@ -275,7 +302,9 @@ function saveConversationLog(session) {
     created_at: session.createdAt,
     saved_at: new Date().toISOString(),
     tts_provider: TTS_PROVIDER,
+    agents: session.agents || [],
     messages: session.conversationLog,
+    conversation_logs: session.conversationLogs || null,
   };
   fs.writeFileSync(jsonPath, JSON.stringify(jsonData, null, 2));
   console.log(`📝  会話ログ保存: ${jsonPath}`);
@@ -288,7 +317,12 @@ function saveConversationLog(session) {
     `- meeting_url: ${session.meetingUrl}`,
     `- tts_provider: ${TTS_PROVIDER}`,
     "",
-    ...session.conversationLog.map((e) => `**${e.role === "assistant" || e.role === "agent" ? "Caty" : "参加者"}** (${e.timestamp}):\n${e.content}\n`),
+    ...session.conversationLog.map((e) => {
+      const speaker = e.role === "assistant" || e.role === "agent"
+        ? (e.agentId ? `AI(${e.agentId})` : "Caty")
+        : "参加者";
+      return `**${speaker}** (${e.timestamp}):\n${e.content}\n`;
+    }),
   ].join("\n");
   fs.writeFileSync(mdPath, mdContent);
   console.log(`📝  会話ログ(MD)保存: ${mdPath}`);
@@ -346,7 +380,9 @@ function appendToMemory(session) {
       "## 全文",
       "",
       ...session.conversationLog.map((e) => {
-        const speaker = e.role === "assistant" || e.role === "agent" ? "Caty" : "参加者";
+        const speaker = e.role === "assistant" || e.role === "agent"
+          ? (e.agentId ? `AI(${e.agentId})` : "Caty")
+          : "参加者";
         return `**${speaker}**: ${e.content}\n`;
       }),
     ].join("\n");
@@ -479,13 +515,27 @@ function createLegacyAgent(session, turnState, onAudio) {
 function createHandler(session, turnState, onAudio) {
   if (TTS_PROVIDER === "fish-audio") {
     console.log(`🐟  Fish Audio パイプラインモード (sid=${session.id})`);
+    const agents = loadAgents();
+    const selectedIds = Array.isArray(session.config.agentIds) ? session.config.agentIds : [];
+    const selectedAgents = selectedIds.filter((id) => !!agents[id]);
+    const defaultAgent = selectedAgents.length > 0
+      ? (getAgentById(agents, selectedAgents[0]) || getDefaultAgent(agents))
+      : null;
+
     const config = getPipelineConfig({
       prompt: session.config.prompt,
       greeting: session.config.greeting,
       model: session.config.model,
       wakeMode: session.config.wakeMode,
+    }, defaultAgent || null);
+    const pipeline = createPipeline(session, turnState, onAudio, config, {
+      agents,
+      selectedAgentIds: selectedAgents,
+      defaultAgentId: defaultAgent?.id || null,
+      onAgentSwitch: (from, to) => {
+        console.log(`🔄  Agent switch: ${from || "none"} → ${to}`);
+      },
     });
-    const pipeline = createPipeline(session, turnState, onAudio, config);
     return { send: (buf) => pipeline.sendAudio(buf), close: () => pipeline.close(), on: pipeline.on?.bind(pipeline) };
   }
 
@@ -644,6 +694,16 @@ async function handleHttp(req, res) {
     return;
   }
 
+  if (req.method === "GET" && url.pathname === "/agents") {
+    const agents = loadAgents();
+    const response = {
+      agents: buildAgentsResponseList(agents),
+    };
+    res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+    res.end(JSON.stringify(response));
+    return;
+  }
+
   // Active session status (for Web UI polling)
   if (req.method === "GET" && url.pathname === "/active-session") {
     const sessions = [];
@@ -656,6 +716,8 @@ async function handleHttp(req, res) {
         state: lc?.state || "unknown",
         botId: sessionBotIds.get(sid) || null,
         hasConnection: activeConnections.has(sid),
+        agentIds: session.config?.agentIds || [],
+        agentDisplayNames: session.agents || [],
       });
     }
     res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
@@ -734,6 +796,16 @@ async function handleHttp(req, res) {
       const wsUrl = toSafeString(formData.wsUrl);
       const conversationMode = toSafeString(formData.conversationMode) || "one_to_one";
       const briefing = toSafeString(formData.briefing) || null;
+      const requestedAgentIds = parseAgentIdsInput(formData.agentIds);
+      const allAgents = loadAgents();
+      const configuredDefault = getDefaultAgent(allAgents);
+      const hasAgentSelection = requestedAgentIds.length > 0;
+      const validRequestedAgentIds = requestedAgentIds.filter((id) => !!allAgents[id]);
+      const selectedAgentIds = hasAgentSelection ? validRequestedAgentIds : [];
+      const defaultAgentId = selectedAgentIds.length > 0
+        ? (selectedAgentIds[0] || configuredDefault?.id || null)
+        : null;
+      const selectedAgentNames = selectedAgentIds.map((id) => allAgents[id]?.name || id);
 
       // Prevent duplicate joins — block if there's already an active session
       if (meetingSessions.size > 0) {
@@ -779,8 +851,15 @@ async function handleHttp(req, res) {
           model: toSafeString(formData.model) || null,
           voice: toSafeString(formData.voice) || null,
           wakeMode: resolveWakeMode(conversationMode),
+          agentIds: selectedAgentIds,
+          defaultAgentId,
         },
         conversationLog: [],
+        conversationLogs: selectedAgentIds.reduce((acc, id) => {
+          acc[id] = [];
+          return acc;
+        }, {}),
+        agents: selectedAgentNames,
       };
 
       meetingSessions.set(sessionId, session);
@@ -788,6 +867,7 @@ async function handleHttp(req, res) {
       const lifecycle = new SessionLifecycle(sessionId, "meet", {
         meetingUrl,
         conversationMode,
+        agents: selectedAgentNames,
       });
       lifecycle.on("session_end", () => handleMeetSessionEnd(lifecycle));
       lifecycle.transition("initiating");
@@ -799,18 +879,29 @@ async function handleHttp(req, res) {
         model: session.config.model,
         wakeMode: session.config.wakeMode,
         exitDetection: conversationMode !== "group",
-      });
-      warmUpGatewaySession(`meet-${sessionId}`, warmupConfig, briefing);
+      }, hasAgentSelection && defaultAgentId ? allAgents[defaultAgentId] : null);
+      if (selectedAgentIds.length > 0) {
+        warmUpMultipleAgents(sessionId, allAgents, selectedAgentIds, warmupConfig, briefing);
+      } else {
+        warmUpGatewaySession(`meet-${sessionId}`, warmupConfig, briefing);
+      }
 
       const wsWithSession = buildWsUrlWithSession(wsUrl, sessionId);
       console.log("📹  Meeting URL:", meetingUrl);
       console.log("🔗  WebSocket URL:", wsWithSession.replace(/token=[^&]+/, "token=***"));
       console.log("🧾  Session ID:", sessionId);
       console.log("💬  Conversation Mode:", conversationMode, `(${session.config.wakeMode})`);
+      if (selectedAgentIds.length > 0) {
+        console.log("🤖  Selected agents:", selectedAgentIds.join(", "));
+      }
+
+      const defaultBotName = selectedAgentNames.length > 0
+        ? `${selectedAgentNames.join(", ")} (AI)`
+        : "Caty (ケイティ)";
 
       const botPayload = {
         meeting_url: meetingUrl,
-        bot_name: toSafeString(formData.botName) || "Caty (ケイティ)",
+        bot_name: toSafeString(formData.botName) || defaultBotName,
         websocket_settings: {
           audio: {
             url: wsWithSession,
@@ -834,7 +925,7 @@ async function handleHttp(req, res) {
         writePlainResponse(
           res,
           200,
-          `成功！Botが30秒以内にMeetに参加し、さらに30秒後にCatyが挨拶を開始します。\nsession_id=${sessionId}`
+          `成功！Botが30秒以内にMeetに参加し、さらに30秒後にAIが挨拶を開始します。\nsession_id=${sessionId}`
         );
         return;
       }

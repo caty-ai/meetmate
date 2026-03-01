@@ -5,6 +5,39 @@ const { createClient, LiveTranscriptionEvents } = require("@deepgram/sdk");
 const { EventEmitter } = require("events");
 
 /**
+ * Build keyterm prompts for Nova-3.
+ * Nova-3 uses `keyterm` (not `keywords`). No intensifier needed — just the term.
+ * See: https://developers.deepgram.com/docs/keyterm
+ */
+function buildKeyterms(extraKeyterms = []) {
+  const enabled = String(process.env.STT_ENABLE_KEYWORDS || "true").toLowerCase() !== "false";
+  if (!enabled) return [];
+
+  const baseTerms = (process.env.WAKE_WORDS || "ケイティ,けいてぃ,caty,katie,ケイケイ")
+    .split(",")
+    .map((w) => w.trim())
+    .filter(Boolean);
+
+  const extraTerms = [
+    "ケイティ",
+    "けいてぃ",
+    "Caty",
+    "Katie",
+  ];
+
+  const dynamicTerms = Array.isArray(extraKeyterms)
+    ? extraKeyterms.map((w) => String(w || "").trim()).filter(Boolean)
+    : [];
+
+  return [...new Set([...baseTerms, ...extraTerms, ...dynamicTerms])];
+}
+
+// Legacy: build keywords for Nova-2 fallback (with intensifier)
+function buildWakeKeywords(keyterms = []) {
+  return keyterms.map((w) => `${w}:5`);
+}
+
+/**
  * Create a streaming STT instance.
  * @param {string} dgKey - Deepgram API key
  * @param {object} options
@@ -34,39 +67,6 @@ function createSTT(dgKey, options = {}) {
   let closedByUser = false;
   let retriedWithoutKeywords = false;
 
-  /**
-   * Build keyterm prompts for Nova-3.
-   * Nova-3 uses `keyterm` (not `keywords`). No intensifier needed — just the term.
-   * See: https://developers.deepgram.com/docs/keyterm
-   */
-  function buildKeyterms() {
-    const enabled = String(process.env.STT_ENABLE_KEYWORDS || "true").toLowerCase() !== "false";
-    if (!enabled) return [];
-
-    // Base wake words + common STT misrecognition targets
-    const baseTerms = (process.env.WAKE_WORDS || "ケイティ,けいてぃ,caty,katie,ケイケイ")
-      .split(",")
-      .map((w) => w.trim())
-      .filter(Boolean);
-
-    // Additional keyterms to improve recognition
-    const extraTerms = [
-      "ケイティ",     // primary (katakana)
-      "けいてぃ",     // hiragana
-      "Caty",         // romaji
-      "Katie",        // English
-    ];
-
-    // Deduplicate
-    const all = [...new Set([...baseTerms, ...extraTerms])];
-    return all;
-  }
-
-  // Legacy: build keywords for Nova-2 fallback (with intensifier)
-  function buildWakeKeywords() {
-    return buildKeyterms().map((w) => `${w}:5`);
-  }
-
   function connect({ withKeywords = true } = {}) {
     if (closedByUser) return;
 
@@ -83,8 +83,8 @@ function createSTT(dgKey, options = {}) {
       vad_events: true,
     };
 
-    const keyterms = buildKeyterms();
-    const wakeKeywords = buildWakeKeywords();
+    const keyterms = buildKeyterms(options.keyterms || []);
+    const wakeKeywords = buildWakeKeywords(keyterms);
     const isNova3 = model.includes("nova-3");
 
     // Nova-3: use `keyterm` parameter; Nova-2/earlier: use `keywords` parameter
@@ -210,4 +210,4 @@ function createSTT(dgKey, options = {}) {
   return emitter;
 }
 
-module.exports = { createSTT };
+module.exports = { createSTT, buildKeyterms };

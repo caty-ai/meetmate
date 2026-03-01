@@ -1,0 +1,54 @@
+{
+  "caty": {
+    "name": "Caty",
+    "displayName": "ケイティ",
+    "gatewayUrl": "http://localhost:18788",
+    "gatewayToken": "${OPENCLAW_GATEWAY_TOKEN}",
+    "voiceId": "your-fish-audio-voice-id",
+    "wakeWords": ["ケイティ", "けいてぃ", "caty", "katie", "ケイケイ"],
+    "keyterms": ["ケイティ", "けいてぃ", "Caty", "Katie"],
+    "greeting": "(happy) こんにちは！ケイティです。よろしくお願いします！",
+    "model": "anthropic/claude-sonnet-4-6",
+    "default": true,
+    "openclawSystemAddendum": null
+  },
+  "alec": {
+    "name": "Alec",
+    "displayName": "アレク",
+    "gatewayUrl": "http://localhost:19009",
+    "gatewayToken": "${ALEC_GATEWAY_TOKEN}",
+    "voiceId": null,
+    "wakeWords": ["アレク", "あれく", "alec"],
+    "keyterms": ["アレク", "あれく", "Alec"],
+    "greeting": "(calm) …アレクだ。よろ。",
+    "model": "openai-codex/gpt-5.3-codex",
+    "default": false,
+    "openclawSystemAddendum": null
+  },
+  "zoe": {
+    "name": "Zoe",
+    "displayName": "ゾーイ",
+    "gatewayUrl": "http://localhost:19100",
+    "gatewayToken": "${ZOE_GATEWAY_TOKEN}",
+    "voiceId": null,
+    "wakeWords": ["ゾーイ", "ぞーい", "zoe", "ゾエ"],
+    "keyterms": ["ゾーイ", "ぞーい", "Zoe"],
+    "greeting": "(excited) ゾーイだよ〜！よろしくね！",
+    "model": "anthropic/claude-opus-4-6",
+    "default": false,
+    "openclawSystemAddendum": null
+  },
+  "eidra": {
+    "name": "Eidra",
+    "displayName": "アイドラ",
+    "gatewayUrl": "http://localhost:19200",
+    "gatewayToken": "${EIDRA_GATEWAY_TOKEN}",
+    "voiceId": null,
+    "wakeWords": ["アイドラ", "あいどら", "eidra"],
+    "keyterms": ["アイドラ", "あいどら", "Eidra"],
+    "greeting": "(soft tone) アイドラです。よろしくね。",
+    "model": "anthropic/claude-sonnet-4-6",
+    "default": false,
+    "openclawSystemAddendum": null
+  }
+}

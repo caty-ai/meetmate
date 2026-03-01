@@ -1,6 +1,7 @@
 // config.js — Voice Agent / Pipeline configuration
 const fs = require("fs");
 const path = require("path");
+const AGENTS_PATH = path.join(__dirname, "..", "agents.json");
 
 // Load Caty's system prompt from markdown file
 const CATY_PROMPT = fs.readFileSync(
@@ -45,18 +46,71 @@ const SLACK_STATUS_CHANNEL = process.env.SLACK_STATUS_CHANNEL || "";
 const SLACK_NOTIFY_ENABLED = String(process.env.SLACK_NOTIFY_ENABLED || "true").toLowerCase() !== "false";
 const SUMMARY_ENABLED = String(process.env.SUMMARY_ENABLED || "true").toLowerCase() !== "false";
 
+function resolveEnvToken(value) {
+  if (!value) return null;
+  const raw = String(value).trim();
+  const match = raw.match(/^\$\{(.+)\}$/);
+  if (!match) return raw;
+  return process.env[match[1]] || null;
+}
+
+function loadAgents() {
+  if (!fs.existsSync(AGENTS_PATH)) return {};
+
+  let raw;
+  try {
+    raw = JSON.parse(fs.readFileSync(AGENTS_PATH, "utf-8"));
+  } catch (err) {
+    console.warn(`⚠️  Failed to load agents.json: ${err.message}`);
+    return {};
+  }
+
+  const resolved = {};
+  for (const [id, agent] of Object.entries(raw || {})) {
+    const token = resolveEnvToken(agent?.gatewayToken);
+    if (!token) {
+      console.warn(`⚠️  Agent "${id}" skipped: gateway token not available`);
+      continue;
+    }
+    resolved[id] = {
+      ...agent,
+      id,
+      gatewayToken: token,
+    };
+  }
+
+  return resolved;
+}
+
+function getDefaultAgent(agents) {
+  const entries = Object.values(agents || {});
+  return entries.find((a) => a.default) || entries[0] || null;
+}
+
+function getAgentById(agents, id) {
+  if (!id) return null;
+  return (agents || {})[id] || null;
+}
+
 /**
  * Get pipeline config for the decomposed STT → LLM → TTS flow.
  */
-function getPipelineConfig(overrides = {}) {
+function getPipelineConfig(overrides = {}, agent = null) {
   const isJapanese = LANG === "ja";
+  const envVoiceId = process.env.FISH_AUDIO_VOICE_ID || null;
+  const llmAddendum = Object.prototype.hasOwnProperty.call(overrides, "openclawSystemAddendum")
+    ? overrides.openclawSystemAddendum
+    : (agent?.openclawSystemAddendum ?? null);
+  const ttsReferenceId = agent && Object.prototype.hasOwnProperty.call(agent, "voiceId")
+    ? (agent.voiceId || envVoiceId)
+    : envVoiceId;
 
   return {
     dgKey: process.env.DEEPGRAM_API_KEY,
     openrouterKey: process.env.OPENROUTER_API_KEY,
     fishKey: process.env.FISH_AUDIO_API_KEY,
-    openclawUrl: process.env.OPENCLAW_GATEWAY_URL || null,
-    openclawToken: process.env.OPENCLAW_GATEWAY_TOKEN || null,
+    openclawUrl: agent?.gatewayUrl || process.env.OPENCLAW_GATEWAY_URL || null,
+    openclawToken: agent?.gatewayToken || process.env.OPENCLAW_GATEWAY_TOKEN || null,
     systemPrompt: overrides.prompt || CATY_PROMPT,
     wakeMode: overrides.wakeMode || null,
     exitDetection: overrides.exitDetection,
@@ -67,23 +121,21 @@ function getPipelineConfig(overrides = {}) {
       sampleRate: SAMPLE_RATE,
     },
     llm: {
-      model: overrides.model || "anthropic/claude-sonnet-4-5",
+      model: overrides.model || agent?.model || "anthropic/claude-sonnet-4-5",
       temperature: overrides.temperature ?? AGENT_TEMPERATURE,
       maxTokens: overrides.maxTokens ?? AGENT_MAX_TOKENS,
       responseTimeoutMs: overrides.responseTimeoutMs ?? LLM_RESPONSE_TIMEOUT_MS,
-      openclawSystemAddendum:
-        Object.prototype.hasOwnProperty.call(overrides, "openclawSystemAddendum")
-          ? overrides.openclawSystemAddendum
-          : null,
+      openclawSystemAddendum: llmAddendum,
     },
     tts: {
       provider: "fish-audio",
-      referenceId: process.env.FISH_AUDIO_VOICE_ID || null,
+      referenceId: ttsReferenceId,
       sampleRate: SAMPLE_RATE,
       latency: process.env.FISH_AUDIO_LATENCY || "balanced",
     },
     greeting:
       overrides.greeting ||
+      agent?.greeting ||
       (isJapanese
         ? "(happy) こんにちは！ケイティです。よろしくお願いします！"
         : "(happy) Hi! I'm Caty. Nice to meet you!"),
@@ -178,4 +230,8 @@ module.exports = {
   SLACK_SUMMARY_CHANNEL,
   SLACK_STATUS_CHANNEL,
   SUMMARY_ENABLED,
+  loadAgents,
+  getDefaultAgent,
+  getAgentById,
+  resolveEnvToken,
 };

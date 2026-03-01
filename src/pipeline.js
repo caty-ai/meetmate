@@ -69,7 +69,7 @@ function normalizeKana(text) {
  * Check if utterance is an exit command.
  * Only active in Meet sessions (not Twilio calls).
  */
-function isExitCommand(text) {
+function isExitCommand(text, agents = null, selectedAgentIds = [], defaultAgentId = null) {
   const lower = text.toLowerCase().trim();
   const normalized = normalizeKana(lower);
 
@@ -82,7 +82,7 @@ function isExitCommand(text) {
   }
 
   // Also check wake word + exit pattern: "ケイティ、退出して"
-  if (containsWakeWord(text)) {
+  if (detectWakeAgent(text, agents, selectedAgentIds, defaultAgentId).detected) {
     for (const cmd of EXIT_COMMANDS) {
       if (lower.includes(cmd.toLowerCase())) return true;
     }
@@ -95,21 +95,34 @@ function isExitCommand(text) {
  * Check if utterance contains a wake word.
  * Uses both exact matching and fuzzy katakana-normalized matching.
  */
-function containsWakeWord(text) {
+function detectWakeAgent(text, agents = null, selectedAgentIds = [], defaultAgentId = null) {
   const lower = text.toLowerCase();
   const normalized = normalizeKana(lower);
 
-  // Exact substring match against configured wake words
-  if (WAKE_WORDS.some(w => lower.includes(w))) return true;
+  const ids = Array.isArray(selectedAgentIds) ? selectedAgentIds : [];
+  const defaultId = defaultAgentId || ids[0] || null;
 
-  // Extended variants match
-  if (EXTENDED_WAKE_VARIANTS.some(v => lower.includes(v))) return true;
+  if (agents && ids.length > 0) {
+    for (const agentId of ids) {
+      const words = (agents[agentId]?.wakeWords || []).map((w) => String(w || "").toLowerCase().trim()).filter(Boolean);
+      if (words.some((w) => lower.includes(w))) return { detected: true, agentId };
+      const normalizedWords = words.map((w) => normalizeKana(w));
+      if (normalizedWords.some((w) => normalized.includes(w))) return { detected: true, agentId };
+    }
+  }
 
-  // Normalized match (strips ー and ッ from both sides)
-  const normalizedWake = WAKE_WORDS.map(w => normalizeKana(w));
-  if (normalizedWake.some(w => normalized.includes(w))) return true;
+  if (WAKE_WORDS.some((w) => lower.includes(w))) {
+    return { detected: true, agentId: defaultId };
+  }
+  if (EXTENDED_WAKE_VARIANTS.some((v) => lower.includes(v))) {
+    return { detected: true, agentId: defaultId };
+  }
+  const normalizedWake = WAKE_WORDS.map((w) => normalizeKana(w));
+  if (normalizedWake.some((w) => normalized.includes(w))) {
+    return { detected: true, agentId: defaultId };
+  }
 
-  return false;
+  return { detected: false, agentId: null };
 }
 
 /**
@@ -191,9 +204,10 @@ function pickProgressPing(index) {
  * @param {object} turnState - Shared turn state { isAgentSpeaking, inputCooldownUntil, droppedEchoFrames }
  * @param {function} onAudio - Callback: (buffer: Buffer) => void (sends audio to Attendee)
  * @param {object} config - Pipeline config from getPipelineConfig()
+ * @param {object} options - Multi-agent options
  * @returns {{ sendAudio(buf: Buffer): void, close(): void }}
  */
-function createPipeline(session, turnState, onAudio, config) {
+function createPipeline(session, turnState, onAudio, config, options = {}) {
   const { EventEmitter } = require("events");
   const emitter = new EventEmitter();
 
@@ -202,10 +216,50 @@ function createPipeline(session, turnState, onAudio, config) {
   const fishKey = config.fishKey;
   const systemPrompt = config.systemPrompt;
   const wakeMode = config.wakeMode || WAKE_MODE;
+  const selectedAgentIds = Array.isArray(options.selectedAgentIds) ? options.selectedAgentIds.filter(Boolean) : [];
+  const hasSelectedAgents = selectedAgentIds.length > 0;
+  const agents = options.agents || {};
+  const defaultAgentId = options.defaultAgentId || selectedAgentIds[0] || null;
+  let currentAgentId = defaultAgentId || "caty";
+
+  const agentState = {
+    openclawUrl: config.openclawUrl,
+    openclawToken: config.openclawToken,
+    voiceId: config.tts.referenceId || null,
+    model: config.llm.model,
+    openclawSystemAddendum: config.llm.openclawSystemAddendum,
+    sessionUser: `meet-${session.id}`,
+  };
+
+  function switchAgent(agentId) {
+    if (!agentId || !agents[agentId]) return false;
+
+    const oldId = currentAgentId;
+    const agent = agents[agentId];
+
+    agentState.openclawUrl = agent.gatewayUrl || config.openclawUrl;
+    agentState.openclawToken = agent.gatewayToken || config.openclawToken;
+    agentState.voiceId = agent.voiceId || config.tts.referenceId || null;
+    agentState.model = agent.model || config.llm.model;
+    agentState.openclawSystemAddendum = Object.prototype.hasOwnProperty.call(agent, "openclawSystemAddendum")
+      ? agent.openclawSystemAddendum
+      : config.llm.openclawSystemAddendum;
+    agentState.sessionUser = `meet-${session.id}-${agentId}`;
+
+    currentAgentId = agentId;
+
+    console.log(`🔄  Agent switch: ${oldId || "unknown"} → ${agentId}`);
+    options.onAgentSwitch?.(oldId, agentId);
+    return { oldId };
+  }
+
+  if (hasSelectedAgents && defaultAgentId && agents[defaultAgentId]) {
+    switchAgent(defaultAgentId);
+  }
 
   // OpenClaw Gateway integration
-  const useOpenClaw = !!(config.openclawUrl && config.openclawToken);
-  if (useOpenClaw) {
+  const hasOpenClaw = () => !!(agentState.openclawUrl && agentState.openclawToken);
+  if (hasOpenClaw()) {
     console.log("🔗  OpenClaw Gateway モード: フルCaty体験 ✨");
   } else {
     console.log("📡  OpenRouter モード: 直接Claude API");
@@ -220,11 +274,36 @@ function createPipeline(session, turnState, onAudio, config) {
   let isProcessing = false;
   let lastUserTranscript = "";
 
+  function appendConversationEntry(role, content, agentId = null) {
+    const entry = {
+      timestamp: new Date().toISOString(),
+      role,
+      content,
+    };
+    if (agentId) entry.agentId = agentId;
+    session.conversationLog.push(entry);
+
+    if (agentId && session.conversationLogs && Array.isArray(session.conversationLogs[agentId])) {
+      session.conversationLogs[agentId].push(entry);
+    }
+  }
+
   // ── STT ──────────────────────────────────────────────────────────
+  const sttExtraKeyterms = [];
+  if (hasSelectedAgents) {
+    for (const agentId of selectedAgentIds) {
+      const agent = agents[agentId];
+      if (!agent) continue;
+      for (const term of (agent.keyterms || [])) sttExtraKeyterms.push(term);
+      for (const term of (agent.wakeWords || [])) sttExtraKeyterms.push(term);
+    }
+  }
+
   const stt = createSTT(dgKey, {
     model: config.stt.model,
     language: config.stt.language,
     sampleRate: config.stt.sampleRate,
+    keyterms: sttExtraKeyterms,
   });
 
   stt.on("transcript", (text, isFinal, confidence) => {
@@ -272,13 +351,9 @@ function createPipeline(session, turnState, onAudio, config) {
     console.log(`💬  [user] ${cleanedText}`);
 
     // Exit command detection (Meet sessions only, not Twilio)
-    if (config.exitDetection !== false && isExitCommand(cleanedText)) {
+    if (config.exitDetection !== false && isExitCommand(cleanedText, agents, selectedAgentIds, defaultAgentId)) {
       console.log("🚪  Exit command detected!");
-      session.conversationLog.push({
-        timestamp: new Date().toISOString(),
-        role: "user",
-        content: cleanedText,
-      });
+      appendConversationEntry("user", cleanedText, currentAgentId || null);
 
       // Speak farewell and emit exit event
       turnState.isAgentSpeaking = true;
@@ -289,11 +364,7 @@ function createPipeline(session, turnState, onAudio, config) {
       }
       turnState.isAgentSpeaking = false;
 
-      session.conversationLog.push({
-        timestamp: new Date().toISOString(),
-        role: "assistant",
-        content: "了解です！退出しますね。お疲れさまでした！",
-      });
+      appendConversationEntry("assistant", "了解です！退出しますね。お疲れさまでした！", currentAgentId || null);
 
       emitter.emit("exit_requested", { sessionId: session.id, trigger: "voice_command", text: cleanedText });
       return;
@@ -301,15 +372,15 @@ function createPipeline(session, turnState, onAudio, config) {
 
     // Wake word detection
     if (wakeMode === "wake") {
-      if (!containsWakeWord(cleanedText)) {
+      const wakeResult = detectWakeAgent(cleanedText, agents, selectedAgentIds, defaultAgentId);
+      if (!wakeResult.detected) {
         console.log(`🔇  Wake word not detected, ignoring: "${cleanedText.slice(0, 50)}..."`);
         // Still log for context, but don't respond
-        session.conversationLog.push({
-          timestamp: new Date().toISOString(),
-          role: "user",
-          content: `[会議音声・未指名] ${cleanedText}`,
-        });
+        appendConversationEntry("user", `[会議音声・未指名] ${cleanedText}`, currentAgentId || null);
         return;
+      }
+      if (wakeResult.agentId && wakeResult.agentId !== currentAgentId) {
+        switchAgent(wakeResult.agentId);
       }
       console.log("🔔  Wake word detected!");
     }
@@ -318,11 +389,7 @@ function createPipeline(session, turnState, onAudio, config) {
     lastUserTranscript = cleanedText;
 
     // Log to session
-    session.conversationLog.push({
-      timestamp: new Date().toISOString(),
-      role: "user",
-      content: cleanedText,
-    });
+    appendConversationEntry("user", cleanedText, currentAgentId || null);
 
     // If agent is currently speaking/processing, interrupt
     if (isProcessing && currentAbort) {
@@ -342,10 +409,11 @@ function createPipeline(session, turnState, onAudio, config) {
   });
 
   // ── Process user input: LLM → TTS ──────────────────────────────
-  async function processUserInput(userText) {
+  async function processUserInput(userText, hasRetriedOnFallback = false) {
     isProcessing = true;
     const abort = new AbortController();
     currentAbort = abort;
+    const requestAgentId = currentAgentId;
 
     let progressTimer = null;
     let llmTimeoutTimer = null;
@@ -374,11 +442,7 @@ function createPipeline(session, turnState, onAudio, config) {
     abort.signal.addEventListener("abort", stopLlmTimeoutTimer, { once: true });
 
     const appendAssistantLog = (text) => {
-      session.conversationLog.push({
-        timestamp: new Date().toISOString(),
-        role: "assistant",
-        content: text,
-      });
+      appendConversationEntry("assistant", text, currentAgentId || null);
     };
 
     const fireAndForgetTimeoutHandoff = (transcript) => {
@@ -388,13 +452,13 @@ function createPipeline(session, turnState, onAudio, config) {
         return;
       }
 
-      if (!useOpenClaw || !config.openclawUrl || !config.openclawToken) {
+      if (!hasOpenClaw() || !agentState.openclawUrl || !agentState.openclawToken) {
         console.log("⏭️  Timeout handoff skipped (OpenClaw Gateway unavailable)");
         return;
       }
 
       try {
-        const gatewayUrl = new URL(config.openclawUrl);
+        const gatewayUrl = new URL(agentState.openclawUrl);
         const isHttps = gatewayUrl.protocol === "https:";
         const transport = isHttps ? https : http;
         const handoffPrompt = [
@@ -406,7 +470,7 @@ function createPipeline(session, turnState, onAudio, config) {
         ].join("\n");
 
         const body = JSON.stringify({
-          model: config.llm.model || "anthropic/claude-sonnet-4-6",
+          model: agentState.model || config.llm.model || "anthropic/claude-sonnet-4-6",
           stream: false,
           temperature: 0.2,
           max_tokens: 700,
@@ -417,7 +481,7 @@ function createPipeline(session, turnState, onAudio, config) {
             },
             { role: "user", content: handoffPrompt },
           ],
-          user: `meet-${session.id}`,
+          user: agentState.sessionUser,
         });
 
         const req = transport.request(
@@ -427,7 +491,7 @@ function createPipeline(session, turnState, onAudio, config) {
             path: "/v1/chat/completions",
             method: "POST",
             headers: {
-              Authorization: `Bearer ${config.openclawToken}`,
+              Authorization: `Bearer ${agentState.openclawToken}`,
               "Content-Type": "application/json",
               "Content-Length": Buffer.byteLength(body),
             },
@@ -544,28 +608,28 @@ function createPipeline(session, turnState, onAudio, config) {
       let fullResponse = "";
       let sentenceBuffer = "";
 
-      console.log("🤔  Caty thinking…");
+      console.log(`🤔  ${requestAgentId || "agent"} thinking…`);
 
       // Build LLM options based on mode
-      const llmMessages = useOpenClaw
+      const llmMessages = hasOpenClaw()
         ? [{ role: "user", content: userText }] // OpenClaw manages history
         : history; // OpenRouter needs full history
 
       startLlmTimeoutTimer();
 
       for await (const chunk of streamChat(
-        useOpenClaw ? null : systemPrompt,
+        hasOpenClaw() ? null : systemPrompt,
         llmMessages,
         {
           // OpenClaw Gateway
-          openclawUrl: config.openclawUrl,
-          openclawToken: config.openclawToken,
-          openclawSystemAddendum: config.llm.openclawSystemAddendum,
-          sessionUser: `meet-${session.id}`,
+          openclawUrl: agentState.openclawUrl,
+          openclawToken: agentState.openclawToken,
+          openclawSystemAddendum: agentState.openclawSystemAddendum,
+          sessionUser: agentState.sessionUser,
           // OpenRouter fallback
           apiKey: openrouterKey,
           // Shared
-          model: config.llm.model,
+          model: agentState.model,
           temperature: config.llm.temperature,
           maxTokens: config.llm.maxTokens,
           signal: abort.signal,
@@ -588,7 +652,7 @@ function createPipeline(session, turnState, onAudio, config) {
           turnState.isAgentSpeaking = true;
           const firstChunk = sentenceBuffer.trim();
           sentenceBuffer = "";
-          console.log(`🗣️  Caty speaking (first chunk): "${firstChunk}"`);
+          console.log(`🗣️  ${requestAgentId || "agent"} speaking (first chunk): "${firstChunk}"`);
           await speakSentence(firstChunk, abort.signal);
           if (abort.signal.aborted) break;
           spokenSentenceCount += 1;
@@ -617,9 +681,9 @@ function createPipeline(session, turnState, onAudio, config) {
             }
 
             if (spokenSentenceCount === 0) {
-              console.log(`🗣️  Caty speaking: "${sentence}"`);
+              console.log(`🗣️  ${requestAgentId || "agent"} speaking: "${sentence}"`);
             } else {
-              console.log(`🗣️  Caty continue: "${sentence}"`);
+              console.log(`🗣️  ${requestAgentId || "agent"} continue: "${sentence}"`);
             }
 
             await speakSentence(sentence, abort.signal);
@@ -646,18 +710,14 @@ function createPipeline(session, turnState, onAudio, config) {
         if (!turnState.isAgentSpeaking) {
           turnState.isAgentSpeaking = true;
         }
-        console.log(`🗣️  Caty speaking (flush): "${sentenceBuffer.trim()}"`);
+        console.log(`🗣️  ${requestAgentId || "agent"} speaking (flush): "${sentenceBuffer.trim()}"`);
         await speakSentence(sentenceBuffer.trim(), abort.signal);
       }
 
       // Log assistant response
       if (fullResponse.trim()) {
         console.log(`💬  [assistant] ${fullResponse.trim()}`);
-        session.conversationLog.push({
-          timestamp: new Date().toISOString(),
-          role: "assistant",
-          content: fullResponse.trim(),
-        });
+        appendConversationEntry("assistant", fullResponse.trim(), requestAgentId || null);
         history.push({ role: "assistant", content: fullResponse.trim() });
         if (history.length > MAX_HISTORY) {
           history.splice(0, history.length - MAX_HISTORY);
@@ -666,6 +726,22 @@ function createPipeline(session, turnState, onAudio, config) {
     } catch (err) {
       if (abort.signal.aborted) {
         await maybeSpeakLlmTimeoutFallback();
+        return;
+      }
+      const errMsg = String(err?.message || err || "");
+      const isGatewayFailure = /ECONNREFUSED|ENOTFOUND|EHOSTUNREACH|ETIMEDOUT|timeout|socket hang up|network/i.test(errMsg);
+      if (
+        isGatewayFailure &&
+        hasSelectedAgents &&
+        requestAgentId &&
+        defaultAgentId &&
+        requestAgentId !== defaultAgentId &&
+        !hasRetriedOnFallback &&
+        agents[defaultAgentId]
+      ) {
+        console.warn(`⚠️  Agent "${requestAgentId}" gateway unavailable. Falling back to "${defaultAgentId}"`);
+        switchAgent(defaultAgentId);
+        await processUserInput(userText, true);
         return;
       }
       console.error("❌  Pipeline error:", err.message);
@@ -692,7 +768,7 @@ function createPipeline(session, turnState, onAudio, config) {
     try {
       await synthesize(text, {
         apiKey: fishKey,
-        referenceId: config.tts.referenceId || null,
+        referenceId: agentState.voiceId || config.tts.referenceId || null,
         sampleRate: config.tts.sampleRate,
         latency: config.tts.latency,
         signal,
@@ -709,15 +785,28 @@ function createPipeline(session, turnState, onAudio, config) {
 
   // ── Greeting ────────────────────────────────────────────────────
   async function sendGreeting() {
-    const greeting = config.greeting;
+    if (hasSelectedAgents && defaultAgentId && currentAgentId !== defaultAgentId) {
+      switchAgent(defaultAgentId);
+    }
+
+    let greeting = config.greeting;
+    if (hasSelectedAgents && defaultAgentId && agents[defaultAgentId]) {
+      const defaultGreeting = agents[defaultAgentId].greeting || config.greeting;
+      const others = selectedAgentIds
+        .filter((id) => id !== defaultAgentId)
+        .map((id) => agents[id]?.displayName || agents[id]?.name || id)
+        .filter(Boolean);
+      if (others.length > 0) {
+        const trimmed = String(defaultGreeting || "").replace(/[。.!！?？\s]+$/u, "");
+        greeting = `${trimmed}。今日は${others.join("と")}も一緒だよ！`;
+      } else {
+        greeting = defaultGreeting;
+      }
+    }
     if (!greeting) return;
 
     console.log(`💬  [assistant] ${greeting}`);
-    session.conversationLog.push({
-      timestamp: new Date().toISOString(),
-      role: "assistant",
-      content: greeting,
-    });
+    appendConversationEntry("assistant", greeting, currentAgentId || null);
     history.push({ role: "assistant", content: greeting });
 
     turnState.isAgentSpeaking = true;
