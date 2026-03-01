@@ -421,24 +421,25 @@ function splitMulawFrames(mulawBuffer, frameSize = 160) {
 
 function validateRequiredEnv() {
   if (!ACCOUNT_SID || !AUTH_TOKEN || !FROM_NUMBER) {
-    console.error("❌  Missing Twilio credentials. Check TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_PHONE_NUMBER");
-    process.exit(1);
+    console.warn("⚠️  Missing Twilio credentials — phone call feature disabled. Set TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_PHONE_NUMBER to enable.");
+    return false;
   }
 
   if (!CALL_SECRET) {
-    console.error("❌  TWILIO_CALL_SECRET is required for POST /call-me");
-    process.exit(1);
+    console.warn("⚠️  TWILIO_CALL_SECRET not set — phone call feature disabled.");
+    return false;
   }
 
   if (!PUBLIC_URL || !/^https:\/\//.test(PUBLIC_URL)) {
-    console.error("❌  TWILIO_PUBLIC_URL is required and must be https://...");
-    process.exit(1);
+    return false;
   }
 
   if (ALLOWED_NUMBERS.size === 0) {
-    console.error("❌  TWILIO_ALLOWED_NUMBERS is required (comma-separated)");
-    process.exit(1);
+    console.warn("⚠️  TWILIO_ALLOWED_NUMBERS not set — phone call feature disabled.");
+    return false;
   }
+
+  return true;
 }
 
 function handleWsConnection(ws, req) {
@@ -613,10 +614,17 @@ function ensureWss() {
   return wss;
 }
 
+let twilioEnabled = false;
+
 async function init(options = {}) {
   if (initialized) return;
 
-  validateRequiredEnv();
+  twilioEnabled = validateRequiredEnv();
+  if (!twilioEnabled) {
+    console.log("📞  Twilio bridge disabled (missing credentials). Meet-only mode.");
+    initialized = true;
+    return;
+  }
 
   if (typeof options.port === "number" && Number.isFinite(options.port)) {
     bridgePort = options.port;
@@ -627,6 +635,12 @@ async function init(options = {}) {
 }
 
 async function handleHttp(req, res) {
+  if (!twilioEnabled) {
+    res.writeHead(503, { "Content-Type": "text/plain" });
+    res.end("Twilio bridge disabled on this instance");
+    return;
+  }
+
   const url = new URL(req.url || "/", "http://localhost");
 
   if (req.method === "GET" && url.pathname === "/health") {
@@ -823,6 +837,10 @@ async function handleHttp(req, res) {
 }
 
 function handleUpgrade(req, socket, head, wsServer) {
+  if (!twilioEnabled) {
+    socket.destroy();
+    return;
+  }
   const serverWss = wsServer || ensureWss();
 
   console.log(`🔌  WS upgrade request: ${req.url}`);
