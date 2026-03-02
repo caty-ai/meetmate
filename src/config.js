@@ -141,6 +141,7 @@ function getPipelineConfig(overrides = {}, agent = null) {
       sampleRate: SAMPLE_RATE,
       latency: process.env.FISH_AUDIO_LATENCY || "balanced",
     },
+    briefing: overrides.briefing || null,
     greeting:
       overrides.greeting ||
       agent?.greeting ||

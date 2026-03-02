@@ -832,8 +832,105 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     turnState.inputCooldownUntil = Date.now() + (config.echoCooldownMs || 300);
   }
 
+  // ── Purpose Explanation (auto-LLM after greeting) ────────────────
+  async function sendPurposeExplanation() {
+    const briefing = config.briefing;
+    if (!briefing) return;
+
+    console.log(`📋  Briefing detected — auto-explaining purpose…`);
+
+    isProcessing = true;
+    const abort = new AbortController();
+    currentAbort = abort;
+    turnState.isAgentSpeaking = true;
+
+    // The Gateway session already has the briefing from warm-up.
+    // Send a system hint to trigger a natural purpose explanation.
+    const purposePrompt = "挨拶が終わりました。今回この電話をかけた理由・目的を、自分の言葉で簡潔に1-2文で伝えてください。briefingの内容をそのまま読み上げるのではなく、自然な話し言葉にしてください。";
+
+    const llmMessages = hasOpenClaw()
+      ? [{ role: "user", content: purposePrompt }]
+      : [
+          ...history,
+          { role: "system", content: `電話の目的: ${briefing}` },
+          { role: "user", content: purposePrompt },
+        ];
+
+    try {
+      let fullResponse = "";
+      let sentenceBuffer = "";
+      let spokenCount = 0;
+
+      for await (const chunk of streamChat(
+        hasOpenClaw() ? null : systemPrompt,
+        llmMessages,
+        {
+          openclawUrl: agentState.openclawUrl,
+          openclawToken: agentState.openclawToken,
+          openclawSystemAddendum: agentState.openclawSystemAddendum,
+          sessionUser: agentState.sessionUser,
+          apiKey: openrouterKey,
+          model: agentState.model,
+          temperature: config.llm.temperature,
+          maxTokens: 150, // Short purpose statement
+          signal: abort.signal,
+        }
+      )) {
+        if (abort.signal.aborted) break;
+
+        fullResponse += chunk;
+        sentenceBuffer += chunk;
+
+        // Speak complete sentences
+        const match = sentenceBuffer.match(SENTENCE_RE);
+        if (match) {
+          const idx = sentenceBuffer.search(SENTENCE_RE);
+          const punctuation = match[0];
+          const sentence = sentenceBuffer.slice(0, idx + punctuation.length).trim();
+          sentenceBuffer = sentenceBuffer.slice(idx + punctuation.length);
+
+          if (sentence.length >= MIN_SENTENCE_LEN) {
+            if (spokenCount > 0 && SENTENCE_PAUSE_MS > 0) {
+              const silence = generateSilence(SENTENCE_PAUSE_MS, config.stt.sampleRate);
+              onAudio(silence);
+            }
+            console.log(`🗣️  [purpose] ${sentence}`);
+            await speakSentence(sentence, abort.signal);
+            if (abort.signal.aborted) break;
+            spokenCount += 1;
+          }
+        }
+      }
+
+      // Flush remaining
+      if (!abort.signal.aborted && sentenceBuffer.trim() && sentenceBuffer.trim().length >= 3) {
+        console.log(`🗣️  [purpose flush] ${sentenceBuffer.trim()}`);
+        await speakSentence(sentenceBuffer.trim(), abort.signal);
+      }
+
+      if (fullResponse.trim()) {
+        console.log(`💬  [purpose] ${fullResponse.trim()}`);
+        appendConversationEntry("assistant", fullResponse.trim(), currentAgentId || null);
+        history.push({ role: "assistant", content: fullResponse.trim() });
+      }
+    } catch (err) {
+      if (!abort.signal.aborted) {
+        console.error("❌  Purpose explanation error:", err.message);
+      }
+    } finally {
+      turnState.isAgentSpeaking = false;
+      turnState.inputCooldownUntil = Date.now() + (config.echoCooldownMs || 300);
+      isProcessing = false;
+      currentAbort = null;
+    }
+  }
+
   // Send greeting after a short delay (give STT time to connect)
-  setTimeout(() => sendGreeting(), 2000);
+  // Then auto-explain purpose if briefing exists
+  setTimeout(async () => {
+    await sendGreeting();
+    await sendPurposeExplanation();
+  }, 2000);
 
   // ── Public API ──────────────────────────────────────────────────
   return {

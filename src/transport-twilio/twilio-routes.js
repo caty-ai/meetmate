@@ -451,6 +451,7 @@ function handleWsConnection(ws, req) {
     streamSid: null,
     callSid: req.twilioMeta?.callSid || null,
     warmupSessionId: req.twilioMeta?.warmupSessionId || null,
+    briefing: req.twilioMeta?.briefing || null,
     pipeline: null,
     jitter: createJitterBuffer(JITTER_MAX_MS, 16000, 2),
   };
@@ -532,6 +533,7 @@ function handleWsConnection(ws, req) {
           wakeMode: "off",
           exitDetection: false,
           responseTimeoutMs: 25_000,
+          briefing: ctx.briefing || null,
         });
         ctx.pipeline = createPipeline(session, turnState, (pcmChunk) => {
           if (ws.readyState !== WebSocket.OPEN || !ctx.streamSid) return;
@@ -709,6 +711,7 @@ async function handleHttp(req, res) {
       const voiceToken = issueEphemeralToken("voice", VOICE_TOKEN_TTL_MS, {
         to,
         warmupSessionId,
+        briefing: briefing || null,
       });
       const twimlUrl = `${PUBLIC_URL}/twilio/voice?vtoken=${encodeURIComponent(voiceToken)}`;
       const statusCallback = `${PUBLIC_URL}/twilio/status`;
@@ -785,6 +788,7 @@ async function handleHttp(req, res) {
     const streamToken = issueEphemeralToken("stream", STREAM_TOKEN_TTL_MS, {
       callSid,
       warmupSessionId: consumedVoiceToken?.meta?.warmupSessionId || null,
+      briefing: consumedVoiceToken?.meta?.briefing || null,
     });
 
     const publicWsUrl = PUBLIC_URL.replace(/^https:/, "wss:").replace(/^http:/, "ws:");
