@@ -1,4 +1,5 @@
-// gateway-warmup.js — fire-and-forget OpenClaw Gateway session warm-up
+// gateway-warmup.js — OpenClaw Gateway session warm-up
+// When briefing is provided, also generates a purpose statement for immediate greeting.
 
 const http = require("http");
 const https = require("https");
@@ -6,13 +7,17 @@ const { URL } = require("url");
 
 const WARMUP_REQUEST_TIMEOUT_MS = 30_000;
 
+/**
+ * Warm up a Gateway session and optionally generate a purpose statement.
+ * @returns {Promise<{status: string, purposeStatement: string|null}>}
+ */
 function warmUpGatewaySession(sessionId, config, briefing = null) {
   return new Promise((resolve) => {
     let settled = false;
-    const done = (status) => {
+    const done = (status, purposeStatement = null) => {
       if (settled) return;
       settled = true;
-      resolve(status);
+      resolve({ status, purposeStatement });
     };
 
     const sessionUser = String(sessionId || "").trim();
@@ -45,7 +50,21 @@ function warmUpGatewaySession(sessionId, config, briefing = null) {
       ? [
           {
             role: "system",
-            content: "音声通話の準備中です。以下の情報を確認して備えてください。",
+            content: [
+              "音声通話の準備中です。以下のブリーフィングを読んで準備してください。",
+              "",
+              "【重要】応答は以下のJSON形式のみで返してください：",
+              '{"purposeStatement": "挨拶の直後に話す、電話の目的を伝える1〜2文。自然な話し言葉で。感情タグ付き。"}',
+              "",
+              "例: {\"purposeStatement\": \"(calm) 今日はレストランの予約の件でお電話させていただきました。来週の金曜日に4名で伺いたいのですが。\"}",
+              "",
+              "ルール:",
+              "- 1〜2文で簡潔に。長くならないこと",
+              "- 自然な敬語の話し言葉にする",
+              "- ブリーフィングの内容を要約・整形する（そのまま読まない）",
+              "- 感情タグを先頭に付ける: (calm), (happy), (confident) など",
+              "- JSONのみ出力。説明やマークダウンは不要",
+            ].join("\n"),
           },
           { role: "user", content: briefingText },
         ]
@@ -59,7 +78,8 @@ function warmUpGatewaySession(sessionId, config, briefing = null) {
     const body = JSON.stringify({
       model: config?.llm?.model || "anthropic/claude-sonnet-4-6",
       stream: false,
-      temperature: config?.llm?.temperature ?? 0.2,
+      temperature: config?.llm?.temperature ?? 0.3,
+      max_tokens: 200,
       messages,
       user: sessionUser,
     });
@@ -85,14 +105,44 @@ function warmUpGatewaySession(sessionId, config, briefing = null) {
           },
         },
         (res) => {
-          res.resume();
+          let responseBody = "";
+          res.on("data", (chunk) => { responseBody += chunk; });
           res.on("end", () => {
             if ((res.statusCode || 0) >= 400) {
               console.error(`❌  Gateway warm-up failed: HTTP ${res.statusCode} (session=${sessionUser})`);
               done("http_error");
               return;
             }
-            done("ok");
+
+            // Extract purpose statement from response
+            let purposeStatement = null;
+            if (briefingText) {
+              try {
+                const parsed = JSON.parse(responseBody);
+                const content = parsed?.choices?.[0]?.message?.content || "";
+                // Try JSON parse first
+                try {
+                  const jsonContent = JSON.parse(content);
+                  purposeStatement = jsonContent.purposeStatement || null;
+                } catch {
+                  // If not valid JSON, try to extract from text
+                  const match = content.match(/"purposeStatement"\s*:\s*"([^"]+)"/);
+                  if (match) {
+                    purposeStatement = match[1];
+                  } else if (content.trim().length > 5 && content.trim().length < 200) {
+                    // Use raw content as fallback
+                    purposeStatement = content.trim();
+                  }
+                }
+                if (purposeStatement) {
+                  console.log(`✅  Purpose statement generated: "${purposeStatement}"`);
+                }
+              } catch (err) {
+                console.error(`⚠️  Purpose statement parse error: ${err.message}`);
+              }
+            }
+
+            done("ok", purposeStatement);
           });
         }
       );
@@ -125,7 +175,7 @@ function warmUpMultipleAgents(sessionId, agents, selectedAgentIds, baseConfig, b
 
   const promises = ids.map((agentId) => {
     const agent = agents?.[agentId];
-    if (!agent) return Promise.resolve("skipped_unknown");
+    if (!agent) return Promise.resolve({ status: "skipped_unknown", purposeStatement: null });
 
     const agentConfig = {
       ...baseConfig,
