@@ -4,7 +4,7 @@ const querystring = require("querystring");
 const { WebSocketServer, WebSocket } = require("ws");
 
 const { createPipeline } = require("../pipeline");
-const { getPipelineConfig } = require("../config");
+const { getPipelineConfig, loadAgents, getAgentById } = require("../config");
 const { warmUpGatewaySession } = require("../gateway-warmup");
 const { SessionLifecycle } = require("../session-events");
 const { SlackNotifier } = require("../slack-notifier");
@@ -49,6 +49,21 @@ const sessionLifecycles = new Map();
 let slackNotifier = null;
 let wss = null;
 let connectionHandlerAttached = false;
+
+// Resolve fixed agent for single-agent mode (Twilio calls)
+const FIXED_AGENT_ID = process.env.AGENT_ID || null;
+const FIXED_AGENT = (() => {
+  if (!FIXED_AGENT_ID) return null;
+  const agents = loadAgents();
+  const agent = getAgentById(agents, FIXED_AGENT_ID);
+  if (!agent) {
+    console.warn(`⚠️  AGENT_ID="${FIXED_AGENT_ID}" not found in agents.json — falling back to defaults`);
+    return null;
+  }
+  console.log(`📋  Twilio fixed agent: ${agent.displayName || agent.name || FIXED_AGENT_ID}`);
+  return agent;
+})();
+const AGENT_DISPLAY_NAME = FIXED_AGENT?.displayName || FIXED_AGENT?.name || "Caty";
 
 function getSlackNotifier() {
   if (!slackNotifier) {
@@ -114,7 +129,7 @@ function saveCallLog(lifecycle) {
     `- from: ${lifecycle.meta.from || "—"}`,
     `- duration: ${lifecycle.durationFormatted}`,
     "",
-    ...log.map((e) => `**${e.role === "assistant" || e.role === "agent" ? "Caty" : "参加者"}** (${e.timestamp}):\n${e.content}\n`),
+    ...log.map((e) => `**${e.role === "assistant" || e.role === "agent" ? AGENT_DISPLAY_NAME : "参加者"}** (${e.timestamp}):\n${e.content}\n`),
   ].join("\n");
   fs.writeFileSync(mdPath, mdContent);
   console.log(`📝  通話ログ(MD)保存: ${mdPath}`);
@@ -129,7 +144,8 @@ function saveCallLog(lifecycle) {
     const memoryFile = require("path").join(memoryDir, `${today}.md`);
 
     const userMsgs = log.filter((e) => e.role !== "assistant" && e.role !== "agent").map((e) => e.content).slice(0, 5);
-    const catyMsgs = log.filter((e) => e.role === "assistant" || e.role === "agent").map((e) => e.content).slice(0, 5);
+    const agentName = AGENT_DISPLAY_NAME;
+    const assistantMsgs = log.filter((e) => e.role === "assistant" || e.role === "agent").map((e) => e.content).slice(0, 5);
 
     const now = new Date().toLocaleString("ja-JP", { timeZone: "Asia/Bangkok" });
     const summary = [
@@ -142,7 +158,7 @@ function saveCallLog(lifecycle) {
       "",
       "### 会話ハイライト",
       ...userMsgs.slice(0, 3).map((m) => `- 参加者: 「${m.slice(0, 80)}${m.length > 80 ? "..." : ""}」`),
-      ...catyMsgs.slice(0, 3).map((m) => `- Caty: 「${m.slice(0, 80)}${m.length > 80 ? "..." : ""}」`),
+      ...assistantMsgs.slice(0, 3).map((m) => `- ${agentName}: 「${m.slice(0, 80)}${m.length > 80 ? "..." : ""}」`),
       "",
     ].join("\n");
 
@@ -164,7 +180,7 @@ function saveCallLog(lifecycle) {
       "## 全文",
       "",
       ...log.map((e) => {
-        const speaker = e.role === "assistant" || e.role === "agent" ? "Caty" : "参加者";
+        const speaker = e.role === "assistant" || e.role === "agent" ? AGENT_DISPLAY_NAME : "参加者";
         return `**${speaker}**: ${e.content}\n`;
       }),
     ].join("\n");
@@ -212,7 +228,7 @@ async function postFullTranscript(notifier, lifecycle) {
   ];
 
   for (const entry of log) {
-    const speaker = entry.role === "assistant" || entry.role === "agent" ? "🤖 Caty" : "👤 参加者";
+    const speaker = entry.role === "assistant" || entry.role === "agent" ? `🤖 ${AGENT_DISPLAY_NAME}` : "👤 参加者";
     const time = entry.timestamp ? `(${new Date(entry.timestamp).toLocaleTimeString("ja-JP")})` : "";
     lines.push(`${speaker} ${time}`);
     lines.push(entry.content);
@@ -536,7 +552,7 @@ function handleWsConnection(ws, req) {
           responseTimeoutMs: 25_000,
           briefing: ctx.briefing || null,
           purposeStatement: ctx.purposeStatement || null,
-        });
+        }, FIXED_AGENT);
         ctx.pipeline = createPipeline(session, turnState, (pcmChunk) => {
           if (ws.readyState !== WebSocket.OPEN || !ctx.streamSid) return;
 
@@ -707,7 +723,7 @@ async function handleHttp(req, res) {
         wakeMode: "off",
         exitDetection: false,
         responseTimeoutMs: 25_000,
-      });
+      }, FIXED_AGENT);
       const warmupResult = await warmUpGatewaySession(`meet-${warmupSessionId}`, warmupConfig, briefing || null);
       const purposeStatement = warmupResult?.purposeStatement || null;
 
