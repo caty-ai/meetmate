@@ -832,20 +832,27 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     appendConversationEntry("assistant", fullGreeting, currentAgentId || null);
     history.push({ role: "assistant", content: fullGreeting });
 
+    // Use AbortController so barge-in can interrupt greeting/purpose
+    const greetAbort = new AbortController();
+    currentAbort = greetAbort;
+    isProcessing = true;
     turnState.isAgentSpeaking = true;
     try {
-      // Speak greeting and purpose as separate sentences for natural pacing
-      await speakSentence(greeting, null);
-      if (purposeStatement) {
+      await speakSentence(greeting, greetAbort.signal);
+      if (purposeStatement && !greetAbort.signal.aborted) {
         // Small pause between greeting and purpose
         const silence = generateSilence(SENTENCE_PAUSE_MS || 500, config.stt.sampleRate);
         onAudio(silence);
-        await speakSentence(purposeStatement, null);
+        await speakSentence(purposeStatement, greetAbort.signal);
       }
     } catch (err) {
-      console.error("❌  Greeting TTS error:", err.message);
+      if (!greetAbort.signal.aborted) {
+        console.error("❌  Greeting TTS error:", err.message);
+      }
     }
     turnState.isAgentSpeaking = false;
+    isProcessing = false;
+    if (currentAbort === greetAbort) currentAbort = null;
     turnState.inputCooldownUntil = Date.now() + (config.echoCooldownMs || 300);
   }
 
