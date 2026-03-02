@@ -837,6 +837,16 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     const briefing = config.briefing;
     if (!briefing) return;
 
+    // Guard: skip if user already spoke or another LLM turn is in progress
+    if (isProcessing || currentAbort) {
+      console.log(`⏭️  Purpose explanation skipped (already processing)`);
+      return;
+    }
+    if (lastUserTranscript) {
+      console.log(`⏭️  Purpose explanation skipped (user already spoke)`);
+      return;
+    }
+
     console.log(`📋  Briefing detected — auto-explaining purpose…`);
 
     isProcessing = true;
