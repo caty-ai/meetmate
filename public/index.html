@@ -220,6 +220,46 @@
             50% { opacity: 0.5; }
         }
 
+        /* Cross-instance navigation */
+        .instance-nav {
+            margin-top: 2rem;
+            padding-top: 1.2rem;
+            border-top: 1px solid #0f3460;
+            text-align: center;
+        }
+        .instance-nav .nav-label {
+            color: #555;
+            font-size: 0.75rem;
+            margin-bottom: 0.6rem;
+            letter-spacing: 0.05em;
+        }
+        .instance-nav .nav-links {
+            display: flex;
+            justify-content: center;
+            gap: 0.8rem;
+            flex-wrap: wrap;
+        }
+        .instance-nav a {
+            display: inline-block;
+            padding: 0.45rem 0.9rem;
+            background: #0f3460;
+            color: #95b5d5;
+            border-radius: 20px;
+            text-decoration: none;
+            font-size: 0.85rem;
+            transition: background 0.15s, color 0.15s;
+        }
+        .instance-nav a:hover {
+            background: #1a4a7a;
+            color: #c5d5e5;
+        }
+        .instance-nav a.current {
+            background: #e94560;
+            color: white;
+            pointer-events: none;
+            cursor: default;
+        }
+
         /* Active session banner */
         .active-banner {
             display: none;
@@ -347,6 +387,16 @@
         </form>
 
         <div id="status" class="status"></div>
+
+        <!-- Cross-instance navigation -->
+        <div class="instance-nav" id="instanceNav">
+            <div class="nav-label">── 他のインスタンスへ ──</div>
+            <div class="nav-links" id="navLinks">
+                <a href="https://your-domain.ngrok.app" data-instance="caty">🐱 ケイティたち</a>
+                <a href="https://your-domain.ngrok.dev" data-instance="claire">🌙 クレアたち</a>
+                <a href="https://your-domain.ngrok.dev" data-instance="sebas">🎩 セバスたち</a>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -727,6 +777,20 @@
 
         // Start polling for active sessions
         startPolling();
+
+        // Highlight current instance in nav
+        (function highlightCurrentNav() {
+            const host = location.hostname.toLowerCase();
+            const links = document.querySelectorAll('#navLinks a');
+            links.forEach(link => {
+                try {
+                    const linkHost = new URL(link.href).hostname.toLowerCase();
+                    if (host === linkHost || host.startsWith(linkHost.split('.')[0])) {
+                        link.classList.add('current');
+                    }
+                } catch {}
+            });
+        })();
 
         form.addEventListener('submit', async function(event) {
             event.preventDefault();
