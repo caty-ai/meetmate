@@ -4,7 +4,6 @@
     "displayName": "ケイティ",
     "gatewayUrl": "http://localhost:18789",
     "gatewayToken": "${OPENCLAW_GATEWAY_TOKEN}",
-    "attendeeApiKey": "${ATTENDEE_API_KEY}",
     "voiceId": "your-fish-audio-voice-id",
     "wakeWords": [
       "ケイティ",
@@ -23,6 +22,13 @@
     "model": "anthropic/claude-sonnet-4-6",
     "default": true,
     "openclawSystemAddendum": null,
+    "emotionTags": true,
+    "ackVariants": [
+      "(calm) 了解、すぐ取りかかるね。",
+      "(calm) 了解です。ちょっと待ってね。",
+      "(calm) はい、今確認するね。",
+      "(nervous) あ、えっと、ちょっと調べてみるね。"
+    ],
     "avatarUrl": "https://example.com/avatar.png"
   },
   "alec": {
@@ -30,7 +36,6 @@
     "displayName": "アレク",
     "gatewayUrl": "http://localhost:19009",
     "gatewayToken": "${ALEC_GATEWAY_TOKEN}",
-    "attendeeApiKey": "${ALEC_ATTENDEE_API_KEY}",
     "voiceId": "your-fish-audio-voice-id",
     "wakeWords": [
       "アレク",
@@ -46,6 +51,12 @@
     "model": "openai-codex/gpt-5.3-codex",
     "default": false,
     "openclawSystemAddendum": null,
+    "emotionTags": true,
+    "ackVariants": [
+      "了解。ちょっと見る。",
+      "おっけ、確認する。",
+      "…わかった。調べるわ。"
+    ],
     "avatarUrl": "https://example.com/avatar.png"
   },
   "zoe": {
@@ -53,7 +64,6 @@
     "displayName": "ゾーイ",
     "gatewayUrl": "http://localhost:19100",
     "gatewayToken": "${ZOE_GATEWAY_TOKEN}",
-    "attendeeApiKey": "${ZOE_ATTENDEE_API_KEY}",
     "voiceId": "your-fish-audio-voice-id",
     "wakeWords": [
       "ゾーイ",
@@ -70,6 +80,12 @@
     "model": "anthropic/claude-opus-4-6",
     "default": false,
     "openclawSystemAddendum": null,
+    "emotionTags": true,
+    "ackVariants": [
+      "(excited) 了解〜！ちょっと見てみるね！",
+      "(happy) おっけー！確認するね〜",
+      "(curious) ん、調べてみる！"
+    ],
     "avatarUrl": "https://example.com/avatar.png"
   },
   "eidra": {
@@ -77,7 +93,6 @@
     "displayName": "アイドラ",
     "gatewayUrl": "http://localhost:19200",
     "gatewayToken": "${EIDRA_GATEWAY_TOKEN}",
-    "attendeeApiKey": "${EIDRA_ATTENDEE_API_KEY}",
     "voiceId": "your-fish-audio-voice-id",
     "wakeWords": [
       "アイドラ",
@@ -93,6 +108,12 @@
     "model": "anthropic/claude-sonnet-4-6",
     "default": false,
     "openclawSystemAddendum": null,
+    "emotionTags": true,
+    "ackVariants": [
+      "(soft tone) はい、確認しますね。",
+      "(calm) 承知しました。少々お待ちくださいね。",
+      "(soft tone) ええ、調べてみますね。"
+    ],
     "avatarUrl": "https://example.com/avatar.png"
   },
   "claire": {
@@ -100,7 +121,6 @@
     "displayName": "クレア",
     "gatewayUrl": "${CLAIRE_GATEWAY_URL}",
     "gatewayToken": "${CLAIRE_GATEWAY_TOKEN}",
-    "attendeeApiKey": "${CLAIRE_ATTENDEE_API_KEY}",
     "voiceId": "your-fish-audio-voice-id",
     "wakeWords": [
       "クレア",
@@ -116,6 +136,12 @@
     "model": "openai/gpt-5.2",
     "default": false,
     "openclawSystemAddendum": null,
+    "emotionTags": true,
+    "ackVariants": [
+      "(calm) 了解です。確認しますね。",
+      "(happy) はい！ちょっと調べてみますね。",
+      "(calm) 承知しました。少しお待ちください。"
+    ],
     "avatarUrl": "https://example.com/avatar.png"
   },
   "sebas": {
@@ -123,7 +149,6 @@
     "displayName": "セバス",
     "gatewayUrl": "${SEBAS_GATEWAY_URL}",
     "gatewayToken": "${SEBAS_GATEWAY_TOKEN}",
-    "attendeeApiKey": "${SEBAS_ATTENDEE_API_KEY}",
     "voiceId": "your-fish-audio-voice-id",
     "wakeWords": [
       "セバス",
@@ -139,6 +164,12 @@
     "model": "anthropic/claude-opus-4-6",
     "default": false,
     "openclawSystemAddendum": null,
+    "emotionTags": true,
+    "ackVariants": [
+      "(calm) 承知いたしました。確認いたします。",
+      "(calm) かしこまりました。少々お待ちください。",
+      "(calm) はい、調べてまいります。"
+    ],
     "avatarUrl": "https://example.com/avatar.png"
   }
 }

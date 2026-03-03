@@ -7,14 +7,19 @@ const { createSTT } = require("./stt");
 const { streamChat } = require("./llm");
 const { synthesize } = require("./tts-fish");
 
-// Sentence splitter for Japanese + English
-// Splits on: 。！？!?\n and also on 、when the segment is long enough
-const SENTENCE_RE = /[。！？!?\n]+/;
+// Two-tier sentence splitter for Japanese + English
+// Tier 1: Full sentence boundary (。！？!?\n) — long pause
+// Tier 2: Clause boundary (、) — short pause, only when buffer is long enough
+const SENTENCE_END_RE = /[。！？!?\n]+/;
+const CLAUSE_CHAR = "、";
 const MIN_SENTENCE_LEN = 8;
+const MIN_CLAUSE_LEN = Number(process.env.MIN_CLAUSE_LEN || 15);       // min buffer length to trigger clause split
+const MIN_CLAUSE_PREFIX = Number(process.env.MIN_CLAUSE_PREFIX || 6);   // min chars before 、 to split
 const FIRST_CHUNK_MIN_CHARS = Number(process.env.FIRST_CHUNK_MIN_CHARS || 12);
 
-// Inter-sentence pause: insert silence between sentences for natural rhythm
-const SENTENCE_PAUSE_MS = Number(process.env.SENTENCE_PAUSE_MS || 500);
+// Inter-segment pauses
+const SENTENCE_PAUSE_MS = Number(process.env.SENTENCE_PAUSE_MS || 500); // full sentence boundary
+const CLAUSE_PAUSE_MS = Number(process.env.CLAUSE_PAUSE_MS || 150);     // clause boundary (、)
 
 // UX controls
 const POST_UTTERANCE_BUFFER_MS = Number(process.env.POST_UTTERANCE_BUFFER_MS || 500);
@@ -146,8 +151,42 @@ function generateSilence(durationMs, sampleRate) {
   return Buffer.alloc(numSamples * 2); // 2 bytes per int16 sample
 }
 
+/**
+ * Find the best split point in a text buffer.
+ * Priority 1: Full sentence boundary (。！？!?\n) → long pause
+ * Priority 2: Clause boundary (、) when buffer is long enough → short pause
+ * Returns { splitAt, pauseMs, type } or null if no split point found.
+ */
+function findSplitPoint(buffer) {
+  // Priority 1: Full sentence boundary
+  const sentenceMatch = buffer.match(SENTENCE_END_RE);
+  if (sentenceMatch) {
+    const idx = buffer.search(SENTENCE_END_RE);
+    return {
+      splitAt: idx + sentenceMatch[0].length,
+      pauseMs: SENTENCE_PAUSE_MS,
+      type: "sentence",
+    };
+  }
+
+  // Priority 2: Clause boundary (、) when buffer is long enough
+  if (buffer.length >= MIN_CLAUSE_LEN) {
+    const clauseIdx = buffer.indexOf(CLAUSE_CHAR);
+    if (clauseIdx >= MIN_CLAUSE_PREFIX) {
+      return {
+        splitAt: clauseIdx + 1,
+        pauseMs: CLAUSE_PAUSE_MS,
+        type: "clause",
+      };
+    }
+  }
+
+  return null;
+}
+
+// Legacy helper (kept for backward compat)
 function splitSentences(text) {
-  const parts = text.split(SENTENCE_RE).filter((s) => s.trim().length > 0);
+  const parts = text.split(SENTENCE_END_RE).filter((s) => s.trim().length > 0);
   return parts.map((s) => s.trim());
 }
 
@@ -177,7 +216,7 @@ const IMMEDIATE_ACK_PATTERNS = [
   /can you|please|check|find|implement|do this|call|book|summarize/i,
 ];
 
-const IMMEDIATE_ACK_VARIANTS = [
+const DEFAULT_ACK_VARIANTS = [
   "(calm) 了解、すぐ取りかかるね。",
   "(calm) 了解です。ちょっと待ってね。",
   "(calm) はい、今確認するね。",
@@ -198,12 +237,17 @@ function shouldSendImmediateAck(text) {
   return IMMEDIATE_ACK_PATTERNS.some((re) => re.test(t));
 }
 
-function pickImmediateAck(text) {
+function pickImmediateAck(text, agentAckVariants = null) {
+  const variants = agentAckVariants && agentAckVariants.length > 0
+    ? agentAckVariants
+    : DEFAULT_ACK_VARIANTS;
+
   // Slightly prefer task-oriented wording when user asks for work.
   if (/調べ|確認|探し|予約|連絡|call|check|find|book/i.test(String(text || ""))) {
-    return "(calm) 了解、いま確認するね。";
+    const taskVariant = variants.find((v) => /確認|調べ|check/i.test(v));
+    return taskVariant || variants[0];
   }
-  return IMMEDIATE_ACK_VARIANTS[Math.floor(Math.random() * IMMEDIATE_ACK_VARIANTS.length)];
+  return variants[Math.floor(Math.random() * variants.length)];
 }
 
 function pickProgressPing(index) {
@@ -600,8 +644,9 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
 
     try {
       // #9 Immediate ack for request-like utterances
+      const currentAgentConfig = agents[currentAgentId] || {};
       if (shouldSendImmediateAck(userText) && !abort.signal.aborted) {
-        const ack = pickImmediateAck(userText);
+        const ack = pickImmediateAck(userText, currentAgentConfig.ackVariants || config.ackVariants);
         turnState.isAgentSpeaking = true;
         console.log(`⚡  Immediate ack: "${ack}"`);
         await speakSentence(ack, abort.signal);
@@ -659,7 +704,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         sentenceBuffer += chunk;
 
         // #9 First chunk fast path: speak early even before punctuation.
-        if (!mainResponseStarted && sentenceBuffer.trim().length >= FIRST_CHUNK_MIN_CHARS && !SENTENCE_RE.test(sentenceBuffer)) {
+        if (!mainResponseStarted && sentenceBuffer.trim().length >= FIRST_CHUNK_MIN_CHARS && !SENTENCE_END_RE.test(sentenceBuffer) && !findSplitPoint(sentenceBuffer)) {
           mainResponseStarted = true;
           stopProgressTimer();
           turnState.isAgentSpeaking = true;
@@ -672,13 +717,11 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
           continue;
         }
 
-        // Check for complete sentence
-        const match = sentenceBuffer.match(SENTENCE_RE);
-        if (match) {
-          const idx = sentenceBuffer.search(SENTENCE_RE);
-          const punctuation = match[0];
-          const sentence = sentenceBuffer.slice(0, idx + punctuation.length).trim();
-          sentenceBuffer = sentenceBuffer.slice(idx + punctuation.length);
+        // Check for split point (two-tier: sentence boundary or clause boundary)
+        const split = findSplitPoint(sentenceBuffer);
+        if (split) {
+          const sentence = sentenceBuffer.slice(0, split.splitAt).trim();
+          sentenceBuffer = sentenceBuffer.slice(split.splitAt);
 
           if (sentence.length >= MIN_SENTENCE_LEN) {
             if (!mainResponseStarted) {
@@ -687,16 +730,17 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
               turnState.isAgentSpeaking = true;
             }
 
-            // Insert pause between sentences (not before the first one)
-            if (spokenSentenceCount > 0 && SENTENCE_PAUSE_MS > 0) {
-              const silence = generateSilence(SENTENCE_PAUSE_MS, config.stt.sampleRate);
+            // Insert pause between segments (sentence=long, clause=short)
+            if (spokenSentenceCount > 0 && split.pauseMs > 0) {
+              const silence = generateSilence(split.pauseMs, config.stt.sampleRate);
               onAudio(silence);
             }
 
+            const splitLabel = split.type === "clause" ? "clause" : "sentence";
             if (spokenSentenceCount === 0) {
-              console.log(`🗣️  ${requestAgentId || "agent"} speaking: "${sentence}"`);
+              console.log(`🗣️  ${requestAgentId || "agent"} speaking [${splitLabel}]: "${sentence}"`);
             } else {
-              console.log(`🗣️  ${requestAgentId || "agent"} continue: "${sentence}"`);
+              console.log(`🗣️  ${requestAgentId || "agent"} continue [${splitLabel}]: "${sentence}"`);
             }
 
             await speakSentence(sentence, abort.signal);

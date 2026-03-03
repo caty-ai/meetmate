@@ -6,13 +6,18 @@
 const http = require("http");
 const https = require("https");
 
-// Voice-specific system prompt (appended to OpenClaw's SOUL.md)
-const VOICE_SYSTEM_ADDENDUM = `あなたは音声通話中です。
+// Voice-specific system prompt builder (appended to OpenClaw's SOUL.md)
+// emotionTags: boolean — include emotion tag instructions (default true)
+function buildVoiceAddendum({ emotionTags = true } = {}) {
+  const emotionLine = emotionTags
+    ? "- すべての文の先頭に感情タグを付ける。使えるタグ: (calm), (happy), (curious), (soft tone), (excited), (nervous), (grateful), (laughing), (confident)\n"
+    : "";
+
+  return `あなたは音声通話中です。
 
 【応答ルール】
 - 短く話す（1回の発話は2〜3文まで。長くならないこと！）
-- すべての文の先頭に感情タグを付ける。使えるタグ: (calm), (happy), (curious), (soft tone), (excited), (nervous), (grateful), (laughing), (confident)
-- コードブロック、マークダウン記法、長いリスト、テーブルは使わない（音声で読み上げるので）
+${emotionLine}- コードブロック、マークダウン記法、長いリスト、テーブルは使わない（音声で読み上げるので）
 - 相手の話をしっかり聞いてから応答する
 - 音声では結論→次アクションを優先。詳細はSlackで共有する
 
@@ -36,6 +41,10 @@ const VOICE_SYSTEM_ADDENDUM = `あなたは音声通話中です。
 セッション履歴にサブエージェントの結果が返ってきている場合は、
 ユーザーの発話に応答した後、「あ、さっきの結果が返ってきたみたい」と自発的に報告すること。
 詳細はSlackを参照するよう案内し、口頭では短い要約を伝える。`;
+}
+
+// Default addendum (backward compat)
+const VOICE_SYSTEM_ADDENDUM = buildVoiceAddendum({ emotionTags: true });
 
 /**
  * Stream a chat completion.
@@ -169,8 +178,8 @@ async function* streamOpenRouter(systemPrompt, messages, options) {
           Authorization: `Bearer ${apiKey}`,
           "Content-Type": "application/json",
           "Content-Length": Buffer.byteLength(body),
-          "HTTP-Referer": "https://github.com/caty-ai/meetmate",
-          "X-Title": "AI Meet Participant",
+          "HTTP-Referer": "https://example.com/private-repo",
+          "X-Title": "AI Phone",
         },
       },
       (res) => resolve(res)
@@ -243,4 +252,4 @@ async function* parseSSE(response, signal) {
   }
 }
 
-module.exports = { streamChat, VOICE_SYSTEM_ADDENDUM };
+module.exports = { streamChat, VOICE_SYSTEM_ADDENDUM, buildVoiceAddendum };
