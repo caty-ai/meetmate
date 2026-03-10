@@ -388,20 +388,9 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
 
     const interim = String(text || "").trim();
 
-    // Multi-participant mode: Skip barge-in during Gate CLOSED (except cancel words)
+    // Multi-participant mode: Skip barge-in during Gate CLOSED
+    // (Cancel detection moved to utterance_end only — interim is too noisy from TTS echo)
     if (wakeMode === "wake" && gateState === "CLOSED") {
-      if (!isCancelWord(interim)) return;
-      // Cancel word detected during CLOSED gate
-      console.log(`🚫  Cancel word detected during CLOSED gate: "${interim.slice(0, 50)}"`);
-      if (currentAbort && !currentAbort.signal?.aborted) {
-        currentAbort.abort();
-        currentAbort = null;
-        // Keep pendingQueue contents (don't discard)
-        gateState = "OPEN";
-        turnState.gateState = gateState;
-        turnState.isAgentSpeaking = false;
-        turnState.inputCooldownUntil = 0;
-      }
       return;
     }
 
@@ -505,7 +494,21 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         while (transcriptBuffer.length > TRANSCRIPT_BUFFER_MAX) transcriptBuffer.shift();
         console.log("🔔  Wake word detected! Gate → CLOSED");
       } else {
-        // Gate is CLOSED: queue only (don't add to buffer — merge happens in finally)
+        // Gate is CLOSED: check for wake+cancel combo (immediate abort)
+        const textAfterWake = cleanedText.replace(/^.*?(ケイティ|keity|caty|けいてぃ)[ー\s、,.]*/i, "").trim();
+        if (isCancelWord(textAfterWake) || isCancelWord(cleanedText)) {
+          console.log(`🚫  Wake+cancel abort: "${cleanedText.slice(0, 50)}"`);
+          if (currentAbort && !currentAbort.signal?.aborted) {
+            currentAbort.abort();
+            currentAbort = null;
+          }
+          gateState = "OPEN";
+          turnState.gateState = gateState;
+          turnState.isAgentSpeaking = false;
+          turnState.inputCooldownUntil = 0;
+          return;
+        }
+        // Regular wake during CLOSED: queue (don't add to buffer — merge happens in finally)
         console.log(`⏳  Wake word detected but gate CLOSED, queuing: "${cleanedText.slice(0, 50)}..."`);
         pendingQueue.push(entry);
         return;
