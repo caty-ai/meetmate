@@ -31,6 +31,14 @@ const ENABLE_BARGE_IN = String(process.env.ENABLE_BARGE_IN || "true").toLowerCas
 const ENABLE_IMMEDIATE_ACK = String(process.env.ENABLE_IMMEDIATE_ACK || "true").toLowerCase() !== "false";
 const ENABLE_PROGRESS_GUARD = String(process.env.ENABLE_PROGRESS_GUARD || "true").toLowerCase() !== "false";
 
+// Multi-participant meeting mode: Injection Gate
+const TRANSCRIPT_BUFFER_MAX = Number(process.env.TRANSCRIPT_BUFFER_MAX || 50);
+const CANCEL_WORDS = ["やめて", "キャンセル", "もういい", "中止", "ストップ", "stop", "cancel"];
+function isCancelWord(text) {
+  const lower = text.toLowerCase();
+  return CANCEL_WORDS.some(w => lower.includes(w));
+}
+
 // Wake word detection: only respond when addressed
 // Modes: "off" (respond to everything), "wake" (require wake word), "context" (LLM decides)
 const WAKE_MODE = process.env.WAKE_MODE || "off";
@@ -331,6 +339,12 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   let isProcessing = false;
   let lastUserTranscript = "";
 
+  // Multi-participant meeting mode: Injection Gate (wake mode only)
+  const transcriptBuffer = []; // Accumulates all utterances (with seq numbers)
+  const pendingQueue = []; // Utterances that arrive while Gate is CLOSED
+  let gateState = "OPEN"; // "OPEN" = accepting input, "CLOSED" = processing
+  let utteranceSeq = 0; // Monotonic sequence counter for ordering
+
   function appendConversationEntry(role, content, agentId = null) {
     const entry = {
       timestamp: new Date().toISOString(),
@@ -370,6 +384,22 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     }
 
     const interim = String(text || "").trim();
+
+    // Multi-participant mode: Skip barge-in during Gate CLOSED (except cancel words)
+    if (wakeMode === "wake" && gateState === "CLOSED") {
+      if (!isCancelWord(interim)) return;
+      // Cancel word detected during CLOSED gate
+      console.log(`🚫  Cancel word detected during CLOSED gate: "${interim.slice(0, 50)}"`);
+      if (currentAbort && !currentAbort.signal?.aborted) {
+        currentAbort.abort();
+        currentAbort = null;
+        // Keep pendingQueue contents (don't discard)
+        gateState = "OPEN";
+        turnState.isAgentSpeaking = false;
+        turnState.inputCooldownUntil = 0;
+      }
+      return;
+    }
 
     // #8 Barge-in: if user starts speaking while agent is speaking, abort immediately.
     if (
@@ -429,17 +459,35 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
 
     // Wake word detection
     if (wakeMode === "wake") {
+      // Multi-participant mode: Always add to transcript buffer (ring buffer)
+      utteranceSeq += 1;
+      const entry = { seq: utteranceSeq, text: cleanedText, timestamp: new Date().toISOString() };
+      transcriptBuffer.push(entry);
+      while (transcriptBuffer.length > TRANSCRIPT_BUFFER_MAX) transcriptBuffer.shift();
+
       const wakeResult = detectWakeAgent(cleanedText, agents, selectedAgentIds, defaultAgentId);
       if (!wakeResult.detected) {
-        console.log(`🔇  Wake word not detected, ignoring: "${cleanedText.slice(0, 50)}..."`);
-        // Still log for context, but don't respond
+        console.log(`🔇  [会議音声・未指名] "${cleanedText.slice(0, 50)}..."`);
+        // Log for context, but don't respond
         appendConversationEntry("user", `[会議音声・未指名] ${cleanedText}`, currentAgentId || null);
         return;
       }
+
+      // Wake word detected
       if (wakeResult.agentId && wakeResult.agentId !== currentAgentId) {
         switchAgent(wakeResult.agentId);
       }
-      console.log("🔔  Wake word detected!");
+
+      // Injection Gate logic
+      if (gateState === "OPEN") {
+        gateState = "CLOSED";
+        console.log("🔔  Wake word detected! Gate → CLOSED");
+      } else {
+        // Gate is CLOSED, queue this utterance
+        console.log(`⏳  Wake word detected but gate CLOSED, queuing: "${cleanedText.slice(0, 50)}..."`);
+        pendingQueue.push(entry);
+        return;
+      }
     }
 
     // Keep the latest user transcript for timeout handoff fallback.
@@ -457,8 +505,18 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       turnState.isAgentSpeaking = false;
     }
 
+    // Build user text with meeting context injection (wake mode only)
+    let textToProcess = cleanedText;
+    if (wakeMode === "wake") {
+      const meetingContext = transcriptBuffer.slice(-20)
+        .map(e => `[${e.timestamp}] ${e.text}`)
+        .join("\n");
+      textToProcess = `【直近の会議の流れ】\n${meetingContext}\n\n【指名された発言】\n${cleanedText}`;
+      console.log(`📋  Injected meeting context (${transcriptBuffer.length} entries)`);
+    }
+
     // Process user input
-    await processUserInput(cleanedText);
+    await processUserInput(textToProcess);
   });
 
   stt.on("error", (err) => {
@@ -817,6 +875,38 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       turnState.inputCooldownUntil = Date.now() + (config.echoCooldownMs || 300);
       isProcessing = false;
       currentAbort = null;
+
+      // Multi-participant mode: Open gate and re-scan pending queue
+      if (wakeMode === "wake") {
+        gateState = "OPEN";
+        // Merge pending into buffer
+        for (const entry of pendingQueue) {
+          transcriptBuffer.push(entry);
+          while (transcriptBuffer.length > TRANSCRIPT_BUFFER_MAX) transcriptBuffer.shift();
+        }
+        const pendingCopy = [...pendingQueue];
+        pendingQueue.length = 0;
+
+        // Re-scan for wake words in pending
+        for (const entry of pendingCopy) {
+          const wakeResult = detectWakeAgent(entry.text, agents, selectedAgentIds, defaultAgentId);
+          if (wakeResult.detected) {
+            console.log(`🔔  Pending wake word found: "${entry.text.slice(0, 50)}"`);
+            if (wakeResult.agentId && wakeResult.agentId !== currentAgentId) {
+              switchAgent(wakeResult.agentId);
+            }
+            // Process this pending wake call
+            const pendingContext = transcriptBuffer.slice(-20)
+              .map(e => `[${e.timestamp}] ${e.text}`)
+              .join("\n");
+            const pendingPrefix = `【直近の会議の流れ】\n${pendingContext}\n\n【指名された発言】\n`;
+            appendConversationEntry("user", entry.text, currentAgentId || null);
+            lastUserTranscript = entry.text;
+            await processUserInput(pendingPrefix + entry.text);
+            break; // Only process first pending wake, rest will be handled in next cycle
+          }
+        }
+      }
     }
   }
 
