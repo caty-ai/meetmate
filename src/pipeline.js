@@ -484,7 +484,10 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         console.log("🔔  Wake word detected! Gate → CLOSED");
       } else {
         // Gate is CLOSED: check for wake+cancel combo (immediate abort)
-        const textAfterWake = cleanedText.replace(/^.*?(ケイティ|keity|caty|けいてぃ)[ー\s、,.]*/i, "").trim();
+        // Strip wake word using all known variants (WAKE_WORDS + EXTENDED_WAKE_VARIANTS)
+        const allWakePatterns = [...WAKE_WORDS, ...EXTENDED_WAKE_VARIANTS].join("|");
+        const wakeStripRe = new RegExp(`^.*?(${allWakePatterns})[ー\\s、,.]*`, "i");
+        const textAfterWake = cleanedText.replace(wakeStripRe, "").trim();
         if (isCancelWord(textAfterWake) || isCancelWord(cleanedText)) {
           console.log(`🚫  Wake+cancel abort: "${cleanedText.slice(0, 50)}"`);
           if (currentAbort && !currentAbort.signal?.aborted) {
