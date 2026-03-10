@@ -459,16 +459,16 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
 
     // Wake word detection
     if (wakeMode === "wake") {
-      // Multi-participant mode: Always add to transcript buffer (ring buffer)
+      // Multi-participant mode: create entry with sequence number
       utteranceSeq += 1;
       const entry = { seq: utteranceSeq, text: cleanedText, timestamp: new Date().toISOString() };
-      transcriptBuffer.push(entry);
-      while (transcriptBuffer.length > TRANSCRIPT_BUFFER_MAX) transcriptBuffer.shift();
 
       const wakeResult = detectWakeAgent(cleanedText, agents, selectedAgentIds, defaultAgentId);
       if (!wakeResult.detected) {
+        // No wake word: add to buffer only (don't call LLM)
+        transcriptBuffer.push(entry);
+        while (transcriptBuffer.length > TRANSCRIPT_BUFFER_MAX) transcriptBuffer.shift();
         console.log(`🔇  [会議音声・未指名] "${cleanedText.slice(0, 50)}..."`);
-        // Log for context, but don't respond
         appendConversationEntry("user", `[会議音声・未指名] ${cleanedText}`, currentAgentId || null);
         return;
       }
@@ -481,9 +481,12 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       // Injection Gate logic
       if (gateState === "OPEN") {
         gateState = "CLOSED";
+        // Add to buffer AFTER taking context snapshot (avoid self-duplication)
+        transcriptBuffer.push(entry);
+        while (transcriptBuffer.length > TRANSCRIPT_BUFFER_MAX) transcriptBuffer.shift();
         console.log("🔔  Wake word detected! Gate → CLOSED");
       } else {
-        // Gate is CLOSED, queue this utterance
+        // Gate is CLOSED: queue only (don't add to buffer — merge happens in finally)
         console.log(`⏳  Wake word detected but gate CLOSED, queuing: "${cleanedText.slice(0, 50)}..."`);
         pendingQueue.push(entry);
         return;
@@ -508,10 +511,14 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     // Build user text with meeting context injection (wake mode only)
     let textToProcess = cleanedText;
     if (wakeMode === "wake") {
-      const meetingContext = transcriptBuffer.slice(-20)
+      // Use slice(-21, -1) to exclude the current utterance (already in buffer)
+      const contextEntries = transcriptBuffer.slice(-21, -1);
+      const meetingContext = contextEntries
         .map(e => `[${e.timestamp}] ${e.text}`)
         .join("\n");
-      textToProcess = `【直近の会議の流れ】\n${meetingContext}\n\n【指名された発言】\n${cleanedText}`;
+      textToProcess = meetingContext.length > 0
+        ? `【直近の会議の流れ】\n${meetingContext}\n\n【指名された発言】\n${cleanedText}`
+        : cleanedText;
       console.log(`📋  Injected meeting context (${transcriptBuffer.length} entries)`);
     }
 
@@ -888,13 +895,16 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         pendingQueue.length = 0;
 
         // Re-scan for wake words in pending
-        for (const entry of pendingCopy) {
+        for (let i = 0; i < pendingCopy.length; i++) {
+          const entry = pendingCopy[i];
           const wakeResult = detectWakeAgent(entry.text, agents, selectedAgentIds, defaultAgentId);
           if (wakeResult.detected) {
             console.log(`🔔  Pending wake word found: "${entry.text.slice(0, 50)}"`);
             if (wakeResult.agentId && wakeResult.agentId !== currentAgentId) {
               switchAgent(wakeResult.agentId);
             }
+            // Push remaining unprocessed entries back to pendingQueue for next cycle
+            pendingQueue.push(...pendingCopy.slice(i + 1));
             // Process this pending wake call
             const pendingContext = transcriptBuffer.slice(-20)
               .map(e => `[${e.timestamp}] ${e.text}`)
@@ -903,7 +913,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
             appendConversationEntry("user", entry.text, currentAgentId || null);
             lastUserTranscript = entry.text;
             await processUserInput(pendingPrefix + entry.text);
-            break; // Only process first pending wake, rest will be handled in next cycle
+            break; // Process first wake only; rest are in pendingQueue for next finally cycle
           }
         }
       }
