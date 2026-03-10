@@ -450,19 +450,8 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       return;
     }
 
-    // Cancel word detection at utterance_end level (confirmed speech, more reliable)
-    if (wakeMode === "wake" && gateState === "CLOSED" && isCancelWord(cleanedText)) {
-      console.log(`🚫  Cancel word detected (utterance_end): "${cleanedText.slice(0, 50)}"`);
-      if (currentAbort && !currentAbort.signal?.aborted) {
-        currentAbort.abort();
-        currentAbort = null;
-      }
-      gateState = "OPEN";
-      turnState.gateState = gateState;
-      turnState.isAgentSpeaking = false;
-      turnState.inputCooldownUntil = 0;
-      return;
-    }
+    // Standalone cancel disabled — cancel requires wake word prefix
+    // (e.g. "ケイティ、ストップ"). Handled in wake+cancel block below.
 
     // Wake word detection
     if (wakeMode === "wake") {
