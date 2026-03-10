@@ -1144,6 +1144,12 @@ function handleWsConnection(client, req) {
       if (parsed.trigger === "realtime_audio.mixed" && parsed?.data?.chunk) {
         const now = Date.now();
         if (turnState.isAgentSpeaking || now < turnState.inputCooldownUntil) {
+          // Gate CLOSED: bypass echo gate so STT can detect cancel words
+          if (turnState.isAgentSpeaking && turnState.gateState === "CLOSED") {
+            const audio = Buffer.from(parsed.data.chunk, "base64");
+            handler.send(audio);
+            return;
+          }
           turnState.droppedEchoFrames += 1;
           if (turnState.droppedEchoFrames % 50 === 0) {
             console.log(

@@ -344,6 +344,8 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   const pendingQueue = []; // Utterances that arrive while Gate is CLOSED
   let gateState = "OPEN"; // "OPEN" = accepting input, "CLOSED" = processing
   let utteranceSeq = 0; // Monotonic sequence counter for ordering
+  // Share gateState with transport layer (echo gate bypass for cancel detection)
+  turnState.gateState = gateState;
 
   function appendConversationEntry(role, content, agentId = null) {
     const entry = {
@@ -395,6 +397,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         currentAbort = null;
         // Keep pendingQueue contents (don't discard)
         gateState = "OPEN";
+        turnState.gateState = gateState;
         turnState.isAgentSpeaking = false;
         turnState.inputCooldownUntil = 0;
       }
@@ -457,6 +460,20 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       return;
     }
 
+    // Cancel word detection at utterance_end level (confirmed speech, more reliable)
+    if (wakeMode === "wake" && gateState === "CLOSED" && isCancelWord(cleanedText)) {
+      console.log(`🚫  Cancel word detected (utterance_end): "${cleanedText.slice(0, 50)}"`);
+      if (currentAbort && !currentAbort.signal?.aborted) {
+        currentAbort.abort();
+        currentAbort = null;
+      }
+      gateState = "OPEN";
+      turnState.gateState = gateState;
+      turnState.isAgentSpeaking = false;
+      turnState.inputCooldownUntil = 0;
+      return;
+    }
+
     // Wake word detection
     if (wakeMode === "wake") {
       // Multi-participant mode: create entry with sequence number
@@ -481,6 +498,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       // Injection Gate logic
       if (gateState === "OPEN") {
         gateState = "CLOSED";
+        turnState.gateState = gateState;
         // Add to buffer AFTER taking context snapshot (avoid self-duplication)
         transcriptBuffer.push(entry);
         while (transcriptBuffer.length > TRANSCRIPT_BUFFER_MAX) transcriptBuffer.shift();
@@ -886,6 +904,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       // Multi-participant mode: Open gate and re-scan pending queue
       if (wakeMode === "wake") {
         gateState = "OPEN";
+        turnState.gateState = gateState;
         // Merge pending into buffer
         for (const entry of pendingQueue) {
           transcriptBuffer.push(entry);
