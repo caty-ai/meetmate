@@ -33,10 +33,11 @@ const ENABLE_PROGRESS_GUARD = String(process.env.ENABLE_PROGRESS_GUARD || "true"
 
 // Multi-participant meeting mode: Injection Gate
 const TRANSCRIPT_BUFFER_MAX = Number(process.env.TRANSCRIPT_BUFFER_MAX || 50);
-const CANCEL_WORDS = ["やめて", "キャンセル", "もういい", "中止", "ストップ", "stop", "cancel"];
+// Cancel word detection: strict boundary match to avoid false positives
+// (e.g. "ストップウォッチ", "キャンセルポリシー" should NOT trigger)
+const CANCEL_RE = /^[\s\u3000]*(キャンセル|やめて|もういい|中止|ストップ|stop|cancel)[\s\u3000。！!]*$/i;
 function isCancelWord(text) {
-  const lower = text.toLowerCase();
-  return CANCEL_WORDS.some(w => lower.includes(w));
+  return CANCEL_RE.test(text.trim());
 }
 
 // Wake word detection: only respond when addressed
