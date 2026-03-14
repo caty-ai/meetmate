@@ -8,7 +8,6 @@ const crypto = require("crypto");
 const { parse } = require("querystring");
 
 const {
-  buildAgentConfig,
   getPipelineConfig,
   SAMPLE_RATE,
   TTS_PROVIDER,
@@ -490,7 +489,7 @@ function createLegacyAgent(session, turnState, onAudio) {
   agent.on(AgentEvents.Open, () => {
     console.log(`🟢  Deepgram Voice Agent 接続完了 (sid=${session.id})`);
 
-    const config = buildAgentConfig({
+    const config = getPipelineConfig({
       prompt: session.config.prompt,
       greeting: session.config.greeting,
       model: session.config.model,
