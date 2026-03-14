@@ -68,6 +68,7 @@ function loadAgents() {
         agent?.gatewayUrl ||
         null,
       gatewayToken: token,
+      attendeeApiKey: resolveEnvToken(agent?.attendeeApiKey, `${id}.attendeeApiKey`) || null,
       // Voice pipeline extensions (defaults for backward compat)
       emotionTags: agent?.emotionTags !== false, // default true
       ackVariants: Array.isArray(agent?.ackVariants) ? agent.ackVariants : null,
@@ -108,7 +109,7 @@ function getPipelineConfig(overrides = {}, agent = null) {
     openclawToken: agent?.gatewayToken || process.env.OPENCLAW_GATEWAY_TOKEN || null,
     systemPrompt: overrides.prompt || CATY_PROMPT,
     wakeMode: overrides.wakeMode || null,
-    exitDetection: false,
+    exitDetection: overrides.exitDetection,
     echoCooldownMs: ECHO_LOOP_COOLDOWN_MS,
     stt: {
       model: "nova-3",
@@ -130,6 +131,8 @@ function getPipelineConfig(overrides = {}, agent = null) {
       sampleRate: SAMPLE_RATE,
       latency: process.env.FISH_AUDIO_LATENCY || "balanced",
     },
+    briefing: overrides.briefing || null,
+    purposeStatement: overrides.purposeStatement || null,
     greeting:
       overrides.greeting ||
       agent?.greeting ||
