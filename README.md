@@ -22,7 +22,7 @@ OpenClaw Gateway 連携により、Slack と **まったく同じ体験** を音
 ## v4 ロードマップ
 
 ### A. 既存の仕上げ
-- [ ] ① meetmate から Twilio コード削除（`transport-twilio/` 除去）
+- [x] ① meetmate から Twilio コード削除（`transport-twilio/` 除去）
 - [ ] ② Meet/Zoom の「最初の挨拶」と「最後の処理」の被り修正
 
 ### B. Recall AI 移行 + ライブアバター
@@ -79,7 +79,6 @@ OpenClaw Gateway 連携により、Slack と **まったく同じ体験** を音
 your-domain.ngrok.app → localhost:5005
 ├── デフォルト: ケイティ
 ├── ウェイクワード切替: アレク / ゾーイ / アイドラ
-├── Twilio 電話ブリッジ（※ 今後分離予定）
 └── Gateway: Caty(:18789) Alec(:19009) Zoe(:19100) Eidra(:19200)
 ```
 
@@ -119,7 +118,6 @@ npm start             # http://localhost:5005
 | `${AGENT_ID}_SLACK_BOT_TOKEN` | エージェント別 Slack トークン |
 | `${AGENT_ID}_GATEWAY_URL` | エージェント別 Gateway URL |
 | `${AGENT_ID}_GATEWAY_TOKEN` | エージェント別 Gateway トークン |
-| `TWILIO_*` | Twilio 設定（電話機能、分離予定） |
 
 ## 感情タグ（Fish Audio TTS）
 
