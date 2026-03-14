@@ -3,8 +3,7 @@
 AIエージェント（Caty, Claire, Sebas, Alec, Zoe, Eidra）がGoogle Meet / Zoom にリアルタイム参加して音声対話。
 OpenClaw Gateway 連携により、Slack と **まったく同じ体験** を音声で提供。
 
-> **📞 Twilio 電話機能は独立リポジトリ `private-telephony-repo` に分離予定**
-> 詳細は [電話独立化計画](#電話独立化計画) を参照。
+> **📞 Twilio 電話機能は独立リポジトリ [`private-telephony-repo`](https://example.com/private-repo) に分離済み**
 
 ## プロジェクト状況
 
@@ -17,7 +16,30 @@ OpenClaw Gateway 連携により、Slack と **まったく同じ体験** を音
 | v2 Zoom | Zoom Meeting 対応 + Web UI 改善 | ✅ 完了 |
 | v2 Phase 3 | マルチエージェント対応 + 独立インスタンス | ✅ 完了 (2026-03-01) |
 | v2 Phase 3.1 | エージェント別ブランディング + バグ修正 | ✅ 完了 (2026-03-02) |
-| v3 | Twilio 電話機能の独立化 (`private-telephony-repo`) | 📋 計画中 |
+| v3 | Twilio 電話機能の独立化 (`private-telephony-repo`) | ✅ 完了 |
+| v4 | Recall AI 移行 + ライブアバター + 仕上げ | 🚧 進行中 |
+
+## v4 ロードマップ
+
+### A. 既存の仕上げ
+- [ ] ① meetmate から Twilio コード削除（`transport-twilio/` 除去）
+- [ ] ② Meet/Zoom の「最初の挨拶」と「最後の処理」の被り修正
+
+### B. Recall AI 移行 + ライブアバター
+- [ ] ③ Attendee → Recall AI 移行（カメラ + スクリーンシェア同時制御）
+- [ ] ④ ライブアバター実装（HeyGen 連携・リップシンク）
+- [ ] ⑤ 映像モード切替（音声コマンドでアバター ⇔ 静止画）
+
+### C. Twilio 電話 (`private-telephony-repo`)
+- [ ] ⑥ S2S モード — 営業用エージェント（ゲートウェイなし・ナレッジベースのみ）
+- [ ] ⑦ ゲートウェイモード — Caty たち用（現行ベースの拡張）
+
+### D. 運用基盤
+- [ ] ⑧ private-telephony-repo の本番整備（テスト・CI/CD・デーモン化）
+
+#### アーキテクチャ方針（v4 で決定）
+- **社内 AI 家族（Caty/Claire/Alec…）** → ゲートウェイ経由（ツール・memory・スキル活用）
+- **営業・外部対応エージェント** → S2S + ナレッジのみ（軽量・安全・高速・情報漏洩リスクゼロ）
 
 ## 完了事項（v2 Phase 3.1 時点）
 
@@ -113,50 +135,20 @@ npm start             # http://localhost:5005
 | `(laughing)` | 笑い | <1% |
 | `(confident)` | 自信 | <1% |
 
-## 電話独立化計画
+## 電話独立化（完了）
 
-### 背景
-Meet/Zoom のボット参加と Twilio の電話は性質が異なる。独立させることで:
-- 片方の変更がもう片方に影響しない
-- デプロイ/障害切り分けが容易
-- 電話固有の仕様（briefing 必須、アウトバウンドのみ）を自由に実装可能
+Twilio 電話機能は [`private-telephony-repo`](https://example.com/private-repo) に分離済み。
+E2E テスト通過、454 秒の安定通話実績あり（2026-02-28）。
 
-### 方針
-- **Shared nothing**: コード共有なし、完全独立
-- **コピー → 削る**: リライトせず、外科的に不要部分を削除
-- **アウトバウンドのみ**: インバウンド/IVR は将来検討
-- **briefing 必須**: 電話の要件情報を必須パラメータにする
+## 残タスク（v4）
 
-### 進め方
-1. `private-telephony-repo` リポ作成（現行 Twilio 一式をコピー）
-2. 疎通確認（`/health` + `/call-me`）
-3. 実通話テスト（barge-in/timeout/Slack通知/サマリー）
-4. Meet/Zoom/HTML/assets を削除
-5. pipeline.js からマルチエージェント機能を外科的削除
-6. 本リポ（`meetmate`）から Twilio を削除
+→ [v4 ロードマップ](#v4-ロードマップ) を参照
 
-### レビュー結果
-- Alec: GO（技術面OK、outbound-only方針に同意）
-- Zoe: GO（UX全項目維持可能、`summarizer.js` 追加必須）
-- Eidra: GO（shared-nothing安全、移植→削除の順で）
-
-## 残タスク
-
-### このリポ（Meet/Zoom）
-- [ ] Twilio 機能の削除（`private-telephony-repo` 完成後）
+### その他
 - [ ] LaunchAgent plist for MBP servers + ngrok
 - [ ] Token ローテーション（Alec のトークン露出分）
 - [ ] Phase 3.1: Speech queue management（マルチエージェント同時発話管理）
 - [ ] stickyMode（ウェイクワード省略での連続会話）
-
-### 新リポ（Phone）— v3 チャンネルで実施
-- [ ] `private-telephony-repo` リポ作成
-- [ ] briefing 必須化
-- [ ] アウトバウンドのみに制限
-- [ ] pipeline.js シンプル化（マルチエージェント削除）
-- [ ] `.env.example` 最小化
-- [ ] README 作成
-- [ ] E2E テスト
 
 ## コミット履歴（Phase 3 〜 3.1）
 
