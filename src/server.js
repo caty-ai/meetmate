@@ -10,9 +10,17 @@ const twilioRoutes = require("./transport-twilio/twilio-routes");
 const PORT = Number(process.env.PORT || 5005);
 
 function isTwilioHttpPath(pathname) {
-  return pathname === "/health"
-    || pathname === "/call-me"
+  return pathname === "/call-me"
     || pathname.startsWith("/twilio/");
+}
+
+function writeJson(res, status, body) {
+  const json = JSON.stringify(body);
+  res.writeHead(status, {
+    "Content-Type": "application/json",
+    "Content-Length": Buffer.byteLength(json),
+  });
+  res.end(json);
 }
 
 function isTwilioWsPath(pathname) {
@@ -29,6 +37,15 @@ async function bootstrap() {
       pathname = new URL(req.url || "/", "http://localhost").pathname;
     } catch {
       // keep default path
+    }
+
+    if (pathname === "/health") {
+      writeJson(res, 200, {
+        ok: true,
+        service: "ai-meet-participant",
+        uptime: process.uptime(),
+      });
+      return;
     }
 
     if (isTwilioHttpPath(pathname)) {
