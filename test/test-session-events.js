@@ -21,9 +21,9 @@ console.log("=== SessionLifecycle Tests ===\n");
 // Test 1: Basic state transitions
 console.log("1. Basic state transitions");
 {
-  const lc = new SessionLifecycle("test-1", "twilio", { to: "+81xxx" });
+  const lc = new SessionLifecycle("test-1", "meet", { meetingUrl: "https://meet.google.com/test" });
   assert(lc.state === "idle", "initial state is idle");
-  assert(lc.transport === "twilio", "transport is twilio");
+  assert(lc.transport === "meet", "transport is meet");
   assert(lc.sessionId === "test-1", "sessionId is correct");
 
   assert(lc.transition("initiating"), "idle → initiating succeeds");
@@ -54,7 +54,7 @@ console.log("\n2. Invalid transitions");
 // Test 3: Events emitted
 console.log("\n3. Events emitted");
 {
-  const lc = new SessionLifecycle("test-3", "twilio");
+  const lc = new SessionLifecycle("test-3", "meet");
   const events = [];
   lc.on("state_change", (e) => events.push(e));
   lc.on("session_start", (e) => events.push({ ...e, type: "start" }));
@@ -72,7 +72,7 @@ console.log("\n3. Events emitted");
 // Test 4: Duration tracking
 console.log("\n4. Duration tracking");
 {
-  const lc = new SessionLifecycle("test-4", "twilio");
+  const lc = new SessionLifecycle("test-4", "meet");
   assert(lc.duration === 0, "duration is 0 before start");
   lc.transition("initiating");
   lc.transition("in-progress");
@@ -98,7 +98,7 @@ console.log("\n5. toJSON serialization");
 // Test 6: Failed state
 console.log("\n6. Failed state");
 {
-  const lc = new SessionLifecycle("test-6", "twilio");
+  const lc = new SessionLifecycle("test-6", "meet");
   lc.transition("initiating");
   assert(lc.transition("failed"), "initiating → failed succeeds");
   assert(lc.isTerminal, "failed is terminal");
