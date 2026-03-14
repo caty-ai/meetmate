@@ -9,6 +9,7 @@ const CATY_PROMPT = fs.readFileSync(
 );
 
 const SAMPLE_RATE = 16_000;
+const TTS_PROVIDER = process.env.TTS_PROVIDER || "fish-audio";
 const LANG = process.env.AGENT_LANG || "ja";
 
 const LISTEN_ENDPOINTING_MS = Number(process.env.LISTEN_ENDPOINTING_MS || 400);
@@ -155,6 +156,7 @@ function getPipelineConfig(overrides = {}, agent = null) {
 module.exports = {
   getPipelineConfig,
   SAMPLE_RATE,
+  TTS_PROVIDER,
   CATY_PROMPT,
   SLACK_BOT_TOKEN,
   SLACK_NOTIFY_CHANNEL,
