@@ -1,5 +1,5 @@
 // session-events.js — Session lifecycle state machine
-// Shared by Twilio and Meet transports
+// Session lifecycle state machine
 
 const { EventEmitter } = require("events");
 
@@ -26,7 +26,7 @@ const TERMINAL_STATES = new Set(["completed", "failed"]);
 class SessionLifecycle extends EventEmitter {
   /**
    * @param {string} sessionId
-   * @param {"twilio"|"meet"} transport
+   * @param {"meet"|"zoom"} transport
    * @param {object} [meta] — extra metadata (to, from, meetingUrl, etc.)
    */
   constructor(sessionId, transport, meta = {}) {

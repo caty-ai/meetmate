@@ -5,14 +5,8 @@ const { URL } = require("url");
 const { WebSocketServer } = require("ws");
 
 const meetRoutes = require("./transport-meet/meet-routes");
-const twilioRoutes = require("./transport-twilio/twilio-routes");
 
 const PORT = Number(process.env.PORT || 5005);
-
-function isTwilioHttpPath(pathname) {
-  return pathname === "/call-me"
-    || pathname.startsWith("/twilio/");
-}
 
 function writeJson(res, status, body) {
   const json = JSON.stringify(body);
@@ -23,13 +17,8 @@ function writeJson(res, status, body) {
   res.end(json);
 }
 
-function isTwilioWsPath(pathname) {
-  return pathname.startsWith("/twilio/stream/");
-}
-
 async function bootstrap() {
   await meetRoutes.init({ detectNgrok: true, loadAvatar: true });
-  await twilioRoutes.init({ port: PORT });
 
   const server = http.createServer((req, res) => {
     let pathname = "/";
@@ -45,11 +34,6 @@ async function bootstrap() {
         service: "ai-meet-participant",
         uptime: process.uptime(),
       });
-      return;
-    }
-
-    if (isTwilioHttpPath(pathname)) {
-      twilioRoutes.handleHttp(req, res);
       return;
     }
 
@@ -70,24 +54,17 @@ async function bootstrap() {
       return;
     }
 
-    if (isTwilioWsPath(pathname)) {
-      twilioRoutes.handleUpgrade(req, socket, head);
-      return;
-    }
-
     meetWss.handleUpgrade(req, socket, head, (ws) => {
       meetWss.emit("connection", ws, req);
     });
   });
 
   server.listen(PORT, () => {
-    console.log(`🚀  Unified Meet + Twilio Server started: http://localhost:${PORT}`);
-    console.log("📡  HTTP routing: /twilio/*,/call-me,/health -> Twilio, others -> Meet");
-    console.log("🔌  WS routing: /twilio/stream/* -> Twilio, others -> Meet");
+    console.log(`🚀  Meet Server started: http://localhost:${PORT}`);
   });
 }
 
 bootstrap().catch((err) => {
-  console.error("❌  Failed to start unified server:", err);
+  console.error("❌  Failed to start Meet server:", err);
   process.exit(1);
 });

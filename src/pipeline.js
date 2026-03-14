@@ -94,7 +94,7 @@ function normalizeKana(text) {
 
 /**
  * Check if utterance is an exit command.
- * Only active in Meet sessions (not Twilio calls).
+ * Only active in Meet/Zoom sessions.
  */
 function isExitCommand(text, agents = null, selectedAgentIds = [], defaultAgentId = null) {
   const lower = text.toLowerCase().trim();
@@ -430,7 +430,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
 
     console.log(`💬  [user] ${cleanedText}`);
 
-    // Exit command detection (Meet sessions only, not Twilio)
+    // Exit command detection
     if (config.exitDetection !== false && isExitCommand(cleanedText, agents, selectedAgentIds, defaultAgentId)) {
       console.log("🚪  Exit command detected!");
       appendConversationEntry("user", cleanedText, currentAgentId || null);

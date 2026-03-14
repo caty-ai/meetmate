@@ -14,7 +14,6 @@ const STATE_EMOJI = {
 };
 
 const TRANSPORT_LABEL = {
-  twilio: "📞 Twilio 通話",
   meet: "🎥 Google Meet",
   zoom: "🎥 Zoom Meeting",
 };
@@ -224,16 +223,12 @@ class SlackNotifier {
       lines.push(`🤖 エージェント: ${agentNames}`);
     }
 
-    if (lifecycle.transport === "twilio") {
-      lines.push(`📱 発信先: ${to}`);
-    } else {
-      lines.push(`🔗 ミーティング: ${to}`);
-    }
+    lines.push(`🔗 ミーティング: ${to}`);
 
     lines.push(`📊 状態: ${state}`);
 
     if (lifecycle.isTerminal) {
-      lines.push(`⏱️ ${lifecycle.transport === "twilio" ? "通話" : "会議"}時間: ${elapsed}`);
+      lines.push(`⏱️ 会議時間: ${elapsed}`);
     } else if (lifecycle.state === "in-progress") {
       lines.push(`⏱️ 経過: ${elapsed}`);
     } else {
@@ -252,7 +247,7 @@ class SlackNotifier {
     const lines = [
       `📋 ${transport} サマリー`,
       "━━━━━━━━━━━━━━━",
-      `⏱️ ${lifecycle.transport === "twilio" ? "通話" : "会議"}時間: ${lifecycle.durationFormatted}`,
+      `⏱️ 会議時間: ${lifecycle.durationFormatted}`,
       "",
     ];
 

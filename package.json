@@ -6,7 +6,6 @@
   "scripts": {
     "start": "node src/server.js",
     "start:meet": "node src/index.js",
-    "start:twilio": "node src/transport-twilio/twilio-bridge.js",
     "dev": "node --watch src/server.js",
     "test:meet:repro": "node --test test/meet-multi-participant-repro.test.js"
   },
