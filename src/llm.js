@@ -10,7 +10,7 @@ const https = require("https");
 // emotionTags: boolean — include emotion tag instructions (default true)
 function buildVoiceAddendum({ emotionTags = true } = {}) {
   const emotionLine = emotionTags
-    ? "- すべての文の先頭に感情タグを付ける。使えるタグ: (calm), (happy), (curious), (soft tone), (excited), (nervous), (grateful), (laughing), (confident)\n"
+    ? "- すべての文の先頭に感情タグを付ける。使えるタグ: [calm], [happy], [curious], [soft tone], [excited], [nervous], [grateful], [laughing], [confident]\n"
     : "";
 
   return `あなたは音声通話中です。
