@@ -446,6 +446,12 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
 
       appendConversationEntry("assistant", "了解です！退出しますね。お疲れさまでした！", currentAgentId || null);
 
+      // Wait for farewell audio to finish playing on the remote end
+      // (speakSentence resolves when chunks are sent, not when playback ends)
+      const EXIT_GRACE_MS = 3000;
+      console.log(`⏳  Waiting ${EXIT_GRACE_MS}ms for farewell playback before exit...`);
+      await sleep(EXIT_GRACE_MS);
+
       emitter.emit("exit_requested", { sessionId: session.id, trigger: "voice_command", text: cleanedText });
       return;
     }
