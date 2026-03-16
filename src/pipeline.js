@@ -798,14 +798,11 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         sentenceBuffer += chunk;
 
         // #9 First chunk fast path: speak early even before punctuation.
-        if (!mainResponseStarted && sentenceBuffer.trim().length >= FIRST_CHUNK_MIN_CHARS && !SENTENCE_END_RE.test(sentenceBuffer) && !findSplitPoint(sentenceBuffer)) {
+        // Skip when ack was already spoken (spokenSentenceCount > 0) — ack provides
+        // sufficient responsiveness, so we wait for proper punctuation chunking instead.
+        if (!mainResponseStarted && spokenSentenceCount === 0 && sentenceBuffer.trim().length >= FIRST_CHUNK_MIN_CHARS && !SENTENCE_END_RE.test(sentenceBuffer) && !findSplitPoint(sentenceBuffer)) {
           mainResponseStarted = true;
           stopProgressTimer();
-          // Insert pause before first chunk if ack was spoken (spokenSentenceCount > 0)
-          if (spokenSentenceCount > 0) {
-            const silence = generateSilence(SENTENCE_PAUSE_MS, config.stt.sampleRate);
-            onAudio(silence);
-          }
           turnState.isAgentSpeaking = true;
           const firstChunk = sentenceBuffer.trim();
           sentenceBuffer = "";
