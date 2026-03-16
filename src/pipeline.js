@@ -737,7 +737,16 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         await speakSentence(ack, abort.signal);
         if (!abort.signal.aborted) {
           appendAssistantLog(ack.replace(/^\([^)]*\)\s*/, ""));
-          turnState.isAgentSpeaking = false;
+          // Insert silence after ack (same as greeting→purpose transition)
+          // so the first LLM sentence doesn't collide with the ack playback.
+          const ackSilence = generateSilence(SENTENCE_PAUSE_MS, config.stt.sampleRate);
+          onAudio(ackSilence);
+          // Count ack as a spoken segment so the first LLM split-point sentence
+          // also gets a pause via the spokenSentenceCount > 0 check.
+          spokenSentenceCount = 1;
+          // Keep isAgentSpeaking true — the LLM response will continue speaking.
+          // Setting it to false here created a brief vulnerability window where
+          // STT noise could trigger barge-in/re-entry.
         }
       }
 
@@ -792,6 +801,11 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         if (!mainResponseStarted && sentenceBuffer.trim().length >= FIRST_CHUNK_MIN_CHARS && !SENTENCE_END_RE.test(sentenceBuffer) && !findSplitPoint(sentenceBuffer)) {
           mainResponseStarted = true;
           stopProgressTimer();
+          // Insert pause before first chunk if ack was spoken (spokenSentenceCount > 0)
+          if (spokenSentenceCount > 0) {
+            const silence = generateSilence(SENTENCE_PAUSE_MS, config.stt.sampleRate);
+            onAudio(silence);
+          }
           turnState.isAgentSpeaking = true;
           const firstChunk = sentenceBuffer.trim();
           sentenceBuffer = "";
