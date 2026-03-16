@@ -226,15 +226,15 @@ const IMMEDIATE_ACK_PATTERNS = [
 ];
 
 const DEFAULT_ACK_VARIANTS = [
-  "[calm] 了解、すぐ取りかかるね。",
-  "[calm] 了解です。ちょっと待ってね。",
-  "[calm] はい、今確認するね。",
+  "(calm) 了解、すぐ取りかかるね。",
+  "(calm) 了解です。ちょっと待ってね。",
+  "(calm) はい、今確認するね。",
 ];
 
 const PROGRESS_PING_VARIANTS = [
-  "[soft tone] いま処理中だよ、もう少し待ってね。",
-  "[calm] 進めてるよ、あと少しで返せそう。",
-  "[empathetic] ごめん、もう少しだけ待ってね。",
+  "(soft tone) いま処理中だよ、もう少し待ってね。",
+  "(calm) 進めてるよ、あと少しで返せそう。",
+  "(empathetic) ごめん、もう少しだけ待ってね。",
 ];
 
 const LLM_TIMEOUT_FALLBACK_VOICE = "ちょっと時間がかかってるから、詳細はあとでSlackで共有するね。";
@@ -438,7 +438,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       // Speak farewell and emit exit event
       turnState.isAgentSpeaking = true;
       try {
-        await speakSentence("[happy] 了解です！退出しますね。お疲れさまでした！", null);
+        await speakSentence("(happy) 了解です！退出しますね。お疲れさまでした！", null);
       } catch {
         // ignore TTS error during exit
       }
@@ -712,7 +712,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       console.log(`⏳  Progress ping: "${ping}"`);
       await speakSentence(ping, abort.signal);
       if (!abort.signal.aborted) {
-        appendAssistantLog(ping.replace(/^\[[^\]]*\]\s*/, ""));
+        appendAssistantLog(ping.replace(/^\([^)]*\)\s*/, ""));
         turnState.isAgentSpeaking = false;
       }
 
@@ -736,7 +736,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         console.log(`⚡  Immediate ack: "${ack}"`);
         await speakSentence(ack, abort.signal);
         if (!abort.signal.aborted) {
-          appendAssistantLog(ack.replace(/^\[[^\]]*\]\s*/, ""));
+          appendAssistantLog(ack.replace(/^\([^)]*\)\s*/, ""));
           // Insert silence after ack (same as greeting→purpose transition)
           // so the first LLM sentence doesn't collide with the ack playback.
           const ackSilence = generateSilence(SENTENCE_PAUSE_MS, config.stt.sampleRate);

@@ -137,8 +137,8 @@ function getPipelineConfig(overrides = {}, agent = null) {
       overrides.greeting ||
       agent?.greeting ||
       (isJapanese
-        ? "[happy] こんにちは！ケイティです。よろしくお願いします！"
-        : "[happy] Hi! I'm Caty. Glad to talk with you!"),
+        ? "(happy) こんにちは！ケイティです。よろしくお願いします！"
+        : "(happy) Hi! I'm Caty. Glad to talk with you!"),
     slack: {
       botToken: SLACK_BOT_TOKEN,
       channelId: SLACK_NOTIFY_CHANNEL,

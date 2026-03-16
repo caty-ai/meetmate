@@ -55,7 +55,7 @@ async function synthesize(text, options = {}) {
           Authorization: `Bearer ${apiKey}`,
           "Content-Type": "application/json",
           "Content-Length": Buffer.byteLength(body),
-          model: "s2-pro",
+          model: "s1",
         },
       },
       (res) => {
