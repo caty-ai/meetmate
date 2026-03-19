@@ -71,11 +71,16 @@ const EXTENDED_WAKE_VARIANTS = [
   // Hiragana variants
   "けいてい", "けーてぃ", "けーてい", "けいてぃー", "けいていー",
   "せいてぃ", "せいてい", "せーてぃ",
+  "ていてい", "てぃてぃ",            // テイテイ (observed 2026-03-17)
+  "らってぃ", "らっち",              // ラッティ (observed 2026-03-17)
   // Katakana variants
   "キーティ", "ケーティ", "ケーティー", "ケイティー", "テイティー",
   "セイティ", "セーティ", "エイティ", "エイティー",
   "キャティ", "キャティー", "ケィティ",
   "ティーティー",
+  "テイテイ",                       // observed 2026-03-17
+  "ラッティ", "ラッティー",          // observed 2026-03-17
+  "ミーティー",                     // Meety → ケイティの誤認 (observed 2026-03-17)
   // Romaji / English STT output
   "keity", "katy", "kaity", "keithi", "keiti",
   "kt", "k.t.", "katy", "katey", "catey",
@@ -237,7 +242,7 @@ const PROGRESS_PING_VARIANTS = [
   "(empathetic) ごめん、もう少しだけ待ってね。",
 ];
 
-const LLM_TIMEOUT_FALLBACK_VOICE = "ちょっと時間がかかってるから、詳細はあとでSlackで共有するね。";
+const LLM_TIMEOUT_FALLBACK_VOICE = "(calm) ちょっと時間がかかってるから、詳細はあとでSlackで共有するね。";
 
 function shouldSendImmediateAck(text) {
   if (!ENABLE_IMMEDIATE_ACK) return false;
