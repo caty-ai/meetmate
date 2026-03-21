@@ -6,6 +6,77 @@
 const http = require("http");
 const https = require("https");
 
+// ── NO_REPLY silent reply detection ─────────────────────────────────
+// Gateway may return NO_REPLY (or truncated "NO") as a control signal.
+// In voice sessions this must NEVER reach TTS.
+
+const SILENT_REPLY_PATTERNS = [
+  /^NO_REPLY$/i,
+  /^NO$/,
+  /^NO_$/,
+  /^_REPLY$/,
+  /^No response from OpenClaw\.?$/i,
+];
+
+function isSilentReply(text) {
+  const trimmed = (text || "").trim();
+  if (!trimmed) return false;
+  return SILENT_REPLY_PATTERNS.some(re => re.test(trimmed));
+}
+
+/**
+ * Wrap an async generator to detect and suppress NO_REPLY tokens.
+ * Strategy: hold back chunks while the accumulated text could still become
+ * a known silent reply pattern. Release only once we can confirm it's NOT
+ * a silent reply. Drop entirely if the stream ends on a match.
+ */
+async function* filterSilentReplies(source) {
+  // All silent reply strings (uppercased) that we want to intercept
+  const SILENT_TARGETS = ["NO_REPLY", "NO RESPONSE FROM OPENCLAW.", "NO", "NO_", "_REPLY"];
+
+  let accumulated = "";
+  let heldChunks = [];
+  let released = false;
+
+  for await (const chunk of source) {
+    accumulated += chunk;
+
+    if (released) {
+      yield chunk;
+      continue;
+    }
+
+    const upper = accumulated.trim().toUpperCase();
+
+    // Could the accumulated text still become a silent reply?
+    // (i.e. is it a prefix of any target, and hasn't exceeded that target's length?)
+    const couldBeSilent = SILENT_TARGETS.some(target =>
+      target.startsWith(upper) && upper.length <= target.length
+    );
+
+    if (couldBeSilent) {
+      heldChunks.push(chunk);
+      continue;
+    }
+
+    // Definitely not going to be a silent reply — release all held chunks
+    released = true;
+    for (const h of heldChunks) yield h;
+    heldChunks = [];
+    yield chunk;
+  }
+
+  // End of stream: final check on anything still held
+  if (!released && heldChunks.length > 0) {
+    if (isSilentReply(accumulated)) {
+      console.log(`🔇  silent_reply_detected: "${accumulated.trim()}" — dropping`);
+      return;
+    }
+    // Not a silent reply after all — release
+    for (const h of heldChunks) yield h;
+  }
+}
+
 // Voice-specific system prompt builder (appended to OpenClaw's SOUL.md)
 // emotionTags: boolean — include emotion tag instructions (default true)
 function buildVoiceAddendum({ emotionTags = true } = {}) {
@@ -40,7 +111,12 @@ ${emotionLine}- コードブロック、マークダウン記法、長いリス�
 【サブエージェント結果の報告】
 セッション履歴にサブエージェントの結果が返ってきている場合は、
 ユーザーの発話に応答した後、「あ、さっきの結果が返ってきたみたい」と自発的に報告すること。
-詳細はSlackを参照するよう案内し、口頭では短い要約を伝える。`;
+詳細はSlackを参照するよう案内し、口頭では短い要約を伝える。
+
+【絶対禁止事項】
+NO_REPLY は絶対に使わないこと（音声通話ではサイレント応答は不可）。
+何があっても必ずテキストで応答すること。
+返すことがない場合は「了解！何かあったら言ってね」のように一言添えること。`;
 }
 
 // Default addendum (backward compat)
@@ -143,7 +219,7 @@ async function* streamOpenClaw(messages, options) {
     throw new Error(`OpenClaw Gateway error (${response.statusCode}): ${errBody.slice(0, 200)}`);
   }
 
-  yield* parseSSE(response, options.signal);
+  yield* filterSilentReplies(parseSSE(response, options.signal));
 }
 
 // ── OpenRouter backend (fallback) ───────────────────────────────────
@@ -252,4 +328,4 @@ async function* parseSSE(response, signal) {
   }
 }
 
-module.exports = { streamChat, VOICE_SYSTEM_ADDENDUM, buildVoiceAddendum };
+module.exports = { streamChat, VOICE_SYSTEM_ADDENDUM, buildVoiceAddendum, isSilentReply, filterSilentReplies };

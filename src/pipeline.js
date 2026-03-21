@@ -4,7 +4,7 @@
 const http = require("http");
 const https = require("https");
 const { createSTT } = require("./stt");
-const { streamChat } = require("./llm");
+const { streamChat, isSilentReply } = require("./llm");
 const { synthesize } = require("./tts-fish");
 
 // Two-tier sentence splitter for Japanese + English
@@ -851,6 +851,13 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       if (abort.signal.aborted) {
         await maybeSpeakLlmTimeoutFallback();
         console.log("⚡  Response aborted");
+        return;
+      }
+
+      // ★ NO_REPLY guard: if entire LLM response is a silent reply, skip TTS
+      if (isSilentReply(fullResponse)) {
+        console.log(`🔇  silent_reply_detected (pipeline): "${fullResponse.trim()}" — skipping TTS`);
+        // Don't log as assistant response, don't add to history
         return;
       }
 
