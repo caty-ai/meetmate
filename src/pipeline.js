@@ -4,7 +4,7 @@
 const http = require("http");
 const https = require("https");
 const { createSTT } = require("./stt");
-const { streamChat } = require("./llm");
+const { streamChat, isSilentReply } = require("./llm");
 const { synthesize } = require("./tts-fish");
 
 // Two-tier sentence splitter for Japanese + English
@@ -451,6 +451,35 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
 
       appendConversationEntry("assistant", "了解です！退出しますね。お疲れさまでした！", currentAgentId || null);
 
+      // LCM ingest tag — triggers one-shot memory capture via Lossless Claw
+      // Sends [[[lcm:ingest]]] through Chat Completions API to fire afterTurn()
+      if (agentState.openclawUrl && agentState.openclawToken) {
+        console.log("📝  Sending LCM ingest tag to capture session memory...");
+        try {
+          const ingestMessages = [
+            ...session.conversationLog
+              .filter(e => e.role === "user" || e.role === "assistant")
+              .map(e => ({ role: e.role, content: e.content })),
+            { role: "user", content: "[[[lcm:ingest]]] セッション終了。この会話を長期記憶に保存してください。" },
+          ];
+          for await (const _ of streamChat(
+            null,
+            ingestMessages,
+            {
+              openclawUrl: agentState.openclawUrl,
+              openclawToken: agentState.openclawToken,
+              sessionUser: agentState.sessionUser,
+              model: agentState.model,
+              temperature: 0.3,
+              maxTokens: 50,
+            }
+          )) { /* drain response */ }
+          console.log("✅  LCM ingest tag sent successfully");
+        } catch (err) {
+          console.warn("⚠️  LCM ingest tag failed (non-fatal):", err.message);
+        }
+      }
+
       // Wait for farewell audio to finish playing on the remote end
       // (speakSentence resolves when chunks are sent, not when playback ends)
       const EXIT_GRACE_MS = 3000;
@@ -772,6 +801,11 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         ? [{ role: "user", content: userText }] // OpenClaw manages history
         : history; // OpenRouter needs full history
 
+      // ★ Diagnostic: dump what we're actually sending to Gateway
+      console.log(`📤  [diag] Gateway payload — agent=${requestAgentId} user=${agentState.sessionUser}`);
+      console.log(`📤  [diag] user.content (${userText.length} chars): "${userText.slice(0, 200)}${userText.length > 200 ? "…" : ""}"`);
+      console.log(`📤  [diag] messages count=${llmMessages.length}, model=${agentState.model}`);
+
       startLlmTimeoutTimer();
 
       for await (const chunk of streamChat(
@@ -797,6 +831,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         if (!firstChunkSeen) {
           firstChunkSeen = true;
           stopLlmTimeoutTimer();
+          console.log(`📥  [diag] firstChunk transition: false→true, chunk="${chunk.slice(0, 40)}"`);
         }
 
         fullResponse += chunk;
@@ -856,6 +891,21 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       if (abort.signal.aborted) {
         await maybeSpeakLlmTimeoutFallback();
         console.log("⚡  Response aborted");
+        return;
+      }
+
+      // ★ Diagnostic: dump final LLM response
+      console.log(`📥  [diag] LLM response (${fullResponse.length} chars, ${firstChunkSeen ? "chunks received" : "NO chunks"}): "${fullResponse.slice(0, 200)}${fullResponse.length > 200 ? "…" : ""}"`);
+
+      // ★ NO_REPLY guard: if entire LLM response is a silent reply, skip TTS
+      if (isSilentReply(fullResponse)) {
+        console.log(`🔇  silent_reply_detected (pipeline): "${fullResponse.trim()}" — skipping TTS`);
+        console.log(`🔇  [diag] NO_REPLY context dump:`);
+        console.log(`🔇  [diag]   STT input: "${lastUserTranscript.slice(0, 200)}"`);
+        console.log(`🔇  [diag]   Sent to LLM: "${userText.slice(0, 200)}"`);
+        console.log(`🔇  [diag]   Agent: ${requestAgentId}, Session: ${agentState.sessionUser}`);
+        console.log(`🔇  [diag]   History depth: ${history.length}, firstChunk: ${firstChunkSeen}`);
+        // Don't log as assistant response, don't add to history
         return;
       }
 
