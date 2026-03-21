@@ -446,6 +446,35 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
 
       appendConversationEntry("assistant", "了解です！退出しますね。お疲れさまでした！", currentAgentId || null);
 
+      // LCM ingest tag — triggers one-shot memory capture via Lossless Claw
+      // Sends [[[lcm:ingest]]] through Chat Completions API to fire afterTurn()
+      if (agentState.openclawUrl && agentState.openclawToken) {
+        console.log("📝  Sending LCM ingest tag to capture session memory...");
+        try {
+          const ingestMessages = [
+            ...session.conversationLog
+              .filter(e => e.role === "user" || e.role === "assistant")
+              .map(e => ({ role: e.role, content: e.content })),
+            { role: "user", content: "[[[lcm:ingest]]] セッション終了。この会話を長期記憶に保存してください。" },
+          ];
+          for await (const _ of streamChat(
+            null,
+            ingestMessages,
+            {
+              openclawUrl: agentState.openclawUrl,
+              openclawToken: agentState.openclawToken,
+              sessionUser: agentState.sessionUser,
+              model: agentState.model,
+              temperature: 0.3,
+              maxTokens: 50,
+            }
+          )) { /* drain response */ }
+          console.log("✅  LCM ingest tag sent successfully");
+        } catch (err) {
+          console.warn("⚠️  LCM ingest tag failed (non-fatal):", err.message);
+        }
+      }
+
       // Wait for farewell audio to finish playing on the remote end
       // (speakSentence resolves when chunks are sent, not when playback ends)
       const EXIT_GRACE_MS = 3000;
