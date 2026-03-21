@@ -767,6 +767,11 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         ? [{ role: "user", content: userText }] // OpenClaw manages history
         : history; // OpenRouter needs full history
 
+      // ★ Diagnostic: dump what we're actually sending to Gateway
+      console.log(`📤  [diag] Gateway payload — agent=${requestAgentId} user=${agentState.sessionUser}`);
+      console.log(`📤  [diag] user.content (${userText.length} chars): "${userText.slice(0, 200)}${userText.length > 200 ? "…" : ""}"`);
+      console.log(`📤  [diag] messages count=${llmMessages.length}, model=${agentState.model}`);
+
       startLlmTimeoutTimer();
 
       for await (const chunk of streamChat(
@@ -854,9 +859,17 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         return;
       }
 
+      // ★ Diagnostic: dump final LLM response
+      console.log(`📥  [diag] LLM response (${fullResponse.length} chars, ${firstChunkSeen ? "chunks received" : "NO chunks"}): "${fullResponse.slice(0, 200)}${fullResponse.length > 200 ? "…" : ""}"`);
+
       // ★ NO_REPLY guard: if entire LLM response is a silent reply, skip TTS
       if (isSilentReply(fullResponse)) {
         console.log(`🔇  silent_reply_detected (pipeline): "${fullResponse.trim()}" — skipping TTS`);
+        console.log(`🔇  [diag] NO_REPLY context dump:`);
+        console.log(`🔇  [diag]   STT input: "${lastUserTranscript.slice(0, 200)}"`);
+        console.log(`🔇  [diag]   Sent to LLM: "${userText.slice(0, 200)}"`);
+        console.log(`🔇  [diag]   Agent: ${requestAgentId}, Session: ${agentState.sessionUser}`);
+        console.log(`🔇  [diag]   History depth: ${history.length}, firstChunk: ${firstChunkSeen}`);
         // Don't log as assistant response, don't add to history
         return;
       }
