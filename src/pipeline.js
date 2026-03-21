@@ -458,10 +458,12 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         try {
           const ingestMessages = [
             ...session.conversationLog
-              .filter(e => e.role === "user" || e.role === "assistant")
+              .filter(e => (e.role === "user" || e.role === "assistant") && typeof e.content === "string")
               .map(e => ({ role: e.role, content: e.content })),
             { role: "user", content: "[[[lcm:ingest]]] セッション終了。この会話を長期記憶に保存してください。" },
           ];
+          // Model response is not needed — we only need afterTurn() to fire.
+          // maxTokens=1 minimizes wasted tokens; the response is drained and discarded.
           for await (const _ of streamChat(
             null,
             ingestMessages,
@@ -471,9 +473,9 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
               sessionUser: agentState.sessionUser,
               model: agentState.model,
               temperature: 0.3,
-              maxTokens: 50,
+              maxTokens: 1,
             }
-          )) { /* drain response */ }
+          )) { /* drain — response content is intentionally ignored */ }
           console.log("✅  LCM ingest tag sent successfully");
         } catch (err) {
           console.warn("⚠️  LCM ingest tag failed (non-fatal):", err.message);
