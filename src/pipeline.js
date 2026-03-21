@@ -797,6 +797,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         if (!firstChunkSeen) {
           firstChunkSeen = true;
           stopLlmTimeoutTimer();
+          console.log(`📥  [diag] firstChunk transition: false→true, chunk="${chunk.slice(0, 40)}"`);
         }
 
         fullResponse += chunk;

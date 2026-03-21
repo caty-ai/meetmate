@@ -37,9 +37,13 @@ async function* filterSilentReplies(source) {
   let accumulated = "";
   let heldChunks = [];
   let released = false;
+  let chunkIndex = 0;
+
+  console.log(`🔇  [diag] filterSilentReplies: attached to stream`);
 
   for await (const chunk of source) {
     accumulated += chunk;
+    chunkIndex++;
 
     if (released) {
       yield chunk;
@@ -55,11 +59,13 @@ async function* filterSilentReplies(source) {
     );
 
     if (couldBeSilent) {
+      console.log(`🔇  [diag] filterSilentReplies: chunk#${chunkIndex} held — acc="${accumulated.trim()}" (could match silent)`);
       heldChunks.push(chunk);
       continue;
     }
 
     // Definitely not going to be a silent reply — release all held chunks
+    console.log(`🔇  [diag] filterSilentReplies: chunk#${chunkIndex} released — acc="${accumulated.trim().slice(0, 60)}" (not silent, releasing ${heldChunks.length} held)`);
     released = true;
     for (const h of heldChunks) yield h;
     heldChunks = [];
@@ -69,11 +75,14 @@ async function* filterSilentReplies(source) {
   // End of stream: final check on anything still held
   if (!released && heldChunks.length > 0) {
     if (isSilentReply(accumulated)) {
-      console.log(`🔇  silent_reply_detected: "${accumulated.trim()}" — dropping`);
+      console.log(`🔇  [diag] filterSilentReplies: stream ended — DROPPED "${accumulated.trim()}" (${chunkIndex} chunks held)`);
       return;
     }
     // Not a silent reply after all — release
+    console.log(`🔇  [diag] filterSilentReplies: stream ended — releasing ${heldChunks.length} held chunks (not silent: "${accumulated.trim().slice(0, 60)}")`);
     for (const h of heldChunks) yield h;
+  } else if (!released && heldChunks.length === 0) {
+    console.log(`🔇  [diag] filterSilentReplies: stream ended — empty (0 chunks)`);
   }
 }
 
