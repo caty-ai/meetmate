@@ -59,10 +59,10 @@ const _defaultWakeWords = (() => {
 const WAKE_WORDS = _defaultWakeWords.toLowerCase().split(",").map(w => w.trim());
 
 // Exit commands (for Meet sessions — triggers bot exit)
+// Only "退出" and "退室" variants — other phrases ("終わりにして" etc.) risk false positives.
 const EXIT_COMMANDS = [
-  "退出して", "退出していいよ", "今日はここまで",
-  "もういいよ", "終わりにして", "退出", "終了して",
-  "ありがとう退出", "おつかれ退出",
+  "退出して", "退出していいよ", "退出", "退出して大丈夫",
+  "退室して", "退室していいよ", "退室", "退室して大丈夫", "退室してもらって",
 ];
 
 // Extended wake word variants to handle STT transcription inaccuracies
@@ -451,36 +451,8 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
 
       appendConversationEntry("assistant", "了解です！退出しますね。お疲れさまでした！", currentAgentId || null);
 
-      // LCM ingest tag — triggers one-shot memory capture via Lossless Claw
-      // Sends [[[lcm:ingest]]] through Chat Completions API to fire afterTurn()
-      if (agentState.openclawUrl && agentState.openclawToken) {
-        console.log("📝  Sending LCM ingest tag to capture session memory...");
-        try {
-          const ingestMessages = [
-            ...session.conversationLog
-              .filter(e => (e.role === "user" || e.role === "assistant") && typeof e.content === "string")
-              .map(e => ({ role: e.role, content: e.content })),
-            { role: "user", content: "[[[lcm:ingest]]] セッション終了。この会話を長期記憶に保存してください。" },
-          ];
-          // Model response is not needed — we only need afterTurn() to fire.
-          // maxTokens=1 minimizes wasted tokens; the response is drained and discarded.
-          for await (const _ of streamChat(
-            null,
-            ingestMessages,
-            {
-              openclawUrl: agentState.openclawUrl,
-              openclawToken: agentState.openclawToken,
-              sessionUser: agentState.sessionUser,
-              model: agentState.model,
-              temperature: 0.3,
-              maxTokens: 1,
-            }
-          )) { /* drain — response content is intentionally ignored */ }
-          console.log("✅  LCM ingest tag sent successfully");
-        } catch (err) {
-          console.warn("⚠️  LCM ingest tag failed (non-fatal):", err.message);
-        }
-      }
+      // LCM ingest is now handled in handleMeetSessionEnd() (meet-routes.js)
+      // after the bot has already left — no blocking delay before exit.
 
       // Wait for farewell audio to finish playing on the remote end
       // (speakSentence resolves when chunks are sent, not when playback ends)

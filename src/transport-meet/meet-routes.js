@@ -20,6 +20,7 @@ const { warmUpGatewaySession, warmUpMultipleAgents } = require("../gateway-warmu
 const { SessionLifecycle } = require("../session-events");
 const { SlackNotifier } = require("../slack-notifier");
 const { summarizeConversation } = require("../summarizer");
+const { streamChat } = require("../llm");
 
 const ATTENDEE_API_BASE_URL = process.env.ATTENDEE_API_BASE_URL || "app.attendee.dev";
 const ATTENDEE_TIMEOUT_MS = Number(process.env.ATTENDEE_TIMEOUT_MS || 15_000);
@@ -125,7 +126,80 @@ async function handleMeetSessionEnd(lifecycle) {
     }
   }
 
+  // LCM ingest — capture conversation into Lossless Claw after bot has left the meeting.
+  // Runs in the background cleanup phase; does not block exit experience.
+  await sendLcmIngest(lifecycle);
+
   meetLifecycles.delete(lifecycle.sessionId);
+}
+
+/**
+ * Send [[[lcm:ingest]]] tag to Gateway via Chat Completions API.
+ * Uses the conversation log from the lifecycle to build messages,
+ * then fires a minimal request (maxTokens=1) so Gateway's afterTurn()
+ * triggers LCM ingest on the existing session.
+ *
+ * Non-fatal: failure is logged but does not affect session cleanup.
+ */
+const LCM_INGEST_TIMEOUT_MS = Number(process.env.LCM_INGEST_TIMEOUT_MS || 15_000);
+
+async function sendLcmIngest(lifecycle) {
+  const openclawUrl = process.env.OPENCLAW_GATEWAY_URL;
+  const openclawToken = process.env.OPENCLAW_GATEWAY_TOKEN;
+  if (!openclawUrl || !openclawToken) {
+    console.log("⏭️  LCM ingest skipped — no Gateway credentials");
+    return;
+  }
+
+  const log = lifecycle._conversationLog;
+  if (!log || log.length === 0) {
+    console.log("⏭️  LCM ingest skipped — empty conversation log");
+    return;
+  }
+
+  // Build sessionUser to match the session key used during the meeting
+  const agents = lifecycle._meta?.agents;
+  const firstAgent = Array.isArray(agents) && agents.length > 0 ? agents[0] : null;
+  const sessionUser = firstAgent
+    ? `meet-${lifecycle.sessionId}-${firstAgent}`
+    : `meet-${lifecycle.sessionId}`;
+
+  console.log(`📝  Sending LCM ingest (background) — session=${sessionUser}, entries=${log.length}`);
+
+  const ingestMessages = [
+    ...log
+      .filter(e => (e.role === "user" || e.role === "assistant") && typeof e.content === "string")
+      .map(e => ({ role: e.role, content: e.content })),
+    { role: "user", content: "[[[lcm:ingest]]] セッション終了。この会話を長期記憶に保存してください。" },
+  ];
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), LCM_INGEST_TIMEOUT_MS);
+
+  try {
+    for await (const _ of streamChat(
+      null,
+      ingestMessages,
+      {
+        openclawUrl,
+        openclawToken,
+        sessionUser,
+        model: "anthropic/claude-sonnet-4-6",
+        temperature: 0.3,
+        maxTokens: 1,
+        signal: controller.signal,
+      }
+    )) { /* drain — response content is intentionally ignored */ }
+    console.log("✅  LCM ingest completed (background)");
+  } catch (err) {
+    if (err.message?.includes("aborted")) {
+      console.warn(`⚠️  LCM ingest timed out after ${LCM_INGEST_TIMEOUT_MS}ms (non-fatal)`);
+    } else {
+      console.warn("⚠️  LCM ingest failed (non-fatal):", err.message);
+    }
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function postMeetFullTranscript(notifier, lifecycle) {
