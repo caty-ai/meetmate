@@ -142,8 +142,15 @@ async function handleMeetSessionEnd(lifecycle) {
  * Non-fatal: failure is logged but does not affect session cleanup.
  */
 const LCM_INGEST_TIMEOUT_MS = Number(process.env.LCM_INGEST_TIMEOUT_MS || 15_000);
+const _lcmIngestedSessions = new Set(); // idempotency guard — one ingest per session
 
 async function sendLcmIngest(lifecycle) {
+  const sid = lifecycle.sessionId;
+  if (_lcmIngestedSessions.has(sid)) {
+    console.log(`⏭️  LCM ingest skipped — already ingested for session ${sid}`);
+    return;
+  }
+  _lcmIngestedSessions.add(sid);
   const openclawUrl = process.env.OPENCLAW_GATEWAY_URL;
   const openclawToken = process.env.OPENCLAW_GATEWAY_TOKEN;
   if (!openclawUrl || !openclawToken) {
@@ -159,10 +166,8 @@ async function sendLcmIngest(lifecycle) {
 
   // Build sessionUser to match the session key used during the meeting
   const agents = lifecycle._meta?.agents;
-  const firstAgent = Array.isArray(agents) && agents.length > 0 ? agents[0] : null;
-  const sessionUser = firstAgent
-    ? `meet-${lifecycle.sessionId}-${firstAgent}`
-    : `meet-${lifecycle.sessionId}`;
+  const firstAgent = Array.isArray(agents) && agents.length > 0 ? agents[0] : "caty";
+  const sessionUser = `meet-${lifecycle.sessionId}-${firstAgent}`;
 
   console.log(`📝  Sending LCM ingest (background) — session=${sessionUser}, entries=${log.length}`);
 
@@ -199,6 +204,8 @@ async function sendLcmIngest(lifecycle) {
     }
   } finally {
     clearTimeout(timeout);
+    // Keep in Set intentionally — prevents re-ingest on duplicate events.
+    // Set is bounded by active sessions (cleaned on process restart).
   }
 }
 
