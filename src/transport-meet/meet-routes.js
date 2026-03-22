@@ -140,7 +140,10 @@ async function handleMeetSessionEnd(lifecycle) {
  *
  * Non-fatal: failure is logged but does not affect session cleanup.
  */
-const LCM_INGEST_TIMEOUT_MS = Number(process.env.LCM_INGEST_TIMEOUT_MS || 15_000);
+// Gateway processes the full agent pipeline (SOUL.md/AGENTS.md/tools) with the entire
+// conversation log, which can take 20-30s. 45s timeout is safe — this runs in
+// background cleanup after bot has already left the meeting.
+const LCM_INGEST_TIMEOUT_MS = Number(process.env.LCM_INGEST_TIMEOUT_MS || 45_000);
 const _lcmIngestedSessions = new Set(); // idempotency guard — one ingest per session
 
 async function sendLcmIngest(lifecycle) {
