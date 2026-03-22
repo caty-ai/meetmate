@@ -140,10 +140,9 @@ async function handleMeetSessionEnd(lifecycle) {
  *
  * Non-fatal: failure is logged but does not affect session cleanup.
  */
-// Gateway processes the full agent pipeline (SOUL.md/AGENTS.md/tools) with the entire
-// conversation log, which can take 20-30s. 45s timeout is safe — this runs in
-// background cleanup after bot has already left the meeting.
-const LCM_INGEST_TIMEOUT_MS = Number(process.env.LCM_INGEST_TIMEOUT_MS || 45_000);
+// No hard timeout — Gateway processing time scales with conversation length.
+// This runs in background cleanup after bot has already left, so no UX impact.
+// Success/failure is logged for monitoring.
 const _lcmIngestedSessions = new Set(); // idempotency guard — one ingest per session
 
 async function sendLcmIngest(lifecycle) {
@@ -173,6 +172,7 @@ async function sendLcmIngest(lifecycle) {
   const firstAgent = (Array.isArray(agents) && agents.length > 0 ? agents[0] : "caty").toLowerCase();
   const sessionUser = `meet-${lifecycle.sessionId}-${firstAgent}`;
 
+  const ingestStart = Date.now();
   console.log(`📝  Sending LCM ingest (background) — session=${sessionUser}, entries=${log.length}`);
 
   const ingestMessages = [
@@ -225,15 +225,28 @@ async function sendLcmIngest(lifecycle) {
       );
 
       req.on("error", reject);
-      req.setTimeout(LCM_INGEST_TIMEOUT_MS, () => {
-        req.destroy(new Error(`LCM ingest timed out after ${LCM_INGEST_TIMEOUT_MS}ms`));
-      });
+      // No timeout — let Gateway finish regardless of conversation length.
+      // Node.js default socket timeout (2min) acts as a safety net.
       req.write(body);
       req.end();
     });
-    console.log(`✅  LCM ingest completed (background) — session=${sessionUser}, id=${sid}`);
+    const elapsed = Date.now() - ingestStart;
+    console.log(`✅  LCM ingest completed (background) — session=${sessionUser}, id=${sid}, ${elapsed}ms`);
+
+    // Notify success to Slack log channel for monitoring
+    const notifier = getMeetSlackNotifier();
+    if (notifier.enabled) {
+      notifier.postTranscript(lifecycle, `✅ LCM ingest 完了 (${(elapsed / 1000).toFixed(1)}s)`).catch(() => {});
+    }
   } catch (err) {
-    console.warn("⚠️  LCM ingest failed (non-fatal):", err.message);
+    const elapsed = Date.now() - ingestStart;
+    console.warn(`⚠️  LCM ingest failed (non-fatal, ${elapsed}ms):`, err.message);
+
+    // Notify failure to Slack log channel for monitoring
+    const notifier = getMeetSlackNotifier();
+    if (notifier.enabled) {
+      notifier.postTranscript(lifecycle, `⚠️ LCM ingest 失敗: ${err.message} (${(elapsed / 1000).toFixed(1)}s)`).catch(() => {});
+    }
   } finally {
     // Keep in Set intentionally — prevents re-ingest on duplicate events.
     // Set is bounded by active sessions (cleaned on process restart).
