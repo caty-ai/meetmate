@@ -20,7 +20,6 @@ const { warmUpGatewaySession, warmUpMultipleAgents } = require("../gateway-warmu
 const { SessionLifecycle } = require("../session-events");
 const { SlackNotifier } = require("../slack-notifier");
 const { summarizeConversation } = require("../summarizer");
-const { streamChat } = require("../llm");
 
 const ATTENDEE_API_BASE_URL = process.env.ATTENDEE_API_BASE_URL || "app.attendee.dev";
 const ATTENDEE_TIMEOUT_MS = Number(process.env.ATTENDEE_TIMEOUT_MS || 15_000);
@@ -180,32 +179,59 @@ async function sendLcmIngest(lifecycle) {
     { role: "user", content: "[[[lcm:ingest]]] セッション終了。この会話を長期記憶に保存してください。" },
   ];
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), LCM_INGEST_TIMEOUT_MS);
+  // Use stream:false (non-streaming) to avoid Caty's known streaming issue.
+  // Same pattern as summarizer.js callOpenClaw().
+  const gatewayUrl = new URL(openclawUrl);
+  const isHttps = gatewayUrl.protocol === "https:";
+  const transport = isHttps ? https : http;
+
+  const body = JSON.stringify({
+    model: "anthropic/claude-sonnet-4-6",
+    stream: false,
+    temperature: 0.3,
+    max_tokens: 1,
+    messages: ingestMessages,
+    user: sessionUser,
+  });
 
   try {
-    for await (const _ of streamChat(
-      null,
-      ingestMessages,
-      {
-        openclawUrl,
-        openclawToken,
-        sessionUser,
-        model: "anthropic/claude-sonnet-4-6",
-        temperature: 0.3,
-        maxTokens: 1,
-        signal: controller.signal,
-      }
-    )) { /* drain — response content is intentionally ignored */ }
+    const responseText = await new Promise((resolve, reject) => {
+      const req = transport.request(
+        {
+          hostname: gatewayUrl.hostname,
+          port: gatewayUrl.port || (isHttps ? 443 : 80),
+          path: "/v1/chat/completions",
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${openclawToken}`,
+            "Content-Type": "application/json",
+            "Content-Length": Buffer.byteLength(body),
+          },
+        },
+        (res) => {
+          let data = "";
+          res.on("data", (chunk) => { data += chunk; });
+          res.on("end", () => {
+            if (res.statusCode !== 200) {
+              reject(new Error(`LCM ingest Gateway error (${res.statusCode}): ${data.slice(0, 200)}`));
+              return;
+            }
+            resolve(data);
+          });
+        }
+      );
+
+      req.on("error", reject);
+      req.setTimeout(LCM_INGEST_TIMEOUT_MS, () => {
+        req.destroy(new Error(`LCM ingest timed out after ${LCM_INGEST_TIMEOUT_MS}ms`));
+      });
+      req.write(body);
+      req.end();
+    });
     console.log("✅  LCM ingest completed (background)");
   } catch (err) {
-    if (err.message?.includes("aborted")) {
-      console.warn(`⚠️  LCM ingest timed out after ${LCM_INGEST_TIMEOUT_MS}ms (non-fatal)`);
-    } else {
-      console.warn("⚠️  LCM ingest failed (non-fatal):", err.message);
-    }
+    console.warn("⚠️  LCM ingest failed (non-fatal):", err.message);
   } finally {
-    clearTimeout(timeout);
     // Keep in Set intentionally — prevents re-ingest on duplicate events.
     // Set is bounded by active sessions (cleaned on process restart).
   }
