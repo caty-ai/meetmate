@@ -164,9 +164,11 @@ async function sendLcmIngest(lifecycle) {
     return;
   }
 
-  // Build sessionUser to match the session key used during the meeting
+  // Build sessionUser to match the session key used during the meeting.
+  // lifecycle._meta.agents contains display names (e.g. "Caty"), but Gateway
+  // session keys use lowercase agentIds (e.g. "caty"). Always toLowerCase().
   const agents = lifecycle._meta?.agents;
-  const firstAgent = Array.isArray(agents) && agents.length > 0 ? agents[0] : "caty";
+  const firstAgent = (Array.isArray(agents) && agents.length > 0 ? agents[0] : "caty").toLowerCase();
   const sessionUser = `meet-${lifecycle.sessionId}-${firstAgent}`;
 
   console.log(`📝  Sending LCM ingest (background) — session=${sessionUser}, entries=${log.length}`);
