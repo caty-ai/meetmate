@@ -135,7 +135,7 @@ async function handleMeetSessionEnd(lifecycle) {
 /**
  * Send [[[lcm:ingest]]] tag to Gateway via Chat Completions API.
  * Uses the conversation log from the lifecycle to build messages,
- * then fires a minimal request (maxTokens=1) so Gateway's afterTurn()
+ * then fires a minimal request (max_tokens=1) so Gateway's afterTurn()
  * triggers LCM ingest on the existing session.
  *
  * Non-fatal: failure is logged but does not affect session cleanup.
@@ -228,7 +228,7 @@ async function sendLcmIngest(lifecycle) {
       req.write(body);
       req.end();
     });
-    console.log("✅  LCM ingest completed (background)");
+    console.log(`✅  LCM ingest completed (background) — session=${sessionUser}, id=${sid}`);
   } catch (err) {
     console.warn("⚠️  LCM ingest failed (non-fatal):", err.message);
   } finally {
