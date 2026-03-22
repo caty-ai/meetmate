@@ -18,6 +18,7 @@ OpenClaw Gateway 連携により、Slack と **まったく同じ体験** を音
 | v2 Phase 3.1 | エージェント別ブランディング + バグ修正 | ✅ 完了 (2026-03-02) |
 | v3 | Twilio 電話機能の独立化 (`private-telephony-repo`) | ✅ 完了 |
 | v4 | Recall AI 移行 + ライブアバター + 仕上げ | 🚧 進行中 |
+| LCM 最適化 | Lossless Claw auto モード対応（stream:true 復帰 + ingest 最適化） | ✅ 完了 (2026-03-23) |
 
 ## v4 ロードマップ
 
@@ -40,6 +41,30 @@ OpenClaw Gateway 連携により、Slack と **まったく同じ体験** を音
 #### アーキテクチャ方針（v4 で決定）
 - **社内 AI 家族（Caty/Claire/Alec…）** → ゲートウェイ経由（ツール・memory・スキル活用）
 - **営業・外部対応エージェント** → S2S + ナレッジのみ（軽量・安全・高速・情報漏洩リスクゼロ）
+
+## LCM（Lossless Claw）最適化について
+
+Meet の Chat Completions API 経由セッションでは、OpenClaw の LCM（Lossless Context Management）プラグインが
+メッセージを記録・圧縮する。LCM の `ingestMode` 設定が Meet の動作に影響する：
+
+| ingestMode | 動作 | Meet での挙動 |
+|---|---|---|
+| `normal` | 毎ターン自動 ingest | ⚠️ tool_result 重複エラーが発生しうる |
+| `tag-only` | `[[[lcm:ingest]]]` タグ検出時のみ ingest | ✅ Meet は自動ではタグを送らないため安全 |
+| `auto` | DM=normal / チャンネル・Meet=tag-only | ✅ 推奨。Meet は自動で tag-only になる |
+
+**推奨設定:** `ingestMode: "auto"`（2026-03-23〜）
+
+### 経緯
+1. LCM `normal` モードで Meet の2ターン目以降が空レスポンスになる問題が発生
+2. `tag-only` モードで回避 → しかし DM でも手動タグが必要になり不便
+3. `auto` モードを新設：sessionKey パターンで DM/チャンネル/Meet を自動判定
+4. `stream:true` に復帰（Gateway ストリーミング障害は別途解消済み）
+
+### 関連コミット
+- `614377c` — stream:false 暫定対応（LCM ingest 用）
+- `fd30c52` — LCM ingest タイムアウト延長
+- `04f2c04` — ハードタイムアウト削除 + Slack モニタリング
 
 ## 完了事項（v2 Phase 3.1 時点）
 
