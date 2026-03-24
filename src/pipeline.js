@@ -6,6 +6,8 @@ const https = require("https");
 const { createSTT } = require("./stt");
 const { streamChat, isSilentReply } = require("./llm");
 const { synthesize } = require("./tts-fish");
+const { getExitCommands, detectExitIntent } = require("./exit-handler");
+const { shouldSuppressReply } = require("./speech-policy");
 
 // Two-tier sentence splitter for Japanese + English
 // Tier 1: Full sentence boundary (。！？!?\n) — long pause
@@ -58,15 +60,13 @@ const _defaultWakeWords = (() => {
 })();
 const WAKE_WORDS = _defaultWakeWords.toLowerCase().split(",").map(w => w.trim());
 
-// Exit commands (for Meet sessions — triggers bot exit)
-// Only "退出" and "退室" variants — other phrases ("終わりにして" etc.) risk false positives.
-const EXIT_COMMANDS = [
-  "退出して", "退出していいよ", "退出", "退出して大丈夫",
-  "退室して", "退室していいよ", "退室", "退室して大丈夫", "退室してもらって",
-];
+// Exit commands: now delegated to exit-handler.js getExitCommands()
+// Kept as module-level reference for backward compat (resolved per-call via getExitCommands)
+const EXIT_COMMANDS = getExitCommands();
 
 // Extended wake word variants to handle STT transcription inaccuracies
 // Deepgram may output: けいてい, ケーティー, ケイティー, キーティ, テイティー, けーてぃ, etc.
+// Per-agent sttWakeVariants from agents.json are merged at pipeline creation time.
 const EXTENDED_WAKE_VARIANTS = [
   // Hiragana variants
   "けいてい", "けーてぃ", "けーてい", "けいてぃー", "けいていー",
@@ -100,22 +100,19 @@ function normalizeKana(text) {
 /**
  * Check if utterance is an exit command.
  * Only active in Meet/Zoom sessions.
+ * Now delegates to exit-handler.js detectExitIntent, with wake word check.
  */
-function isExitCommand(text, agents = null, selectedAgentIds = [], defaultAgentId = null) {
-  const lower = text.toLowerCase().trim();
-  const normalized = normalizeKana(lower);
-
-  // Check exit commands
-  for (const cmd of EXIT_COMMANDS) {
-    const cmdNorm = normalizeKana(cmd.toLowerCase());
-    if (normalized.includes(cmdNorm) || lower.includes(cmd)) {
-      return true;
-    }
+function isExitCommand(text, agents = null, selectedAgentIds = [], defaultAgentId = null, agentProfile = null) {
+  // Use exit-handler for primary detection
+  if (detectExitIntent(text, agents, selectedAgentIds, defaultAgentId, agentProfile)) {
+    return true;
   }
 
   // Also check wake word + exit pattern: "ケイティ、退出して"
+  const exitCmds = getExitCommands(agentProfile);
+  const lower = text.toLowerCase().trim();
   if (detectWakeAgent(text, agents, selectedAgentIds, defaultAgentId).detected) {
-    for (const cmd of EXIT_COMMANDS) {
+    for (const cmd of exitCmds) {
       if (lower.includes(cmd.toLowerCase())) return true;
     }
   }
@@ -146,7 +143,17 @@ function detectWakeAgent(text, agents = null, selectedAgentIds = [], defaultAgen
   if (WAKE_WORDS.some((w) => lower.includes(w))) {
     return { detected: true, agentId: defaultId };
   }
-  if (EXTENDED_WAKE_VARIANTS.some((v) => lower.includes(v))) {
+  // Check extended variants (built-in + per-agent sttWakeVariants from agents.json)
+  const allExtended = [...EXTENDED_WAKE_VARIANTS];
+  if (agents && ids.length > 0) {
+    for (const agentId of ids) {
+      const variants = agents[agentId]?.sttWakeVariants;
+      if (Array.isArray(variants)) {
+        for (const v of variants) allExtended.push(String(v).toLowerCase().trim());
+      }
+    }
+  }
+  if (allExtended.some((v) => lower.includes(v))) {
     return { detected: true, agentId: defaultId };
   }
   const normalizedWake = WAKE_WORDS.map((w) => normalizeKana(w));
@@ -290,8 +297,9 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   const selectedAgentIds = Array.isArray(options.selectedAgentIds) ? options.selectedAgentIds.filter(Boolean) : [];
   const hasSelectedAgents = selectedAgentIds.length > 0;
   const agents = options.agents || {};
+  const agentProfile = options.agentProfile || null;
   const defaultAgentId = options.defaultAgentId || selectedAgentIds[0] || null;
-  let currentAgentId = defaultAgentId || "caty";
+  let currentAgentId = defaultAgentId || agentProfile?.agentId || "caty";
 
   const agentState = {
     openclawUrl: config.openclawUrl,
@@ -436,7 +444,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     console.log(`💬  [user] ${cleanedText}`);
 
     // Exit command detection
-    if (config.exitDetection !== false && isExitCommand(cleanedText, agents, selectedAgentIds, defaultAgentId)) {
+    if (config.exitDetection !== false && isExitCommand(cleanedText, agents, selectedAgentIds, defaultAgentId, agentProfile)) {
       console.log("🚪  Exit command detected!");
       appendConversationEntry("user", cleanedText, currentAgentId || null);
 
@@ -872,7 +880,8 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       console.log(`📥  [diag] LLM response (${fullResponse.length} chars, ${firstChunkSeen ? "chunks received" : "NO chunks"}): "${fullResponse.slice(0, 200)}${fullResponse.length > 200 ? "…" : ""}"`);
 
       // ★ NO_REPLY guard: if entire LLM response is a silent reply, skip TTS
-      if (isSilentReply(fullResponse)) {
+      // Phase 1: speech-policy as additional layer (existing isSilentReply kept)
+      if (shouldSuppressReply(fullResponse) || isSilentReply(fullResponse)) {
         console.log(`🔇  silent_reply_detected (pipeline): "${fullResponse.trim()}" — skipping TTS`);
         console.log(`🔇  [diag] NO_REPLY context dump:`);
         console.log(`🔇  [diag]   STT input: "${lastUserTranscript.slice(0, 200)}"`);

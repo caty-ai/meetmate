@@ -20,6 +20,7 @@ const { warmUpGatewaySession, warmUpMultipleAgents } = require("../gateway-warmu
 const { SessionLifecycle } = require("../session-events");
 const { SlackNotifier } = require("../slack-notifier");
 const { summarizeConversation } = require("../summarizer");
+const { resolveAgentProfile, AgentNotFoundError } = require("../agent-profile");
 
 const ATTENDEE_API_BASE_URL = process.env.ATTENDEE_API_BASE_URL || "app.attendee.dev";
 const ATTENDEE_TIMEOUT_MS = Number(process.env.ATTENDEE_TIMEOUT_MS || 15_000);
@@ -45,14 +46,15 @@ const DEFAULT_BOT_IMAGE_URL = process.env.BOT_IMAGE_URL
 
 function getBotImageConfig() {
   if (FIXED_AGENT_ID) {
-    const agents = loadAgents();
-    const agent = agents[FIXED_AGENT_ID];
-    if (agent?.avatarUrl) {
-      return {
-        path: path.join(__dirname, "..", "..", "assets", `${FIXED_AGENT_ID}-avatar.png`),
-        url: agent.avatarUrl,
-      };
-    }
+    try {
+      const profile = resolveAgentProfile(FIXED_AGENT_ID);
+      if (profile.avatarPath || profile.avatarUrl) {
+        return {
+          path: profile.avatarPath || path.join(__dirname, "..", "..", "assets", `${FIXED_AGENT_ID}-avatar.png`),
+          url: profile.avatarUrl || DEFAULT_BOT_IMAGE_URL,
+        };
+      }
+    } catch { /* fall through */ }
   }
   return {
     path: path.join(__dirname, "..", "..", "assets", "caty-avatar.png"),
@@ -82,9 +84,11 @@ function getMeetSlackNotifier() {
     const statusChannel = process.env.SLACK_STATUS_CHANNEL || summaryChannel || fallback;
 
     // Per-agent Slack bot token: ${AGENT_ID}_SLACK_BOT_TOKEN → SLACK_BOT_TOKEN
-    const agentSlackToken = FIXED_AGENT_ID
-      ? (process.env[`${FIXED_AGENT_ID.toUpperCase()}_SLACK_BOT_TOKEN`] || process.env.SLACK_BOT_TOKEN || "")
-      : (process.env.SLACK_BOT_TOKEN || "");
+    const agentIdForToken = FIXED_AGENT_ID || "caty";
+    const agentSlackToken =
+      process.env[`${agentIdForToken.toUpperCase()}_SLACK_BOT_TOKEN`]
+      || process.env.SLACK_BOT_TOKEN
+      || "";
 
     meetSlackNotifier = new SlackNotifier(
       agentSlackToken,
@@ -143,17 +147,30 @@ async function handleMeetSessionEnd(lifecycle) {
 // No hard timeout — Gateway processing time scales with conversation length.
 // This runs in background cleanup after bot has already left, so no UX impact.
 // Success/failure is logged for monitoring.
-const _lcmIngestedSessions = new Set(); // idempotency guard — one ingest per session
+const _lcmIngestedSessions = new Map(); // idempotency guard — key: "agentId:meetingId" → Set of session IDs
 
 async function sendLcmIngest(lifecycle) {
   const sid = lifecycle.sessionId;
-  if (_lcmIngestedSessions.has(sid)) {
-    console.log(`⏭️  LCM ingest skipped — already ingested for session ${sid}`);
+  // Resolve agent ID for LCM key
+  const agentIds = lifecycle._meta?.agentIds;
+  const agentId = (Array.isArray(agentIds) && agentIds.length > 0 ? agentIds[0] : (FIXED_AGENT_ID || "caty")).toLowerCase();
+  const lcmKey = `${agentId}:${sid}`;
+
+  if (_lcmIngestedSessions.has(lcmKey)) {
+    console.log(`⏭️  LCM ingest skipped — already ingested for ${lcmKey}`);
     return;
   }
-  _lcmIngestedSessions.add(sid);
-  const openclawUrl = process.env.OPENCLAW_GATEWAY_URL;
-  const openclawToken = process.env.OPENCLAW_GATEWAY_TOKEN;
+  _lcmIngestedSessions.set(lcmKey, true);
+
+  // Try to resolve agent-specific gateway credentials
+  let openclawUrl = process.env.OPENCLAW_GATEWAY_URL;
+  let openclawToken = process.env.OPENCLAW_GATEWAY_TOKEN;
+  try {
+    const profile = resolveAgentProfile(agentId);
+    if (profile.gatewayUrl) openclawUrl = profile.gatewayUrl;
+    if (profile.gatewayToken) openclawToken = profile.gatewayToken;
+  } catch { /* use env defaults */ }
+
   if (!openclawUrl || !openclawToken) {
     console.log("⏭️  LCM ingest skipped — no Gateway credentials");
     return;
@@ -166,11 +183,7 @@ async function sendLcmIngest(lifecycle) {
   }
 
   // Build sessionUser to match the session key used during the meeting.
-  // lifecycle._meta.agents contains display names (e.g. "Caty"), but Gateway
-  // session keys use lowercase agentIds (e.g. "caty"). Always toLowerCase().
-  const agents = lifecycle._meta?.agents;
-  const firstAgent = (Array.isArray(agents) && agents.length > 0 ? agents[0] : "caty").toLowerCase();
-  const sessionUser = `meet-${lifecycle.sessionId}-${firstAgent}`;
+  const sessionUser = `meet-${sid}-${agentId}`;
 
   const ingestStart = Date.now();
   console.log(`📝  Sending LCM ingest (background) — session=${sessionUser}, entries=${log.length}`);
@@ -500,6 +513,7 @@ function appendToMemory(session) {
       .slice(0, 10);
 
     const now = new Date().toLocaleString("ja-JP", { timeZone: "Asia/Bangkok" });
+    const agentLabel = FIXED_AGENT_ID || "caty";
     const summary = [
       "",
       `## 🎙️ Google Meet セッション (${now})`,
@@ -509,7 +523,7 @@ function appendToMemory(session) {
       "",
       "### 会話ハイライト",
       ...userMsgs.slice(0, 5).map((m) => `- 参加者: 「${m.slice(0, 80)}${m.length > 80 ? "..." : ""}」`),
-      ...catyMsgs.slice(0, 5).map((m) => `- Caty: 「${m.slice(0, 80)}${m.length > 80 ? "..." : ""}」`),
+      ...catyMsgs.slice(0, 5).map((m) => `- ${agentLabel}: 「${m.slice(0, 80)}${m.length > 80 ? "..." : ""}」`),
       "",
     ].join("\n");
 
@@ -798,6 +812,20 @@ function startNgrokDetection() {
 async function init(options = {}) {
   if (initialized) return;
 
+  // Validate AGENT_ID at startup — fail fast if agent not found
+  if (FIXED_AGENT_ID) {
+    try {
+      const profile = resolveAgentProfile(FIXED_AGENT_ID);
+      console.log(`[${profile.agentId}] Agent profile resolved: ${profile.displayName}`);
+    } catch (err) {
+      if (err instanceof AgentNotFoundError) {
+        console.error(`❌  ${err.message}`);
+        process.exit(1);
+      }
+      throw err;
+    }
+  }
+
   validateRequiredEnv();
   if (options.loadAvatar !== false) {
     startBotImageLoad();
@@ -986,7 +1014,7 @@ async function handleHttp(req, res) {
         hasAgentSelection = true;
         console.log(`🔒  Single-agent mode: ${FIXED_AGENT_ID}`);
       } else if (FIXED_AGENT_ID && !allAgents[FIXED_AGENT_ID]) {
-        console.warn(`⚠️  AGENT_ID="${FIXED_AGENT_ID}" not found in agents.json — falling back to multi-agent mode`);
+        throw new AgentNotFoundError(FIXED_AGENT_ID);
       }
       if (!hasAgentSelection) {
         const requestedAgentIds = parseAgentIdsInput(formData.agentIds);
@@ -1061,6 +1089,7 @@ async function handleHttp(req, res) {
         meetingUrl,
         conversationMode,
         agents: selectedAgentNames,
+        agentIds: selectedAgentIds,
       });
       lifecycle.on("session_end", () => handleMeetSessionEnd(lifecycle));
       lifecycle.transition("initiating");
@@ -1088,9 +1117,20 @@ async function handleHttp(req, res) {
         console.log("🤖  Selected agents:", selectedAgentIds.join(", "));
       }
 
-      const defaultBotName = selectedAgentNames.length > 0
-        ? `${selectedAgentNames.join(", ")} (AI)`
-        : "Caty (ケイティ)";
+      // Derive default bot name from agent profile or selected agents
+      let defaultBotName;
+      if (selectedAgentNames.length > 0) {
+        defaultBotName = `${selectedAgentNames.join(", ")} (AI)`;
+      } else if (FIXED_AGENT_ID) {
+        try {
+          const profile = resolveAgentProfile(FIXED_AGENT_ID);
+          defaultBotName = `${profile.name} (${profile.displayName})`;
+        } catch {
+          defaultBotName = `${FIXED_AGENT_ID} (AI)`;
+        }
+      } else {
+        defaultBotName = "Caty (ケイティ)";
+      }
 
       const botPayload = {
         meeting_url: meetingUrl,
