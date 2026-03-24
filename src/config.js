@@ -3,10 +3,6 @@ const path = require("path");
 const { buildVoiceAddendum } = require("./llm");
 
 const AGENTS_PATH = path.join(__dirname, "..", "agents.json");
-const CATY_PROMPT = fs.readFileSync(
-  path.join(__dirname, "prompts", "caty-system.md"),
-  "utf-8"
-);
 
 const SAMPLE_RATE = 16_000;
 const TTS_PROVIDER = process.env.TTS_PROVIDER || "fish-audio";
@@ -88,7 +84,16 @@ function getAgentById(agents, id) {
   return (agents || {})[id] || null;
 }
 
-function getPipelineConfig(overrides = {}, agent = null) {
+/**
+ * Build pipeline config.
+ * Accepts either an agentProfile (from resolveAgentProfile) or a raw agent object
+ * for backward compatibility. agentProfile takes precedence for systemPrompt/greeting.
+ *
+ * @param {object} overrides - Per-session overrides
+ * @param {object|null} agent - Raw agent object from loadAgents() (backward compat)
+ * @param {object|null} agentProfile - AgentProfile from resolveAgentProfile()
+ */
+function getPipelineConfig(overrides = {}, agent = null, agentProfile = null) {
   const isJapanese = LANG === "ja";
   const envVoiceId = process.env.FISH_AUDIO_VOICE_ID || null;
   // Build voice addendum: use per-agent emotionTags flag
@@ -101,13 +106,39 @@ function getPipelineConfig(overrides = {}, agent = null) {
     ? (agent.voiceId || envVoiceId)
     : envVoiceId;
 
+  // Resolve system prompt: agentProfile > overrides > fallback
+  let systemPrompt;
+  if (agentProfile?.systemPrompt) {
+    systemPrompt = agentProfile.systemPrompt;
+  } else if (overrides.prompt) {
+    systemPrompt = overrides.prompt;
+  } else {
+    // Fallback: try to load caty-system.md for backward compat
+    try {
+      systemPrompt = require("fs").readFileSync(
+        require("path").join(__dirname, "prompts", "caty-system.md"), "utf-8"
+      );
+    } catch {
+      systemPrompt = "";
+    }
+  }
+
+  // Resolve greeting: agentProfile > overrides > agent > hardcoded fallback
+  const greeting =
+    overrides.greeting ||
+    agentProfile?.greeting ||
+    agent?.greeting ||
+    (isJapanese
+      ? "(happy) こんにちは！ケイティです。よろしくお願いします！"
+      : "(happy) Hi! I'm Caty. Glad to talk with you!");
+
   return {
     dgKey: process.env.DEEPGRAM_API_KEY,
     openrouterKey: process.env.OPENROUTER_API_KEY,
     fishKey: process.env.FISH_AUDIO_API_KEY,
     openclawUrl: agent?.gatewayUrl || process.env.OPENCLAW_GATEWAY_URL || null,
     openclawToken: agent?.gatewayToken || process.env.OPENCLAW_GATEWAY_TOKEN || null,
-    systemPrompt: overrides.prompt || CATY_PROMPT,
+    systemPrompt,
     wakeMode: overrides.wakeMode || null,
     exitDetection: overrides.exitDetection,
     echoCooldownMs: ECHO_LOOP_COOLDOWN_MS,
@@ -133,12 +164,7 @@ function getPipelineConfig(overrides = {}, agent = null) {
     },
     briefing: overrides.briefing || null,
     purposeStatement: overrides.purposeStatement || null,
-    greeting:
-      overrides.greeting ||
-      agent?.greeting ||
-      (isJapanese
-        ? "(happy) こんにちは！ケイティです。よろしくお願いします！"
-        : "(happy) Hi! I'm Caty. Glad to talk with you!"),
+    greeting,
     slack: {
       botToken: SLACK_BOT_TOKEN,
       channelId: SLACK_NOTIFY_CHANNEL,
@@ -160,7 +186,6 @@ module.exports = {
   getPipelineConfig,
   SAMPLE_RATE,
   TTS_PROVIDER,
-  CATY_PROMPT,
   SLACK_BOT_TOKEN,
   SLACK_NOTIFY_CHANNEL,
   SLACK_NOTIFY_ENABLED,

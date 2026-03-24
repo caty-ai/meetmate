@@ -20,6 +20,7 @@ const { warmUpGatewaySession } = require("./gateway-warmup");
 const { SessionLifecycle } = require("./session-events");
 const { SlackNotifier } = require("./slack-notifier");
 const { summarizeConversation } = require("./summarizer");
+const { resolveAgentProfile, AgentNotFoundError } = require("./agent-profile");
 
 const PORT = Number(process.env.PORT || 5005);
 const ATTENDEE_API_BASE_URL = process.env.ATTENDEE_API_BASE_URL || "app.attendee.dev";
@@ -62,11 +63,25 @@ if (TTS_PROVIDER === "fish-audio") {
   }
 }
 
+// Resolve agent profile at startup (catches AgentNotFoundError)
+let _startupAgentProfile = null;
+try {
+  _startupAgentProfile = resolveAgentProfile();
+} catch (err) {
+  if (err instanceof AgentNotFoundError) {
+    console.error(`❌  ${err.message}`);
+    process.exit(1);
+  }
+  throw err;
+}
+
 // Bot avatar image (loaded at startup, cached as base64)
 let botImageData = null;
 
-const BOT_IMAGE_PATH = path.join(__dirname, "..", "assets", "caty-avatar.png");
+const BOT_IMAGE_PATH = _startupAgentProfile?.avatarPath
+  || path.join(__dirname, "..", "assets", `${_startupAgentProfile?.agentId || "caty"}-avatar.png`);
 const BOT_IMAGE_URL = process.env.BOT_IMAGE_URL
+  || _startupAgentProfile?.avatarUrl
   || "https://example.com/avatar.png";
 
 (async function loadBotImage() {
@@ -207,7 +222,8 @@ async function postMeetFullTranscript(notifier, lifecycle) {
 
   const lines = ["📜 全文ログ", "━━━━━━━━━━━━━━━", ""];
   for (const entry of log) {
-    const speaker = entry.role === "assistant" || entry.role === "agent" ? "🤖 Caty" : "👤 参加者";
+    const agentDisplayName = _startupAgentProfile?.displayName || "Caty";
+    const speaker = entry.role === "assistant" || entry.role === "agent" ? `🤖 ${agentDisplayName}` : "👤 参加者";
     const time = entry.timestamp ? `(${new Date(entry.timestamp).toLocaleTimeString("ja-JP")})` : "";
     lines.push(`${speaker} ${time}`);
     lines.push(entry.content);
@@ -391,7 +407,7 @@ function saveConversationLog(session) {
     `- meeting_url: ${session.meetingUrl}`,
     `- tts_provider: ${TTS_PROVIDER}`,
     "",
-    ...session.conversationLog.map((e) => `**${e.role === "assistant" || e.role === "agent" ? "Caty" : "参加者"}** (${e.timestamp}):\n${e.content}\n`),
+    ...session.conversationLog.map((e) => `**${e.role === "assistant" || e.role === "agent" ? (_startupAgentProfile?.displayName || "Caty") : "参加者"}** (${e.timestamp}):\n${e.content}\n`),
   ].join("\n");
   fs.writeFileSync(mdPath, mdContent);
   console.log(`📝  会話ログ(MD)保存: ${mdPath}`);
@@ -414,11 +430,12 @@ function appendToMemory(session) {
       .filter((e) => e.role !== "assistant" && e.role !== "agent")
       .map((e) => e.content)
       .slice(0, 10);
-    const catyMsgs = session.conversationLog
+    const agentMsgs = session.conversationLog
       .filter((e) => e.role === "assistant" || e.role === "agent")
       .map((e) => e.content)
       .slice(0, 10);
 
+    const agentLabel = _startupAgentProfile?.agentId || "caty";
     const now = new Date().toLocaleString("ja-JP", { timeZone: "Asia/Bangkok" });
     const summary = [
       "",
@@ -429,7 +446,7 @@ function appendToMemory(session) {
       "",
       "### 会話ハイライト",
       ...userMsgs.slice(0, 5).map((m) => `- 参加者: 「${m.slice(0, 80)}${m.length > 80 ? "..." : ""}」`),
-      ...catyMsgs.slice(0, 5).map((m) => `- Caty: 「${m.slice(0, 80)}${m.length > 80 ? "..." : ""}」`),
+      ...agentMsgs.slice(0, 5).map((m) => `- ${agentLabel}: 「${m.slice(0, 80)}${m.length > 80 ? "..." : ""}」`),
       "",
     ].join("\n");
 
@@ -450,7 +467,9 @@ function appendToMemory(session) {
       "## 全文",
       "",
       ...session.conversationLog.map((e) => {
-        const speaker = e.role === "assistant" || e.role === "agent" ? "Caty" : "参加者";
+        const speaker = e.role === "assistant" || e.role === "agent"
+          ? (_startupAgentProfile?.displayName || "Caty")
+          : "参加者";
         return `**${speaker}**: ${e.content}\n`;
       }),
     ].join("\n");
@@ -526,11 +545,11 @@ function createLegacyAgent(session, turnState, onAudio) {
     });
     console.log(`💬  [${m.role}] ${m.content}`);
   });
-  agent.on(AgentEvents.AgentThinking, () => console.log(`🤔  Caty thinking… (sid=${session.id})`));
+  agent.on(AgentEvents.AgentThinking, () => console.log(`🤔  [${_startupAgentProfile?.agentId || "caty"}] thinking… (sid=${session.id})`));
   agent.on(AgentEvents.AgentStartedSpeaking, (s) => {
     turnState.isAgentSpeaking = true;
     turnState.inputCooldownUntil = Date.now() + ECHO_LOOP_COOLDOWN_MS;
-    console.log(`🗣️  Caty speaking (sid=${session.id}):`, s);
+    console.log(`🗣️  [${_startupAgentProfile?.agentId || "caty"}] speaking (sid=${session.id}):`, s);
   });
   agent.on(AgentEvents.UserStartedSpeaking, () => console.log(`🎙️  User speaking (sid=${session.id})`));
   agent.on(AgentEvents.AgentAudioDone, () => {
@@ -693,7 +712,7 @@ const server = http.createServer(async (req, res) => {
 
       const botPayload = {
         meeting_url: meetingUrl,
-        bot_name: toSafeString(formData.botName) || "Caty (ケイティ)",
+        bot_name: toSafeString(formData.botName) || `${_startupAgentProfile?.name || "Caty"} (${_startupAgentProfile?.displayName || "ケイティ"})`,
         websocket_settings: {
           audio: {
             url: wsWithSession,
@@ -712,10 +731,11 @@ const server = http.createServer(async (req, res) => {
       const attendeeResult = await createAttendeeBotWithRetry(attendeePayload);
       if (attendeeResult.statusCode >= 200 && attendeeResult.statusCode < 300) {
         console.log("✅  Bot起動成功:", attendeeResult.body);
+        const agentName = _startupAgentProfile?.displayName || "Caty";
         writePlainResponse(
           res,
           200,
-          `成功！Botが30秒以内にMeetに参加し、さらに30秒後にCatyが挨拶を開始します。\nsession_id=${sessionId}`
+          `成功！Botが30秒以内にMeetに参加し、さらに30秒後に${agentName}が挨拶を開始します。\nsession_id=${sessionId}`
         );
         return;
       }
@@ -910,7 +930,9 @@ wss.on("connection", (client, req) => {
 });
 
 server.listen(PORT, () => {
+  const displayName = _startupAgentProfile?.displayName || "Caty";
+  const agentId = _startupAgentProfile?.agentId || "caty";
   console.log(`🚀  AI Meet Participant Bridge Server 起動: http://localhost:${PORT}`);
   console.log(`📡  TTS Provider: ${TTS_PROVIDER}`);
-  console.log("🐱  Caty（ケイティ）がMeetで待機中…");
+  console.log(`🤖  [${agentId}] ${displayName} がMeetで待機中…`);
 });
