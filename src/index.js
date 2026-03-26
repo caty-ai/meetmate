@@ -161,6 +161,9 @@ const activeConnections = new Map();
 /** @type {Map<string, import("./session-events").SessionLifecycle>} */
 const meetLifecycles = new Map();
 
+/** Sessions in the process of leaving — block reconnection + greeting replay */
+const leavingSessionIds = new Set();
+
 // Slack notifier for Meet sessions
 let meetSlackNotifier = null;
 function getMeetSlackNotifier() {
@@ -211,7 +214,115 @@ async function handleMeetSessionEnd(lifecycle) {
     }
   }
 
+  // LCM ingest — capture conversation into Lossless Claw (background, non-blocking)
+  sendLcmIngest(lifecycle, notifier).catch((err) => {
+    console.warn(`⚠️  LCM ingest failed (non-fatal):`, err.message);
+  });
+
   meetLifecycles.delete(lifecycle.sessionId);
+}
+
+/** Send [[[lcm:ingest]]] tag to Gateway via Chat Completions API. */
+const _lcmIngestedSessions = new Map();
+
+async function sendLcmIngest(lifecycle, notifier) {
+  const sid = lifecycle.sessionId;
+  const agentId = (process.env.AGENT_ID || "caty").toLowerCase();
+  const lcmKey = `${agentId}:${sid}`;
+
+  if (_lcmIngestedSessions.has(lcmKey)) {
+    console.log(`⏭️  LCM ingest skipped — already ingested for ${lcmKey}`);
+    return;
+  }
+  _lcmIngestedSessions.set(lcmKey, true);
+
+  // Resolve agent-specific gateway credentials
+  let openclawUrl = process.env.OPENCLAW_GATEWAY_URL;
+  let openclawToken = process.env.OPENCLAW_GATEWAY_TOKEN;
+  try {
+    const profile = resolveAgentProfile(agentId);
+    if (profile.gatewayUrl) openclawUrl = profile.gatewayUrl;
+    if (profile.gatewayToken) openclawToken = profile.gatewayToken;
+  } catch { /* use env defaults */ }
+
+  if (!openclawUrl || !openclawToken) {
+    console.log("⏭️  LCM ingest skipped — no Gateway credentials");
+    return;
+  }
+
+  const log = lifecycle._conversationLog;
+  if (!log || log.length === 0) {
+    console.log("⏭️  LCM ingest skipped — empty conversation log");
+    return;
+  }
+
+  const sessionUser = `meet-${sid}-${agentId}`;
+  const ingestStart = Date.now();
+  console.log(`📝  Sending LCM ingest (background) — session=${sessionUser}, entries=${log.length}`);
+
+  const ingestMessages = [
+    ...log
+      .filter(e => (e.role === "user" || e.role === "assistant") && typeof e.content === "string")
+      .map(e => ({ role: e.role, content: e.content })),
+    { role: "user", content: "[[[lcm:ingest]]] セッション終了。この会話を長期記憶に保存してください。" },
+  ];
+
+  const gatewayUrl = new URL(openclawUrl);
+  const isHttps = gatewayUrl.protocol === "https:";
+  const transport = isHttps ? https : http;
+
+  const body = JSON.stringify({
+    model: "anthropic/claude-sonnet-4-6",
+    stream: false,
+    temperature: 0.3,
+    max_tokens: 1,
+    messages: ingestMessages,
+    user: sessionUser,
+  });
+
+  try {
+    const responseText = await new Promise((resolve, reject) => {
+      const req = transport.request(
+        {
+          hostname: gatewayUrl.hostname,
+          port: gatewayUrl.port || (isHttps ? 443 : 80),
+          path: "/v1/chat/completions",
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${openclawToken}`,
+            "Content-Type": "application/json",
+            "Content-Length": Buffer.byteLength(body),
+          },
+        },
+        (res) => {
+          let data = "";
+          res.on("data", (chunk) => { data += chunk; });
+          res.on("end", () => {
+            if (res.statusCode !== 200) {
+              reject(new Error(`LCM ingest Gateway error (${res.statusCode}): ${data.slice(0, 200)}`));
+              return;
+            }
+            resolve(data);
+          });
+        }
+      );
+      req.on("error", reject);
+      req.write(body);
+      req.end();
+    });
+
+    const elapsed = Date.now() - ingestStart;
+    console.log(`✅  LCM ingest completed (background) — session=${sessionUser}, id=${sid}, ${elapsed}ms`);
+    if (notifier?.enabled) {
+      notifier.postTranscript(lifecycle, `✅ LCM ingest 完了 (${(elapsed / 1000).toFixed(1)}s)`).catch(() => {});
+    }
+  } catch (err) {
+    const elapsed = Date.now() - ingestStart;
+    console.warn(`⚠️  LCM ingest failed (non-fatal, ${elapsed}ms):`, err.message);
+    if (notifier?.enabled) {
+      notifier.postTranscript(lifecycle, `⚠️ LCM ingest 失敗: ${err.message}`).catch(() => {});
+    }
+  }
 }
 
 /** Post full conversation transcript as Slack thread reply. */
@@ -517,6 +628,7 @@ function finalizeSessionIfInactive(sessionId) {
 
   saveConversationLog(session);
   meetingSessions.delete(sessionId);
+  leavingSessionIds.delete(sessionId);
   console.log(`🧹  Session closed: ${sessionId}`);
 }
 
@@ -867,6 +979,9 @@ const server = http.createServer(async (req, res) => {
       const session = meetingSessions.get(targetSid);
       const botId = session?.botId;
 
+      // Mark as leaving to prevent reconnection
+      leavingSessionIds.add(targetSid);
+
       // Close the WebSocket connection
       const conn = activeConnections.get(targetSid);
       if (conn?.client) {
@@ -889,6 +1004,7 @@ const server = http.createServer(async (req, res) => {
         if (session.closeTimer) clearTimeout(session.closeTimer);
         saveConversationLog(session);
         meetingSessions.delete(targetSid);
+        leavingSessionIds.delete(targetSid);
         console.log(`🧹  Session closed (leave): ${targetSid}`);
       }
 
@@ -920,6 +1036,13 @@ wss.on("connection", (client, req) => {
 
   if (!sid || !meetingSessions.has(sid)) {
     client.close(1008, "Unknown session");
+    return;
+  }
+
+  // Block reconnection for sessions that are leaving (prevents greeting replay)
+  if (leavingSessionIds.has(sid)) {
+    console.log(`⛔  Blocked reconnection for leaving session ${sid}`);
+    client.close(1000, "Session is leaving");
     return;
   }
 
@@ -984,6 +1107,9 @@ wss.on("connection", (client, req) => {
   if (handler.on) {
     handler.on("exit_requested", (evt) => {
       console.log(`🚪  Exit requested for session ${sid}: ${evt.trigger}`);
+
+      // Mark as leaving to prevent reconnection greeting replay
+      leavingSessionIds.add(sid);
 
       // Call Attendee API to remove bot from Meet
       const session = meetingSessions.get(sid);
