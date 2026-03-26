@@ -43,7 +43,7 @@ function isCancelWord(text) {
 }
 
 // Wake word detection: only respond when addressed
-// In single-agent mode, use the agent's wakeWords as default; otherwise fall back to Caty's
+// In single-agent mode, use the agent's wakeWords as default; otherwise fall back to empty
 const _defaultWakeWords = (() => {
   if (process.env.WAKE_WORDS) return process.env.WAKE_WORDS;
   if (process.env.AGENT_ID) {

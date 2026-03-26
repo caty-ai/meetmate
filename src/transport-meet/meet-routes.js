@@ -506,7 +506,7 @@ function appendToMemory(session) {
       .filter((e) => e.role !== "assistant" && e.role !== "agent")
       .map((e) => e.content)
       .slice(0, 10);
-    const catyMsgs = session.conversationLog
+    const agentMsgs = session.conversationLog
       .filter((e) => e.role === "assistant" || e.role === "agent")
       .map((e) => e.content)
       .slice(0, 10);
@@ -522,7 +522,7 @@ function appendToMemory(session) {
       "",
       "### 会話ハイライト",
       ...userMsgs.slice(0, 5).map((m) => `- 参加者: 「${m.slice(0, 80)}${m.length > 80 ? "..." : ""}」`),
-      ...catyMsgs.slice(0, 5).map((m) => `- ${agentLabel}: 「${m.slice(0, 80)}${m.length > 80 ? "..." : ""}」`),
+      ...agentMsgs.slice(0, 5).map((m) => `- ${agentLabel}: 「${m.slice(0, 80)}${m.length > 80 ? "..." : ""}」`),
       "",
     ].join("\n");
 
@@ -652,11 +652,11 @@ function createLegacyAgent(session, turnState, onAudio) {
     });
     console.log(`💬  [${m.role}] ${m.content}`);
   });
-  agent.on(AgentEvents.AgentThinking, () => console.log(`🤔  Caty thinking… (sid=${session.id})`));
+  agent.on(AgentEvents.AgentThinking, () => console.log(`🤔  [${FIXED_AGENT_ID || process.env.AGENT_ID || "agent"}] thinking… (sid=${session.id})`));
   agent.on(AgentEvents.AgentStartedSpeaking, (s) => {
     turnState.isAgentSpeaking = true;
     turnState.inputCooldownUntil = Date.now() + ECHO_LOOP_COOLDOWN_MS;
-    console.log(`🗣️  Caty speaking (sid=${session.id}):`, s);
+    console.log(`🗣️  [${FIXED_AGENT_ID || process.env.AGENT_ID || "agent"}] speaking (sid=${session.id}):`, s);
   });
   agent.on(AgentEvents.UserStartedSpeaking, () => console.log(`🎙️  User speaking (sid=${session.id})`));
   agent.on(AgentEvents.AgentAudioDone, () => {
@@ -1124,7 +1124,12 @@ async function handleHttp(req, res) {
           defaultBotName = `${FIXED_AGENT_ID} (AI)`;
         }
       } else {
-        defaultBotName = "Caty (ケイティ)";
+        try {
+          const profile = resolveAgentProfile();
+          defaultBotName = `${profile.name || profile.agentId} (${profile.displayName || "AI"})`;
+        } catch {
+          defaultBotName = "AI Agent";
+        }
       }
 
       const botPayload = {
