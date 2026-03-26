@@ -376,6 +376,34 @@ async function createAttendeeBotWithRetry(attendeePayload) {
   throw lastError || new Error("Unknown attendee request error");
 }
 
+/**
+ * Request bot to leave the meeting via Attendee API (POST /api/v1/bots/{id}/leave).
+ */
+function requestBotLeave(botId, reason) {
+  const payload = JSON.stringify({});
+  const options = {
+    hostname: ATTENDEE_API_BASE_URL,
+    port: 443,
+    path: `/api/v1/bots/${botId}/leave`,
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Token ${ATTENDEE_API_KEY}`,
+      "Content-Length": Buffer.byteLength(payload),
+    },
+  };
+  const req = https.request(options, (res) => {
+    let data = "";
+    res.on("data", (chunk) => (data += chunk));
+    res.on("end", () => {
+      console.log(`🚪  Attendee bot leave (${reason}): ${botId} → ${res.statusCode} ${data.slice(0, 200)}`);
+    });
+  });
+  req.on("error", (err) => console.error(`❌  Attendee bot leave error (${reason}): ${err.message}`));
+  req.write(payload);
+  req.end();
+}
+
 function saveConversationLog(session) {
   if (!session || !Array.isArray(session.conversationLog) || session.conversationLog.length === 0) {
     return;
@@ -577,7 +605,13 @@ function createHandler(session, turnState, onAudio) {
       wakeMode: session.config.wakeMode,
     });
     const pipeline = createPipeline(session, turnState, onAudio, config);
-    return { send: (buf) => pipeline.sendAudio(buf), close: () => pipeline.close() };
+    return {
+      send: (buf) => pipeline.sendAudio(buf),
+      close: () => pipeline.close(),
+      on: pipeline.on,
+      once: pipeline.once,
+      removeListener: pipeline.removeListener,
+    };
   } else {
     console.log(`🔊  Deepgram Voice Agent モード (sid=${session.id})`);
     return createLegacyAgent(session, turnState, onAudio);
@@ -742,6 +776,14 @@ const server = http.createServer(async (req, res) => {
       const attendeeResult = await createAttendeeBotWithRetry(attendeePayload);
       if (attendeeResult.statusCode >= 200 && attendeeResult.statusCode < 300) {
         console.log("✅  Bot起動成功:", attendeeResult.body);
+        // Parse botId from Attendee API response for leave functionality
+        try {
+          const parsed = JSON.parse(attendeeResult.body);
+          if (parsed.id) {
+            session.botId = parsed.id;
+            console.log(`🤖  Bot ID: ${parsed.id}`);
+          }
+        } catch { /* body may not be JSON */ }
         const agentName = _startupAgentProfile?.displayName || "Caty";
         writePlainResponse(
           res,
@@ -783,6 +825,80 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
     res.end(JSON.stringify(response));
     return;
+  }
+
+  // /active-session — list active meeting sessions (for UI polling)
+  if (req.method === "GET" && req.url === "/active-session") {
+    const sessions = [];
+    for (const [sid, session] of meetingSessions) {
+      const lc = meetLifecycles.get(sid);
+      sessions.push({
+        sessionId: sid,
+        meetingUrl: session.meetingUrl,
+        startedAt: session.startedAt,
+        state: lc?.state || "unknown",
+        botId: session.botId || null,
+        hasConnection: activeConnections.has(sid),
+        agentIds: session.config?.agentIds || [],
+        agentDisplayNames: session.agents || [],
+      });
+    }
+    res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+    res.end(JSON.stringify({ active: sessions.length > 0, sessions }));
+    return;
+  }
+
+  // /leave-meeting — force-remove bot from meeting
+  if (req.method === "POST" && req.url === "/leave-meeting") {
+    try {
+      const formData = await parseRequestBody(req);
+      let targetSid = formData?.sessionId;
+
+      if (!targetSid || !meetingSessions.has(targetSid)) {
+        // If no specific session, try to leave the first active one
+        const firstSid = meetingSessions.keys().next().value;
+        if (!firstSid) {
+          writePlainResponse(res, 404, "アクティブなセッションがありません。");
+          return;
+        }
+        targetSid = firstSid;
+      }
+
+      const session = meetingSessions.get(targetSid);
+      const botId = session?.botId;
+
+      // Close the WebSocket connection
+      const conn = activeConnections.get(targetSid);
+      if (conn?.client) {
+        try { conn.client.close(1000, "leave_requested"); } catch { /* ignore */ }
+      }
+
+      // Call Attendee API to leave the meeting
+      if (botId) {
+        requestBotLeave(botId, "web_ui_leave");
+      }
+
+      // Transition lifecycle
+      const lc = meetLifecycles.get(targetSid);
+      if (lc && !lc.isTerminal) {
+        lc.transition("completed", { reason: "leave_requested" });
+      }
+
+      // Immediate cleanup
+      if (session) {
+        if (session.closeTimer) clearTimeout(session.closeTimer);
+        saveConversationLog(session);
+        meetingSessions.delete(targetSid);
+        console.log(`🧹  Session closed (leave): ${targetSid}`);
+      }
+
+      writePlainResponse(res, 200, `退出リクエスト送信: session=${targetSid}, bot=${botId || "unknown"}`);
+      return;
+    } catch (err) {
+      console.error("❌  /leave-meeting error:", err);
+      writePlainResponse(res, 500, `leave-meeting エラー: ${err.message}`);
+      return;
+    }
   }
 
   writePlainResponse(res, 404, "Not Found");
@@ -868,6 +984,13 @@ wss.on("connection", (client, req) => {
   if (handler.on) {
     handler.on("exit_requested", (evt) => {
       console.log(`🚪  Exit requested for session ${sid}: ${evt.trigger}`);
+
+      // Call Attendee API to remove bot from Meet
+      const session = meetingSessions.get(sid);
+      if (session?.botId) {
+        requestBotLeave(session.botId, "exit_requested");
+      }
+
       // Close the Attendee bot connection, which triggers cleanup
       try {
         client.close(1000, "Exit requested by user");
