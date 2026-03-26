@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const { buildVoiceAddendum } = require("./llm");
 
+const CONFIG_PATH = path.join(__dirname, "..", "config.json");
 const AGENTS_PATH = path.join(__dirname, "..", "agents.json");
 
 const SAMPLE_RATE = 16_000;
@@ -35,6 +36,41 @@ function resolveEnvToken(value, fieldName = "token") {
     return raw;
   }
   return process.env[match[1]] || null;
+}
+
+/**
+ * Load config.json (new single-agent format).
+ * Resolves ${ENV_VAR} placeholders in string values.
+ * Returns parsed config or null if config.json not found.
+ */
+function loadConfig() {
+  if (!fs.existsSync(CONFIG_PATH)) return null;
+
+  let raw;
+  try {
+    raw = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8"));
+  } catch (err) {
+    console.error(`❌  Failed to parse config.json: ${err.message}`);
+    process.exit(1);
+  }
+
+  // Deep-resolve ${ENV_VAR} tokens in all string values
+  function resolveDeep(obj) {
+    if (typeof obj === "string") {
+      const match = obj.match(/^\$\{(.+)\}$/);
+      if (match) return process.env[match[1]] || "";
+      return obj;
+    }
+    if (Array.isArray(obj)) return obj.map(resolveDeep);
+    if (obj && typeof obj === "object") {
+      const out = {};
+      for (const [k, v] of Object.entries(obj)) out[k] = resolveDeep(v);
+      return out;
+    }
+    return obj;
+  }
+
+  return resolveDeep(raw);
 }
 
 function loadAgents() {
@@ -116,14 +152,12 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null) {
     console.error("❌  OpenClaw Gateway is required. Set OPENCLAW_GATEWAY_URL and OPENCLAW_GATEWAY_TOKEN (or configure in agents.json).");
   }
 
-  // Resolve greeting: agentProfile > overrides > agent > hardcoded fallback
+  // Resolve greeting: agentProfile > overrides > agent > empty (skip if unconfigured)
   const greeting =
     overrides.greeting ||
     agentProfile?.greeting ||
     agent?.greeting ||
-    (isJapanese
-      ? "(happy) こんにちは！ケイティです。よろしくお願いします！"
-      : "(happy) Hi! I'm Caty. Glad to talk with you!");
+    "";
 
   return {
     dgKey: process.env.DEEPGRAM_API_KEY,
@@ -183,6 +217,7 @@ module.exports = {
   SLACK_SUMMARY_CHANNEL,
   SLACK_STATUS_CHANNEL,
   SUMMARY_ENABLED,
+  loadConfig,
   loadAgents,
   getDefaultAgent,
   getAgentById,

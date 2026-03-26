@@ -14,7 +14,7 @@ const https = require("https");
 const path = require("path");
 const crypto = require("crypto");
 const { parse } = require("querystring");
-const { buildAgentConfig, getPipelineConfig, SAMPLE_RATE, TTS_PROVIDER, loadAgents } = require("./config");
+const { getPipelineConfig, SAMPLE_RATE, TTS_PROVIDER, loadConfig, loadAgents } = require("./config");
 const { createPipeline } = require("./pipeline");
 const { warmUpGatewaySession } = require("./gateway-warmup");
 const { SessionLifecycle } = require("./session-events");
@@ -75,10 +75,10 @@ try {
 let botImageData = null;
 
 const BOT_IMAGE_PATH = _startupAgentProfile?.avatarPath
-  || path.join(__dirname, "..", "assets", `${_startupAgentProfile?.agentId || "caty"}-avatar.png`);
+  || path.join(__dirname, "..", "assets", "avatar.png");
 const BOT_IMAGE_URL = process.env.BOT_IMAGE_URL
   || _startupAgentProfile?.avatarUrl
-  || "https://example.com/avatar.png";
+  || "";
 
 (async function loadBotImage() {
   // Try local file first, then download from URL
@@ -224,7 +224,7 @@ const _lcmIngestedSessions = new Map();
 
 async function sendLcmIngest(lifecycle, notifier) {
   const sid = lifecycle.sessionId;
-  const agentId = (process.env.AGENT_ID || "caty").toLowerCase();
+  const agentId = (_startupAgentProfile?.agentId || process.env.AGENT_ID || "unknown").toLowerCase();
   const lcmKey = `${agentId}:${sid}`;
 
   if (_lcmIngestedSessions.has(lcmKey)) {

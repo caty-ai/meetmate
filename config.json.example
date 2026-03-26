@@ -1,0 +1,31 @@
+{
+  "agent": {
+    "id": "caty",
+    "name": "Caty",
+    "displayName": "ケイティ",
+    "greeting": "(happy) こんにちは！ケイティです。よろしくお願いします！",
+    "model": "anthropic/claude-sonnet-4-6",
+    "emotionTags": true,
+    "wakeWords": ["ケイティ", "けいてぃ", "caty", "katie", "ケイケイ"],
+    "keyterms": ["ケイティ", "けいてぃ", "Caty", "Katie"],
+    "sttWakeVariants": [],
+    "ackVariants": [
+      "(calm) 了解、すぐ取りかかるね。",
+      "(calm) 了解です。ちょっと待ってね。",
+      "(calm) はい、今確認するね。",
+      "(calm) 了解、ちょっと調べてみるね。"
+    ],
+    "avatarUrl": ""
+  },
+  "gateway": {
+    "url": "${OPENCLAW_GATEWAY_URL}",
+    "token": "${OPENCLAW_GATEWAY_TOKEN}"
+  },
+  "tts": {
+    "provider": "fish-audio",
+    "voiceId": ""
+  },
+  "server": {
+    "port": 5005
+  }
+}
