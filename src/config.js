@@ -106,21 +106,14 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null) {
     ? (agent.voiceId || envVoiceId)
     : envVoiceId;
 
-  // Resolve system prompt: agentProfile > overrides > fallback
-  let systemPrompt;
-  if (agentProfile?.systemPrompt) {
-    systemPrompt = agentProfile.systemPrompt;
-  } else if (overrides.prompt) {
-    systemPrompt = overrides.prompt;
-  } else {
-    // Fallback: try to load caty-system.md for backward compat
-    try {
-      systemPrompt = require("fs").readFileSync(
-        require("path").join(__dirname, "prompts", "caty-system.md"), "utf-8"
-      );
-    } catch {
-      systemPrompt = "";
-    }
+  // Resolve system prompt: agentProfile > overrides > empty (Gateway manages system prompts)
+  const systemPrompt = agentProfile?.systemPrompt || overrides.prompt || "";
+
+  // Validate Gateway config
+  const resolvedOpenclawUrl = agent?.gatewayUrl || process.env.OPENCLAW_GATEWAY_URL || null;
+  const resolvedOpenclawToken = agent?.gatewayToken || process.env.OPENCLAW_GATEWAY_TOKEN || null;
+  if (!resolvedOpenclawUrl || !resolvedOpenclawToken) {
+    console.error("❌  OpenClaw Gateway is required. Set OPENCLAW_GATEWAY_URL and OPENCLAW_GATEWAY_TOKEN (or configure in agents.json).");
   }
 
   // Resolve greeting: agentProfile > overrides > agent > hardcoded fallback
@@ -134,7 +127,6 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null) {
 
   return {
     dgKey: process.env.DEEPGRAM_API_KEY,
-    openrouterKey: process.env.OPENROUTER_API_KEY,
     fishKey: process.env.FISH_AUDIO_API_KEY,
     openclawUrl: agent?.gatewayUrl || process.env.OPENCLAW_GATEWAY_URL || null,
     openclawToken: agent?.gatewayToken || process.env.OPENCLAW_GATEWAY_TOKEN || null,

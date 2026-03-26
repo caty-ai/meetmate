@@ -53,10 +53,6 @@ if (!ATTENDEE_API_KEY) {
 }
 
 if (TTS_PROVIDER === "fish-audio") {
-  if (!process.env.OPENROUTER_API_KEY) {
-    console.error("❌  OPENROUTER_API_KEY が設定されていません（Fish Audio モードに必要）。");
-    process.exit(1);
-  }
   if (!process.env.FISH_AUDIO_API_KEY) {
     console.error("❌  FISH_AUDIO_API_KEY が設定されていません。");
     process.exit(1);
@@ -204,7 +200,6 @@ async function handleMeetSessionEnd(lifecycle) {
       const summary = await summarizeConversation(lifecycle._conversationLog, {
         openclawUrl: process.env.OPENCLAW_GATEWAY_URL,
         openclawToken: process.env.OPENCLAW_GATEWAY_TOKEN,
-        openrouterKey: process.env.OPENROUTER_API_KEY,
       });
       await notifier.postSummary(lifecycle, summary);
       console.log("📋  Meetサマリー投稿完了");

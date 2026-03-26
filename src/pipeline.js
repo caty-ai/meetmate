@@ -288,9 +288,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   const emitter = new EventEmitter();
 
   const dgKey = config.dgKey;
-  const openrouterKey = config.openrouterKey;
   const fishKey = config.fishKey;
-  const systemPrompt = config.systemPrompt;
   const selectedAgentIds = Array.isArray(options.selectedAgentIds) ? options.selectedAgentIds.filter(Boolean) : [];
   const hasSelectedAgents = selectedAgentIds.length > 0;
   const agents = options.agents || {};
@@ -333,17 +331,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     switchAgent(defaultAgentId);
   }
 
-  // OpenClaw Gateway integration
-  const hasOpenClaw = () => !!(agentState.openclawUrl && agentState.openclawToken);
-  if (hasOpenClaw()) {
-    console.log("🔗  OpenClaw Gateway モード: フルCaty体験 ✨");
-  } else {
-    console.log("📡  OpenRouter モード: 直接Claude API");
-  }
-
-  // Conversation history (for OpenRouter fallback; OpenClaw manages its own)
-  const MAX_HISTORY = 20;
-  const history = []; // {role: "user"|"assistant", content: string}
+  console.log("🔗  OpenClaw Gateway モード ✨");
 
   // Current LLM/TTS abort controller (for interruption)
   let currentAbort = null;
@@ -607,7 +595,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         return;
       }
 
-      if (!hasOpenClaw() || !agentState.openclawUrl || !agentState.openclawToken) {
+      if (!agentState.openclawUrl || !agentState.openclawToken) {
         console.log("⏭️  Timeout handoff skipped (OpenClaw Gateway unavailable)");
         return;
       }
@@ -734,12 +722,6 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       }
     };
 
-    // Add to history (used by OpenRouter fallback; OpenClaw manages its own)
-    history.push({ role: "user", content: userText });
-    if (history.length > MAX_HISTORY) {
-      history.splice(0, history.length - MAX_HISTORY);
-    }
-
     try {
       // #9 Immediate ack for request-like utterances
       const currentAgentConfig = agents[currentAgentId] || {};
@@ -775,10 +757,8 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
 
       console.log(`🤔  ${requestAgentId || "agent"} thinking…`);
 
-      // Build LLM options based on mode
-      const llmMessages = hasOpenClaw()
-        ? [{ role: "user", content: userText }] // OpenClaw manages history
-        : history; // OpenRouter needs full history
+      // OpenClaw Gateway manages conversation history
+      const llmMessages = [{ role: "user", content: userText }];
 
       // ★ Diagnostic: dump what we're actually sending to Gateway
       console.log(`📤  [diag] Gateway payload — agent=${requestAgentId} user=${agentState.sessionUser}`);
@@ -788,17 +768,12 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       startLlmTimeoutTimer();
 
       for await (const chunk of streamChat(
-        hasOpenClaw() ? null : systemPrompt,
         llmMessages,
         {
-          // OpenClaw Gateway
           openclawUrl: agentState.openclawUrl,
           openclawToken: agentState.openclawToken,
           openclawSystemAddendum: agentState.openclawSystemAddendum,
           sessionUser: agentState.sessionUser,
-          // OpenRouter fallback
-          apiKey: openrouterKey,
-          // Shared
           model: agentState.model,
           temperature: config.llm.temperature,
           maxTokens: config.llm.maxTokens,
@@ -883,7 +858,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         console.log(`🔇  [diag]   STT input: "${lastUserTranscript.slice(0, 200)}"`);
         console.log(`🔇  [diag]   Sent to LLM: "${userText.slice(0, 200)}"`);
         console.log(`🔇  [diag]   Agent: ${requestAgentId}, Session: ${agentState.sessionUser}`);
-        console.log(`🔇  [diag]   History depth: ${history.length}, firstChunk: ${firstChunkSeen}`);
+        console.log(`🔇  [diag]   firstChunk: ${firstChunkSeen}`);
         // Don't log as assistant response, don't add to history
         return;
       }
@@ -905,10 +880,6 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       if (fullResponse.trim()) {
         console.log(`💬  [assistant] ${fullResponse.trim()}`);
         appendConversationEntry("assistant", fullResponse.trim(), requestAgentId || null);
-        history.push({ role: "assistant", content: fullResponse.trim() });
-        if (history.length > MAX_HISTORY) {
-          history.splice(0, history.length - MAX_HISTORY);
-        }
       }
     } catch (err) {
       if (abort.signal.aborted) {
@@ -1040,7 +1011,6 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
 
     console.log(`💬  [assistant] ${fullGreeting}`);
     appendConversationEntry("assistant", fullGreeting, currentAgentId || null);
-    history.push({ role: "assistant", content: fullGreeting });
 
     // Use AbortController so barge-in can interrupt greeting/purpose
     const greetAbort = new AbortController();

@@ -1,7 +1,5 @@
-// llm.js — LLM streaming wrapper
-// Supports two backends:
-//   1. OpenClaw Gateway (full Caty with SOUL/memory/tools/skills)
-//   2. OpenRouter (fallback, direct Claude API)
+// llm.js — LLM streaming wrapper (OpenClaw Gateway only)
+// Gateway provides full agent experience: SOUL/memory/tools/skills
 
 const http = require("http");
 const https = require("https");
@@ -52,14 +50,12 @@ NO_REPLY は絶対に使わないこと（音声通話ではサイレント応�
 const VOICE_SYSTEM_ADDENDUM = buildVoiceAddendum({ emotionTags: true });
 
 /**
- * Stream a chat completion.
+ * Stream a chat completion via OpenClaw Gateway.
  *
- * @param {string|null} systemPrompt - System prompt (used for OpenRouter only; ignored for OpenClaw)
- * @param {Array<{role: string, content: string}>} messages - Conversation history
+ * @param {Array<{role: string, content: string}>} messages - Conversation messages
  * @param {object} options
- * @param {string} [options.apiKey] - OpenRouter API key (fallback mode)
- * @param {string} [options.openclawUrl] - OpenClaw Gateway URL (e.g., "http://localhost:18789")
- * @param {string} [options.openclawToken] - OpenClaw Gateway token
+ * @param {string} options.openclawUrl - OpenClaw Gateway URL (required)
+ * @param {string} options.openclawToken - OpenClaw Gateway token (required)
  * @param {string} [options.sessionUser] - User/session ID for OpenClaw session isolation
  * @param {string} [options.openclawSystemAddendum] - System addendum override for OpenClaw voice mode
  * @param {string} [options.model] - Model ID
@@ -68,14 +64,11 @@ const VOICE_SYSTEM_ADDENDUM = buildVoiceAddendum({ emotionTags: true });
  * @param {AbortSignal} [options.signal] - AbortSignal for cancellation
  * @returns {AsyncGenerator<string>} Yields text chunks
  */
-async function* streamChat(systemPrompt, messages, options = {}) {
-  const useOpenClaw = !!(options.openclawUrl && options.openclawToken);
-
-  if (useOpenClaw) {
-    yield* streamOpenClaw(messages, options);
-  } else {
-    yield* streamOpenRouter(systemPrompt, messages, options);
+async function* streamChat(messages, options = {}) {
+  if (!options.openclawUrl || !options.openclawToken) {
+    throw new Error('OpenClaw Gateway is required. Set OPENCLAW_GATEWAY_URL and OPENCLAW_GATEWAY_TOKEN.');
   }
+  yield* streamOpenClaw(messages, options);
 }
 
 // ── OpenClaw Gateway backend ────────────────────────────────────────
@@ -151,71 +144,7 @@ async function* streamOpenClaw(messages, options) {
   yield* parseSSE(response, options.signal);
 }
 
-// ── OpenRouter backend (fallback) ───────────────────────────────────
-
-async function* streamOpenRouter(systemPrompt, messages, options) {
-  const apiKey = options.apiKey;
-  if (!apiKey) throw new Error("OPENROUTER_API_KEY is required for LLM");
-
-  const model = options.model || "anthropic/claude-sonnet-4-5";
-  const temperature = options.temperature ?? 0.5;
-  const maxTokens = options.maxTokens || 300;
-
-  const body = JSON.stringify({
-    model,
-    stream: true,
-    temperature,
-    max_tokens: maxTokens,
-    messages: [
-      { role: "system", content: systemPrompt },
-      ...messages,
-    ],
-  });
-
-  const response = await new Promise((resolve, reject) => {
-    const req = https.request(
-      {
-        hostname: "openrouter.ai",
-        port: 443,
-        path: "/api/v1/chat/completions",
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-          "Content-Length": Buffer.byteLength(body),
-          "HTTP-Referer": "https://example.com/private-repo",
-          "X-Title": "AI Phone",
-        },
-      },
-      (res) => resolve(res)
-    );
-
-    req.on("error", reject);
-
-    if (options.signal) {
-      options.signal.addEventListener("abort", () => {
-        req.destroy(new Error("LLM request aborted"));
-      }, { once: true });
-    }
-
-    req.setTimeout(30_000, () => {
-      req.destroy(new Error("LLM request timeout"));
-    });
-
-    req.write(body);
-    req.end();
-  });
-
-  if (response.statusCode !== 200) {
-    let errBody = "";
-    for await (const chunk of response) errBody += chunk;
-    throw new Error(`OpenRouter API error (${response.statusCode}): ${errBody.slice(0, 200)}`);
-  }
-
-  yield* parseSSE(response, options.signal);
-}
-
-// ── Shared SSE parser ───────────────────────────────────────────────
+// ── SSE parser ──────────────────────────────────────────────────────
 
 async function* parseSSE(response, signal) {
   let buffer = "";

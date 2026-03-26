@@ -1,5 +1,4 @@
-// summarizer.js — LLM-based conversation summarizer
-// Uses OpenClaw Gateway if available, fallback to OpenRouter
+// summarizer.js — LLM-based conversation summarizer (OpenClaw Gateway only)
 
 const http = require("http");
 const https = require("https");
@@ -27,9 +26,8 @@ const SUMMARY_PROMPT = `以下の音声通話/会議の会話ログから、簡�
  *
  * @param {Array<{role: string, content: string, timestamp?: string}>} conversationLog
  * @param {object} options
- * @param {string} [options.openclawUrl]
- * @param {string} [options.openclawToken]
- * @param {string} [options.openrouterKey]
+ * @param {string} options.openclawUrl - OpenClaw Gateway URL (required)
+ * @param {string} options.openclawToken - OpenClaw Gateway token (required)
  * @param {string} [options.model]
  * @returns {Promise<{summary: string[], decisions: string[], todos: string[]}>}
  */
@@ -71,17 +69,12 @@ async function summarizeConversation(conversationLog, options = {}) {
   const prompt = SUMMARY_PROMPT + logText;
 
   try {
-    const useOpenClaw = !!(options.openclawUrl && options.openclawToken);
-    let responseText;
-
-    if (useOpenClaw) {
-      responseText = await callOpenClaw(prompt, options);
-    } else if (options.openrouterKey) {
-      responseText = await callOpenRouter(prompt, options);
-    } else {
-      console.warn("⚠️  Summarizer: no LLM backend configured");
+    if (!options.openclawUrl || !options.openclawToken) {
+      console.warn("⚠️  Summarizer: OpenClaw Gateway not configured");
       return { summary: [], decisions: [], todos: [] };
     }
+
+    const responseText = await callOpenClaw(prompt, options);
 
     // Parse JSON from response (handle potential markdown wrapping)
     return parseJsonResponse(responseText);
@@ -157,53 +150,6 @@ async function callOpenClaw(prompt, options) {
         res.on("end", () => {
           if (res.statusCode !== 200) {
             reject(new Error(`OpenClaw summarizer error (${res.statusCode}): ${data.slice(0, 200)}`));
-            return;
-          }
-          resolve(data);
-        });
-      }
-    );
-
-    req.on("error", reject);
-    req.setTimeout(30_000, () => req.destroy(new Error("Summarizer timeout")));
-    req.write(body);
-    req.end();
-  });
-
-  const parsed = JSON.parse(response);
-  return parsed.choices?.[0]?.message?.content || "";
-}
-
-async function callOpenRouter(prompt, options) {
-  const body = JSON.stringify({
-    model: options.model || "anthropic/claude-sonnet-4-6",
-    stream: false,
-    temperature: 0.3,
-    max_tokens: 500,
-    messages: [{ role: "user", content: prompt }],
-  });
-
-  const response = await new Promise((resolve, reject) => {
-    const req = https.request(
-      {
-        hostname: "openrouter.ai",
-        port: 443,
-        path: "/api/v1/chat/completions",
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${options.openrouterKey}`,
-          "Content-Type": "application/json",
-          "Content-Length": Buffer.byteLength(body),
-          "HTTP-Referer": "https://github.com/caty-ai/meetmate",
-          "X-Title": "AI Meet Participant Summarizer",
-        },
-      },
-      (res) => {
-        let data = "";
-        res.on("data", (chunk) => { data += chunk; });
-        res.on("end", () => {
-          if (res.statusCode !== 200) {
-            reject(new Error(`OpenRouter summarizer error (${res.statusCode}): ${data.slice(0, 200)}`));
             return;
           }
           resolve(data);
