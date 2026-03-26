@@ -22,7 +22,8 @@ const { SlackNotifier } = require("./slack-notifier");
 const { summarizeConversation } = require("./summarizer");
 const { resolveAgentProfile, AgentNotFoundError } = require("./agent-profile");
 
-const PORT = Number(process.env.PORT || 5005);
+const _configForPort = loadConfig();
+const PORT = Number(_configForPort?.server?.port || process.env.PORT || 5005);
 const ATTENDEE_API_BASE_URL = process.env.ATTENDEE_API_BASE_URL || "app.attendee.dev";
 const ATTENDEE_TIMEOUT_MS = Number(process.env.ATTENDEE_TIMEOUT_MS || 15_000);
 const ATTENDEE_RETRY_ATTEMPTS = Number(process.env.ATTENDEE_RETRY_ATTEMPTS || 3);
