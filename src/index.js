@@ -590,7 +590,18 @@ function writePlainResponse(res, status, text) {
 }
 
 // ── HTTP + WebSocket Server ────────────────────────────────────────
+const SERVER_START_TIME = Date.now();
+
 const server = http.createServer(async (req, res) => {
+  // Health check endpoint for watchdog
+  if (req.method === "GET" && req.url === "/health") {
+    const uptimeSeconds = ((Date.now() - SERVER_START_TIME) / 1000).toFixed(1);
+    const payload = JSON.stringify({ ok: true, uptime: Number(uptimeSeconds), activeSessions: meetingSessions.size });
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(payload);
+    return;
+  }
+
   if (req.method === "GET" && req.url === "/") {
     fs.readFile(path.join(__dirname, "..", "public", "index.html"), (err, data) => {
       if (err) {
