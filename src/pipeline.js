@@ -54,7 +54,7 @@ const _defaultWakeWords = (() => {
       if (agent?.wakeWords?.length) return agent.wakeWords.join(",");
     } catch { /* fall through */ }
   }
-  return "ケイティ,けいてぃ,caty,katie,ケイケイ";
+  return "";
 })();
 const WAKE_WORDS = _defaultWakeWords.toLowerCase().split(",").map(w => w.trim());
 
@@ -294,7 +294,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   const agents = options.agents || {};
   const agentProfile = options.agentProfile || null;
   const defaultAgentId = options.defaultAgentId || selectedAgentIds[0] || null;
-  let currentAgentId = defaultAgentId || agentProfile?.agentId || "caty";
+  let currentAgentId = defaultAgentId || agentProfile?.agentId || "agent";
 
   const agentState = {
     openclawUrl: config.openclawUrl,

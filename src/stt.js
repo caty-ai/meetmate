@@ -13,17 +13,12 @@ function buildKeyterms(extraKeyterms = []) {
   const enabled = String(process.env.STT_ENABLE_KEYWORDS || "true").toLowerCase() !== "false";
   if (!enabled) return [];
 
-  const baseTerms = (process.env.WAKE_WORDS || "ケイティ,けいてぃ,caty,katie,ケイケイ")
+  const baseTerms = (process.env.WAKE_WORDS || "")
     .split(",")
     .map((w) => w.trim())
     .filter(Boolean);
 
-  const extraTerms = [
-    "ケイティ",
-    "けいてぃ",
-    "Caty",
-    "Katie",
-  ];
+  const extraTerms = [];
 
   const dynamicTerms = Array.isArray(extraKeyterms)
     ? extraKeyterms.map((w) => String(w || "").trim()).filter(Boolean)

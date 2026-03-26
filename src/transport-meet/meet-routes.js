@@ -57,7 +57,7 @@ function getBotImageConfig() {
     } catch { /* fall through */ }
   }
   return {
-    path: path.join(__dirname, "..", "..", "assets", "caty-avatar.png"),
+    path: path.join(__dirname, "..", "..", "assets", "avatar.png"),
     url: DEFAULT_BOT_IMAGE_URL,
   };
 }
@@ -84,7 +84,7 @@ function getMeetSlackNotifier() {
     const statusChannel = process.env.SLACK_STATUS_CHANNEL || summaryChannel || fallback;
 
     // Per-agent Slack bot token: ${AGENT_ID}_SLACK_BOT_TOKEN → SLACK_BOT_TOKEN
-    const agentIdForToken = FIXED_AGENT_ID || "caty";
+    const agentIdForToken = FIXED_AGENT_ID || process.env.AGENT_ID || "unknown";
     const agentSlackToken =
       process.env[`${agentIdForToken.toUpperCase()}_SLACK_BOT_TOKEN`]
       || process.env.SLACK_BOT_TOKEN
@@ -152,7 +152,7 @@ async function sendLcmIngest(lifecycle) {
   const sid = lifecycle.sessionId;
   // Resolve agent ID for LCM key
   const agentIds = lifecycle._meta?.agentIds;
-  const agentId = (Array.isArray(agentIds) && agentIds.length > 0 ? agentIds[0] : (FIXED_AGENT_ID || "caty")).toLowerCase();
+  const agentId = (Array.isArray(agentIds) && agentIds.length > 0 ? agentIds[0] : (FIXED_AGENT_ID || process.env.AGENT_ID || "unknown")).toLowerCase();
   const lcmKey = `${agentId}:${sid}`;
 
   if (_lcmIngestedSessions.has(lcmKey)) {
@@ -273,7 +273,7 @@ async function postMeetFullTranscript(notifier, lifecycle) {
   const lines = ["📜 全文ログ", "━━━━━━━━━━━━━━━", ""];
   for (const entry of log) {
     const speaker = entry.role === "assistant" || entry.role === "agent"
-      ? `🤖 ${entry.agentId || "Caty"}`
+      ? `🤖 ${entry.agentId || "AI"}`
       : "👤 参加者";
     const time = entry.timestamp ? `(${new Date(entry.timestamp).toLocaleTimeString("ja-JP")})` : "";
     lines.push(`${speaker} ${time}`);
@@ -480,7 +480,7 @@ function saveConversationLog(session) {
     "",
     ...session.conversationLog.map((e) => {
       const speaker = e.role === "assistant" || e.role === "agent"
-        ? (e.agentId ? `AI(${e.agentId})` : "Caty")
+        ? (e.agentId ? `AI(${e.agentId})` : "AI")
         : "参加者";
       return `**${speaker}** (${e.timestamp}):\n${e.content}\n`;
     }),
@@ -512,7 +512,7 @@ function appendToMemory(session) {
       .slice(0, 10);
 
     const now = new Date().toLocaleString("ja-JP", { timeZone: "Asia/Bangkok" });
-    const agentLabel = FIXED_AGENT_ID || "caty";
+    const agentLabel = FIXED_AGENT_ID || process.env.AGENT_ID || "unknown";
     const summary = [
       "",
       `## 🎙️ Google Meet セッション (${now})`,
@@ -543,7 +543,7 @@ function appendToMemory(session) {
       "",
       ...session.conversationLog.map((e) => {
         const speaker = e.role === "assistant" || e.role === "agent"
-          ? (e.agentId ? `AI(${e.agentId})` : "Caty")
+          ? (e.agentId ? `AI(${e.agentId})` : "AI")
           : "参加者";
         return `**${speaker}**: ${e.content}\n`;
       }),
