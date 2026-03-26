@@ -14,7 +14,7 @@ const https = require("https");
 const path = require("path");
 const crypto = require("crypto");
 const { parse } = require("querystring");
-const { buildAgentConfig, getPipelineConfig, SAMPLE_RATE, TTS_PROVIDER } = require("./config");
+const { buildAgentConfig, getPipelineConfig, SAMPLE_RATE, TTS_PROVIDER, loadAgents } = require("./config");
 const { createPipeline } = require("./pipeline");
 const { warmUpGatewaySession } = require("./gateway-warmup");
 const { SessionLifecycle } = require("./session-events");
@@ -765,6 +765,24 @@ const server = http.createServer(async (req, res) => {
       writePlainResponse(res, 500, `join-meeting エラー: ${err.message}`);
       return;
     }
+  }
+
+  // /agents — list available agents (single-agent mode aware)
+  if (req.method === "GET" && req.url === "/agents") {
+    const agents = loadAgents();
+    const FIXED_AGENT_ID = process.env.AGENT_ID || null;
+    const filteredAgents = FIXED_AGENT_ID
+      ? Object.fromEntries(Object.entries(agents).filter(([id]) => id === FIXED_AGENT_ID))
+      : agents;
+    const agentList = Object.values(filteredAgents).map(a => ({
+      id: a.id,
+      displayName: a.displayName || a.name || a.id,
+      voiceId: a.voiceId || null,
+    }));
+    const response = { agents: agentList, fixedAgentId: FIXED_AGENT_ID };
+    res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+    res.end(JSON.stringify(response));
+    return;
   }
 
   writePlainResponse(res, 404, "Not Found");
