@@ -1,7 +1,20 @@
 // tts-fish.js — Fish Audio TTS streaming wrapper
 // Uses Fish Audio REST API with chunked transfer encoding (no SDK needed)
+//
+// Safety guards:
+//   - MAX_AUDIO_DURATION_MS: hard cap on total audio output per synthesize() call
+//     Prevents Fish Audio hallucination loops (e.g. repeating "ケイケイ" indefinitely)
+//   - STALL_TIMEOUT_MS: kills request if no data received for this long
+//   - Both are in addition to the HTTP-level 30s connect timeout
 
 const https = require("https");
+
+// Max audio duration per sentence: 15 seconds at any sample rate
+// (a single sentence should never produce more than this)
+const MAX_AUDIO_DURATION_MS = 15_000;
+
+// If no new data arrives for 5 seconds, consider the stream stalled
+const STALL_TIMEOUT_MS = 5_000;
 
 /**
  * Synthesize text to PCM audio via Fish Audio REST API.
@@ -27,6 +40,10 @@ async function synthesize(text, options = {}) {
   const onAudio = options.onAudio;
   if (!onAudio) throw new Error("onAudio callback is required");
 
+  // Calculate max bytes based on duration limit
+  // PCM int16: 2 bytes per sample, mono
+  const maxBytes = Math.floor((sampleRate * MAX_AUDIO_DURATION_MS) / 1000) * 2;
+
   const requestBody = {
     text: text.trim(),
     format: "pcm",
@@ -45,6 +62,33 @@ async function synthesize(text, options = {}) {
   const body = JSON.stringify(requestBody);
 
   return new Promise((resolve, reject) => {
+    let totalBytesReceived = 0;
+    let stallTimer = null;
+    let resolved = false;
+
+    function cleanup() {
+      if (stallTimer) {
+        clearTimeout(stallTimer);
+        stallTimer = null;
+      }
+    }
+
+    function finish(err) {
+      if (resolved) return;
+      resolved = true;
+      cleanup();
+      if (err) reject(err);
+      else resolve();
+    }
+
+    function resetStallTimer(req) {
+      if (stallTimer) clearTimeout(stallTimer);
+      stallTimer = setTimeout(() => {
+        console.warn(`⚠️  TTS stall detected: no data for ${STALL_TIMEOUT_MS}ms, aborting (received ${totalBytesReceived} bytes)`);
+        req.destroy(new Error("TTS stream stalled"));
+      }, STALL_TIMEOUT_MS);
+    }
+
     const req = https.request(
       {
         hostname: "api.fish.audio",
@@ -63,7 +107,7 @@ async function synthesize(text, options = {}) {
           let errBody = "";
           res.on("data", (c) => (errBody += c));
           res.on("end", () => {
-            reject(new Error(`Fish Audio API error (${res.statusCode}): ${errBody.slice(0, 300)}`));
+            finish(new Error(`Fish Audio API error (${res.statusCode}): ${errBody.slice(0, 300)}`));
           });
           return;
         }
@@ -72,8 +116,14 @@ async function synthesize(text, options = {}) {
         // Fish Audio can return odd-byte chunks which misalign 16-bit samples
         let leftover = null;
 
+        // Start stall timer on first response
+        resetStallTimer(req);
+
         res.on("data", (chunk) => {
-          if (options.signal?.aborted) return;
+          if (options.signal?.aborted || resolved) return;
+
+          // Reset stall timer on each chunk
+          resetStallTimer(req);
 
           let data = chunk;
           // Prepend leftover byte from previous chunk
@@ -89,28 +139,51 @@ async function synthesize(text, options = {}) {
           }
 
           if (data.length > 0) {
+            // Check duration cap BEFORE sending audio
+            if (totalBytesReceived + data.length > maxBytes) {
+              // Trim to max and stop
+              const remaining = maxBytes - totalBytesReceived;
+              if (remaining > 0) {
+                // Ensure even alignment
+                const trimmed = remaining - (remaining % 2);
+                if (trimmed > 0) {
+                  onAudio(data.subarray(0, trimmed));
+                }
+              }
+              totalBytesReceived = maxBytes;
+              console.warn(
+                `⚠️  TTS duration cap hit: ${MAX_AUDIO_DURATION_MS}ms (${maxBytes} bytes) for text: "${text.slice(0, 60)}…" — truncating`
+              );
+              // Destroy request to stop receiving more data
+              res.destroy();
+              finish();
+              return;
+            }
+
+            totalBytesReceived += data.length;
             onAudio(data);
           }
         });
 
         res.on("end", () => {
           // Flush any leftover byte (pad with zero)
-          if (leftover && leftover.length > 0) {
+          if (leftover && leftover.length > 0 && totalBytesReceived < maxBytes) {
             const padded = Buffer.alloc(2);
             leftover.copy(padded);
             onAudio(padded);
           }
-          resolve();
+          finish();
         });
 
-        res.on("error", reject);
+        res.on("error", (err) => finish(err));
       }
     );
 
-    req.on("error", reject);
+    req.on("error", (err) => finish(err));
 
     if (options.signal) {
       options.signal.addEventListener("abort", () => {
+        cleanup();
         req.destroy(new Error("TTS request aborted"));
       });
     }
