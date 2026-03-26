@@ -139,7 +139,6 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null) {
     openclawUrl: agent?.gatewayUrl || process.env.OPENCLAW_GATEWAY_URL || null,
     openclawToken: agent?.gatewayToken || process.env.OPENCLAW_GATEWAY_TOKEN || null,
     systemPrompt,
-    wakeMode: overrides.wakeMode || null,
     exitDetection: overrides.exitDetection,
     echoCooldownMs: ECHO_LOOP_COOLDOWN_MS,
     stt: {

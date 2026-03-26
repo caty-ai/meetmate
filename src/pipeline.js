@@ -4,7 +4,7 @@
 const http = require("http");
 const https = require("https");
 const { createSTT } = require("./stt");
-const { streamChat, isSilentReply } = require("./llm");
+const { streamChat } = require("./llm");
 const { synthesize } = require("./tts-fish");
 const { getExitCommands, detectExitIntent } = require("./exit-handler");
 const { shouldSuppressReply } = require("./speech-policy");
@@ -43,8 +43,6 @@ function isCancelWord(text) {
 }
 
 // Wake word detection: only respond when addressed
-// Modes: "off" (respond to everything), "wake" (require wake word), "context" (LLM decides)
-const WAKE_MODE = process.env.WAKE_MODE || "off";
 // In single-agent mode, use the agent's wakeWords as default; otherwise fall back to Caty's
 const _defaultWakeWords = (() => {
   if (process.env.WAKE_WORDS) return process.env.WAKE_WORDS;
@@ -293,7 +291,6 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   const openrouterKey = config.openrouterKey;
   const fishKey = config.fishKey;
   const systemPrompt = config.systemPrompt;
-  const wakeMode = config.wakeMode || WAKE_MODE;
   const selectedAgentIds = Array.isArray(options.selectedAgentIds) ? options.selectedAgentIds.filter(Boolean) : [];
   const hasSelectedAgents = selectedAgentIds.length > 0;
   const agents = options.agents || {};
@@ -403,7 +400,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
 
     // Multi-participant mode: Skip barge-in during Gate CLOSED
     // (Cancel detection moved to utterance_end only — interim is too noisy from TTS echo)
-    if (wakeMode === "wake" && gateState === "CLOSED") {
+    if (gateState === "CLOSED") {
       return;
     }
 
@@ -476,7 +473,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     // (e.g. "ケイティ、ストップ"). Handled in wake+cancel block below.
 
     // Wake word detection
-    if (wakeMode === "wake") {
+    {
       // Multi-participant mode: create entry with sequence number
       utteranceSeq += 1;
       const entry = { seq: utteranceSeq, text: cleanedText, timestamp: new Date().toISOString() };
@@ -544,9 +541,9 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       turnState.isAgentSpeaking = false;
     }
 
-    // Build user text with meeting context injection (wake mode only)
+    // Build user text with meeting context injection
     let textToProcess = cleanedText;
-    if (wakeMode === "wake") {
+    {
       // Use slice(-21, -1) to exclude the current utterance (already in buffer)
       const contextEntries = transcriptBuffer.slice(-21, -1);
       const meetingContext = contextEntries
@@ -880,8 +877,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       console.log(`📥  [diag] LLM response (${fullResponse.length} chars, ${firstChunkSeen ? "chunks received" : "NO chunks"}): "${fullResponse.slice(0, 200)}${fullResponse.length > 200 ? "…" : ""}"`);
 
       // ★ NO_REPLY guard: if entire LLM response is a silent reply, skip TTS
-      // Phase 1: speech-policy as additional layer (existing isSilentReply kept)
-      if (shouldSuppressReply(fullResponse) || isSilentReply(fullResponse)) {
+      if (shouldSuppressReply(fullResponse)) {
         console.log(`🔇  silent_reply_detected (pipeline): "${fullResponse.trim()}" — skipping TTS`);
         console.log(`🔇  [diag] NO_REPLY context dump:`);
         console.log(`🔇  [diag]   STT input: "${lastUserTranscript.slice(0, 200)}"`);
@@ -953,7 +949,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       currentAbort = null;
 
       // Multi-participant mode: Open gate and re-scan pending queue
-      if (wakeMode === "wake") {
+      {
         gateState = "OPEN";
         turnState.gateState = gateState;
         // Merge pending into buffer
