@@ -163,6 +163,8 @@ const meetLifecycles = new Map();
 
 /** Sessions in the process of leaving — block reconnection + greeting replay */
 const leavingSessionIds = new Set();
+/** Track which leaving sessions have already been logged (avoid log spam) */
+const leavingLoggedOnce = new Set();
 
 // Slack notifier for Meet sessions
 let meetSlackNotifier = null;
@@ -629,6 +631,7 @@ function finalizeSessionIfInactive(sessionId) {
   saveConversationLog(session);
   meetingSessions.delete(sessionId);
   leavingSessionIds.delete(sessionId);
+  leavingLoggedOnce.delete(sessionId);
   console.log(`🧹  Session closed: ${sessionId}`);
 }
 
@@ -1005,6 +1008,7 @@ const server = http.createServer(async (req, res) => {
         saveConversationLog(session);
         meetingSessions.delete(targetSid);
         leavingSessionIds.delete(targetSid);
+        leavingLoggedOnce.delete(targetSid);
         console.log(`🧹  Session closed (leave): ${targetSid}`);
       }
 
@@ -1041,8 +1045,13 @@ wss.on("connection", (client, req) => {
 
   // Block reconnection for sessions that are leaving (prevents greeting replay)
   if (leavingSessionIds.has(sid)) {
-    console.log(`⛔  Blocked reconnection for leaving session ${sid}`);
-    client.close(1000, "Session is leaving");
+    // Log only once per session to avoid spam
+    if (!leavingLoggedOnce.has(sid)) {
+      leavingLoggedOnce.add(sid);
+      console.log(`⛔  Blocked reconnection for leaving session ${sid} (further attempts silenced)`);
+    }
+    // Use 4000 (custom close) to signal "do not retry"
+    client.close(4000, "Session terminated");
     return;
   }
 
