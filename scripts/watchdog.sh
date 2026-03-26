@@ -1,35 +1,63 @@
 #!/bin/bash
-# Meet Server Watchdog — checks health and restarts via launchctl if down
+# Meet Server Watchdog — checks health, restarts if down, notifies on recovery only
+# State-based: only sends Slack notification on state transition (down → up)
 # Intended to be called from cron or OpenClaw heartbeat
 
 SERVICE="ai.openclaw.meet-server"
 HEALTH_URL="http://localhost:5005/health"
 LOG_DIR="/Users/you/meetmate/logs"
 LOG_FILE="$LOG_DIR/watchdog.log"
+STATE_FILE="$LOG_DIR/.watchdog-state"
 
 mkdir -p "$LOG_DIR"
 
 ts() { date "+%Y-%m-%d %H:%M:%S"; }
 
+# Read previous state (healthy / unhealthy / unknown)
+PREV_STATE="unknown"
+if [ -f "$STATE_FILE" ]; then
+  PREV_STATE=$(cat "$STATE_FILE")
+fi
+
 RESPONSE=$(curl -s --max-time 5 "$HEALTH_URL" 2>/dev/null)
 
 if echo "$RESPONSE" | grep -q '"ok":true'; then
-  # Server is healthy — no action needed
+  # Server is healthy
+  if [ "$PREV_STATE" = "unhealthy" ]; then
+    # Recovered! Log and notify
+    UPTIME=$(echo "$RESPONSE" | grep -o '"uptime":[0-9.]*' | cut -d: -f2)
+    echo "$(ts) [WATCHDOG] ✅ Recovered! uptime=${UPTIME}s" >> "$LOG_FILE"
+    echo "healthy" > "$STATE_FILE"
+    exit 0
+  fi
+  # Consistently healthy — silent
+  echo "healthy" > "$STATE_FILE"
   exit 0
 fi
 
+# Server is unhealthy
 echo "$(ts) [WATCHDOG] Health check failed. Response: $RESPONSE" >> "$LOG_FILE"
-echo "$(ts) [WATCHDOG] Attempting restart via launchctl kickstart..." >> "$LOG_FILE"
 
+if [ "$PREV_STATE" != "unhealthy" ]; then
+  # First failure — log transition
+  echo "$(ts) [WATCHDOG] ⚠️ State transition: ${PREV_STATE} → unhealthy" >> "$LOG_FILE"
+fi
+
+echo "unhealthy" > "$STATE_FILE"
+
+echo "$(ts) [WATCHDOG] Attempting restart via launchctl kickstart..." >> "$LOG_FILE"
 launchctl kickstart -k "gui/$(id -u)/$SERVICE" 2>>"$LOG_FILE"
 
 sleep 8
 
 RESPONSE2=$(curl -s --max-time 5 "$HEALTH_URL" 2>/dev/null)
 if echo "$RESPONSE2" | grep -q '"ok":true'; then
-  echo "$(ts) [WATCHDOG] ✅ Restart successful. uptime=$(echo "$RESPONSE2" | grep -o '"uptime":[0-9.]*')" >> "$LOG_FILE"
+  UPTIME=$(echo "$RESPONSE2" | grep -o '"uptime":[0-9.]*' | cut -d: -f2)
+  echo "$(ts) [WATCHDOG] ✅ Restart successful. uptime=${UPTIME}s" >> "$LOG_FILE"
+  echo "healthy" > "$STATE_FILE"
   exit 0
 else
   echo "$(ts) [WATCHDOG] ❌ Restart FAILED. Response: $RESPONSE2" >> "$LOG_FILE"
+  # State stays unhealthy — next run will retry
   exit 1
 fi
