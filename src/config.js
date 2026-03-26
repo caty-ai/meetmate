@@ -129,7 +129,7 @@ function getAgentById(agents, id) {
  * @param {object|null} agent - Raw agent object from loadAgents() (backward compat)
  * @param {object|null} agentProfile - AgentProfile from resolveAgentProfile()
  */
-function getPipelineConfig(overrides = {}, agent = null, agentProfile = null) {
+function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, configJson = null) {
   const isJapanese = LANG === "ja";
   const envVoiceId = process.env.FISH_AUDIO_VOICE_ID || null;
   // Build voice addendum: use per-agent emotionTags flag
@@ -191,11 +191,11 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null) {
     purposeStatement: overrides.purposeStatement || null,
     greeting,
     slack: {
-      botToken: SLACK_BOT_TOKEN,
-      channelId: SLACK_NOTIFY_CHANNEL,
+      botToken: configJson?.slack?.botToken || SLACK_BOT_TOKEN,
+      channelId: configJson?.slack?.notifyChannel || SLACK_NOTIFY_CHANNEL,
       statusChannelId:
-        SLACK_STATUS_CHANNEL || SLACK_SUMMARY_CHANNEL || SLACK_NOTIFY_CHANNEL,
-      summaryChannelId: SLACK_SUMMARY_CHANNEL || SLACK_NOTIFY_CHANNEL,
+        configJson?.slack?.statusChannel || SLACK_STATUS_CHANNEL || SLACK_SUMMARY_CHANNEL || SLACK_NOTIFY_CHANNEL,
+      summaryChannelId: configJson?.slack?.summaryChannel || SLACK_SUMMARY_CHANNEL || SLACK_NOTIFY_CHANNEL,
       enabled: SLACK_NOTIFY_ENABLED,
     },
     summary: {
@@ -203,7 +203,11 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null) {
     },
     // Per-agent voice extensions
     emotionTags: agentEmotionTags,
-    ackVariants: overrides.ackVariants || agent?.ackVariants || null,
+    ackVariants: overrides.ackVariants || agentProfile?.ackVariants || agent?.ackVariants || null,
+    progressPings: agentProfile?.progressPings || agent?.progressPings || null,
+    timeoutFallback: agentProfile?.timeoutFallback || agent?.timeoutFallback || null,
+    exitFarewell: agentProfile?.exitFarewell || agent?.exitFarewell || null,
+    cancelAck: agentProfile?.cancelAck || agent?.cancelAck || null,
   };
 }
 

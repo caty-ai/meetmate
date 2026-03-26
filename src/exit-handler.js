@@ -83,8 +83,9 @@ async function runExitSequence(options) {
 
   try {
     // Speak farewell
+    const farewell = options.farewell || agentProfile?.exitFarewell || "(happy) 了解です！退出しますね。お疲れさまでした！";
     try {
-      await speakFn("(happy) 了解です！退出しますね。お疲れさまでした！", null);
+      await speakFn(farewell, null);
     } catch {
       // ignore TTS error during exit
     }

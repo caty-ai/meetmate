@@ -269,8 +269,11 @@ function pickImmediateAck(text, agentAckVariants = null) {
   return variants[Math.floor(Math.random() * variants.length)];
 }
 
-function pickProgressPing(index) {
-  return PROGRESS_PING_VARIANTS[index % PROGRESS_PING_VARIANTS.length];
+function pickProgressPing(index, customVariants = null) {
+  const variants = customVariants && customVariants.length > 0
+    ? customVariants
+    : PROGRESS_PING_VARIANTS;
+  return variants[index % variants.length];
 }
 
 /**
@@ -434,15 +437,17 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       appendConversationEntry("user", cleanedText, currentAgentId || null);
 
       // Speak farewell and emit exit event
+      const farewellVoice = config.exitFarewell || "(happy) 了解です！退出しますね。お疲れさまでした！";
+      const farewellLog = farewellVoice.replace(/^\([^)]*\)\s*/, "");
       turnState.isAgentSpeaking = true;
       try {
-        await speakSentence("(happy) 了解です！退出しますね。お疲れさまでした！", null);
+        await speakSentence(farewellVoice, null);
       } catch {
         // ignore TTS error during exit
       }
       turnState.isAgentSpeaking = false;
 
-      appendConversationEntry("assistant", "了解です！退出しますね。お疲れさまでした！", currentAgentId || null);
+      appendConversationEntry("assistant", farewellLog, currentAgentId || null);
 
       // LCM ingest is now handled in handleMeetSessionEnd() (meet-routes.js)
       // after the bot has already left — no blocking delay before exit.
@@ -505,6 +510,16 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
           turnState.gateState = gateState;
           turnState.isAgentSpeaking = false;
           turnState.inputCooldownUntil = 0;
+          // Speak cancel acknowledgement if configured
+          const cancelMsg = config.cancelAck;
+          if (cancelMsg) {
+            try {
+              turnState.isAgentSpeaking = true;
+              await speakSentence(cancelMsg, null);
+              appendConversationEntry("assistant", cancelMsg.replace(/^\([^)]*\)\s*/, ""), currentAgentId || null);
+            } catch { /* ignore */ }
+            turnState.isAgentSpeaking = false;
+          }
           return;
         }
         // Regular wake during CLOSED: queue (don't add to buffer — merge happens in finally)
@@ -670,8 +685,9 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
 
       stopProgressTimer();
       turnState.isAgentSpeaking = true;
-      await speakSentence(LLM_TIMEOUT_FALLBACK_VOICE, null);
-      appendAssistantLog(LLM_TIMEOUT_FALLBACK_VOICE);
+      const timeoutMsg = config.timeoutFallback || LLM_TIMEOUT_FALLBACK_VOICE;
+      await speakSentence(timeoutMsg, null);
+      appendAssistantLog(timeoutMsg);
       turnState.isAgentSpeaking = false;
 
       if (!handoffAttempted) {
@@ -707,7 +723,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         return;
       }
 
-      const ping = pickProgressPing(progressPingIndex);
+      const ping = pickProgressPing(progressPingIndex, config.progressPings);
       progressPingIndex += 1;
       turnState.isAgentSpeaking = true;
       console.log(`⏳  Progress ping: "${ping}"`);
