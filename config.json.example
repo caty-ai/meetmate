@@ -9,12 +9,11 @@
     "wakeWords": ["ケイティ", "けいてぃ", "caty", "katie", "ケイケイ"],
     "keyterms": ["ケイティ", "けいてぃ", "Caty", "Katie"],
     "sttWakeVariants": [],
-    "ackVariants": [
-      "(calm) 了解、すぐ取りかかるね。",
-      "(calm) 了解です。ちょっと待ってね。",
-      "(calm) はい、今確認するね。",
-      "(calm) 了解、ちょっと調べてみるね。"
-    ],
+    "ackVariants": ["(calm) 了解、すぐ取りかかるね。"],
+    "exitFarewell": "(soft) お疲れ様でした。また何かあったら呼んでね！",
+    "cancelAck": "了解、キャンセルしたよ。",
+    "progressPings": ["(calm) 少々お待ちください…", "(calm) もう少しで…"],
+    "timeoutFallback": "(calm) ごめんね、ちょっと時間がかかっちゃって…",
     "avatarUrl": ""
   },
   "gateway": {
@@ -25,7 +24,20 @@
     "provider": "fish-audio",
     "voiceId": ""
   },
+  "stt": {
+    "apiKey": "${DEEPGRAM_API_KEY}"
+  },
+  "slack": {
+    "botToken": "${SLACK_BOT_TOKEN}",
+    "notifyChannel": "",
+    "summaryChannel": "",
+    "statusChannel": ""
+  },
+  "attendee": {
+    "apiKey": "${ATTENDEE_API_KEY}"
+  },
   "server": {
-    "port": 5005
+    "port": 5005,
+    "ngrokDomain": ""
   }
 }

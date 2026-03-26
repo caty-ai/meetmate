@@ -55,7 +55,7 @@ async function summarizeConversation(conversationLog, options = {}) {
   // Format and mask sensitive data
   let logText = clipped
     .map((e) => {
-      const speaker = e.role === "assistant" || e.role === "agent" ? "Caty" : "参加者";
+      const speaker = e.role === "assistant" || e.role === "agent" ? (options.displayName || "AI") : "参加者";
       return `${speaker}: ${maskSensitive(e.content || "")}`;
     })
     .join("\n");

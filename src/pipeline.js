@@ -43,7 +43,7 @@ function isCancelWord(text) {
 }
 
 // Wake word detection: only respond when addressed
-// In single-agent mode, use the agent's wakeWords as default; otherwise fall back to Caty's
+// In single-agent mode, use the agent's wakeWords as default; otherwise fall back to empty
 const _defaultWakeWords = (() => {
   if (process.env.WAKE_WORDS) return process.env.WAKE_WORDS;
   if (process.env.AGENT_ID) {
@@ -54,7 +54,7 @@ const _defaultWakeWords = (() => {
       if (agent?.wakeWords?.length) return agent.wakeWords.join(",");
     } catch { /* fall through */ }
   }
-  return "ケイティ,けいてぃ,caty,katie,ケイケイ";
+  return "";
 })();
 const WAKE_WORDS = _defaultWakeWords.toLowerCase().split(",").map(w => w.trim());
 
@@ -294,7 +294,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   const agents = options.agents || {};
   const agentProfile = options.agentProfile || null;
   const defaultAgentId = options.defaultAgentId || selectedAgentIds[0] || null;
-  let currentAgentId = defaultAgentId || agentProfile?.agentId || "caty";
+  let currentAgentId = defaultAgentId || agentProfile?.agentId || "agent";
 
   const agentState = {
     openclawUrl: config.openclawUrl,
