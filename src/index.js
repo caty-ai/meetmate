@@ -47,9 +47,9 @@ if (!DG_KEY) {
   process.exit(1);
 }
 
-const ATTENDEE_API_KEY = process.env.ATTENDEE_API_KEY;
+const ATTENDEE_API_KEY = _configForPort?.attendee?.apiKey || process.env.ATTENDEE_API_KEY;
 if (!ATTENDEE_API_KEY) {
-  console.error("❌  ATTENDEE_API_KEY が設定されていません。.env ファイルを確認してください。");
+  console.error("❌  ATTENDEE_API_KEY が設定されていません。config.json または .env ファイルを確認してください。");
   process.exit(1);
 }
 
@@ -114,8 +114,15 @@ const BOT_IMAGE_URL = process.env.BOT_IMAGE_URL
 })();
 
 // Auto-detect ngrok public URL for WebSocket
+// config.server.ngrokDomain takes priority; falls back to localhost:4040 auto-detection
 let detectedNgrokUrl = "";
 (async function detectNgrok() {
+  const ngrokDomain = _configForPort?.server?.ngrokDomain;
+  if (ngrokDomain) {
+    detectedNgrokUrl = `wss://${ngrokDomain}`;
+    console.log(`🌐  ngrok WSS URL (config.json): ${detectedNgrokUrl}`);
+    return;
+  }
   try {
     const ngrokRes = await new Promise((resolve, reject) => {
       http.get("http://localhost:4040/api/tunnels", (res) => {
