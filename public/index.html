@@ -100,23 +100,7 @@
             margin-top: 0.3rem;
             font-size: 0.85rem;
         }
-        .advanced-toggle {
-            margin-top: 1.5rem;
-            color: #666;
-            font-size: 0.85rem;
-            cursor: pointer;
-            text-align: center;
-            user-select: none;
-        }
-        .advanced-toggle:hover {
-            color: #aaa;
-        }
-        .advanced {
-            display: none;
-        }
-        .advanced.open {
-            display: block;
-        }
+
         button {
             margin-top: 1.5rem;
             padding: 1rem;
@@ -264,16 +248,6 @@
 
             <div id="agentInfoDisplay" class="agent-greeting" style="margin-top: 1rem;"></div>
 
-            <div class="advanced-toggle" onclick="toggleAdvanced()">▶ 詳細設定</div>
-            <div class="advanced" id="advancedSection">
-                <label for="botName">🤖 Bot名:</label>
-                <input type="text" id="botName" name="botName" value="">
-
-                <label for="wsUrl">🔗 WebSocket URL（自動設定）:</label>
-                <input type="text" id="wsUrl" name="wsUrl" placeholder="自動設定されます">
-                <small>空欄の場合、現在のホストから自動生成されます</small>
-            </div>
-
             <button type="submit" id="joinBtn">🚀 Meetに参加させる</button>
         </form>
 
@@ -309,13 +283,6 @@
             } else {
                 statusEl.textContent = text;
             }
-        }
-
-        function toggleAdvanced() {
-            const section = document.getElementById('advancedSection');
-            const toggle = document.querySelector('.advanced-toggle');
-            section.classList.toggle('open');
-            toggle.textContent = section.classList.contains('open') ? '▼ 詳細設定' : '▶ 詳細設定';
         }
 
         function updateSubmitButtonState() {
@@ -361,11 +328,6 @@
                 const subtitleEl = document.getElementById('pageSubtitle');
                 if (subtitleEl) subtitleEl.textContent = `${dn}をGoogle Meet / Zoomに参加させる`;
                 currentAgentId = agent.id;
-                // Auto-fill bot name from agent profile
-                const botNameEl = document.getElementById('botName');
-                if (botNameEl && !localStorage.getItem(currentAgentId + '_botName')) {
-                    botNameEl.value = `${agent.id} (${dn})`;
-                }
             } else {
                 agentInfoEl.textContent = '利用可能なエージェントがありません';
             }
@@ -530,12 +492,6 @@
             return `${proto}//${location.host}`;
         }
 
-        // Restore saved values
-        ['botName'].forEach((id) => {
-            const saved = localStorage.getItem(currentAgentId + '_' + id);
-            if (saved) document.getElementById(id).value = saved;
-        });
-
         // Fetch server info for mode badge + public WSS URL
         fetch('/info').then(r => r.json()).then(info => {
             const badge = document.getElementById('modeBadge');
@@ -578,19 +534,18 @@
             setStatus('loading', '⏳ Botを起動中...');
 
             try {
-                const botName = document.getElementById('botName').value.trim();
-                const wsUrl = document.getElementById('wsUrl').value.trim() || getAutoWsUrl();
+                const wsUrl = getAutoWsUrl();
                 // Always use group mode (wake-word mode) — single-agent architecture
                 const conversationMode = 'group';
                 const selectedAgentIds = availableAgents.map(a => a.id);
 
-                const agentFallbackName = availableAgents.length
+                const botName = availableAgents.length
                     ? `${availableAgents[0].id} (${availableAgents[0].displayName})`
                     : 'Agent';
 
                 const formData = new URLSearchParams({
                     meetingUrl: extractedMeetingUrl,
-                    botName: botName || agentFallbackName,
+                    botName,
                     wsUrl,
                     conversationMode,
                     agentIds: selectedAgentIds.join(','),
@@ -603,7 +558,6 @@
 
                 const text = await response.text();
                 if (response.ok) {
-                    localStorage.setItem(currentAgentId + '_botName', botName);
                     setStatus('success',
                         '✅ ' + text +
                         '<br><small style="opacity:0.9">ミーティング画面でBotの参加を確認してください 🐱</small>',
