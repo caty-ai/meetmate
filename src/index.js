@@ -17,6 +17,9 @@ const { parse } = require("querystring");
 const { getPipelineConfig, SAMPLE_RATE, TTS_PROVIDER, loadConfig, loadAgents } = require("./config");
 const { createPipeline } = require("./pipeline");
 const { warmUpGatewaySession } = require("./gateway-warmup");
+
+// Track first warm-up for await (subsequent calls are fire-and-forget)
+let _firstWarmupDone = false;
 const { SessionLifecycle } = require("./session-events");
 const { SlackNotifier } = require("./slack-notifier");
 const { summarizeConversation } = require("./summarizer");
@@ -865,7 +868,22 @@ const server = http.createServer(async (req, res) => {
         wakeMode: session.config.wakeMode,
         exitDetection: conversationMode !== "group",
       });
-      warmUpGatewaySession(`meet-${sessionId}`, warmupConfig, briefing);
+      if (!_firstWarmupDone) {
+        // First warm-up: await with short timeout to prevent initial race condition
+        _firstWarmupDone = true;
+        console.log("🔥  First warm-up (awaiting up to 10s)...");
+        try {
+          const warmupResult = await Promise.race([
+            warmUpGatewaySession(`meet-${sessionId}`, warmupConfig, briefing),
+            new Promise((_, reject) => setTimeout(() => reject(new Error("warmup timeout 10s")), 10_000)),
+          ]);
+          console.log(`✅  First warm-up completed: ${warmupResult.status}`);
+        } catch (e) {
+          console.warn(`⚠️  First warm-up failed (non-blocking): ${e.message}`);
+        }
+      } else {
+        warmUpGatewaySession(`meet-${sessionId}`, warmupConfig, briefing);
+      }
 
       const wsWithSession = buildWsUrlWithSession(wsUrl, sessionId);
       console.log("📹  Meeting URL:", meetingUrl);
