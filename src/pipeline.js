@@ -62,28 +62,10 @@ const WAKE_WORDS = _defaultWakeWords.toLowerCase().split(",").map(w => w.trim())
 // Kept as module-level reference for backward compat (resolved per-call via getExitCommands)
 const EXIT_COMMANDS = getExitCommands();
 
-// Extended wake word variants to handle STT transcription inaccuracies.
-// These are built-in defaults for backward compatibility.
-// Per-agent sttWakeVariants (from config.json agent.sttWakeVariants or agents.json)
-// are merged at detection time in detectWakeAgent().
-const EXTENDED_WAKE_VARIANTS = [
-  // Hiragana variants
-  "けいてい", "けーてぃ", "けーてい", "けいてぃー", "けいていー",
-  "せいてぃ", "せいてい", "せーてぃ",
-  "ていてい", "てぃてぃ",            // テイテイ (observed 2026-03-17)
-  "らってぃ", "らっち",              // ラッティ (observed 2026-03-17)
-  // Katakana variants
-  "キーティ", "ケーティ", "ケーティー", "ケイティー", "テイティー",
-  "セイティ", "セーティ", "エイティ", "エイティー",
-  "キャティ", "キャティー", "ケィティ",
-  "ティーティー",
-  "テイテイ",                       // observed 2026-03-17
-  "ラッティ", "ラッティー",          // observed 2026-03-17
-  "ミーティー",                     // Meety → ケイティの誤認 (observed 2026-03-17)
-  // Romaji / English STT output
-  "keity", "katy", "kaity", "keithi", "keiti",
-  "kt", "k.t.", "katy", "katey", "catey",
-];
+// Extended wake word variants: no built-in defaults.
+// All STT transcription variants are loaded per-agent from config.json agent.sttWakeVariants
+// or agents.json sttWakeVariants. Each agent defines their own variants.
+const EXTENDED_WAKE_VARIANTS = [];
 
 /**
  * Normalize katakana: strip long vowel marks (ー) and normalize common variations.
@@ -107,7 +89,7 @@ function isExitCommand(text, agents = null, selectedAgentIds = [], defaultAgentI
     return true;
   }
 
-  // Also check wake word + exit pattern: "ケイティ、退出して"
+  // Also check wake word + exit pattern: e.g. "{agentName}、退出して"
   const exitCmds = getExitCommands(agentProfile);
   const lower = text.toLowerCase().trim();
   if (detectWakeAgent(text, agents, selectedAgentIds, defaultAgentId).detected) {
@@ -464,7 +446,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     }
 
     // Standalone cancel disabled — cancel requires wake word prefix
-    // (e.g. "ケイティ、ストップ"). Handled in wake+cancel block below.
+    // (e.g. "{agentName}、ストップ"). Handled in wake+cancel block below.
 
     // Wake word detection
     {
