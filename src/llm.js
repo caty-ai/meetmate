@@ -102,7 +102,11 @@ async function collectChunks(source) {
     chunks.push(chunk);
     text += chunk;
   }
-  return { chunks: chunks[Symbol.asyncIterator](), text };
+  // Return chunks as an async generator for yield* compatibility
+  return {
+    chunks: (async function* () { for (const c of chunks) yield c; })(),
+    text
+  };
 }
 
 // ── OpenClaw Gateway backend ────────────────────────────────────────
