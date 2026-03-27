@@ -125,14 +125,10 @@ function _buildProfileFromAgentsJson(agentId, agent) {
   // No prompt file loading — Gateway manages prompts via SOUL.md
   const systemPrompt = "";
 
-  // Check avatar: try generic avatar.png first, then legacy {agentId}-avatar.png
-  let avatarPath = path.join(__dirname, "..", "assets", "avatar.png");
+  // Check avatar: generic avatar.png (each instance provides its own)
+  const avatarPath = path.join(__dirname, "..", "assets", "avatar.png");
   let avatarExists = false;
   try { avatarExists = fs.existsSync(avatarPath); } catch { /* ignore */ }
-  if (!avatarExists) {
-    avatarPath = path.join(__dirname, "..", "assets", `${agentId}-avatar.png`);
-    try { avatarExists = fs.existsSync(avatarPath); } catch { /* ignore */ }
-  }
 
   const profile = {
     agentId,

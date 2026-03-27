@@ -43,24 +43,22 @@ const ATTENDEE_API_KEY = _configJson?.attendee?.apiKey || process.env.ATTENDEE_A
 // Single-agent mode: when AGENT_ID is set, this server operates as that agent only
 const FIXED_AGENT_ID = process.env.AGENT_ID || null;
 
-const DEFAULT_BOT_IMAGE_URL = process.env.BOT_IMAGE_URL
-  || "https://example.com/avatar.png";
+const FALLBACK_BOT_IMAGE_URL = process.env.BOT_IMAGE_URL || null;
 
 function getBotImageConfig() {
   if (FIXED_AGENT_ID) {
     try {
       const profile = resolveAgentProfile(FIXED_AGENT_ID);
-      if (profile.avatarPath || profile.avatarUrl) {
-        return {
-          path: profile.avatarPath || path.join(__dirname, "..", "..", "assets", `${FIXED_AGENT_ID}-avatar.png`),
-          url: profile.avatarUrl || DEFAULT_BOT_IMAGE_URL,
-        };
-      }
+      const localPath = profile.avatarPath || path.join(__dirname, "..", "..", "assets", "avatar.png");
+      return {
+        path: localPath,
+        url: profile.avatarUrl || FALLBACK_BOT_IMAGE_URL,
+      };
     } catch { /* fall through */ }
   }
   return {
     path: path.join(__dirname, "..", "..", "assets", "avatar.png"),
-    url: DEFAULT_BOT_IMAGE_URL,
+    url: FALLBACK_BOT_IMAGE_URL,
   };
 }
 
