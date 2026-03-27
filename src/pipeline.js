@@ -62,9 +62,10 @@ const WAKE_WORDS = _defaultWakeWords.toLowerCase().split(",").map(w => w.trim())
 // Kept as module-level reference for backward compat (resolved per-call via getExitCommands)
 const EXIT_COMMANDS = getExitCommands();
 
-// Extended wake word variants to handle STT transcription inaccuracies
-// Deepgram may output: けいてい, ケーティー, ケイティー, キーティ, テイティー, けーてぃ, etc.
-// Per-agent sttWakeVariants from agents.json are merged at pipeline creation time.
+// Extended wake word variants to handle STT transcription inaccuracies.
+// These are built-in defaults for backward compatibility.
+// Per-agent sttWakeVariants (from config.json agent.sttWakeVariants or agents.json)
+// are merged at detection time in detectWakeAgent().
 const EXTENDED_WAKE_VARIANTS = [
   // Hiragana variants
   "けいてい", "けーてぃ", "けーてい", "けいてぃー", "けいていー",

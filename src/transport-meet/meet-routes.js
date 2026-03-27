@@ -11,6 +11,7 @@ const {
   getPipelineConfig,
   SAMPLE_RATE,
   TTS_PROVIDER,
+  loadConfig,
   loadAgents,
   getDefaultAgent,
   getAgentById,
@@ -35,8 +36,9 @@ const WS_SHARED_TOKEN = process.env.WS_SHARED_TOKEN || "";
 const MEETING_URL_RE = /^https:\/\/(meet\.google\.com\/[a-z0-9-]+|[\w.-]*zoom\.us\/(j|my)\/[a-zA-Z0-9?=&._%-]+)(?:\?.*)?$/i;
 const CONVERSATION_MODES = new Set(["one_to_one", "group"]);
 
+const _configJson = loadConfig();
 const DG_KEY = process.env.DEEPGRAM_API_KEY;
-const ATTENDEE_API_KEY = process.env.ATTENDEE_API_KEY;
+const ATTENDEE_API_KEY = _configJson?.attendee?.apiKey || process.env.ATTENDEE_API_KEY;
 
 // Single-agent mode: when AGENT_ID is set, this server operates as that agent only
 const FIXED_AGENT_ID = process.env.AGENT_ID || null;
@@ -718,7 +720,7 @@ function validateRequiredEnv() {
   }
 
   if (!ATTENDEE_API_KEY) {
-    console.error("❌  ATTENDEE_API_KEY が設定されていません。.env ファイルを確認してください。");
+    console.error("❌  ATTENDEE_API_KEY が設定されていません。config.json または .env ファイルを確認してください。");
     process.exit(1);
   }
 
@@ -782,6 +784,13 @@ function startBotImageLoad() {
 function startNgrokDetection() {
   if (ngrokDetectionStarted) return;
   ngrokDetectionStarted = true;
+
+  const ngrokDomain = _configJson?.server?.ngrokDomain;
+  if (ngrokDomain) {
+    detectedNgrokUrl = `wss://${ngrokDomain}`;
+    console.log(`🌐  ngrok WSS URL (config.json): ${detectedNgrokUrl}`);
+    return;
+  }
 
   (async () => {
     try {
