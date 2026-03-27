@@ -3,6 +3,7 @@
 
 const http = require("http");
 const https = require("https");
+const { filterSilentRepliesStream } = require("./speech-policy");
 
 // Voice-specific system prompt builder (appended to OpenClaw's SOUL.md)
 // emotionTags: boolean — include emotion tag instructions (default true)
@@ -68,7 +69,40 @@ async function* streamChat(messages, options = {}) {
   if (!options.openclawUrl || !options.openclawToken) {
     throw new Error('OpenClaw Gateway is required. Set OPENCLAW_GATEWAY_URL and OPENCLAW_GATEWAY_TOKEN.');
   }
-  yield* streamOpenClaw(messages, options);
+
+  // First attempt
+  const attempt1 = collectChunks(streamOpenClaw(messages, options));
+  const result1 = await attempt1;
+
+  // Empty response auto-retry (max 1 retry)
+  if (result1.text.length === 0 && !options.signal?.aborted) {
+    console.warn(`⚠️  [llm] Empty response on attempt 1 (session=${options.sessionUser}) — retrying...`);
+    const attempt2 = collectChunks(streamOpenClaw(messages, options));
+    const result2 = await attempt2;
+    if (result2.text.length > 0) {
+      console.log(`✅  [llm] Retry succeeded (${result2.text.length} chars)`);
+    } else {
+      console.warn(`⚠️  [llm] Empty response on attempt 2 — giving up`);
+    }
+    yield* result2.chunks;
+    return;
+  }
+
+  yield* result1.chunks;
+}
+
+/**
+ * Collect all chunks from an async generator into an array + concatenated text.
+ * Returns both for diagnostic logging and replay.
+ */
+async function collectChunks(source) {
+  const chunks = [];
+  let text = "";
+  for await (const chunk of source) {
+    chunks.push(chunk);
+    text += chunk;
+  }
+  return { chunks: chunks[Symbol.asyncIterator](), text };
 }
 
 // ── OpenClaw Gateway backend ────────────────────────────────────────
@@ -141,7 +175,7 @@ async function* streamOpenClaw(messages, options) {
     throw new Error(`OpenClaw Gateway error (${response.statusCode}): ${errBody.slice(0, 200)}`);
   }
 
-  yield* parseSSE(response, options.signal);
+  yield* filterSilentRepliesStream(parseSSE(response, options.signal));
 }
 
 // ── SSE parser ──────────────────────────────────────────────────────

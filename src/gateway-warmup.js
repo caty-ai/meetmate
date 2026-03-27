@@ -5,7 +5,7 @@ const http = require("http");
 const https = require("https");
 const { URL } = require("url");
 
-const WARMUP_REQUEST_TIMEOUT_MS = 30_000;
+const WARMUP_REQUEST_TIMEOUT_MS = 8_000;
 
 /**
  * Warm up a Gateway session and optionally generate a purpose statement.
@@ -142,6 +142,7 @@ function warmUpGatewaySession(sessionId, config, briefing = null) {
               }
             }
 
+            console.log(`✅  Gateway warm-up complete (session=${sessionUser})`);
             done("ok", purposeStatement);
           });
         }
