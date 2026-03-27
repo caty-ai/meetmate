@@ -1,7 +1,7 @@
 {
   "name": "ai-meet-participant",
   "version": "0.1.0",
-  "description": "AIアシスタント(Caty)がGoogle Meetにリアルタイム参加し音声で対話するブリッジサーバー",
+  "description": "AIエージェントがGoogle Meet/Zoomにリアルタイム参加し音声で対話するブリッジサーバー",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/server.js",

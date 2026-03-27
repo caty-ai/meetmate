@@ -24,7 +24,7 @@ let _cached = null;
  *   2. agents.json + agentId param / AGENT_ID env (deprecated fallback)
  *
  * If neither config.json nor agents.json provides an agent, throws AgentNotFoundError.
- * No more implicit "caty" fallback.
+ * No implicit default agent fallback.
  *
  * @param {string} [agentId] - Explicit agent ID (only used for agents.json fallback path)
  * @returns {AgentProfile}
