@@ -172,46 +172,6 @@
             50% { opacity: 0.5; }
         }
 
-        /* Cross-instance navigation */
-        .instance-nav {
-            margin-top: 2rem;
-            padding-top: 1.2rem;
-            border-top: 1px solid #0f3460;
-            text-align: center;
-        }
-        .instance-nav .nav-label {
-            color: #555;
-            font-size: 0.75rem;
-            margin-bottom: 0.6rem;
-            letter-spacing: 0.05em;
-        }
-        .instance-nav .nav-links {
-            display: flex;
-            justify-content: center;
-            gap: 0.8rem;
-            flex-wrap: wrap;
-        }
-        .instance-nav a {
-            display: inline-block;
-            padding: 0.45rem 0.9rem;
-            background: #0f3460;
-            color: #95b5d5;
-            border-radius: 20px;
-            text-decoration: none;
-            font-size: 0.85rem;
-            transition: background 0.15s, color 0.15s;
-        }
-        .instance-nav a:hover {
-            background: #1a4a7a;
-            color: #c5d5e5;
-        }
-        .instance-nav a.current {
-            background: #e94560;
-            color: white;
-            pointer-events: none;
-            cursor: default;
-        }
-
         /* Active session banner */
         .active-banner {
             display: none;
@@ -307,7 +267,7 @@
             <div class="advanced-toggle" onclick="toggleAdvanced()">▶ 詳細設定</div>
             <div class="advanced" id="advancedSection">
                 <label for="botName">🤖 Bot名:</label>
-                <input type="text" id="botName" name="botName" value="Caty (ケイティ)">
+                <input type="text" id="botName" name="botName" value="">
 
                 <label for="wsUrl">🔗 WebSocket URL（自動設定）:</label>
                 <input type="text" id="wsUrl" name="wsUrl" placeholder="自動設定されます">
@@ -319,15 +279,6 @@
 
         <div id="status" class="status"></div>
 
-        <!-- Cross-instance navigation -->
-        <div class="instance-nav" id="instanceNav">
-            <div class="nav-label">── 他のインスタンスへ ──</div>
-            <div class="nav-links" id="navLinks">
-                <a href="https://your-domain.ngrok.app" data-instance="caty">🐱 ケイティたち</a>
-                <a href="https://your-domain.ngrok.dev" data-instance="claire">🌙 クレアたち</a>
-                <a href="https://your-domain.ngrok.dev" data-instance="sebas">🎩 セバスたち</a>
-            </div>
-        </div>
     </div>
 
     <script>
@@ -349,6 +300,7 @@
         let activeSessionId = null;
         let pollTimer = null;
         let availableAgents = [];
+        let currentAgentId = "default";
 
         function setStatus(type, text, asHtml = false) {
             statusEl.className = `status ${type}`;
@@ -408,9 +360,10 @@
                 if (titleEl) titleEl.textContent = `🎙️ AI Meet Participant — ${dn}`;
                 const subtitleEl = document.getElementById('pageSubtitle');
                 if (subtitleEl) subtitleEl.textContent = `${dn}をGoogle Meet / Zoomに参加させる`;
+                currentAgentId = agent.id;
                 // Auto-fill bot name from agent profile
                 const botNameEl = document.getElementById('botName');
-                if (botNameEl && !localStorage.getItem('caty_botName')) {
+                if (botNameEl && !localStorage.getItem(currentAgentId + '_botName')) {
                     botNameEl.value = `${agent.id} (${dn})`;
                 }
             } else {
@@ -579,7 +532,7 @@
 
         // Restore saved values
         ['botName'].forEach((id) => {
-            const saved = localStorage.getItem('caty_' + id);
+            const saved = localStorage.getItem(currentAgentId + '_' + id);
             if (saved) document.getElementById(id).value = saved;
         });
 
@@ -606,20 +559,6 @@
 
         // Start polling for active sessions
         startPolling();
-
-        // Highlight current instance in nav
-        (function highlightCurrentNav() {
-            const host = location.hostname.toLowerCase();
-            const links = document.querySelectorAll('#navLinks a');
-            links.forEach(link => {
-                try {
-                    const linkHost = new URL(link.href).hostname.toLowerCase();
-                    if (host === linkHost || host.startsWith(linkHost.split('.')[0])) {
-                        link.classList.add('current');
-                    }
-                } catch {}
-            });
-        })();
 
         form.addEventListener('submit', async function(event) {
             event.preventDefault();
@@ -664,7 +603,7 @@
 
                 const text = await response.text();
                 if (response.ok) {
-                    localStorage.setItem('caty_botName', botName);
+                    localStorage.setItem(currentAgentId + '_botName', botName);
                     setStatus('success',
                         '✅ ' + text +
                         '<br><small style="opacity:0.9">ミーティング画面でBotの参加を確認してください 🐱</small>',

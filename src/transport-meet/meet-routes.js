@@ -196,7 +196,7 @@ async function sendLcmIngest(lifecycle) {
     { role: "user", content: "[[[lcm:ingest]]] セッション終了。この会話を長期記憶に保存してください。" },
   ];
 
-  // Use stream:false (non-streaming) to avoid Caty's known streaming issue.
+  // Use stream:false (non-streaming) to avoid known streaming issue with LCM.
   // Same pattern as summarizer.js callOpenClaw().
   const gatewayUrl = new URL(openclawUrl);
   const isHttps = gatewayUrl.protocol === "https:";
