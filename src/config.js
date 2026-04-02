@@ -55,22 +55,39 @@ function loadConfig() {
   }
 
   // Deep-resolve ${ENV_VAR} tokens in all string values
-  function resolveDeep(obj) {
+  const unresolved = [];
+  function resolveDeep(obj, keyPath = "") {
     if (typeof obj === "string") {
       const match = obj.match(/^\$\{(.+)\}$/);
-      if (match) return process.env[match[1]] || "";
+      if (match) {
+        const val = process.env[match[1]];
+        if (val === undefined || val === "") {
+          unresolved.push({ path: keyPath, envVar: match[1] });
+        }
+        return val || "";
+      }
       return obj;
     }
-    if (Array.isArray(obj)) return obj.map(resolveDeep);
+    if (Array.isArray(obj)) return obj.map((v, i) => resolveDeep(v, `${keyPath}[${i}]`));
     if (obj && typeof obj === "object") {
       const out = {};
-      for (const [k, v] of Object.entries(obj)) out[k] = resolveDeep(v);
+      for (const [k, v] of Object.entries(obj)) out[k] = resolveDeep(v, keyPath ? `${keyPath}.${k}` : k);
       return out;
     }
     return obj;
   }
 
-  return resolveDeep(raw);
+  const resolved = resolveDeep(raw);
+
+  if (unresolved.length > 0) {
+    console.error(`❌  config.json has unresolved environment variables:`);
+    for (const { path: p, envVar } of unresolved) {
+      console.error(`   ${p}: \${${envVar}} is not set`);
+    }
+    process.exit(1);
+  }
+
+  return resolved;
 }
 
 function loadAgents() {

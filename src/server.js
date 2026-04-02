@@ -10,7 +10,13 @@ const { resolveAgentProfile } = require("./agent-profile");
 
 const config = loadConfig();
 const PORT = Number(config?.server?.port || process.env.PORT || 5005);
-const pkg = require("../package.json");
+const pkg = (() => {
+  try {
+    return require(path.join(process.cwd(), "package.json"));
+  } catch {
+    try { return require("../package.json"); } catch { return { version: "unknown" }; }
+  }
+})();
 
 function writeJson(res, status, body) {
   const json = JSON.stringify(body);
