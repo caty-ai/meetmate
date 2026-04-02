@@ -12,3 +12,6 @@ logs/
 
 # OS
 .DS_Store
+
+# Instance-specific config (contains secrets via ${ENV_VAR})
+config.json
