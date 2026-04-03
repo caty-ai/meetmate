@@ -880,6 +880,7 @@ async function handleHttp(req, res) {
         default: true,
         available: true,
         greeting: profile.greeting || "",
+        wakeWords: Array.isArray(profile.wakeWords) ? profile.wakeWords : [],
       }];
     } catch {
       // no agent configured

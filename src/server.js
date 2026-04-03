@@ -1,10 +1,12 @@
-require("dotenv").config({ path: require("path").join(__dirname, "..", ".env") });
+const path = require("path");
+require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
 
 const http = require("http");
 const { URL } = require("url");
 const { WebSocketServer } = require("ws");
 
 const meetRoutes = require("./transport-meet/meet-routes");
+const { handleCalibrate, handleCalibrateWs } = require("./wake-calibrate/calibrate-routes");
 const { loadConfig } = require("./config");
 const { resolveAgentProfile } = require("./agent-profile");
 
@@ -58,6 +60,15 @@ async function bootstrap() {
       return;
     }
 
+    if (
+      pathname === "/calibrate" ||
+      pathname === "/calibrate/status" ||
+      (pathname === "/calibrate/apply" && req.method === "POST")
+    ) {
+      handleCalibrate(req, res);
+      return;
+    }
+
     meetRoutes.handleHttp(req, res);
   });
 
@@ -66,12 +77,24 @@ async function bootstrap() {
     meetRoutes.handleWsConnection(ws, req);
   });
 
+  const calibrateWss = new WebSocketServer({ noServer: true });
+  calibrateWss.on("connection", (ws, req) => {
+    handleCalibrateWs(ws, req);
+  });
+
   server.on("upgrade", (req, socket, head) => {
     let pathname = "/";
     try {
       pathname = new URL(req.url || "/", "http://localhost").pathname;
     } catch {
       socket.destroy();
+      return;
+    }
+
+    if (pathname === "/calibrate/stream") {
+      calibrateWss.handleUpgrade(req, socket, head, (ws) => {
+        calibrateWss.emit("connection", ws, req);
+      });
       return;
     }
 

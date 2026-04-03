@@ -124,6 +124,28 @@
             cursor: not-allowed;
             transform: none;
         }
+        .aux-actions {
+            margin-top: 1rem;
+        }
+        .link-button {
+            display: none;
+            box-sizing: border-box;
+            width: 100%;
+            margin-top: 0.75rem;
+            padding: 0.9rem 1rem;
+            background: linear-gradient(135deg, #0f3460, #16213e);
+            border: 1px solid #0f3460;
+            border-radius: 8px;
+            color: #e0e0e0;
+            text-decoration: none;
+            text-align: center;
+            font-size: 0.98rem;
+            font-weight: 600;
+            transition: transform 0.1s;
+        }
+        .link-button:hover {
+            transform: translateY(-1px);
+        }
         .status {
             margin-top: 1.5rem;
             padding: 1rem;
@@ -253,6 +275,10 @@
 
         <div id="status" class="status"></div>
 
+        <div class="aux-actions">
+            <a id="calibrateLink" class="link-button" href="/calibrate">🎤 Wake Word Calibrate</a>
+        </div>
+
     </div>
 
     <script>
@@ -267,6 +293,7 @@
         const activeAgentsEl = document.getElementById('activeAgents');
         const leaveBtn = document.getElementById('leaveBtn');
         const agentInfoEl = document.getElementById('agentInfoDisplay');
+        const calibrateLink = document.getElementById('calibrateLink');
         let extractedMeetingUrl = '';
         let isSubmitting = false;
         let isLeaving = false;
@@ -504,6 +531,15 @@
                 serverPublicWsUrl = info.publicWsUrl;
             }
         }).catch(() => {});
+
+        fetch('/calibrate/status')
+            .then(r => r.ok ? r.json() : { enabled: false })
+            .then(data => {
+                if (data.enabled) {
+                    calibrateLink.style.display = 'block';
+                }
+            })
+            .catch(() => {});
 
         loadAgentsFromServer();
 
