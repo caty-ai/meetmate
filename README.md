@@ -1,12 +1,12 @@
 # 🎙️ AI Meet Participant
 
-AIエージェントがGoogle Meet / Zoomにリアルタイム参加して音声で対話するブリッジサーバー。
-OpenClaw Gateway連携により、Slackとまったく同じ体験を音声で提供。
+AIエージェントをGoogle Meet / Zoomにリアルタイム参加させ、音声で対話するブリッジサーバー。
+OpenClaw Gateway連携により、任意のエージェントを音声会議に接続可能。
 
 ## 特徴
 - Google Meet / Zoom 対応
 - OpenClaw Gateway連携（SOUL/memory/skills/tools完全対応）
-- ウェイクワード検出（マルチエージェント対応）
+- ウェイクワード検出
 - バージイン（割り込み）対応
 - TTS: Fish Audio / Deepgram Voice Agent
 - STT: Deepgram
@@ -22,33 +22,36 @@ cd ai-meet-participant
 npm install
 ```
 
-### 2. 設定ファイルの準備
+### 2. config.json（エージェント設定の単一ソース）
+```bash
+cp config.json.example config.json
+```
+エージェントID・表示名・ウェイクワード・TTS設定などを記述。
+詳細は `config.json.example` を参照。
 
-#### config.json
-`cp config.json.example config.json` で作成し、エージェント情報を設定。
-
-#### .env
-`cp .env.example .env` で作成し、APIキーを設定。
-
+### 3. .env（APIキー・シークレット）
+```bash
+cp .env.example .env
+```
 必須:
-- `DEEPGRAM_API_KEY`
-- `ATTENDEE_API_KEY` (or config.json `attendee.apiKey`)
+- `DEEPGRAM_API_KEY` — STT用
+- `FISH_AUDIO_API_KEY` — TTS用
+- `FISH_AUDIO_VOICE_ID` — TTS音声ID（config.json `tts.voiceId` が参照）
+- `ATTENDEE_API_KEY` — Meet/Zoom Bot API（config.json `attendee.apiKey` でも可）
 
-#### アバター
+### 4. アバター
 `assets/avatar.png` にエージェントのアバター画像を配置。
 
-### 3. 起動
+### 5. 起動
 ```bash
 npm start
 ```
-
-### 4. 使い方
 ブラウザで http://localhost:5005 を開き、Meet/Zoom URLを貼り付けて「参加させる」をクリック。
 
 ## アーキテクチャ
 
-1エージェント = 1サーバーインスタンス。
-各エージェントが独立したconfig.json + .env + avatar.pngで動作。
+**1エージェント = 1サーバーインスタンス。**
+`config.json` + `.env` + `assets/avatar.png` だけで任意のエージェントが動作する。
 
 ### 音声パイプライン
 ```
