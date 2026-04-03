@@ -326,17 +326,6 @@ function parseAgentIdsInput(rawValue) {
   return [...new Set(raw.split(",").map((v) => v.trim()).filter(Boolean))];
 }
 
-function buildAgentsResponseList(agents) {
-  return Object.values(agents || {}).map((agent) => ({
-    id: agent.id,
-    name: agent.name,
-    displayName: agent.displayName || agent.name || agent.id,
-    default: !!agent.default,
-    available: true,
-    greeting: agent.greeting || "",
-  }));
-}
-
 function buildWsUrlWithSession(baseWsUrl, sessionId) {
   const u = new URL(baseWsUrl);
   u.searchParams.set("sid", sessionId);
