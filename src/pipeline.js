@@ -43,17 +43,14 @@ function isCancelWord(text) {
 }
 
 // Wake word detection: only respond when addressed
-// In single-agent mode, use the agent's wakeWords as default; otherwise fall back to empty
+// In single-agent mode, use the agent's wakeWords from config.json
 const _defaultWakeWords = (() => {
   if (process.env.WAKE_WORDS) return process.env.WAKE_WORDS;
-  if (process.env.AGENT_ID) {
-    try {
-      const { loadAgents } = require("./config");
-      const agents = loadAgents();
-      const agent = agents[process.env.AGENT_ID];
-      if (agent?.wakeWords?.length) return agent.wakeWords.join(",");
-    } catch { /* fall through */ }
-  }
+  try {
+    const { resolveAgentProfile } = require("./agent-profile");
+    const profile = resolveAgentProfile();
+    if (profile?.wakeWords?.length) return profile.wakeWords.join(",");
+  } catch { /* fall through */ }
   return "";
 })();
 const WAKE_WORDS = _defaultWakeWords.toLowerCase().split(",").map(w => w.trim());
@@ -63,8 +60,7 @@ const WAKE_WORDS = _defaultWakeWords.toLowerCase().split(",").map(w => w.trim())
 const EXIT_COMMANDS = getExitCommands();
 
 // Extended wake word variants: no built-in defaults.
-// All STT transcription variants are loaded per-agent from config.json agent.sttWakeVariants
-// or agents.json sttWakeVariants. Each agent defines their own variants.
+// All STT transcription variants are loaded per-agent from config.json agent.sttWakeVariants.
 const EXTENDED_WAKE_VARIANTS = [];
 
 /**
@@ -124,7 +120,7 @@ function detectWakeAgent(text, agents = null, selectedAgentIds = [], defaultAgen
   if (WAKE_WORDS.some((w) => lower.includes(w))) {
     return { detected: true, agentId: defaultId };
   }
-  // Check extended variants (built-in + per-agent sttWakeVariants from agents.json)
+  // Check extended variants (built-in + per-agent sttWakeVariants from config.json)
   const allExtended = [...EXTENDED_WAKE_VARIANTS];
   if (agents && ids.length > 0) {
     for (const agentId of ids) {

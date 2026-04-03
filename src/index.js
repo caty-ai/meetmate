@@ -14,7 +14,7 @@ const https = require("https");
 const path = require("path");
 const crypto = require("crypto");
 const { parse } = require("querystring");
-const { getPipelineConfig, SAMPLE_RATE, TTS_PROVIDER, loadConfig, loadAgents } = require("./config");
+const { getPipelineConfig, SAMPLE_RATE, TTS_PROVIDER, loadConfig } = require("./config");
 const { createPipeline } = require("./pipeline");
 const { warmUpGatewaySession } = require("./gateway-warmup");
 
@@ -235,7 +235,7 @@ const _lcmIngestedSessions = new Map();
 
 async function sendLcmIngest(lifecycle, notifier) {
   const sid = lifecycle.sessionId;
-  const agentId = (_startupAgentProfile?.agentId || process.env.AGENT_ID || "unknown").toLowerCase();
+  const agentId = (_startupAgentProfile?.agentId || "unknown").toLowerCase();
   const lcmKey = `${agentId}:${sid}`;
 
   if (_lcmIngestedSessions.has(lcmKey)) {
@@ -247,11 +247,10 @@ async function sendLcmIngest(lifecycle, notifier) {
   // Resolve agent-specific gateway credentials
   let openclawUrl = process.env.OPENCLAW_GATEWAY_URL;
   let openclawToken = process.env.OPENCLAW_GATEWAY_TOKEN;
-  try {
-    const profile = resolveAgentProfile(agentId);
-    if (profile.gatewayUrl) openclawUrl = profile.gatewayUrl;
-    if (profile.gatewayToken) openclawToken = profile.gatewayToken;
-  } catch { /* use env defaults */ }
+  if (_startupAgentProfile) {
+    if (_startupAgentProfile.gatewayUrl) openclawUrl = _startupAgentProfile.gatewayUrl;
+    if (_startupAgentProfile.gatewayToken) openclawToken = _startupAgentProfile.gatewayToken;
+  }
 
   if (!openclawUrl || !openclawToken) {
     console.log("⏭️  LCM ingest skipped — no Gateway credentials");
@@ -946,19 +945,17 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
-  // /agents — list available agents (single-agent mode aware)
+  // /agents — list the configured agent
   if (req.method === "GET" && req.url === "/agents") {
-    const agents = loadAgents();
-    const FIXED_AGENT_ID = process.env.AGENT_ID || null;
-    const filteredAgents = FIXED_AGENT_ID
-      ? Object.fromEntries(Object.entries(agents).filter(([id]) => id === FIXED_AGENT_ID))
-      : agents;
-    const agentList = Object.values(filteredAgents).map(a => ({
-      id: a.id,
-      displayName: a.displayName || a.name || a.id,
-      voiceId: a.voiceId || null,
-    }));
-    const response = { agents: agentList, fixedAgentId: FIXED_AGENT_ID };
+    let agentList = [];
+    if (_startupAgentProfile) {
+      agentList = [{
+        id: _startupAgentProfile.agentId,
+        displayName: _startupAgentProfile.displayName,
+        voiceId: _startupAgentProfile.voiceId || null,
+      }];
+    }
+    const response = { agents: agentList, fixedAgentId: _startupAgentProfile?.agentId || null };
     res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
     res.end(JSON.stringify(response));
     return;

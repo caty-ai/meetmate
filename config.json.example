@@ -1,13 +1,13 @@
 {
   "agent": {
-    "id": "caty",
-    "name": "Caty",
-    "displayName": "ケイティ",
-    "greeting": "(happy) こんにちは！ケイティです。よろしくお願いします！",
-    "model": "anthropic/claude-sonnet-4-6",
+    "id": "your-agent-id",
+    "name": "YourAgent",
+    "displayName": "エージェント名",
+    "greeting": "(happy) こんにちは！よろしくお願いします！",
+    "model": "openclaw",
     "emotionTags": true,
-    "wakeWords": ["ケイティ", "けいてぃ", "caty", "katie", "ケイケイ"],
-    "keyterms": ["ケイティ", "けいてぃ", "Caty", "Katie"],
+    "wakeWords": ["エージェント名", "your-agent"],
+    "keyterms": ["エージェント名", "YourAgent"],
     "sttWakeVariants": [],
     "ackVariants": ["(calm) 了解、すぐ取りかかるね。"],
     "exitFarewell": "(soft) お疲れ様でした。また何かあったら呼んでね！",
@@ -22,7 +22,7 @@
   },
   "tts": {
     "provider": "fish-audio",
-    "voiceId": ""
+    "voiceId": "${FISH_AUDIO_VOICE_ID}"
   },
   "stt": {
     "apiKey": "${DEEPGRAM_API_KEY}"

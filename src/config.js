@@ -3,7 +3,6 @@ const path = require("path");
 const { buildVoiceAddendum } = require("./llm");
 
 const CONFIG_PATH = path.join(__dirname, "..", "config.json");
-const AGENTS_PATH = path.join(__dirname, "..", "agents.json");
 
 const SAMPLE_RATE = 16_000;
 const TTS_PROVIDER = process.env.TTS_PROVIDER || "fish-audio";
@@ -23,23 +22,8 @@ const SLACK_STATUS_CHANNEL = process.env.SLACK_STATUS_CHANNEL || "";
 const SLACK_NOTIFY_ENABLED = String(process.env.SLACK_NOTIFY_ENABLED || "true").toLowerCase() !== "false";
 const SUMMARY_ENABLED = String(process.env.SUMMARY_ENABLED || "true").toLowerCase() !== "false";
 
-function resolveEnvToken(value, fieldName = "token") {
-  if (!value) return null;
-  const raw = String(value).trim();
-  const match = raw.match(/^\$\{(.+)\}$/);
-  if (!match) {
-    if (raw.length > 8) {
-      console.warn(
-        `⚠️  SECURITY: ${fieldName} appears to be a plaintext token in agents.json. Use \${ENV_VAR} syntax instead.`
-      );
-    }
-    return raw;
-  }
-  return process.env[match[1]] || null;
-}
-
 /**
- * Load config.json (new single-agent format).
+ * Load config.json (single-agent format).
  * Resolves ${ENV_VAR} placeholders in string values.
  * Returns parsed config or null if config.json not found.
  */
@@ -90,60 +74,13 @@ function loadConfig() {
   return resolved;
 }
 
-function loadAgents() {
-  if (!fs.existsSync(AGENTS_PATH)) return {};
-
-  let raw;
-  try {
-    raw = JSON.parse(fs.readFileSync(AGENTS_PATH, "utf-8"));
-  } catch (err) {
-    console.warn(`⚠️  Failed to load agents.json: ${err.message}`);
-    return {};
-  }
-
-  const resolved = {};
-  for (const [id, agent] of Object.entries(raw || {})) {
-    const token = resolveEnvToken(agent?.gatewayToken, `${id}.gatewayToken`);
-    if (!token) {
-      console.warn(`⚠️  Agent "${id}" skipped: gateway token not available`);
-      continue;
-    }
-
-    resolved[id] = {
-      ...agent,
-      id,
-      gatewayUrl:
-        resolveEnvToken(agent?.gatewayUrl, `${id}.gatewayUrl`) ||
-        agent?.gatewayUrl ||
-        null,
-      gatewayToken: token,
-      attendeeApiKey: resolveEnvToken(agent?.attendeeApiKey, `${id}.attendeeApiKey`) || null,
-      // Voice pipeline extensions (defaults for backward compat)
-      emotionTags: agent?.emotionTags !== false, // default true
-      ackVariants: Array.isArray(agent?.ackVariants) ? agent.ackVariants : null,
-    };
-  }
-
-  return resolved;
-}
-
-function getDefaultAgent(agents) {
-  const entries = Object.values(agents || {});
-  return entries.find((a) => a.default) || entries[0] || null;
-}
-
-function getAgentById(agents, id) {
-  if (!id) return null;
-  return (agents || {})[id] || null;
-}
-
 /**
  * Build pipeline config.
  * Accepts either an agentProfile (from resolveAgentProfile) or a raw agent object
  * for backward compatibility. agentProfile takes precedence for systemPrompt/greeting.
  *
  * @param {object} overrides - Per-session overrides
- * @param {object|null} agent - Raw agent object from loadAgents() (backward compat)
+ * @param {object|null} agent - Raw agent object (backward compat)
  * @param {object|null} agentProfile - AgentProfile from resolveAgentProfile()
  */
 function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, configJson = null) {
@@ -166,7 +103,7 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
   const resolvedOpenclawUrl = agent?.gatewayUrl || process.env.OPENCLAW_GATEWAY_URL || null;
   const resolvedOpenclawToken = agent?.gatewayToken || process.env.OPENCLAW_GATEWAY_TOKEN || null;
   if (!resolvedOpenclawUrl || !resolvedOpenclawToken) {
-    console.error("❌  OpenClaw Gateway is required. Set OPENCLAW_GATEWAY_URL and OPENCLAW_GATEWAY_TOKEN (or configure in agents.json).");
+    console.error("❌  OpenClaw Gateway is required. Set OPENCLAW_GATEWAY_URL and OPENCLAW_GATEWAY_TOKEN in config.json or .env.");
   }
 
   // Resolve greeting: agentProfile > overrides > agent > empty (skip if unconfigured)
@@ -241,8 +178,4 @@ module.exports = {
   SLACK_STATUS_CHANNEL,
   SUMMARY_ENABLED,
   loadConfig,
-  loadAgents,
-  getDefaultAgent,
-  getAgentById,
-  resolveEnvToken,
 };
