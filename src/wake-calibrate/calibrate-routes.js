@@ -217,6 +217,7 @@ function handleCalibrateWs(ws, _req) {
   });
 
   dgConnection.on(LiveTranscriptionEvents.Open, () => {
+    console.log("🎙️  [calibrate] Deepgram connection opened (model=nova-3, lang=" + lang + ")");
     wsSend(ws, { type: "ready" });
   });
 
@@ -226,16 +227,18 @@ function handleCalibrateWs(ws, _req) {
     const text = alt.transcript || "";
     if (!text) return;
     const isFinal = data.is_final === true;
+    console.log(`🎙️  [calibrate] ${isFinal ? "FINAL" : "interim"}: "${text}"`);
     wsSend(ws, { type: "transcript", text, isFinal });
   });
 
   dgConnection.on(LiveTranscriptionEvents.Error, (err) => {
-    console.error("❌  Calibrate STT error:", err);
+    console.error("❌  [calibrate] Deepgram STT error:", err);
     wsSend(ws, { type: "error", message: String(err?.message || "STT error") });
     cleanup();
   });
 
   dgConnection.on(LiveTranscriptionEvents.Close, () => {
+    console.log("🎙️  [calibrate] Deepgram connection closed");
     if (!closed) {
       wsSend(ws, { type: "error", message: "STT connection closed" });
       cleanup();
