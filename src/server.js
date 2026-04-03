@@ -5,8 +5,18 @@ const { URL } = require("url");
 const { WebSocketServer } = require("ws");
 
 const meetRoutes = require("./transport-meet/meet-routes");
+const { loadConfig } = require("./config");
+const { resolveAgentProfile } = require("./agent-profile");
 
-const PORT = Number(process.env.PORT || 5005);
+const config = loadConfig();
+const PORT = Number(config?.server?.port || process.env.PORT || 5005);
+const pkg = (() => {
+  try {
+    return require(path.join(process.cwd(), "package.json"));
+  } catch {
+    try { return require("../package.json"); } catch { return { version: "unknown" }; }
+  }
+})();
 
 function writeJson(res, status, body) {
   const json = JSON.stringify(body);
@@ -18,6 +28,13 @@ function writeJson(res, status, body) {
 }
 
 async function bootstrap() {
+  // AGENT_ID vs config.agent.id mismatch check
+  if (process.env.AGENT_ID && config?.agent?.id &&
+      process.env.AGENT_ID !== config.agent.id) {
+    console.error(`❌  AGENT_ID mismatch: env="${process.env.AGENT_ID}" vs config="${config.agent.id}"`);
+    process.exit(1);
+  }
+
   await meetRoutes.init({ detectNgrok: true, loadAvatar: true });
 
   const server = http.createServer((req, res) => {
@@ -29,9 +46,13 @@ async function bootstrap() {
     }
 
     if (pathname === "/health") {
+      let agentId = "unknown";
+      try { agentId = resolveAgentProfile()?.agentId || agentId; } catch { /* ignore */ }
       writeJson(res, 200, {
         ok: true,
-        service: "ai-meet-participant",
+        service: config?.agent?.id || "ai-meet-participant",
+        agentId,
+        version: pkg.version,
         uptime: process.uptime(),
       });
       return;

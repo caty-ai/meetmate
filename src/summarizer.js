@@ -124,7 +124,8 @@ async function callOpenClaw(prompt, options) {
   const transport = isHttps ? https : http;
 
   const body = JSON.stringify({
-    model: options.model || "anthropic/claude-sonnet-4-6",
+    // Do not hardcode a foundation model; let Gateway choose.
+    model: options.model || "openclaw",
     stream: false,
     temperature: 0.3,
     max_tokens: 500,

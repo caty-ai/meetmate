@@ -280,7 +280,8 @@ async function sendLcmIngest(lifecycle, notifier) {
   const transport = isHttps ? https : http;
 
   const body = JSON.stringify({
-    model: "anthropic/claude-sonnet-4-6",
+    // Route to OpenClaw Gateway default agent/model selection.
+    model: "openclaw",
     stream: false,
     temperature: 0.3,
     max_tokens: 1,

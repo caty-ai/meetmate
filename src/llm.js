@@ -130,7 +130,9 @@ async function* streamOpenClaw(messages, options) {
   ];
 
   const body = JSON.stringify({
-    model: options.model || "anthropic/claude-sonnet-4-6",
+    // OpenClaw Gateway /v1/chat/completions: `model` selects the OpenClaw agent
+    // (or is ignored depending on routing). Do not hardcode a foundation model here.
+    model: options.model || "openclaw", 
     stream: true,
     temperature,
     max_tokens: maxTokens,

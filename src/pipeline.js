@@ -219,15 +219,15 @@ const IMMEDIATE_ACK_PATTERNS = [
 ];
 
 const DEFAULT_ACK_VARIANTS = [
-  "(calm) 了解、すぐ取りかかるね。",
-  "(calm) 了解です。ちょっと待ってね。",
-  "(calm) はい、今確認するね。",
+  "(soft tone) 了解、すぐ取りかかるね。",
+  "(soft tone) 了解です。ちょっと待ってね。",
+  "(soft tone) はい、今確認するね。",
 ];
 
 const PROGRESS_PING_VARIANTS = [
   "(soft tone) いま処理中だよ、もう少し待ってね。",
-  "(calm) 進めてるよ、あと少しで返せそう。",
-  "(empathetic) ごめん、もう少しだけ待ってね。",
+  "(soft tone) 進めてるよ、あと少しで返せそう。",
+  "(soft tone) ごめん、もう少しだけ待ってね。",
 ];
 
 const LLM_TIMEOUT_FALLBACK_VOICE = "(calm) ちょっと時間がかかってるから、詳細はあとでSlackで共有するね。";
@@ -611,7 +611,8 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         ].join("\n");
 
         const body = JSON.stringify({
-          model: agentState.model || config.llm.model || "anthropic/claude-sonnet-4-6",
+          // Do not hardcode a foundation model; let Gateway choose.
+          model: agentState.model || config.llm.model || "openclaw",
           stream: false,
           temperature: 0.2,
           max_tokens: 700,
