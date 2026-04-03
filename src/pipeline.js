@@ -611,7 +611,8 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         ].join("\n");
 
         const body = JSON.stringify({
-          model: agentState.model || config.llm.model || "anthropic/claude-sonnet-4-6",
+          // Do not hardcode a foundation model; let Gateway choose.
+          model: agentState.model || config.llm.model || "openclaw",
           stream: false,
           temperature: 0.2,
           max_tokens: 700,

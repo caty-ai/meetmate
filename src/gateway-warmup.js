@@ -76,7 +76,8 @@ function warmUpGatewaySession(sessionId, config, briefing = null) {
         ];
 
     const body = JSON.stringify({
-      model: config?.llm?.model || "anthropic/claude-sonnet-4-6",
+      // Do not hardcode a foundation model; let Gateway choose.
+      model: config?.llm?.model || "openclaw",
       stream: false,
       temperature: config?.llm?.temperature ?? 0.3,
       max_tokens: 200,

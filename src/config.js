@@ -192,7 +192,9 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
       utteranceEndMs: LISTEN_UTTERANCE_END_MS,
     },
     llm: {
-      model: overrides.model || agent?.model || "anthropic/claude-sonnet-4-5",
+      // Do not default to a foundation model here; let Gateway choose.
+      // (If a foundation model is required, set it explicitly via overrides/agent config.)
+      model: overrides.model || agent?.model || "openclaw",
       temperature: overrides.temperature ?? AGENT_TEMPERATURE,
       maxTokens: overrides.maxTokens ?? AGENT_MAX_TOKENS,
       responseTimeoutMs: overrides.responseTimeoutMs ?? LLM_RESPONSE_TIMEOUT_MS,
