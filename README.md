@@ -33,7 +33,6 @@ npm install
 必須:
 - `DEEPGRAM_API_KEY`
 - `ATTENDEE_API_KEY` (or config.json `attendee.apiKey`)
-- `AGENT_ID` (agents.json使用時のみ)
 
 #### アバター
 `assets/avatar.png` にエージェントのアバター画像を配置。
