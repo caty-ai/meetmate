@@ -2,8 +2,10 @@
 // Phase 1: Added as ADDITIONAL layer alongside existing isSilentReply/filterSilentReplies in llm.js
 
 // NOTE: Gateway may stream-close mid-token; we sometimes receive a truncated prefix like "NO".
-// Treat bare "NO" (and "NO_"/"NO ") as suppressed as well.
-const NO_REPLY_RE = /^\s*NO(?:[_\s]?REPLY)?[_\s]*[。.！!？?]*\s*$/i;
+// Suppress these to avoid speaking "NO".
+const NO_REPLY_RE = /^\s*NO[_\s]?REPLY\s*[。.！!？?]*\s*$/i;
+// Case-sensitive on purpose: we only want to suppress the exact uppercase prefix, not a legitimate "No." reply.
+const TRUNCATED_NO_RE = /^\s*NO[_\s]*[。.！!？?]*\s*$/;
 
 /**
  * Check if a reply text should be suppressed (NO_REPLY pattern, empty, null, whitespace).
@@ -15,6 +17,7 @@ function shouldSuppressReply(text) {
   const trimmed = String(text).trim();
   if (!trimmed) return true;
   if (NO_REPLY_RE.test(trimmed)) return true;
+  if (TRUNCATED_NO_RE.test(trimmed)) return true;
   return false;
 }
 
