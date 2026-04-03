@@ -37,21 +37,22 @@ const _configJson = loadConfig();
 const DG_KEY = process.env.DEEPGRAM_API_KEY;
 const ATTENDEE_API_KEY = _configJson?.attendee?.apiKey || process.env.ATTENDEE_API_KEY;
 
-// Single-agent mode: when AGENT_ID is set, this server operates as that agent only
-const FIXED_AGENT_ID = process.env.AGENT_ID || null;
+// Single-agent mode: resolve profile once at startup from config.json
+let _agentProfile = null;
+try {
+  _agentProfile = resolveAgentProfile();
+} catch { /* will fail later with clear error */ }
+const FIXED_AGENT_ID = _agentProfile?.agentId || null;
 
 const FALLBACK_BOT_IMAGE_URL = process.env.BOT_IMAGE_URL || null;
 
 function getBotImageConfig() {
-  if (FIXED_AGENT_ID) {
-    try {
-      const profile = resolveAgentProfile(FIXED_AGENT_ID);
-      const localPath = profile.avatarPath || path.join(__dirname, "..", "..", "assets", "avatar.png");
-      return {
-        path: localPath,
-        url: profile.avatarUrl || FALLBACK_BOT_IMAGE_URL,
-      };
-    } catch { /* fall through */ }
+  if (_agentProfile) {
+    const localPath = _agentProfile.avatarPath || path.join(__dirname, "..", "..", "assets", "avatar.png");
+    return {
+      path: localPath,
+      url: _agentProfile.avatarUrl || FALLBACK_BOT_IMAGE_URL,
+    };
   }
   return {
     path: path.join(__dirname, "..", "..", "assets", "avatar.png"),
@@ -81,7 +82,7 @@ function getMeetSlackNotifier() {
     const statusChannel = process.env.SLACK_STATUS_CHANNEL || summaryChannel || fallback;
 
     // Per-agent Slack bot token: ${AGENT_ID}_SLACK_BOT_TOKEN → SLACK_BOT_TOKEN
-    const agentIdForToken = FIXED_AGENT_ID || process.env.AGENT_ID || "unknown";
+    const agentIdForToken = FIXED_AGENT_ID || "unknown";
     const agentSlackToken =
       process.env[`${agentIdForToken.toUpperCase()}_SLACK_BOT_TOKEN`]
       || process.env.SLACK_BOT_TOKEN
@@ -149,7 +150,7 @@ async function sendLcmIngest(lifecycle) {
   const sid = lifecycle.sessionId;
   // Resolve agent ID for LCM key
   const agentIds = lifecycle._meta?.agentIds;
-  const agentId = (Array.isArray(agentIds) && agentIds.length > 0 ? agentIds[0] : (FIXED_AGENT_ID || process.env.AGENT_ID || "unknown")).toLowerCase();
+  const agentId = (Array.isArray(agentIds) && agentIds.length > 0 ? agentIds[0] : (FIXED_AGENT_ID || "unknown")).toLowerCase();
   const lcmKey = `${agentId}:${sid}`;
 
   if (_lcmIngestedSessions.has(lcmKey)) {
@@ -161,11 +162,10 @@ async function sendLcmIngest(lifecycle) {
   // Try to resolve agent-specific gateway credentials
   let openclawUrl = process.env.OPENCLAW_GATEWAY_URL;
   let openclawToken = process.env.OPENCLAW_GATEWAY_TOKEN;
-  try {
-    const profile = resolveAgentProfile(agentId);
-    if (profile.gatewayUrl) openclawUrl = profile.gatewayUrl;
-    if (profile.gatewayToken) openclawToken = profile.gatewayToken;
-  } catch { /* use env defaults */ }
+  if (_agentProfile) {
+    if (_agentProfile.gatewayUrl) openclawUrl = _agentProfile.gatewayUrl;
+    if (_agentProfile.gatewayToken) openclawToken = _agentProfile.gatewayToken;
+  }
 
   if (!openclawUrl || !openclawToken) {
     console.log("⏭️  LCM ingest skipped — no Gateway credentials");
@@ -499,7 +499,7 @@ function appendToMemory(session) {
       .slice(0, 10);
 
     const now = new Date().toLocaleString("ja-JP", { timeZone: "Asia/Bangkok" });
-    const agentLabel = FIXED_AGENT_ID || process.env.AGENT_ID || "unknown";
+    const agentLabel = FIXED_AGENT_ID || "unknown";
     const summary = [
       "",
       `## 🎙️ Google Meet セッション (${now})`,
@@ -639,11 +639,11 @@ function createLegacyAgent(session, turnState, onAudio) {
     });
     console.log(`💬  [${m.role}] ${m.content}`);
   });
-  agent.on(AgentEvents.AgentThinking, () => console.log(`🤔  [${FIXED_AGENT_ID || process.env.AGENT_ID || "agent"}] thinking… (sid=${session.id})`));
+  agent.on(AgentEvents.AgentThinking, () => console.log(`🤔  [${FIXED_AGENT_ID || "agent"}] thinking… (sid=${session.id})`));
   agent.on(AgentEvents.AgentStartedSpeaking, (s) => {
     turnState.isAgentSpeaking = true;
     turnState.inputCooldownUntil = Date.now() + ECHO_LOOP_COOLDOWN_MS;
-    console.log(`🗣️  [${FIXED_AGENT_ID || process.env.AGENT_ID || "agent"}] speaking (sid=${session.id}):`, s);
+    console.log(`🗣️  [${FIXED_AGENT_ID || "agent"}] speaking (sid=${session.id}):`, s);
   });
   agent.on(AgentEvents.UserStartedSpeaking, () => console.log(`🎙️  User speaking (sid=${session.id})`));
   agent.on(AgentEvents.AgentAudioDone, () => {
@@ -665,7 +665,7 @@ function createLegacyAgent(session, turnState, onAudio) {
 function createHandler(session, turnState, onAudio) {
   if (TTS_PROVIDER === "fish-audio") {
     console.log(`🐟  Fish Audio パイプラインモード (sid=${session.id})`);
-    const profile = resolveAgentProfile();
+    const profile = _agentProfile;
 
     const config = getPipelineConfig({
       prompt: session.config.prompt,
@@ -797,18 +797,12 @@ function startNgrokDetection() {
 async function init(options = {}) {
   if (initialized) return;
 
-  // Validate AGENT_ID at startup — fail fast if agent not found
-  if (FIXED_AGENT_ID) {
-    try {
-      const profile = resolveAgentProfile(FIXED_AGENT_ID);
-      console.log(`[${profile.agentId}] Agent profile resolved: ${profile.displayName}`);
-    } catch (err) {
-      if (err instanceof AgentNotFoundError) {
-        console.error(`❌  ${err.message}`);
-        process.exit(1);
-      }
-      throw err;
-    }
+  // Validate agent profile at startup — fail fast if not configured
+  if (_agentProfile) {
+    console.log(`[${_agentProfile.agentId}] Agent profile resolved: ${_agentProfile.displayName}`);
+  } else {
+    console.error(`❌  No agent configured. Create config.json from config.json.example.`);
+    process.exit(1);
   }
 
   validateRequiredEnv();
@@ -851,7 +845,7 @@ async function handleHttp(req, res) {
     // Resolve primary agent info for single-agent mode branding
     let primaryAgent = null;
     try {
-      const profile = resolveAgentProfile();
+      const profile = _agentProfile;
       primaryAgent = {
         id: profile.agentId,
         name: profile.name,
@@ -878,7 +872,7 @@ async function handleHttp(req, res) {
   if (req.method === "GET" && url.pathname === "/agents") {
     let agentList = [];
     try {
-      const profile = resolveAgentProfile();
+      const profile = _agentProfile;
       agentList = [{
         id: profile.agentId,
         name: profile.name,
@@ -992,7 +986,7 @@ async function handleHttp(req, res) {
       const wsUrl = toSafeString(formData.wsUrl);
       const conversationMode = toSafeString(formData.conversationMode) || "one_to_one";
       const briefing = toSafeString(formData.briefing) || null;
-      const profile = resolveAgentProfile();
+      const profile = _agentProfile;
 
       // Single-agent mode: always use config.json agent
       const selectedAgentIds = [profile.agentId];
@@ -1090,20 +1084,10 @@ async function handleHttp(req, res) {
       let defaultBotName;
       if (selectedAgentNames.length > 0) {
         defaultBotName = `${selectedAgentNames.join(", ")} (AI)`;
-      } else if (FIXED_AGENT_ID) {
-        try {
-          const profile = resolveAgentProfile(FIXED_AGENT_ID);
-          defaultBotName = `${profile.name} (${profile.displayName})`;
-        } catch {
-          defaultBotName = `${FIXED_AGENT_ID} (AI)`;
-        }
+      } else if (_agentProfile) {
+        defaultBotName = `${_agentProfile.name || _agentProfile.agentId} (${_agentProfile.displayName || "AI"})`;
       } else {
-        try {
-          const profile = resolveAgentProfile();
-          defaultBotName = `${profile.name || profile.agentId} (${profile.displayName || "AI"})`;
-        } catch {
-          defaultBotName = "AI Agent";
-        }
+        defaultBotName = "AI Agent";
       }
 
       const botPayload = {

@@ -235,7 +235,7 @@ const _lcmIngestedSessions = new Map();
 
 async function sendLcmIngest(lifecycle, notifier) {
   const sid = lifecycle.sessionId;
-  const agentId = (_startupAgentProfile?.agentId || process.env.AGENT_ID || "unknown").toLowerCase();
+  const agentId = (_startupAgentProfile?.agentId || "unknown").toLowerCase();
   const lcmKey = `${agentId}:${sid}`;
 
   if (_lcmIngestedSessions.has(lcmKey)) {
@@ -247,11 +247,10 @@ async function sendLcmIngest(lifecycle, notifier) {
   // Resolve agent-specific gateway credentials
   let openclawUrl = process.env.OPENCLAW_GATEWAY_URL;
   let openclawToken = process.env.OPENCLAW_GATEWAY_TOKEN;
-  try {
-    const profile = resolveAgentProfile(agentId);
-    if (profile.gatewayUrl) openclawUrl = profile.gatewayUrl;
-    if (profile.gatewayToken) openclawToken = profile.gatewayToken;
-  } catch { /* use env defaults */ }
+  if (_startupAgentProfile) {
+    if (_startupAgentProfile.gatewayUrl) openclawUrl = _startupAgentProfile.gatewayUrl;
+    if (_startupAgentProfile.gatewayToken) openclawToken = _startupAgentProfile.gatewayToken;
+  }
 
   if (!openclawUrl || !openclawToken) {
     console.log("⏭️  LCM ingest skipped — no Gateway credentials");
@@ -949,17 +948,14 @@ const server = http.createServer(async (req, res) => {
   // /agents — list the configured agent
   if (req.method === "GET" && req.url === "/agents") {
     let agentList = [];
-    try {
-      const profile = resolveAgentProfile();
+    if (_startupAgentProfile) {
       agentList = [{
-        id: profile.agentId,
-        displayName: profile.displayName,
-        voiceId: profile.voiceId || null,
+        id: _startupAgentProfile.agentId,
+        displayName: _startupAgentProfile.displayName,
+        voiceId: _startupAgentProfile.voiceId || null,
       }];
-    } catch {
-      // no agent configured
     }
-    const response = { agents: agentList, fixedAgentId: process.env.AGENT_ID || null };
+    const response = { agents: agentList, fixedAgentId: _startupAgentProfile?.agentId || null };
     res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
     res.end(JSON.stringify(response));
     return;
