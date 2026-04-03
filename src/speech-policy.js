@@ -1,7 +1,9 @@
 // speech-policy.js — Centralized NO_REPLY suppression and reply sanitization
 // Phase 1: Added as ADDITIONAL layer alongside existing isSilentReply/filterSilentReplies in llm.js
 
-const NO_REPLY_RE = /^\s*NO[_\s]?REPLY\s*[。.！!？?]*\s*$/i;
+// NOTE: Gateway may stream-close mid-token; we sometimes receive a truncated prefix like "NO".
+// Treat bare "NO" (and "NO_"/"NO ") as suppressed as well.
+const NO_REPLY_RE = /^\s*NO(?:[_\s]?REPLY)?[_\s]*[。.！!？?]*\s*$/i;
 
 /**
  * Check if a reply text should be suppressed (NO_REPLY pattern, empty, null, whitespace).
