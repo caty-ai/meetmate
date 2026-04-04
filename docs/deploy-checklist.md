@@ -15,8 +15,11 @@
 - [ ] Attendee API キー取得済み
 - [ ] Fish Audio API キー取得済み
 - [ ] Fish Audio Voice ID 決定済み（https://fish.audio/ で試聴）
-- [ ] ngrok ドメイン確保済み（固定ドメイン推奨）
-- [ ] エージェントのアバター画像準備済み（PNG推奨）
+- [ ] ngrok 固定ドメイン取得済み（https://dashboard.ngrok.com → Domains → Create Domain）
+  - 無料プラン: 1ドメイン/アカウント。2台目以降は別アカウントか有料プラン
+  - Tailscale+VPS構成なら ngrok 不要
+- [ ] エージェントのアバター画像準備済み（PNG推奨、256x256px以上の正方形）
+  - ⚠️ クローン元の画像がそのまま残るため、必ず差し替え
 - [ ] 使用ポート番号決定済み（既存エージェントと衝突しないこと）
   ```bash
   lsof -i :<port> 2>/dev/null  # 空いていることを確認
@@ -42,7 +45,8 @@
   - [ ] `agent.id` — エージェントID（小文字英数字、例: `luca`）
   - [ ] `agent.name` — 内部名（例: `Luca`）
   - [ ] `agent.displayName` — 表示名（例: `ルカ`）
-  - [ ] `agent.greeting` — 参加時の挨拶テキスト
+  - [ ] `agent.greeting` — 参加時の挨拶テキスト（感情タグ付き推奨: `(happy) こんにちは！`）
+  - [ ] `agent.emotionTags` — `true` にする（TTS感情表現の有効化）
   - [ ] `agent.model` — **必ず `"openclaw"`**（モデル名を直接書かない）
   - [ ] `agent.wakeWords` — ウェイクワード配列（エージェント名のバリエーション）
   - [ ] `agent.keyterms` — Deepgram キーワードブースト用
@@ -176,9 +180,11 @@
 | Gateway タイムアウト | warm-up timeout ログ + 会話開始しない | モデル応答が8秒超 | `config.json` の `gateway.warmupTimeoutMs` を `30000` に設定 |
 | ngrok URL 誤検出 | 別エージェントのngrok URLでWSS接続 | auto-detect が port 4040 の最初のngrokを拾う | `config.json` に `ngrokDomain` を明示 |
 | ngrok API ポート衝突 | 2台目の ngrok が起動失敗 | デフォルト API port 4040 が被る | 専用 config yml で `agent.web_addr` を変更。または Tailscale+VPS なら ngrok 不要 |
-| アバター不一致 | 別エージェントのアイコン表示 | clone元の `assets/avatar.png` がそのまま | 差し替え |
+| アバター不一致 | 別エージェントのアイコン表示 | clone元の `assets/avatar.png` がそのまま | 必ず差し替え（Phase 2 でチェック） |
 | model に具体名 | Gateway が無視、意図しないモデルで応答 | Gateway は agent config 側のモデルを使用 | `"openclaw"` 固定 |
-| sttWakeVariants 空 | ウェイクワードに反応しない | STT誤認識バリアント未登録 | キャリブレーション実行 |
+| sttWakeVariants 空 | ウェイクワードに反応しない | STT誤認識バリアント未登録 | キャリブレーション実行（Phase 6） |
+| greeting / name 未設定 | 参加時無言 / ログで名前不明 | config.json で設定漏れ | greeting + name + emotionTags を設定 |
+| ngrok ドメイン未取得 | 毎回URL変わる / 手動設定が面倒 | ランダムドメインで起動 | dashboard で固定ドメイン取得 → config に記載 |
 
 ---
 

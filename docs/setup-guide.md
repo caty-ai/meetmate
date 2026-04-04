@@ -58,9 +58,10 @@ cp config.json.example config.json
 {
   "agent": {
     "id": "luca",                    // エージェントID（小文字英数字）
-    "name": "Luca",                  // 内部名
-    "displayName": "ルカ",           // 表示名（日本語OK）
-    "greeting": "(happy) こんにちは！ルカです！",  // 参加時の挨拶
+    "name": "Luca",                  // 内部名（英語、ログやAPI識別に使用）
+    "displayName": "ルカ",           // 表示名（日本語OK、Meet UIに表示）
+    "greeting": "(happy) こんにちは！ルカです！",  // 参加時の挨拶（感情タグ付き）
+    "emotionTags": true,             // TTS用の感情タグを有効化（推奨: true）
     "model": "openclaw",             // ← 必ず "openclaw"（Gatewayに任せる）
     "wakeWords": ["ルカ", "luca"],   // ウェイクワード（名前）
     "keyterms": ["ルカ", "Luca"],    // Deepgramキーワードブースト用
@@ -87,6 +88,8 @@ cp config.json.example config.json
 ```
 
 > ⚠️ `model` は必ず `"openclaw"` にすること。モデル名（`anthropic/claude-opus-4-6` 等）を直接書いても Gateway に無視される。
+
+> 💡 **`emotionTags`** を `true` にすると、LLM の応答に `(happy)`, `(calm)`, `(excited)` 等の感情タグが付き、TTS の表現力が上がる。`greeting` にも同じ形式でタグを付けると参加時の挨拶が自然になる。使えるタグ: `(calm)`, `(happy)`, `(curious)`, `(soft tone)`, `(excited)`, `(nervous)`, `(grateful)`, `(laughing)`, `(confident)`
 
 > 💡 `tts` / `stt` セクションは `.env` の `TTS_PROVIDER` / `DEEPGRAM_API_KEY` が未設定の場合のフォールバック。通常は `.env` 側が優先される（`config.js` で `process.env.* || config値` の順で解決）。
 
@@ -118,43 +121,71 @@ TTS_PROVIDER=fish-audio
 
 > ⚠️ **`TTS_PROVIDER=fish-audio` は必須。** `openai` にすると Deepgram Voice Agent（レガシーモード）で起動し、パイプラインが全く別のルートに入る。
 
-### 4. アバター
+### 4. アバター画像
+
+エージェントの顔となる画像を配置する。Google Meet の参加者アイコンに表示される。
 
 ```bash
-# エージェントのアバター画像を配置
-cp /path/to/your-avatar.png assets/avatar.png
+# エージェント固有の画像をコピー
+cp /path/to/your-agent-avatar.png assets/avatar.png
 ```
 
-- `assets/avatar.png` に配置（固定名）
-- Google Meet の参加者アイコンに表示される
-- 未配置の場合はフォールバック画像（設定されていれば `avatarUrl`）
+> ⚠️ **クローンしたリポジトリの `assets/avatar.png` は元エージェント（Caty等）の画像がそのまま残っている。** 必ず差し替えること。
 
-### 5. ngrok トンネル
+- ファイル名は `avatar.png` 固定（コードがこの名前で参照する）
+- 推奨サイズ: 256x256px 以上の正方形 PNG
+- 丸くクロップされて表示されるため、顔が中央にあるとベスト
+- エージェントの画像がない場合: OpenClaw workspace の `creative-assets/` 等を確認
+
+### 5. ngrok トンネル（固定ドメイン取得 → 起動）
+
+#### 5-1. 固定ドメインの取得（初回のみ）
+
+Meet Bot が外部から WebSocket 接続を受けるために、公開 URL が必要。
+ngrok の固定ドメイン（無料プランで1つ）を使うと、再起動してもURLが変わらない。
+
+1. https://dashboard.ngrok.com にログイン
+2. 左メニュー「**Domains**」→「**Create Domain**」
+3. 自動生成されたドメイン（例: `pretty-duckling-abc123.ngrok-free.dev`）をコピー
+4. `config.json` の `server.ngrokDomain` に記入
+
+> 💡 **無料プランは1ドメインまで。** 2台目以降のエージェントには別の ngrok アカウントを作成するか、有料プラン（$8/月〜）で追加ドメインを取得する。
+> 別の方法として Tailscale + VPS 構成なら ngrok 自体が不要（後述）。
+
+#### 5-2. ngrok の起動
 
 ```bash
 # 固定ドメインの場合（推奨）
 ngrok http 5006 --domain=your-domain.ngrok-free.dev
 
-# ランダムドメインの場合
+# ランダムドメインの場合（テスト用）
 ngrok http 5006
 ```
 
 - ポート番号は `config.json` の `server.port` に合わせる
-- ngrok の API ポートがデフォルト（4040）だと、**同一マシンの他エージェントの ngrok と衝突**する
-  - 2台目以降: 専用の ngrok config ファイルで API ポートをずらす:
-    ```yaml
-    # ~/.config/ngrok/ngrok-<agent-name>.yml
-    version: 3
-    authtoken: YOUR_AUTHTOKEN
-    agent:
-      web_addr: 127.0.0.1:4041  # デフォルト4040と被らないように
-    ```
-    ```bash
-    ngrok http 5006 --domain=your-domain.ngrok-free.dev --config ~/.config/ngrok/ngrok-<agent-name>.yml
-    ```
-- 固定ドメインを使う場合は `config.json` の `server.ngrokDomain` に記載必須
 
-> 💡 **ngrok 不要な構成:** Tailscale + VPS 環境であれば ngrok なしで直接接続可能。Attendee 側の WebSocket URL を Tailscale IP ベース（例: `wss://<tailscale-ip>:5006`）に向ければ、トンネルなしで動作する。
+#### 5-3. 同一マシンで複数エージェントを動かす場合
+
+ngrok の API ポートがデフォルト（4040）だと、**他エージェントの ngrok と衝突**する。
+2台目以降は専用の ngrok config ファイルで API ポートをずらす:
+
+```yaml
+# ~/.config/ngrok/ngrok-<agent-name>.yml
+version: 3
+authtoken: YOUR_AUTHTOKEN
+agent:
+  web_addr: 127.0.0.1:4041  # デフォルト4040と被らないように
+```
+
+```bash
+ngrok http 5006 --domain=your-domain.ngrok-free.dev --config ~/.config/ngrok/ngrok-<agent-name>.yml
+```
+
+> ⚠️ `config.json` の `server.ngrokDomain` を**必ず明示**すること。自動検出（ngrok API port 4040）は同一マシンの最初の ngrok しか検出しない。
+
+#### 5-4. ngrok 不要な構成
+
+Tailscale + VPS 環境であれば ngrok なしで直接接続可能。Attendee 側の WebSocket URL を Tailscale IP ベース（例: `wss://<tailscale-ip>:5006`）に向ければ、トンネルなしで動作する。
 
 ### 6. 起動
 
