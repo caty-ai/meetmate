@@ -178,22 +178,41 @@ let meetSlackNotifier = null;
 function getMeetSlackNotifier() {
   if (!meetSlackNotifier) {
     const notifyEnabled = String(process.env.SLACK_NOTIFY_ENABLED || "true").toLowerCase() !== "false";
-    const fallback = process.env.SLACK_NOTIFY_CHANNEL || "";
-    const summaryChannel = process.env.SLACK_SUMMARY_CHANNEL || fallback;
-    const statusChannel = process.env.SLACK_STATUS_CHANNEL || summaryChannel || fallback;
+
+    // Read notification config from config.json (DM-first architecture)
+    const slackConfig = _configForPort?.slack || {};
+    const notifications = slackConfig.notifications || {};
+
+    const notifyTarget = notifications.target || "dm";
+    const dmUserId = notifications.dmUserId || "";
+
+    const fallback = slackConfig.notifyChannel || process.env.SLACK_NOTIFY_CHANNEL || "";
+    const summaryChannel = slackConfig.summaryChannel || process.env.SLACK_SUMMARY_CHANNEL || fallback;
+    const statusChannel = slackConfig.statusChannel || process.env.SLACK_STATUS_CHANNEL || summaryChannel || fallback;
+
+    const agentSlackToken =
+      slackConfig.botToken
+      || process.env.SLACK_BOT_TOKEN
+      || "";
 
     meetSlackNotifier = new SlackNotifier(
-      process.env.SLACK_BOT_TOKEN || "",
+      agentSlackToken,
       fallback,
       {
         enabled: notifyEnabled,
+        notifyTarget,
+        dmUserId,
         statusChannelId: statusChannel,
         summaryChannelId: summaryChannel,
       }
     );
 
     if (meetSlackNotifier.enabled) {
-      console.log(`📢  Meet Slack通知有効: status=${statusChannel}, summary=${summaryChannel}`);
+      if (notifyTarget === "dm") {
+        console.log(`📢  Meet Slack通知有効: target=DM (user=${dmUserId})`);
+      } else {
+        console.log(`📢  Meet Slack通知有効: target=channel (status=${statusChannel}, summary=${summaryChannel})`);
+      }
     }
   }
   return meetSlackNotifier;

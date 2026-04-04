@@ -26,22 +26,36 @@ function detectMeetingPlatform(meetingUrl) {
 
 /**
  * Slack notifier — creates and updates status messages, posts summaries.
+ *
+ * Supports two notification targets:
+ *   - "channel" (legacy default): posts to a Slack channel by ID
+ *   - "dm": opens a DM with a Slack user and posts there
+ *
+ * DM mode uses conversations.open to lazily resolve the DM channel ID.
+ * Once resolved, the DM channel is cached for the process lifetime.
  */
 class SlackNotifier {
   /**
    * @param {string} botToken — Slack bot token (xoxb-...)
-   * @param {string} channelId — Default channel ID (fallback)
+   * @param {string} channelId — Default channel ID (fallback for channel mode)
    * @param {object} [options]
    * @param {boolean} [options.enabled=true] — Master enable switch (SLACK_NOTIFY_ENABLED)
-   * @param {string} [options.statusChannelId] — Status post channel
-   * @param {string} [options.summaryChannelId] — Summary/transcript post channel
+   * @param {string} [options.statusChannelId] — Status post channel (channel mode)
+   * @param {string} [options.summaryChannelId] — Summary/transcript post channel (channel mode)
+   * @param {string} [options.notifyTarget="channel"] — "dm" or "channel"
+   * @param {string} [options.dmUserId] — Slack user ID for DM mode (required when notifyTarget="dm")
    */
   constructor(botToken, channelId, options = {}) {
     this._botToken = botToken || "";
     this._defaultChannelId = channelId || "";
     this._masterEnabled = options.enabled !== false; // default true
 
-    // Channel resolution:
+    // Notification target: "dm" or "channel" (default)
+    this._notifyTarget = (options.notifyTarget || "channel").toLowerCase();
+    this._dmUserId = options.dmUserId || "";
+    this._dmChannelId = ""; // lazily resolved via conversations.open
+
+    // Channel resolution (channel mode):
     // status: explicit statusChannel -> summaryChannel -> default
     // summary/transcript: explicit summaryChannel -> default
     this._summaryChannelId =
@@ -54,9 +68,50 @@ class SlackNotifier {
     this._updateTimers = new Map(); // sessionId → interval
   }
 
-  /** Returns false if disabled, or token/channel is missing. */
+  /** Returns false if disabled, or required credentials are missing. */
   get enabled() {
-    return this._masterEnabled && !!(this._botToken && this._statusChannelId);
+    if (!this._masterEnabled || !this._botToken) return false;
+    if (this._notifyTarget === "dm") {
+      return !!this._dmUserId;
+    }
+    return !!this._statusChannelId;
+  }
+
+  /**
+   * Resolve the target channel ID (DM or channel mode).
+   * In DM mode, calls conversations.open once and caches the result.
+   * @returns {Promise<string>} resolved channel ID
+   */
+  async _resolveTargetChannel() {
+    if (this._notifyTarget !== "dm") {
+      return this._statusChannelId;
+    }
+
+    // DM mode: return cached channel or open a new DM
+    if (this._dmChannelId) return this._dmChannelId;
+
+    const result = await this._slackApi("conversations.open", {
+      users: this._dmUserId,
+    });
+
+    if (result?.channel?.id) {
+      this._dmChannelId = result.channel.id;
+      console.log(`📩  Slack DM channel opened: ${this._dmChannelId} (user=${this._dmUserId})`);
+      return this._dmChannelId;
+    }
+
+    throw new Error(`conversations.open failed for user ${this._dmUserId}: ${JSON.stringify(result?.error || "unknown")}`);
+  }
+
+  /**
+   * Resolve the summary channel (DM → same DM, channel → summaryChannel).
+   * @returns {Promise<string>}
+   */
+  async _resolveSummaryChannel() {
+    if (this._notifyTarget === "dm") {
+      return this._resolveTargetChannel();
+    }
+    return this._summaryChannelId || this._statusChannelId;
   }
 
   get statusChannelId() {
@@ -76,9 +131,9 @@ class SlackNotifier {
 
     const text = this._buildStatusText(lifecycle);
     const sessionId = lifecycle.sessionId;
-    const targetChannel = this.statusChannelId;
 
     try {
+      const targetChannel = await this._resolveTargetChannel();
       const existing = this._statusMessageRef.get(sessionId);
       if (existing && existing.channel === targetChannel) {
         // Update existing message
@@ -143,7 +198,7 @@ class SlackNotifier {
     const text = this._buildSummaryText(lifecycle, summary);
 
     try {
-      const summaryChannel = this.summaryChannelId;
+      const summaryChannel = await this._resolveSummaryChannel();
       const statusRef = this._statusMessageRef.get(lifecycle.sessionId);
       const sameChannel = statusRef && statusRef.channel === summaryChannel;
 
@@ -168,7 +223,7 @@ class SlackNotifier {
     if (!text) return;
 
     try {
-      const summaryChannel = this.summaryChannelId;
+      const summaryChannel = await this._resolveSummaryChannel();
       const statusRef = this._statusMessageRef.get(lifecycle.sessionId);
       const sameChannel = statusRef && statusRef.channel === summaryChannel;
 

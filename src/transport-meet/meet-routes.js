@@ -77,14 +77,25 @@ let meetSlackNotifier = null;
 function getMeetSlackNotifier() {
   if (!meetSlackNotifier) {
     const notifyEnabled = String(process.env.SLACK_NOTIFY_ENABLED || "true").toLowerCase() !== "false";
-    const fallback = process.env.SLACK_NOTIFY_CHANNEL || "";
-    const summaryChannel = process.env.SLACK_SUMMARY_CHANNEL || fallback;
-    const statusChannel = process.env.SLACK_STATUS_CHANNEL || summaryChannel || fallback;
 
-    // Per-agent Slack bot token: ${AGENT_ID}_SLACK_BOT_TOKEN → SLACK_BOT_TOKEN
+    // Read notification config from config.json (new DM-first architecture)
+    const slackConfig = _configJson?.slack || {};
+    const notifications = slackConfig.notifications || {};
+
+    // Notification target: "dm" (default) or "channel"
+    const notifyTarget = notifications.target || "dm";
+    const dmUserId = notifications.dmUserId || "";
+
+    // Channel mode fallback (legacy env vars + config.json)
+    const fallback = slackConfig.notifyChannel || process.env.SLACK_NOTIFY_CHANNEL || "";
+    const summaryChannel = slackConfig.summaryChannel || process.env.SLACK_SUMMARY_CHANNEL || fallback;
+    const statusChannel = slackConfig.statusChannel || process.env.SLACK_STATUS_CHANNEL || summaryChannel || fallback;
+
+    // Per-agent Slack bot token: ${AGENT_ID}_SLACK_BOT_TOKEN → config.json → SLACK_BOT_TOKEN
     const agentIdForToken = FIXED_AGENT_ID || "unknown";
     const agentSlackToken =
       process.env[`${agentIdForToken.toUpperCase()}_SLACK_BOT_TOKEN`]
+      || slackConfig.botToken
       || process.env.SLACK_BOT_TOKEN
       || "";
 
@@ -93,13 +104,19 @@ function getMeetSlackNotifier() {
       fallback,
       {
         enabled: notifyEnabled,
+        notifyTarget,
+        dmUserId,
         statusChannelId: statusChannel,
         summaryChannelId: summaryChannel,
       }
     );
 
     if (meetSlackNotifier.enabled) {
-      console.log(`📢  Meet Slack通知有効: status=${statusChannel}, summary=${summaryChannel}`);
+      if (notifyTarget === "dm") {
+        console.log(`📢  Meet Slack通知有効: target=DM (user=${dmUserId})`);
+      } else {
+        console.log(`📢  Meet Slack通知有効: target=channel (status=${statusChannel}, summary=${summaryChannel})`);
+      }
     }
   }
   return meetSlackNotifier;

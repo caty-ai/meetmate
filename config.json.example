@@ -30,6 +30,10 @@
   },
   "slack": {
     "botToken": "${SLACK_BOT_TOKEN}",
+    "notifications": {
+      "target": "dm",
+      "dmUserId": ""
+    },
     "notifyChannel": "",
     "summaryChannel": "",
     "statusChannel": ""

@@ -275,8 +275,45 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.openclaw.meet-<agent-
 
 ## Slack 連携（任意）
 
+会議のステータス・サマリー・全文ログを Slack に自動投稿できます。
+デフォルトは **DM モード**（Bot → ユーザーへの DM）です。
+
+### DM モード（推奨）
+
+```jsonc
+// config.json
+"slack": {
+  "botToken": "${SLACK_BOT_TOKEN}",
+  "notifications": {
+    "target": "dm",           // "dm" = DMに投稿（デフォルト）
+    "dmUserId": "U0XXXXXXXXX" // 通知先の Slack User ID
+  }
+}
+```
+
 ```bash
 # .env
+SLACK_BOT_TOKEN=xoxb-xxxxx
+```
+
+> **dmUserId の確認方法**: Slack でユーザーのプロフィールを開き「メンバーIDをコピー」
+
+### チャンネルモード（大規模チーム向け）
+
+```jsonc
+// config.json
+"slack": {
+  "botToken": "${SLACK_BOT_TOKEN}",
+  "notifications": {
+    "target": "channel"       // "channel" = チャンネルに投稿
+  },
+  "statusChannel": "C0XXXXXXXXX",
+  "summaryChannel": "C0XXXXXXXXX"
+}
+```
+
+```bash
+# .env（環境変数でも設定可能）
 SLACK_BOT_TOKEN=xoxb-xxxxx
 SLACK_STATUS_CHANNEL=C0XXXXXXXXX    # ステータス通知（参加/退出）
 SLACK_SUMMARY_CHANNEL=C0XXXXXXXXX   # 会議サマリー + 全文ログ
