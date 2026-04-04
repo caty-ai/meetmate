@@ -18,7 +18,8 @@
   },
   "gateway": {
     "url": "${OPENCLAW_GATEWAY_URL}",
-    "token": "${OPENCLAW_GATEWAY_TOKEN}"
+    "token": "${OPENCLAW_GATEWAY_TOKEN}",
+    "warmupTimeoutMs": 8000
   },
   "tts": {
     "provider": "fish-audio",

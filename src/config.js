@@ -118,6 +118,7 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
     fishKey: process.env.FISH_AUDIO_API_KEY,
     openclawUrl: agent?.gatewayUrl || process.env.OPENCLAW_GATEWAY_URL || null,
     openclawToken: agent?.gatewayToken || process.env.OPENCLAW_GATEWAY_TOKEN || null,
+    warmupTimeoutMs: configJson?.gateway?.warmupTimeoutMs || null,
     systemPrompt,
     exitDetection: overrides.exitDetection,
     echoCooldownMs: ECHO_LOOP_COOLDOWN_MS,

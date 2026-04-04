@@ -5,13 +5,18 @@ const http = require("http");
 const https = require("https");
 const { URL } = require("url");
 
-const WARMUP_REQUEST_TIMEOUT_MS = 8_000;
+const DEFAULT_WARMUP_TIMEOUT_MS = 8_000;
 
 /**
  * Warm up a Gateway session and optionally generate a purpose statement.
  * @returns {Promise<{status: string, purposeStatement: string|null}>}
  */
 function warmUpGatewaySession(sessionId, config, briefing = null) {
+  // Allow per-agent timeout via config (gateway.warmupTimeoutMs) or env var
+  const WARMUP_REQUEST_TIMEOUT_MS =
+    Number(config?.warmupTimeoutMs) ||
+    Number(process.env.GATEWAY_WARMUP_TIMEOUT_MS) ||
+    DEFAULT_WARMUP_TIMEOUT_MS;
   return new Promise((resolve) => {
     let settled = false;
     const done = (status, purposeStatement = null) => {

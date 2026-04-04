@@ -619,7 +619,7 @@ function createLegacyAgent(session, turnState, onAudio) {
       greeting: session.config.greeting,
       model: session.config.model,
       voice: session.config.voice,
-    });
+    }, null, null, _configJson);
     agent.configure(config);
   });
 
@@ -672,7 +672,7 @@ function createHandler(session, turnState, onAudio) {
       greeting: session.config.greeting,
       model: session.config.model,
       wakeMode: session.config.wakeMode,
-    }, null, profile);
+    }, null, profile, _configJson);
     const pipeline = createPipeline(session, turnState, onAudio, config, {
       agents: {},
       selectedAgentIds: [profile.agentId],
@@ -1069,7 +1069,7 @@ async function handleHttp(req, res) {
         model: session.config.model,
         wakeMode: session.config.wakeMode,
         exitDetection: conversationMode !== "group",
-      }, null, profile);
+      }, null, profile, _configJson);
       warmUpGatewaySession(`meet-${sessionId}`, warmupConfig, briefing);
 
       const wsWithSession = buildWsUrlWithSession(wsUrl, sessionId);

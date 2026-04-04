@@ -724,7 +724,7 @@ function createHandler(session, turnState, onAudio) {
       greeting: session.config.greeting,
       model: session.config.model,
       wakeMode: session.config.wakeMode,
-    });
+    }, null, null, _configForPort);
     const pipeline = createPipeline(session, turnState, onAudio, config);
     return {
       send: (buf) => pipeline.sendAudio(buf),
@@ -867,15 +867,16 @@ const server = http.createServer(async (req, res) => {
         model: session.config.model,
         wakeMode: session.config.wakeMode,
         exitDetection: conversationMode !== "group",
-      });
+      }, null, null, _configForPort);
       if (!_firstWarmupDone) {
-        // First warm-up: await with short timeout to prevent initial race condition
+        // First warm-up: await with configurable timeout to prevent initial race condition
         _firstWarmupDone = true;
-        console.log("🔥  First warm-up (awaiting up to 10s)...");
+        const firstWarmupRaceMs = Math.min(warmupConfig.warmupTimeoutMs || 10_000, 60_000);
+        console.log(`🔥  First warm-up (awaiting up to ${firstWarmupRaceMs / 1000}s)...`);
         try {
           const warmupResult = await Promise.race([
             warmUpGatewaySession(`meet-${sessionId}`, warmupConfig, briefing),
-            new Promise((_, reject) => setTimeout(() => reject(new Error("warmup timeout 10s")), 10_000)),
+            new Promise((_, reject) => setTimeout(() => reject(new Error(`warmup timeout ${firstWarmupRaceMs}ms`)), firstWarmupRaceMs)),
           ]);
           console.log(`✅  First warm-up completed: ${warmupResult.status}`);
         } catch (e) {
