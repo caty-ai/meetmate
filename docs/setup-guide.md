@@ -133,9 +133,19 @@ cp /path/to/your-agent-avatar.png assets/avatar.png
 > ⚠️ **クローンしたリポジトリの `assets/avatar.png` は元エージェント（Caty等）の画像がそのまま残っている。** 必ず差し替えること。
 
 - ファイル名は `avatar.png` 固定（コードがこの名前で参照する）
-- 推奨サイズ: 256x256px 以上の正方形 PNG
+- **⚠️ 必ず PNG 形式であること**（JPEG を `.png` にリネームしただけでは Attendee API が `400 - Data is not a valid PNG image` で拒否する）
+- 推奨サイズ: 256x256px の正方形 PNG
 - 丸くクロップされて表示されるため、顔が中央にあるとベスト
 - エージェントの画像がない場合: OpenClaw workspace の `creative-assets/` 等を確認
+
+**PNG 形式の確認・変換方法:**
+```bash
+# 形式を確認（"PNG image data" と出ればOK）
+file assets/avatar.png
+
+# JPEG等の場合はPNGに変換 + 256x256リサイズ（macOS）
+sips -s format png -z 256 256 assets/avatar.png --out assets/avatar.png
+```
 
 ### 5. ngrok トンネル（固定ドメイン取得 → 起動）
 

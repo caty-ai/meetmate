@@ -74,9 +74,13 @@
 
 > 💡 `.env` と `config.json` に重複する設定（`tts.provider`, `stt.apiKey` 等）がある場合、`.env` 側が優先される。`config.json` 側はフォールバック。
 
-- [ ] アバター配置
+- [ ] アバター配置（**必ず PNG 形式** — JPEG を .png にリネームしただけでは 400 エラーになる）
   ```bash
   cp /path/to/agent-avatar.png assets/avatar.png
+  # PNG確認: "PNG image data" と出ればOK
+  file assets/avatar.png
+  # JPEG等の場合は変換 + リサイズ
+  sips -s format png -z 256 256 assets/avatar.png --out assets/avatar.png
   ```
 
 ---
@@ -181,6 +185,7 @@
 | ngrok URL 誤検出 | 別エージェントのngrok URLでWSS接続 | auto-detect が port 4040 の最初のngrokを拾う | `config.json` に `ngrokDomain` を明示 |
 | ngrok API ポート衝突 | 2台目の ngrok が起動失敗 | デフォルト API port 4040 が被る | 専用 config yml で `agent.web_addr` を変更。または Tailscale+VPS なら ngrok 不要 |
 | アバター不一致 | 別エージェントのアイコン表示 | clone元の `assets/avatar.png` がそのまま | 必ず差し替え（Phase 2 でチェック） |
+| アバター形式エラー | `400 - Data is not a valid PNG image` | JPEG を `.png` にリネームしただけ | `file assets/avatar.png` で確認、JPEG なら `sips -s format png -z 256 256` で変換 |
 | model に具体名 | Gateway が無視、意図しないモデルで応答 | Gateway は agent config 側のモデルを使用 | `"openclaw"` 固定 |
 | sttWakeVariants 空 | ウェイクワードに反応しない | STT誤認識バリアント未登録 | キャリブレーション実行（Phase 6） |
 | greeting / name 未設定 | 参加時無言 / ログで名前不明 | config.json で設定漏れ | greeting + name + emotionTags を設定 |
