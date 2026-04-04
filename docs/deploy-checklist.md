@@ -159,6 +159,19 @@
 
 ## Phase 6: 仕上げ（任意）
 
+- [ ] **OpenClaw LCM 設定**（Meet セッションがメインコンテキストに混入しないための必須設定）
+  - エージェントの `openclaw.json` → `plugins.entries.lossless-claw.config` に以下を追加:
+  ```json
+  {
+    "statelessSessionPatterns": ["meet-*"],
+    "ignoreSessionPatterns": ["cron-*", "heartbeat-*"]
+  }
+  ```
+  - `statelessSessionPatterns: ["meet-*"]` — Meet セッションを LCM に保存するがメインコンテキストには混入させない
+  - `ignoreSessionPatterns: ["cron-*", "heartbeat-*"]` — cron/heartbeat を LCM 保存対象外に
+  - 設定後 Gateway を再起動（`openclaw gateway restart` or SIGUSR1）
+  - ⚠️ 未設定だと Meet の会話（warm-up 含む）がメインの Slack チャットに流入してコンテキストが膨張する
+
 - [ ] LaunchAgent 登録（常駐化）
   ```bash
   ./scripts/install-launchagent.sh \

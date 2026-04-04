@@ -352,6 +352,17 @@ SLACK_SUMMARY_CHANNEL=C0XXXXXXXXX   # 会議サマリー + 全文ログ
 ### アバターが違うエージェントの画像
 - `assets/avatar.png` がクローン元のまま → エージェント固有の画像に差し替え
 
+### Meet の会話がメインの Slack チャットに混入する
+- OpenClaw の LCM 設定が必要。エージェントの `openclaw.json` → `plugins.entries.lossless-claw.config` に以下を追加:
+  ```json
+  {
+    "statelessSessionPatterns": ["meet-*"],
+    "ignoreSessionPatterns": ["cron-*", "heartbeat-*"]
+  }
+  ```
+- 設定後 `openclaw gateway restart` で反映
+- `statelessSessionPatterns: ["meet-*"]` により Meet セッションは LCM に保存されるがメインコンテキストに積み重ならない
+
 ---
 
 ## アーキテクチャ概要

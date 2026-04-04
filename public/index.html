@@ -6,47 +6,49 @@
     <title>AI Meet Participant</title>
     <style>
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            background-color: #1a1a2e;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino Sans', sans-serif;
+            background-color: #F7F6F3;
             display: flex;
             justify-content: center;
             align-items: center;
             min-height: 100vh;
             margin: 0;
             padding: 2rem 1rem;
-            color: #e0e0e0;
+            color: #37352F;
         }
         .container {
-            background: #16213e;
+            background: #FFFFFF;
             padding: 2.5rem;
             border-radius: 16px;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 4px 24px rgba(0,0,0,0.06);
             width: 100%;
-            max-width: 500px;
-            border: 1px solid #0f3460;
+            max-width: 480px;
+            border: 1px solid rgba(0,0,0,0.06);
         }
         h1 {
             text-align: center;
-            color: #e94560;
-            font-size: 1.8rem;
+            color: #37352F;
+            font-size: 1.6rem;
             margin-bottom: 0.3rem;
+            font-weight: 700;
+            letter-spacing: -0.01em;
         }
         .subtitle {
             text-align: center;
-            color: #888;
+            color: #9B9A97;
             margin-bottom: 1.5rem;
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
         .mode-badge {
             text-align: center;
             margin-bottom: 2rem;
         }
         .mode-badge span {
-            background: #0f3460;
+            background: #F1F0ED;
             padding: 0.3rem 0.8rem;
             border-radius: 20px;
             font-size: 0.8rem;
-            color: #95b5d5;
+            color: #787774;
         }
         form {
             display: flex;
@@ -55,19 +57,20 @@
         label {
             margin-top: 1rem;
             margin-bottom: 0.5rem;
-            color: #aaa;
-            font-size: 0.95rem;
+            color: #787774;
+            font-size: 0.9rem;
             font-weight: 500;
         }
         input,
         textarea {
             padding: 0.85rem;
-            border: 1px solid #0f3460;
-            border-radius: 8px;
+            border: 1px solid #E3E2DE;
+            border-radius: 10px;
             font-size: 1rem;
             font-family: inherit;
-            background-color: #1a1a2e;
-            color: #e0e0e0;
+            background-color: #FAFAF8;
+            color: #37352F;
+            transition: border-color 0.15s, box-shadow 0.15s;
         }
         textarea {
             min-height: 84px;
@@ -76,53 +79,55 @@
         }
         input:focus,
         textarea:focus {
-            outline: 2px solid #e94560;
-            outline-offset: 2px;
-            border-color: #e94560;
+            outline: none;
+            border-color: #E8966D;
+            box-shadow: 0 0 0 3px rgba(232,150,109,0.15);
         }
         .field-status {
             margin-top: 0.5rem;
-            font-size: 0.9rem;
-            color: #d5959b;
+            font-size: 0.85rem;
+            color: #CF6D4F;
             min-height: 1.2rem;
         }
         .field-status.success {
-            color: #95d5b2;
+            color: #4B9E6F;
         }
         .agent-greeting {
             margin-top: 0.6rem;
-            color: #95b5d5;
+            color: #9B9A97;
             font-size: 0.9rem;
             min-height: 1.2rem;
         }
         small {
-            color: #666;
+            color: #B4B3AF;
             margin-top: 0.3rem;
-            font-size: 0.85rem;
+            font-size: 0.82rem;
         }
 
         button {
             margin-top: 1.5rem;
-            padding: 1rem;
-            background: linear-gradient(135deg, #e94560, #c23152);
-            color: white;
+            padding: 0.9rem;
+            background: #E8966D;
+            color: #FFFFFF;
             border: none;
-            border-radius: 8px;
+            border-radius: 10px;
             cursor: pointer;
-            font-size: 1.05rem;
+            font-size: 1rem;
             font-weight: 600;
-            transition: transform 0.1s;
+            transition: background 0.15s, transform 0.1s;
         }
         button:hover {
+            background: #D4845E;
             transform: translateY(-1px);
         }
         button:active {
             transform: translateY(0);
         }
         button:disabled {
-            opacity: 0.6;
+            opacity: 0.5;
             cursor: not-allowed;
             transform: none;
+            background: #D2C8BE;
         }
         .aux-actions {
             margin-top: 1rem;
@@ -132,44 +137,46 @@
             box-sizing: border-box;
             width: 100%;
             margin-top: 0.75rem;
-            padding: 0.9rem 1rem;
-            background: linear-gradient(135deg, #0f3460, #16213e);
-            border: 1px solid #0f3460;
-            border-radius: 8px;
-            color: #e0e0e0;
+            padding: 0.85rem 1rem;
+            background: #FAFAF8;
+            border: 1px solid #E3E2DE;
+            border-radius: 10px;
+            color: #787774;
             text-decoration: none;
             text-align: center;
-            font-size: 0.98rem;
+            font-size: 0.95rem;
             font-weight: 600;
-            transition: transform 0.1s;
+            transition: background 0.15s, transform 0.1s;
         }
         .link-button:hover {
+            background: #F1F0ED;
             transform: translateY(-1px);
         }
         .status {
             margin-top: 1.5rem;
             padding: 1rem;
-            border-radius: 8px;
+            border-radius: 10px;
             text-align: center;
             display: none;
             line-height: 1.5;
+            font-size: 0.93rem;
         }
         .status.success {
-            background: #1a3a2a;
-            border: 1px solid #2d6a4f;
-            color: #95d5b2;
+            background: #F0FAF4;
+            border: 1px solid #C3E6D1;
+            color: #2D6A4F;
             display: block;
         }
         .status.error {
-            background: #3a1a1a;
-            border: 1px solid #6a2d2d;
-            color: #d5959b;
+            background: #FDF2F2;
+            border: 1px solid #F0C4C4;
+            color: #9B2C2C;
             display: block;
         }
         .status.loading {
-            background: #1a2a3a;
-            border: 1px solid #2d4a6a;
-            color: #95b5d5;
+            background: #F5F3FF;
+            border: 1px solid #DDD6FE;
+            color: #6D5EAB;
             display: block;
             animation: pulse 1.5s ease-in-out infinite;
         }
@@ -181,9 +188,9 @@
         /* Active session banner */
         .active-banner {
             display: none;
-            background: #1a3a2a;
-            border: 1px solid #2d6a4f;
-            border-radius: 12px;
+            background: #F0FAF4;
+            border: 1px solid #C3E6D1;
+            border-radius: 14px;
             padding: 1.2rem;
             margin-bottom: 1.5rem;
             text-align: center;
@@ -196,44 +203,45 @@
             margin-bottom: 0.5rem;
         }
         .active-banner .active-label {
-            color: #95d5b2;
+            color: #2D6A4F;
             font-weight: 600;
             font-size: 1rem;
             margin-bottom: 0.3rem;
         }
         .active-banner .active-url {
-            color: #6dba8a;
-            font-size: 0.85rem;
+            color: #4B9E6F;
+            font-size: 0.82rem;
             word-break: break-all;
             margin-bottom: 0.3rem;
         }
         .active-banner .active-state {
-            color: #888;
+            color: #9B9A97;
             font-size: 0.8rem;
             margin-bottom: 0.8rem;
         }
         .active-banner .active-agents {
-            color: #95d5b2;
+            color: #2D6A4F;
             font-size: 0.85rem;
             margin-bottom: 0.6rem;
         }
         .leave-btn {
             margin-top: 0.5rem;
             padding: 0.7rem 1.5rem;
-            background: linear-gradient(135deg, #e94560, #c23152);
+            background: #EF6461;
             color: white;
             border: none;
-            border-radius: 8px;
+            border-radius: 10px;
             cursor: pointer;
-            font-size: 0.95rem;
+            font-size: 0.93rem;
             font-weight: 600;
-            transition: transform 0.1s;
+            transition: background 0.15s, transform 0.1s;
         }
         .leave-btn:hover {
+            background: #D95450;
             transform: translateY(-1px);
         }
         .leave-btn:disabled {
-            opacity: 0.6;
+            opacity: 0.5;
             cursor: not-allowed;
             transform: none;
         }
