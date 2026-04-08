@@ -319,6 +319,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   let currentAbort = null;
   let isProcessing = false;
   let lastUserTranscript = "";
+  let hasSentInitialWakeAck = false;
 
   // Multi-participant meeting mode: Injection Gate (wake mode only)
   const transcriptBuffer = []; // Accumulates all utterances (with seq numbers)
@@ -357,6 +358,8 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     model: config.stt.model,
     language: config.stt.language,
     sampleRate: config.stt.sampleRate,
+    endpointingMs: config.stt.endpointingMs,
+    utteranceEndMs: config.stt.utteranceEndMs,
     keyterms: sttExtraKeyterms,
   });
 
@@ -448,11 +451,17 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     {
       // Multi-participant mode: create entry with sequence number
       utteranceSeq += 1;
-      const entry = { seq: utteranceSeq, text: cleanedText, timestamp: new Date().toISOString() };
-
       const wakeResult = detectWakeAgent(cleanedText, agents, selectedAgentIds, defaultAgentId);
+      const entry = {
+        seq: utteranceSeq,
+        text: cleanedText,
+        timestamp: new Date().toISOString(),
+        addressed: wakeResult.detected,
+        injectToLlm: wakeResult.detected,
+      };
+
       if (!wakeResult.detected) {
-        // No wake word: add to buffer only (don't call LLM)
+        // No wake word: keep for wake re-scan/ops logs, but don't inject into LLM context.
         transcriptBuffer.push(entry);
         while (transcriptBuffer.length > TRANSCRIPT_BUFFER_MAX) transcriptBuffer.shift();
         console.log(`🔇  [会議音声・未指名] "${cleanedText.slice(0, 50)}..."`);
@@ -527,7 +536,10 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     let textToProcess = cleanedText;
     {
       // Use slice(-21, -1) to exclude the current utterance (already in buffer)
-      const contextEntries = transcriptBuffer.slice(-21, -1);
+      const contextEntries = transcriptBuffer
+        .slice(0, -1)
+        .filter((e) => e.injectToLlm !== false)
+        .slice(-20);
       const meetingContext = contextEntries
         .map(e => `[${e.timestamp}] ${e.text}`)
         .join("\n");
@@ -538,7 +550,14 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     }
 
     // Process user input
-    await processUserInput(textToProcess);
+    const forceImmediateAck = !hasSentInitialWakeAck;
+    if (forceImmediateAck) {
+      hasSentInitialWakeAck = true;
+    }
+    await processUserInput(textToProcess, {
+      forceImmediateAck,
+      ackSourceText: cleanedText,
+    });
   });
 
   stt.on("error", (err) => {
@@ -546,7 +565,12 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   });
 
   // ── Process user input: LLM → TTS ──────────────────────────────
-  async function processUserInput(userText, hasRetriedOnFallback = false) {
+  async function processUserInput(userText, options = {}) {
+    const {
+      hasRetriedOnFallback = false,
+      forceImmediateAck = false,
+      ackSourceText = userText,
+    } = options;
     isProcessing = true;
     const abort = new AbortController();
     currentAbort = abort;
@@ -721,8 +745,9 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     try {
       // #9 Immediate ack for request-like utterances
       const currentAgentConfig = agents[currentAgentId] || {};
-      if (shouldSendImmediateAck(userText) && !abort.signal.aborted) {
-        const ack = pickImmediateAck(userText, currentAgentConfig.ackVariants || config.ackVariants);
+      const ackDecisionText = String(ackSourceText ?? userText ?? "");
+      if ((forceImmediateAck || shouldSendImmediateAck(ackDecisionText)) && !abort.signal.aborted) {
+        const ack = pickImmediateAck(ackDecisionText, currentAgentConfig.ackVariants || config.ackVariants);
         turnState.isAgentSpeaking = true;
         console.log(`⚡  Immediate ack: "${ack}"`);
         await speakSentence(ack, abort.signal);
@@ -895,7 +920,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       ) {
         console.warn(`⚠️  Agent "${requestAgentId}" gateway unavailable. Falling back to "${defaultAgentId}"`);
         switchAgent(defaultAgentId);
-        await processUserInput(userText, true);
+        await processUserInput(userText, { hasRetriedOnFallback: true, ackSourceText });
         return;
       }
       console.error("❌  Pipeline error:", err.message || err.code || JSON.stringify(err));
@@ -939,13 +964,28 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
             // Push remaining unprocessed entries back to pendingQueue for next cycle
             pendingQueue.push(...pendingCopy.slice(i + 1));
             // Process this pending wake call
-            const pendingContext = transcriptBuffer.slice(-20)
+            const pendingContext = transcriptBuffer
+              .filter((e) => e.injectToLlm !== false)
+              .filter((e) => {
+                if (typeof entry.seq === "number" && typeof e.seq === "number") {
+                  return e.seq < entry.seq;
+                }
+                return e !== entry;
+              })
+              .slice(-20)
               .map(e => `[${e.timestamp}] ${e.text}`)
               .join("\n");
             const pendingPrefix = `【直近の会議の流れ】\n${pendingContext}\n\n【指名された発言】\n`;
             appendConversationEntry("user", entry.text, currentAgentId || null);
             lastUserTranscript = entry.text;
-            await processUserInput(pendingPrefix + entry.text);
+            const forceImmediateAck = !hasSentInitialWakeAck;
+            if (forceImmediateAck) {
+              hasSentInitialWakeAck = true;
+            }
+            await processUserInput(pendingPrefix + entry.text, {
+              forceImmediateAck,
+              ackSourceText: entry.text,
+            });
             break; // Process first wake only; rest are in pendingQueue for next finally cycle
           }
         }

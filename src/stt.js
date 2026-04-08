@@ -73,8 +73,8 @@ function createSTT(dgKey, options = {}) {
       channels: 1,
       smart_format: true,
       interim_results: true,
-      utterance_end_ms: Number(process.env.LISTEN_UTTERANCE_END_MS || 1800),
-      endpointing: Number(process.env.LISTEN_ENDPOINTING_MS || 700),
+      utterance_end_ms: Number(options.utteranceEndMs || process.env.LISTEN_UTTERANCE_END_MS || 1800),
+      endpointing: Number(options.endpointingMs || process.env.LISTEN_ENDPOINTING_MS || 700),
       vad_events: true,
     };
 

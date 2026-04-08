@@ -690,8 +690,17 @@ function createHandler(session, turnState, onAudio) {
       model: session.config.model,
       wakeMode: session.config.wakeMode,
     }, null, profile, _configJson);
+    const singleAgentMap = {
+      [profile.agentId]: {
+        ...profile,
+        gatewayUrl: profile.gatewayUrl,
+        gatewayToken: profile.gatewayToken,
+        voiceId: profile.voiceId,
+        model: profile.model,
+      },
+    };
     const pipeline = createPipeline(session, turnState, onAudio, config, {
-      agents: {},
+      agents: singleAgentMap,
       selectedAgentIds: [profile.agentId],
       defaultAgentId: profile.agentId,
       agentProfile: profile,

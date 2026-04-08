@@ -10,7 +10,7 @@
     "test:meet:repro": "node --test test/meet-multi-participant-repro.test.js"
   },
   "dependencies": {
-    "@deepgram/sdk": "^4.7.0",
+    "@deepgram/sdk": "4.7.0",
     "dotenv": "^17.0.0",
     "ws": "^8.18.3"
   },
