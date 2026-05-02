@@ -12,7 +12,13 @@ const LISTEN_ENDPOINTING_MS = Number(process.env.LISTEN_ENDPOINTING_MS || 400);
 const LISTEN_UTTERANCE_END_MS = Number(process.env.LISTEN_UTTERANCE_END_MS || 1200);
 const AGENT_TEMPERATURE = Number(process.env.AGENT_TEMPERATURE || 0.5);
 const AGENT_MAX_TOKENS = Number(process.env.AGENT_MAX_TOKENS || 300);
-const LLM_RESPONSE_TIMEOUT_MS = Number(process.env.LLM_RESPONSE_TIMEOUT_MS || 0);
+// First-audio timeout: aborts the LLM turn if no chunk arrives in this window.
+// Pipeline clears the timer on the first streamed chunk (firstChunkSeen),
+// so this is effectively a "first audible chunk" deadline. With true LLM
+// streaming, 12s comfortably covers slow Gateway/tool work while still
+// catching genuine hangs that previously caused silent freezes.
+// Set to 0 to disable.
+const LLM_RESPONSE_TIMEOUT_MS = Number(process.env.LLM_RESPONSE_TIMEOUT_MS || 12_000);
 const ECHO_LOOP_COOLDOWN_MS = Number(process.env.ECHO_LOOP_COOLDOWN_MS || 300);
 
 const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN || "";

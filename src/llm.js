@@ -70,43 +70,32 @@ async function* streamChat(messages, options = {}) {
     throw new Error('OpenClaw Gateway is required. Set OPENCLAW_GATEWAY_URL and OPENCLAW_GATEWAY_TOKEN.');
   }
 
-  // First attempt
-  const attempt1 = collectChunks(streamOpenClaw(messages, options));
-  const result1 = await attempt1;
-
-  // Empty response auto-retry (max 1 retry)
-  if (result1.text.length === 0 && !options.signal?.aborted) {
-    console.warn(`⚠️  [llm] Empty response on attempt 1 (session=${options.sessionUser}) — retrying...`);
-    const attempt2 = collectChunks(streamOpenClaw(messages, options));
-    const result2 = await attempt2;
-    if (result2.text.length > 0) {
-      console.log(`✅  [llm] Retry succeeded (${result2.text.length} chars)`);
-    } else {
-      console.warn(`⚠️  [llm] Empty response on attempt 2 — giving up`);
-    }
-    yield* result2.chunks;
-    return;
+  // First attempt: stream chunks directly to caller for real-time TTS.
+  // Previously this was buffered via collectChunks(), which delayed first audio
+  // by the full Gateway/tool round-trip. Yielding directly restores the
+  // sentence-level streaming the rest of the pipeline expects.
+  let chunkCount = 0;
+  for await (const chunk of streamOpenClaw(messages, options)) {
+    chunkCount += 1;
+    yield chunk;
   }
 
-  yield* result1.chunks;
-}
+  if (chunkCount > 0 || options.signal?.aborted) return;
 
-/**
- * Collect all chunks from an async generator into an array + concatenated text.
- * Returns both for diagnostic logging and replay.
- */
-async function collectChunks(source) {
-  const chunks = [];
-  let text = "";
-  for await (const chunk of source) {
-    chunks.push(chunk);
-    text += chunk;
+  // Empty response auto-retry (max 1 retry) — only triggers when attempt 1
+  // produced zero chunks. We cannot retry mid-stream because partial chunks
+  // have already been yielded to the caller.
+  console.warn(`⚠️  [llm] Empty response on attempt 1 (session=${options.sessionUser}) — retrying...`);
+  let retryChunks = 0;
+  for await (const chunk of streamOpenClaw(messages, options)) {
+    retryChunks += 1;
+    yield chunk;
   }
-  // Return chunks as an async generator for yield* compatibility
-  return {
-    chunks: (async function* () { for (const c of chunks) yield c; })(),
-    text
-  };
+  if (retryChunks > 0) {
+    console.log(`✅  [llm] Retry succeeded (${retryChunks} chunks)`);
+  } else {
+    console.warn(`⚠️  [llm] Empty response on attempt 2 — giving up`);
+  }
 }
 
 // ── OpenClaw Gateway backend ────────────────────────────────────────

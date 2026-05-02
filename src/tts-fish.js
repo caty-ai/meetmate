@@ -16,9 +16,54 @@ const MAX_AUDIO_DURATION_MS = 15_000;
 // If no new data arrives for 5 seconds, consider the stream stalled
 const STALL_TIMEOUT_MS = 5_000;
 
+// Retry: 429 / 5xx pre-audio failures only. Once a 200 stream starts emitting
+// audio, _synthesizeOnce never throws with a statusCode tag, so partial audio
+// is never duplicated by retries. Honors Retry-After (numeric seconds), but
+// caps it so a bogus value doesn't stall live audio.
+function _resolveRetryMax(raw) {
+  // Guards against NaN / negative / non-integer env input. A NaN here would
+  // make `attempt >= RETRY_MAX` always false → unbounded retry loop.
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return 2;
+  return Math.floor(n);
+}
+const RETRY_MAX = process.env.FISH_AUDIO_RETRY_MAX != null
+  ? _resolveRetryMax(process.env.FISH_AUDIO_RETRY_MAX)
+  : 2;
+const RETRY_BASE_MS = 100;
+const RETRY_AFTER_MAX_MS = 1500;
+
+function parseRetryAfter(raw) {
+  if (typeof raw !== "string") return null;
+  const seconds = Number(raw.trim());
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+  return null;
+}
+
+function abortableSleep(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error("Fish Audio retry sleep aborted"));
+      return;
+    }
+    const timer = setTimeout(() => { cleanup(); resolve(); }, ms);
+    function onAbort() {
+      cleanup();
+      reject(new Error("Fish Audio retry sleep aborted"));
+    }
+    function cleanup() {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 /**
  * Synthesize text to PCM audio via Fish Audio REST API.
- * Returns audio chunks via callback (streaming).
+ * Returns audio chunks via callback (streaming). Retries on 429 / 5xx
+ * with exponential backoff (RETRY_MAX attempts, 100ms then 400ms). Retries
+ * only fire before any audio bytes have been emitted to onAudio.
  *
  * @param {string} text - Text to synthesize
  * @param {object} options
@@ -31,6 +76,28 @@ const STALL_TIMEOUT_MS = 5_000;
  * @returns {Promise<void>} Resolves when synthesis complete
  */
 async function synthesize(text, options = {}) {
+  let attempt = 0;
+  while (true) {
+    try {
+      await _synthesizeOnce(text, options);
+      return;
+    } catch (err) {
+      if (options.signal?.aborted) throw err;
+      const sc = err.statusCode;
+      const retryable = sc === 429 || (sc >= 500 && sc <= 599);
+      if (!retryable || attempt >= RETRY_MAX) throw err;
+      attempt += 1;
+      const exponential = RETRY_BASE_MS * Math.pow(4, attempt - 1); // 100, 400
+      const delay = err.retryAfterMs != null
+        ? Math.min(err.retryAfterMs, RETRY_AFTER_MAX_MS)
+        : exponential;
+      console.warn(`⚠️  Fish Audio retry ${attempt}/${RETRY_MAX} in ${delay}ms (status=${sc})`);
+      await abortableSleep(delay, options.signal);
+    }
+  }
+}
+
+async function _synthesizeOnce(text, options = {}) {
   const apiKey = options.apiKey;
   if (!apiKey) throw new Error("FISH_AUDIO_API_KEY is required for TTS");
   if (!text || !text.trim()) return;
@@ -107,7 +174,11 @@ async function synthesize(text, options = {}) {
           let errBody = "";
           res.on("data", (c) => (errBody += c));
           res.on("end", () => {
-            finish(new Error(`Fish Audio API error (${res.statusCode}): ${errBody.slice(0, 300)}`));
+            const error = new Error(`Fish Audio API error (${res.statusCode}): ${errBody.slice(0, 300)}`);
+            error.statusCode = res.statusCode;
+            const retryAfterMs = parseRetryAfter(res.headers["retry-after"]);
+            if (retryAfterMs != null) error.retryAfterMs = retryAfterMs;
+            finish(error);
           });
           return;
         }
