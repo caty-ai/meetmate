@@ -275,25 +275,31 @@ const IMMEDIATE_ACK_PATTERNS = [
   /can you|please|check|find|implement|do this|call|book|summarize/i,
 ];
 
+// Fixed lines below: emotion tags removed for S2-Pro per official guidance
+// ("over-tagging competes with itself"). Short ack/progress lines stay plain
+// — the model already produces a calm tone when no tag is present, and the
+// underlying voice clone provides Caty's warmth. Tags are reserved for the
+// handful of moments where a specific shift genuinely matters (apology in
+// fallback, warmth at farewell).
 const DEFAULT_ACK_VARIANTS = [
-  "(soft tone) 了解、すぐ取りかかるね。",
-  "(soft tone) 了解です。ちょっと待ってね。",
-  "(soft tone) はい、今確認するね。",
+  "了解、すぐ取りかかるね。",
+  "了解です。ちょっと待ってね。",
+  "はい、今確認するね。",
 ];
 
 const PROGRESS_PING_VARIANTS = [
-  "(soft tone) いま処理中だよ、もう少し待ってね。",
-  "(soft tone) 進めてるよ、あと少しで返せそう。",
-  "(soft tone) ごめん、もう少しだけ待ってね。",
+  "いま処理中だよ、もう少し待ってね。",
+  "進めてるよ、あと少しで返せそう。",
+  "ごめん、もう少しだけ待ってね。",
 ];
 
 // Spoken first when the LLM never returns a chunk within the timeout budget.
 // Intentionally does NOT promise Slack — that would be a lie if the handoff
 // itself fails. The real Slack-confirmation line is spoken later, only on
 // success of requestTimeoutHandoff().
-const LLM_TIMEOUT_FALLBACK_VOICE = "(calm) ごめん、ちょっと時間がかかってるね。少し待ってもらえるかな？";
-const HANDOFF_SUCCESS_VOICE = "(soft tone) 続きはSlackに共有しておくね。";
-const HANDOFF_FAILURE_VOICE = "(soft tone) ごめん、うまく繋げられなかったみたい。あとでもう一回試してね。";
+const LLM_TIMEOUT_FALLBACK_VOICE = "[empathetic, unhurried] ごめん、ちょっと時間がかかってるね。少し待ってもらえるかな？";
+const HANDOFF_SUCCESS_VOICE = "続きはSlackに共有しておくね。";
+const HANDOFF_FAILURE_VOICE = "ごめん、うまく繋げられなかったみたい。あとでもう一回試してね。";
 
 function shouldSendImmediateAck(text) {
   // Always ack on any addressed turn so the user never hears silence after
@@ -502,8 +508,9 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       appendConversationEntry("user", cleanedText, currentAgentId || null);
 
       // Speak farewell and emit exit event
-      const farewellVoice = config.exitFarewell || "(happy) 了解です！退出しますね。お疲れさまでした！";
-      const farewellLog = farewellVoice.replace(/^\([^)]*\)\s*/, "");
+      const farewellVoice = config.exitFarewell || "[warm] 了解です！退出しますね。お疲れさまでした！";
+      // Strip leading emotion tag (S1 paren or S2 bracket) for clean console log
+      const farewellLog = farewellVoice.replace(/^[\[(][^\])]*[\])]\s*/, "");
       turnState.isAgentSpeaking = true;
       try {
         await speakSentence(farewellVoice, null);
