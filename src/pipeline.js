@@ -41,11 +41,66 @@ const ENABLE_PROGRESS_GUARD = String(process.env.ENABLE_PROGRESS_GUARD || "true"
 
 // Multi-participant meeting mode: Injection Gate
 const TRANSCRIPT_BUFFER_MAX = Number(process.env.TRANSCRIPT_BUFFER_MAX || 50);
+const MEETING_CONTEXT_RAW_UTTERANCES = positiveInt(process.env.MEETING_CONTEXT_RAW_UTTERANCES, 10);
+const MEETING_CONTEXT_RAW_CHARS = positiveInt(process.env.MEETING_CONTEXT_RAW_CHARS, 1800);
+// Master kill-switch for unaddressed-utterance injection. Default OFF — when
+// false, only the existing addressed-only context flows into LLM prompts
+// (current main behavior preserved). Set to "true" to enable T3a's full
+// unaddressed-context experiment; effective only in wake/group meetings.
+const ENABLE_MEETING_CONTEXT_INJECTION = String(process.env.ENABLE_MEETING_CONTEXT_INJECTION || "false").toLowerCase() === "true";
 // Cancel word detection: strict boundary match to avoid false positives
 // (e.g. "ストップウォッチ", "キャンセルポリシー" should NOT trigger)
 const CANCEL_RE = /^[\s\u3000]*(キャンセル|やめて|もういい|中止|ストップ|stop|cancel)[\s\u3000。！!]*$/i;
 function isCancelWord(text) {
   return CANCEL_RE.test(text.trim());
+}
+
+function positiveInt(value, fallback) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
+}
+
+function buildMeetingContextBlock(transcriptBuffer, currentEntry, options = {}) {
+  const maxUtterances = positiveInt(options.maxUtterances, MEETING_CONTEXT_RAW_UTTERANCES);
+  const maxChars = positiveInt(options.maxChars, MEETING_CONTEXT_RAW_CHARS);
+  const includeUnaddressed = options.includeUnaddressed === true;
+  const beforeSeq = typeof currentEntry?.seq === "number" ? currentEntry.seq : null;
+
+  const candidates = transcriptBuffer
+    .filter((entry) => {
+      if (!entry || entry === currentEntry) return false;
+      if (!includeUnaddressed && entry.injectToLlm === false) return false;
+      if (beforeSeq !== null && typeof entry.seq === "number") return entry.seq < beforeSeq;
+      return true;
+    })
+    .slice(-maxUtterances);
+
+  const lines = [];
+  let usedChars = 0;
+  for (let i = candidates.length - 1; i >= 0; i -= 1) {
+    const text = String(candidates[i].text || "").trim();
+    if (!text) continue;
+    const line = `[${candidates[i].timestamp || "unknown-time"}] ${text}`;
+    const separatorChars = lines.length > 0 ? 1 : 0;
+    if (usedChars + separatorChars + line.length <= maxChars) {
+      lines.unshift(line);
+      usedChars += separatorChars + line.length;
+      continue;
+    }
+    if (lines.length === 0) {
+      lines.unshift(maxChars <= 3 ? line.slice(0, maxChars) : `${line.slice(0, maxChars - 3)}...`);
+    }
+    break;
+  }
+
+  return lines.join("\n");
+}
+
+function buildMeetingContextPrompt(transcriptBuffer, currentEntry, addressedText, options = {}) {
+  const meetingContext = buildMeetingContextBlock(transcriptBuffer, currentEntry, options);
+  return meetingContext.length > 0
+    ? `【直近の会議の流れ】\n${meetingContext}\n\n【指名された発言】\n${addressedText}`
+    : addressedText;
 }
 
 // Wake word detection: only respond when addressed
@@ -349,6 +404,11 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   const pendingQueue = []; // Utterances that arrive while Gate is CLOSED
   let gateState = "OPEN"; // "OPEN" = accepting input, "CLOSED" = processing
   let utteranceSeq = 0; // Monotonic sequence counter for ordering
+  const meetingContextOptions = {
+    includeUnaddressed:
+      ENABLE_MEETING_CONTEXT_INJECTION &&
+      (session?.config?.wakeMode === "wake" || config?.wakeMode === "wake"),
+  };
   // Share gateState with transport layer (echo gate bypass for cancel detection)
   turnState.gateState = gateState;
 
@@ -470,6 +530,8 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     // Standalone cancel disabled — cancel requires wake word prefix
     // (e.g. "{agentName}、ストップ"). Handled in wake+cancel block below.
 
+    let currentWakeEntry = null;
+
     // Wake word detection
     {
       // Multi-participant mode: create entry with sequence number
@@ -496,6 +558,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       if (wakeResult.agentId && wakeResult.agentId !== currentAgentId) {
         switchAgent(wakeResult.agentId);
       }
+      currentWakeEntry = entry;
 
       // Injection Gate logic
       if (gateState === "OPEN") {
@@ -556,21 +619,13 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     }
 
     // Build user text with meeting context injection
-    let textToProcess = cleanedText;
-    {
-      // Use slice(-21, -1) to exclude the current utterance (already in buffer)
-      const contextEntries = transcriptBuffer
-        .slice(0, -1)
-        .filter((e) => e.injectToLlm !== false)
-        .slice(-20);
-      const meetingContext = contextEntries
-        .map(e => `[${e.timestamp}] ${e.text}`)
-        .join("\n");
-      textToProcess = meetingContext.length > 0
-        ? `【直近の会議の流れ】\n${meetingContext}\n\n【指名された発言】\n${cleanedText}`
-        : cleanedText;
-      console.log(`📋  Injected meeting context (${transcriptBuffer.length} entries)`);
-    }
+    const textToProcess = buildMeetingContextPrompt(
+      transcriptBuffer,
+      currentWakeEntry,
+      cleanedText,
+      meetingContextOptions
+    );
+    console.log(`📋  Injected meeting context (${transcriptBuffer.length} buffered entries)`);
 
     // Process user input
     const forceImmediateAck = !hasSentInitialWakeAck;
@@ -1024,25 +1079,19 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
             // Push remaining unprocessed entries back to pendingQueue for next cycle
             pendingQueue.push(...pendingCopy.slice(i + 1));
             // Process this pending wake call
-            const pendingContext = transcriptBuffer
-              .filter((e) => e.injectToLlm !== false)
-              .filter((e) => {
-                if (typeof entry.seq === "number" && typeof e.seq === "number") {
-                  return e.seq < entry.seq;
-                }
-                return e !== entry;
-              })
-              .slice(-20)
-              .map(e => `[${e.timestamp}] ${e.text}`)
-              .join("\n");
-            const pendingPrefix = `【直近の会議の流れ】\n${pendingContext}\n\n【指名された発言】\n`;
+            const pendingText = buildMeetingContextPrompt(
+              transcriptBuffer,
+              entry,
+              entry.text,
+              meetingContextOptions
+            );
             appendConversationEntry("user", entry.text, currentAgentId || null);
             lastUserTranscript = entry.text;
             const forceImmediateAck = !hasSentInitialWakeAck;
             if (forceImmediateAck) {
               hasSentInitialWakeAck = true;
             }
-            await processUserInput(pendingPrefix + entry.text, {
+            await processUserInput(pendingText, {
               forceImmediateAck,
               ackSourceText: entry.text,
             });
@@ -1177,4 +1226,10 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   };
 }
 
-module.exports = { createPipeline };
+module.exports = {
+  createPipeline,
+  _test: {
+    buildMeetingContextBlock,
+    buildMeetingContextPrompt,
+  },
+};
