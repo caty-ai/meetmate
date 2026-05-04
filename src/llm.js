@@ -8,13 +8,14 @@ const { filterSilentRepliesStream } = require("./speech-policy");
 // Voice-specific system prompt builder (appended to OpenClaw's SOUL.md)
 // emotionTags: boolean — include emotion tag instructions (default true)
 //
-// Tag syntax: Fish Audio S2-Pro uses [bracket] + natural language (15,000+
-// free-form tags). The S1 (parenthesis) syntax is silently ignored by S2-Pro,
-// so all tags below are S2-style. Official guidance: "Start simple, then layer.
-// Over-tagging competes with itself" — keep it sparse, not on every sentence.
+// Tag syntax: Fish Audio S2-Pro uses [bracket] + natural language tags. Without
+// any tag the model's prosody is unstable (live testing showed sudden volume
+// jumps and voice-quality drift), so we *always* anchor every utterance with
+// at least one tag. [soft voice] is the default to keep Caty calm and gentle;
+// other tags are reserved for moments that call for them.
 function buildVoiceAddendum({ emotionTags = true } = {}) {
   const emotionLine = emotionTags
-    ? "- 必要な時だけ感情タグを使う。多用しない（1発話で多くても1個、ない方が自然な時はつけない）。使えるタグ: [soft voice], [warm], [friendly, warm], [empathetic, unhurried], [thoughtful]\n"
+    ? "- すべての発話の先頭に必ず感情タグを1個入れる（タグなしだと声が暴走するため、スタイル安定化のアンカーとして使う）。使えるタグ: [soft voice]（デフォルト・優しい声）, [warm]（温かみ）, [friendly, warm]（親しみ＋温かみ）, [empathetic, unhurried]（謝罪・落ち着き）, [thoughtful]（考え深く）。迷ったら [soft voice]。\n"
     : "";
 
   return `あなたは音声通話中です。

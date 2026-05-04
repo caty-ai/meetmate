@@ -67,7 +67,7 @@ function warmUpGatewaySession(sessionId, config, briefing = null) {
               "- 1〜2文で簡潔に。長くならないこと",
               "- 自然な敬語の話し言葉にする",
               "- ブリーフィングの内容を要約・整形する（そのまま読まない）",
-              "- 必要な時だけ感情タグを使う（多用しない）。使えるタグ: [soft voice], [warm], [friendly, warm], [empathetic, unhurried], [thoughtful]",
+              "- 先頭に感情タグを必ず1個入れる（スタイル安定化のため）。使えるタグ: [soft voice], [warm], [friendly, warm], [empathetic, unhurried], [thoughtful]。迷ったら [soft voice]。",
               "- JSONのみ出力。説明やマークダウンは不要",
             ].join("\n"),
           },

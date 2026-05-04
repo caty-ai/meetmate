@@ -275,22 +275,22 @@ const IMMEDIATE_ACK_PATTERNS = [
   /can you|please|check|find|implement|do this|call|book|summarize/i,
 ];
 
-// Fixed lines below: emotion tags removed for S2-Pro per official guidance
-// ("over-tagging competes with itself"). Short ack/progress lines stay plain
-// — the model already produces a calm tone when no tag is present, and the
-// underlying voice clone provides Caty's warmth. Tags are reserved for the
-// handful of moments where a specific shift genuinely matters (apology in
-// fallback, warmth at farewell).
+// Fixed lines below: every line is anchored with an S2-Pro emotion tag.
+// Tagless input causes S2-Pro to drift (sudden volume / pitch / voice quality
+// changes), so we use [soft voice] as the default anchor across ack / progress
+// / handoff. Two moments use a different tag because the moment genuinely
+// calls for one: timeout fallback (apology) → [empathetic, unhurried],
+// exit farewell → [warm].
 const DEFAULT_ACK_VARIANTS = [
-  "了解、すぐ取りかかるね。",
-  "了解です。ちょっと待ってね。",
-  "はい、今確認するね。",
+  "[soft voice] 了解、すぐ取りかかるね。",
+  "[soft voice] 了解です。ちょっと待ってね。",
+  "[soft voice] はい、今確認するね。",
 ];
 
 const PROGRESS_PING_VARIANTS = [
-  "いま処理中だよ、もう少し待ってね。",
-  "進めてるよ、あと少しで返せそう。",
-  "ごめん、もう少しだけ待ってね。",
+  "[soft voice] いま処理中だよ、もう少し待ってね。",
+  "[soft voice] 進めてるよ、あと少しで返せそう。",
+  "[soft voice] ごめん、もう少しだけ待ってね。",
 ];
 
 // Spoken first when the LLM never returns a chunk within the timeout budget.
@@ -298,8 +298,8 @@ const PROGRESS_PING_VARIANTS = [
 // itself fails. The real Slack-confirmation line is spoken later, only on
 // success of requestTimeoutHandoff().
 const LLM_TIMEOUT_FALLBACK_VOICE = "[empathetic, unhurried] ごめん、ちょっと時間がかかってるね。少し待ってもらえるかな？";
-const HANDOFF_SUCCESS_VOICE = "続きはSlackに共有しておくね。";
-const HANDOFF_FAILURE_VOICE = "ごめん、うまく繋げられなかったみたい。あとでもう一回試してね。";
+const HANDOFF_SUCCESS_VOICE = "[soft voice] 続きはSlackに共有しておくね。";
+const HANDOFF_FAILURE_VOICE = "[soft voice] ごめん、うまく繋げられなかったみたい。あとでもう一回試してね。";
 
 function shouldSendImmediateAck(text) {
   // Always ack on any addressed turn so the user never hears silence after
