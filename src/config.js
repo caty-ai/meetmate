@@ -14,11 +14,11 @@ const AGENT_TEMPERATURE = Number(process.env.AGENT_TEMPERATURE || 0.5);
 const AGENT_MAX_TOKENS = Number(process.env.AGENT_MAX_TOKENS || 300);
 // First-audio timeout: aborts the LLM turn if no chunk arrives in this window.
 // Pipeline clears the timer on the first streamed chunk (firstChunkSeen),
-// so this is effectively a "first audible chunk" deadline. With true LLM
-// streaming, 12s comfortably covers slow Gateway/tool work while still
-// catching genuine hangs that previously caused silent freezes.
-// Set to 0 to disable.
-const LLM_RESPONSE_TIMEOUT_MS = Number(process.env.LLM_RESPONSE_TIMEOUT_MS || 12_000);
+// so this is effectively a "first audible chunk" deadline. The budget covers
+// the always-ack + up to 3 progress pings (~30s) plus buffer, so timeout
+// fires only on genuine Gateway/tool hangs rather than legitimately slow
+// turns. Set to 0 to disable.
+const LLM_RESPONSE_TIMEOUT_MS = Number(process.env.LLM_RESPONSE_TIMEOUT_MS || 35_000);
 const ECHO_LOOP_COOLDOWN_MS = Number(process.env.ECHO_LOOP_COOLDOWN_MS || 300);
 
 const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN || "";

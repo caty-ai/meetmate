@@ -887,6 +887,11 @@ const server = http.createServer(async (req, res) => {
         wakeMode: session.config.wakeMode,
         exitDetection: conversationMode !== "group",
       }, null, null, _configForPort);
+      // pipeline.js builds runtime sessionUser as `meet-${sessionId}-${agentId}`,
+      // so the warm-up key must include agentId to actually warm Caty's session
+      // (matches the fix in src/transport-meet/meet-routes.js).
+      const warmupAgentId = _startupAgentProfile?.agentId || "default";
+      const warmupSessionKey = `meet-${sessionId}-${warmupAgentId}`;
       if (!_firstWarmupDone) {
         // First warm-up: await with configurable timeout to prevent initial race condition
         _firstWarmupDone = true;
@@ -894,7 +899,7 @@ const server = http.createServer(async (req, res) => {
         console.log(`🔥  First warm-up (awaiting up to ${firstWarmupRaceMs / 1000}s)...`);
         try {
           const warmupResult = await Promise.race([
-            warmUpGatewaySession(`meet-${sessionId}`, warmupConfig, briefing),
+            warmUpGatewaySession(warmupSessionKey, warmupConfig, briefing),
             new Promise((_, reject) => setTimeout(() => reject(new Error(`warmup timeout ${firstWarmupRaceMs}ms`)), firstWarmupRaceMs)),
           ]);
           console.log(`✅  First warm-up completed: ${warmupResult.status}`);
@@ -902,7 +907,7 @@ const server = http.createServer(async (req, res) => {
           console.warn(`⚠️  First warm-up failed (non-blocking): ${e.message}`);
         }
       } else {
-        warmUpGatewaySession(`meet-${sessionId}`, warmupConfig, briefing);
+        warmUpGatewaySession(warmupSessionKey, warmupConfig, briefing);
       }
 
       const wsWithSession = buildWsUrlWithSession(wsUrl, sessionId);

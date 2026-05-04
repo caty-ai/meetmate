@@ -1096,7 +1096,11 @@ async function handleHttp(req, res) {
         wakeMode: session.config.wakeMode,
         exitDetection: conversationMode !== "group",
       }, null, profile, _configJson);
-      warmUpGatewaySession(`meet-${sessionId}`, warmupConfig, briefing);
+      // Must include the agentId — pipeline.js builds sessionUser as
+      // `meet-${sessionId}-${agentId}` (see switchAgent in pipeline.js).
+      // Warming the bare `meet-${sessionId}` key left Caty's actual session
+      // cold and contributed to first-turn latency / timeout fallbacks.
+      warmUpGatewaySession(`meet-${sessionId}-${profile.agentId}`, warmupConfig, briefing);
 
       const wsWithSession = buildWsUrlWithSession(wsUrl, sessionId);
       console.log("📹  Meeting URL:", meetingUrl);

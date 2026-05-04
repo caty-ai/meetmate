@@ -22,6 +22,11 @@ const FIRST_CHUNK_MIN_CHARS = Number(process.env.FIRST_CHUNK_MIN_CHARS || 12);
 // Inter-segment pauses
 const SENTENCE_PAUSE_MS = Number(process.env.SENTENCE_PAUSE_MS || 500); // full sentence boundary
 const CLAUSE_PAUSE_MS = Number(process.env.CLAUSE_PAUSE_MS || 150);     // clause boundary (、)
+// Gap between independent TTS utterances (ack vs progress-ping vs LLM reply
+// vs followup). Always-ack + progress pings made it possible for two speak
+// operations to overlap into onAudio; this gap plus the queue in
+// speakSentence keeps utterances cleanly separated.
+const TTS_GAP_MS = Number(process.env.TTS_GAP_MS || 250);
 
 // UX controls
 const POST_UTTERANCE_BUFFER_MS = Number(process.env.POST_UTTERANCE_BUFFER_MS || 500);
@@ -226,13 +231,24 @@ const PROGRESS_PING_VARIANTS = [
   "(soft tone) ごめん、もう少しだけ待ってね。",
 ];
 
-const LLM_TIMEOUT_FALLBACK_VOICE = "(calm) ちょっと時間がかかってるから、詳細はあとでSlackで共有するね。";
+// Spoken first when the LLM never returns a chunk within the timeout budget.
+// Intentionally does NOT promise Slack — that would be a lie if the handoff
+// itself fails. The real Slack-confirmation line is spoken later, only on
+// success of requestTimeoutHandoff().
+const LLM_TIMEOUT_FALLBACK_VOICE = "(calm) ごめん、ちょっと時間がかかってるね。少し待ってもらえるかな？";
+const HANDOFF_SUCCESS_VOICE = "(soft tone) 続きはSlackに共有しておくね。";
+const HANDOFF_FAILURE_VOICE = "(soft tone) ごめん、うまく繋げられなかったみたい。あとでもう一回試してね。";
 
 function shouldSendImmediateAck(text) {
+  // Always ack on any addressed turn so the user never hears silence after
+  // calling Caty. The caller already gates this to addressed (post-wake)
+  // turns, and exit/cancel turns short-circuit before reaching the ack path.
+  // Pattern matching is preserved internally so pickImmediateAck() can pick
+  // a task-flavored variant for request-like utterances.
   if (!ENABLE_IMMEDIATE_ACK) return false;
   const t = String(text || "").trim();
   if (!t) return false;
-  return IMMEDIATE_ACK_PATTERNS.some((re) => re.test(t));
+  return true;
 }
 
 function pickImmediateAck(text, agentAckVariants = null) {
@@ -268,6 +284,12 @@ function pickProgressPing(index, customVariants = null) {
 function createPipeline(session, turnState, onAudio, config, options = {}) {
   const { EventEmitter } = require("events");
   const emitter = new EventEmitter();
+
+  // TTS serialization: every speakSentence call chains onto this lock so
+  // ack / progress-ping / LLM stream chunks / fallback never overlap into
+  // onAudio. ttsHasSpoken skips the gap before the very first utterance.
+  let ttsLock = Promise.resolve();
+  let ttsHasSpoken = false;
 
   const dgKey = config.dgKey;
   const fishKey = config.fishKey;
@@ -606,81 +628,97 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       appendConversationEntry("assistant", text, currentAgentId || null);
     };
 
-    const fireAndForgetTimeoutHandoff = (transcript) => {
+    // Returns Promise<boolean>: true if Gateway accepted the handoff (HTTP 2xx/3xx),
+    // false on HTTP error / network error / timeout. Caller uses this to decide
+    // whether to speak the "shared to Slack" line — we no longer claim Slack
+    // before the handoff actually succeeds.
+    const requestTimeoutHandoff = (transcript) => {
       const trimmed = String(transcript || "").trim();
       if (!trimmed) {
         console.log("⏭️  Timeout handoff skipped (empty transcript)");
-        return;
+        return Promise.resolve(false);
       }
 
       if (!agentState.openclawUrl || !agentState.openclawToken) {
         console.log("⏭️  Timeout handoff skipped (OpenClaw Gateway unavailable)");
-        return;
+        return Promise.resolve(false);
       }
 
-      try {
-        const gatewayUrl = new URL(agentState.openclawUrl);
-        const isHttps = gatewayUrl.protocol === "https:";
-        const transport = isHttps ? https : http;
-        const handoffPrompt = [
-          "ユーザーの音声通話中に依頼処理がタイムアウトしました。",
-          "必ず sessions_spawn を使って作業を委譲し、結果をSlackに投稿してください。",
-          "まずユーザー依頼を短く要約し、実行計画を立ててからサブエージェントを起動してください。",
-          "",
-          `ユーザー依頼: ${trimmed}`,
-        ].join("\n");
+      return new Promise((resolve) => {
+        let settled = false;
+        const finish = (success) => {
+          if (settled) return;
+          settled = true;
+          resolve(success);
+        };
 
-        const body = JSON.stringify({
-          // Do not hardcode a foundation model; let Gateway choose.
-          model: agentState.model || config.llm.model || "openclaw",
-          stream: false,
-          temperature: 0.2,
-          max_tokens: 700,
-          messages: [
+        try {
+          const gatewayUrl = new URL(agentState.openclawUrl);
+          const isHttps = gatewayUrl.protocol === "https:";
+          const transport = isHttps ? https : http;
+          const handoffPrompt = [
+            "ユーザーの音声通話中に依頼処理がタイムアウトしました。",
+            "必ず sessions_spawn を使って作業を委譲し、結果をSlackに投稿してください。",
+            "まずユーザー依頼を短く要約し、実行計画を立ててからサブエージェントを起動してください。",
+            "",
+            `ユーザー依頼: ${trimmed}`,
+          ].join("\n");
+
+          const body = JSON.stringify({
+            // Do not hardcode a foundation model; let Gateway choose.
+            model: agentState.model || config.llm.model || "openclaw",
+            stream: false,
+            temperature: 0.2,
+            max_tokens: 700,
+            messages: [
+              {
+                role: "system",
+                content: "あなたは音声タイムアウト時の自動委譲ハンドラーです。結果は必ずSlackに共有してください。",
+              },
+              { role: "user", content: handoffPrompt },
+            ],
+            user: agentState.sessionUser,
+          });
+
+          const req = transport.request(
             {
-              role: "system",
-              content: "あなたは音声タイムアウト時の自動委譲ハンドラーです。結果は必ずSlackに共有してください。",
+              hostname: gatewayUrl.hostname,
+              port: gatewayUrl.port || (isHttps ? 443 : 80),
+              path: "/v1/chat/completions",
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${agentState.openclawToken}`,
+                "Content-Type": "application/json",
+                "Content-Length": Buffer.byteLength(body),
+              },
             },
-            { role: "user", content: handoffPrompt },
-          ],
-          user: agentState.sessionUser,
-        });
-
-        const req = transport.request(
-          {
-            hostname: gatewayUrl.hostname,
-            port: gatewayUrl.port || (isHttps ? 443 : 80),
-            path: "/v1/chat/completions",
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${agentState.openclawToken}`,
-              "Content-Type": "application/json",
-              "Content-Length": Buffer.byteLength(body),
-            },
-          },
-          (res) => {
-            res.resume();
-            if (res.statusCode >= 400) {
-              console.error(`❌  Timeout handoff failed: HTTP ${res.statusCode}`);
+            (res) => {
+              res.resume();
+              const ok = res.statusCode >= 200 && res.statusCode < 400;
+              if (!ok) console.error(`❌  Timeout handoff failed: HTTP ${res.statusCode}`);
+              finish(ok);
             }
-          }
-        );
+          );
 
-        req.on("error", (err) => {
-          console.error("❌  Timeout handoff request error:", err.message);
-        });
+          req.on("error", (err) => {
+            console.error("❌  Timeout handoff request error:", err.message);
+            finish(false);
+          });
 
-        req.setTimeout(5_000, () => {
-          req.destroy(new Error("Timeout handoff request timeout"));
-        });
+          req.setTimeout(5_000, () => {
+            req.destroy(new Error("Timeout handoff request timeout"));
+            finish(false);
+          });
 
-        req.write(body);
-        req.end();
+          req.write(body);
+          req.end();
 
-        console.log(`🔄  Timeout handoff spawned for: "${trimmed.slice(0, 80)}${trimmed.length > 80 ? "…" : ""}"`);
-      } catch (err) {
-        console.error("❌  Timeout handoff setup error:", err.message);
-      }
+          console.log(`🔄  Timeout handoff spawned for: "${trimmed.slice(0, 80)}${trimmed.length > 80 ? "…" : ""}"`);
+        } catch (err) {
+          console.error("❌  Timeout handoff setup error:", err.message);
+          finish(false);
+        }
+      });
     };
 
     const maybeSpeakLlmTimeoutFallback = async () => {
@@ -690,15 +728,34 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       stopProgressTimer();
       turnState.isAgentSpeaking = true;
       const timeoutMsg = config.timeoutFallback || LLM_TIMEOUT_FALLBACK_VOICE;
-      await speakSentence(timeoutMsg, null);
+      try {
+        await speakSentence(timeoutMsg, null);
+      } catch { /* ignore TTS error during fallback */ }
       appendAssistantLog(timeoutMsg);
+
+      // Release barge-in window so the user can cancel/redirect during the
+      // up-to-5s handoff await. Without this, Caty appears deaf for ~8-9s
+      // between "ちょっと時間がかかってるね" and the Slack confirmation.
       turnState.isAgentSpeaking = false;
+      turnState.inputCooldownUntil = Date.now() + (config.echoCooldownMs || 300);
 
       if (!handoffAttempted) {
         const transcriptForHandoff = String(lastUserTranscript || "").trim();
         if (transcriptForHandoff) {
           handoffAttempted = true;
-          fireAndForgetTimeoutHandoff(transcriptForHandoff);
+          // Block the spoken Slack confirmation on actual handoff success
+          // so we never tell the user we shared something we did not.
+          const success = await requestTimeoutHandoff(transcriptForHandoff);
+          // If user already barged-in or aborted during the handoff await,
+          // skip the followup line — they have moved on.
+          if (abort.signal.aborted) return;
+          turnState.isAgentSpeaking = true;
+          const followup = success ? HANDOFF_SUCCESS_VOICE : HANDOFF_FAILURE_VOICE;
+          try {
+            await speakSentence(followup, null);
+          } catch { /* ignore TTS error during fallback */ }
+          appendAssistantLog(followup.replace(/^\([^)]*\)\s*/, ""));
+          turnState.isAgentSpeaking = false;
         } else {
           console.log("⏭️  Timeout handoff skipped (no transcript)");
         }
@@ -760,9 +817,11 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
           // Count ack as a spoken segment so the first LLM split-point sentence
           // also gets a pause via the spokenSentenceCount > 0 check.
           spokenSentenceCount = 1;
-          // Keep isAgentSpeaking true — the LLM response will continue speaking.
-          // Setting it to false here created a brief vulnerability window where
-          // STT noise could trigger barge-in/re-entry.
+          // Release isAgentSpeaking so progress pings can fire while the LLM
+          // is still thinking. inputCooldownUntil absorbs any echo from the
+          // ack playback so STT noise doesn't trigger barge-in/re-entry.
+          turnState.isAgentSpeaking = false;
+          turnState.inputCooldownUntil = Date.now() + (config.echoCooldownMs || 300);
         }
       }
 
@@ -994,7 +1053,29 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   }
 
   // ── TTS: synthesize one sentence ────────────────────────────────
+  // Public entry: queues every speakSentence call so independent utterances
+  // (ack, progress ping, LLM chunks, timeout fallback, greeting…) never
+  // overlap into onAudio. A short silence (TTS_GAP_MS) is inserted between
+  // utterances for natural breath; skipped before the very first speak.
   async function speakSentence(text, signal) {
+    const prev = ttsLock;
+    let release;
+    ttsLock = new Promise((r) => { release = r; });
+    try {
+      await prev.catch(() => {});
+      if (signal?.aborted) return;
+      if (ttsHasSpoken && TTS_GAP_MS > 0) {
+        const gap = generateSilence(TTS_GAP_MS, config.stt.sampleRate);
+        onAudio(gap);
+      }
+      ttsHasSpoken = true;
+      await _speakSentenceRaw(text, signal);
+    } finally {
+      release();
+    }
+  }
+
+  async function _speakSentenceRaw(text, signal) {
     try {
       await synthesize(text, {
         apiKey: fishKey,

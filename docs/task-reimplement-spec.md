@@ -15,7 +15,7 @@ Gateway分離に関する2コミット (`bc24dcd`, `d603254`) をrevertした。
 ### 1. LLMレスポンスタイムアウト
 **場所**: `src/pipeline.js` + `src/config.js`
 
-- 環境変数 `LLM_RESPONSE_TIMEOUT_MS`（デフォルト: 12000ms。0 = 無効）
+- 環境変数 `LLM_RESPONSE_TIMEOUT_MS`（デフォルト: 35000ms = ack + 3 progress pings + buffer。0 = 無効）
 - `config.llm.responseTimeoutMs` として config に追加
 - `overrides.responseTimeoutMs` からの受け取りも対応
 - pipeline内で `llmTimeoutTimer` を設置
