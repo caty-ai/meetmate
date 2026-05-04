@@ -149,13 +149,14 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
       referenceId: ttsReferenceId,
       sampleRate: SAMPLE_RATE,
       latency: process.env.FISH_AUDIO_LATENCY || "balanced",
-      // Speech rate, 0.5-2.0 (1.0 = native speed). Default 0.9 = ~10% slower
-      // for a calmer, more natural Japanese delivery. Forwarded to Fish Audio
-      // as `speed` only when the env var is set, so older Fish models that
-      // ignore the field stay safe.
+      // Speech rate, 0.5-2.0 (1.0 = native speed). Default 1.0, chosen
+      // 2026-05-04 after switching the default model to s2-pro: 0.9 felt
+      // unnaturally slow on s2-pro's already-calmer delivery. env is kept
+      // as an escape hatch only — change the default here for permanent
+      // moves so there is one source of truth.
       speed: process.env.FISH_AUDIO_SPEED !== undefined
         ? Number(process.env.FISH_AUDIO_SPEED)
-        : 0.9,
+        : 1.0,
     },
     briefing: overrides.briefing || null,
     purposeStatement: overrides.purposeStatement || null,

@@ -173,7 +173,13 @@ async function _synthesizeOnce(text, options = {}) {
           Authorization: `Bearer ${apiKey}`,
           "Content-Type": "application/json",
           "Content-Length": Buffer.byteLength(body),
-          model: "s1",
+          // FISH_AUDIO_MODEL env (default "s2-pro") controls which Fish Audio
+          // engine handles synthesis. Known values: "s2-pro" (current default,
+          // Qwen3-4B backbone, more natural Japanese delivery, chosen 2026-05-04
+          // after live A/B vs s1), "s1" (older, fallback for emergency rollback).
+          // env is kept as an escape hatch only — change the default below for
+          // permanent moves so there is one source of truth.
+          model: process.env.FISH_AUDIO_MODEL || "s2-pro",
         },
       },
       (res) => {
