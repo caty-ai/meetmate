@@ -19,9 +19,10 @@ const MIN_CLAUSE_LEN = Number(process.env.MIN_CLAUSE_LEN || 15);       // min bu
 const MIN_CLAUSE_PREFIX = Number(process.env.MIN_CLAUSE_PREFIX || 6);   // min chars before 、 to split
 const FIRST_CHUNK_MIN_CHARS = Number(process.env.FIRST_CHUNK_MIN_CHARS || 12);
 
-// Inter-segment pauses
-const SENTENCE_PAUSE_MS = Number(process.env.SENTENCE_PAUSE_MS || 500); // full sentence boundary
-const CLAUSE_PAUSE_MS = Number(process.env.CLAUSE_PAUSE_MS || 150);     // clause boundary (、)
+// Inter-segment pauses. Defaults tuned for natural Japanese pacing; both
+// are env-overridable for live micro-tuning without redeploy.
+const SENTENCE_PAUSE_MS = Number(process.env.SENTENCE_PAUSE_MS || 700); // full sentence boundary (。！？\n)
+const CLAUSE_PAUSE_MS = Number(process.env.CLAUSE_PAUSE_MS || 300);     // clause boundary (、)
 // Gap between independent TTS utterances (ack vs progress-ping vs LLM reply
 // vs followup). Always-ack + progress pings made it possible for two speak
 // operations to overlap into onAudio; this gap plus the queue in
@@ -1082,6 +1083,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         referenceId: agentState.voiceId || config.tts.referenceId || null,
         sampleRate: config.tts.sampleRate,
         latency: config.tts.latency,
+        speed: config.tts.speed,
         signal,
         onAudio: (chunk) => {
           if (signal?.aborted) return;
