@@ -444,12 +444,15 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   }
 
   const stt = createSTT(dgKey, {
+    provider: config.stt.provider,
+    sonioxKey: config.sonioxKey,
     model: config.stt.model,
     language: config.stt.language,
     sampleRate: config.stt.sampleRate,
     endpointingMs: config.stt.endpointingMs,
     utteranceEndMs: config.stt.utteranceEndMs,
     keyterms: sttExtraKeyterms,
+    soniox: config.stt.soniox,
   });
 
   stt.on("transcript", (text, isFinal, confidence) => {

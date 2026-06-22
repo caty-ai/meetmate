@@ -14,8 +14,15 @@ const WebSocket = require("ws");
 const { EventEmitter } = require("events");
 const { buildKeyterms } = require("./stt");
 
-const SONIOX_WS_URL =
-  process.env.SONIOX_WS_URL || "wss://stt-rt.soniox.com/transcribe-websocket";
+const DEFAULT_SONIOX_WS_URL = "wss://stt-rt.soniox.com/transcribe-websocket";
+
+// Read an optional numeric setting: prefer the explicit option, fall back to
+// the env var, return null when neither is set (so we omit it from config).
+function numOpt(optVal, envVal) {
+  if (optVal !== undefined && optVal !== null) return Number(optVal);
+  if (envVal !== undefined && envVal !== "") return Number(envVal);
+  return null;
+}
 
 /**
  * Create a streaming Soniox STT instance.
@@ -33,6 +40,20 @@ function createSonioxSTT(apiKey, options = {}) {
   const model = options.model || process.env.SONIOX_MODEL || "stt-rt-v5";
   const language = options.language || "ja";
   const sampleRate = options.sampleRate || 16_000;
+  const wsUrl = options.wsUrl || process.env.SONIOX_WS_URL || DEFAULT_SONIOX_WS_URL;
+
+  const endpointSensitivity = numOpt(
+    options.endpointSensitivity,
+    process.env.SONIOX_ENDPOINT_SENSITIVITY,
+  );
+  const maxEndpointDelayMs = numOpt(
+    options.maxEndpointDelayMs,
+    process.env.SONIOX_MAX_ENDPOINT_DELAY_MS,
+  );
+  const endpointLatencyLevel = numOpt(
+    options.endpointLatencyLevel,
+    process.env.SONIOX_ENDPOINT_LATENCY_LEVEL,
+  );
 
   if (!apiKey) {
     // Defer the error so callers can attach listeners first.
@@ -46,7 +67,7 @@ function createSonioxSTT(apiKey, options = {}) {
   let closedByUser = false;
   const pending = []; // audio buffered until the socket is open
 
-  const ws = new WebSocket(SONIOX_WS_URL);
+  const ws = new WebSocket(wsUrl);
 
   ws.on("open", () => {
     const keyterms = buildKeyterms(options.keyterms || []);
@@ -64,17 +85,15 @@ function createSonioxSTT(apiKey, options = {}) {
       // Soniox "context.terms" is the equivalent of Deepgram keyterms.
       config.context = { terms: keyterms };
     }
-    // Optional endpoint tuning (full config-ization is tracked in Step 2 / #51).
-    if (process.env.SONIOX_ENDPOINT_SENSITIVITY) {
-      config.endpoint_sensitivity = Number(process.env.SONIOX_ENDPOINT_SENSITIVITY);
+    // Optional endpoint tuning (resolved from config.js / env in #51).
+    if (endpointSensitivity !== null) {
+      config.endpoint_sensitivity = endpointSensitivity;
     }
-    if (process.env.SONIOX_MAX_ENDPOINT_DELAY_MS) {
-      config.max_endpoint_delay_ms = Number(process.env.SONIOX_MAX_ENDPOINT_DELAY_MS);
+    if (maxEndpointDelayMs !== null) {
+      config.max_endpoint_delay_ms = maxEndpointDelayMs;
     }
-    if (process.env.SONIOX_ENDPOINT_LATENCY_LEVEL) {
-      config.endpoint_latency_adjustment_level = Number(
-        process.env.SONIOX_ENDPOINT_LATENCY_LEVEL,
-      );
+    if (endpointLatencyLevel !== null) {
+      config.endpoint_latency_adjustment_level = endpointLatencyLevel;
     }
 
     try {

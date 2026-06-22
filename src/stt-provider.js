@@ -1,27 +1,41 @@
 // stt-provider.js — STT provider dispatcher
-// Selects the STT backend at runtime via STT_PROVIDER (default: "deepgram").
-// Keeps the createSTT(deepgramKey, options) signature so the pipeline call
-// site stays unchanged; the Soniox key is resolved from SONIOX_API_KEY.
+// Selects the STT backend via options.provider (from config.js) or the
+// STT_PROVIDER env var (default: "deepgram"). Keeps the
+// createSTT(deepgramKey, options) signature so the pipeline call site is
+// provider-agnostic.
 //
-// STT_PROVIDER=deepgram  → src/stt.js        (default, unchanged behavior)
-// STT_PROVIDER=soniox    → src/stt-soniox.js
+// provider=deepgram → src/stt.js        (default, unchanged behavior)
+// provider=soniox   → src/stt-soniox.js
 //
-// Revert is instant: set STT_PROVIDER=deepgram and restart (no git ops).
+// Revert is instant: set STT_PROVIDER=deepgram (or config) and restart.
 
 const { createSTT: createDeepgramSTT, buildKeyterms } = require("./stt");
 const { createSonioxSTT } = require("./stt-soniox");
 
 function createSTT(deepgramKey, options = {}) {
-  const provider = String(process.env.STT_PROVIDER || "deepgram").toLowerCase();
+  const provider = String(
+    options.provider || process.env.STT_PROVIDER || "deepgram",
+  ).toLowerCase();
 
   if (provider === "soniox") {
-    const key = process.env.SONIOX_API_KEY;
+    const key = options.sonioxKey || process.env.SONIOX_API_KEY;
     if (!key) {
       console.error(
-        "❌  STT_PROVIDER=soniox ですが SONIOX_API_KEY が未設定です。.env を確認してください。",
+        "❌  STT provider=soniox ですが SONIOX_API_KEY が未設定です。.env を確認してください。",
       );
     }
-    return createSonioxSTT(key, options);
+    const sx = options.soniox || {};
+    return createSonioxSTT(key, {
+      model: sx.model,
+      wsUrl: sx.wsUrl,
+      language: options.language,
+      sampleRate: options.sampleRate,
+      // Merge dynamic wake/agent keyterms with config-defined context terms.
+      keyterms: [...(options.keyterms || []), ...(sx.contextTerms || [])],
+      endpointSensitivity: sx.endpointSensitivity,
+      maxEndpointDelayMs: sx.maxEndpointDelayMs,
+      endpointLatencyLevel: sx.endpointLatencyLevel,
+    });
   }
 
   return createDeepgramSTT(deepgramKey, options);
