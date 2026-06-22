@@ -3,7 +3,7 @@
 
 const http = require("http");
 const https = require("https");
-const { createSTT } = require("./stt");
+const { createSTT } = require("./stt-provider");
 const { streamChat } = require("./llm");
 const { synthesize } = require("./tts-fish");
 const { getExitCommands, detectExitIntent } = require("./exit-handler");
