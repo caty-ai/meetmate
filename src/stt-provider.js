@@ -14,7 +14,7 @@ const { createSonioxSTT } = require("./stt-soniox");
 
 function createSTT(deepgramKey, options = {}) {
   const provider = String(
-    options.provider || process.env.STT_PROVIDER || "deepgram",
+    options.provider || process.env.STT_PROVIDER || "soniox",
   ).toLowerCase();
 
   if (provider === "soniox") {

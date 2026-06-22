@@ -11,9 +11,10 @@ const LANG = process.env.AGENT_LANG || "ja";
 const LISTEN_ENDPOINTING_MS = Number(process.env.LISTEN_ENDPOINTING_MS || 400);
 const LISTEN_UTTERANCE_END_MS = Number(process.env.LISTEN_UTTERANCE_END_MS || 1200);
 
-// STT provider + Soniox settings (Step 2 / #51). Default provider is deepgram
-// so existing deployments are unchanged. Switch with STT_PROVIDER=soniox.
-const STT_PROVIDER = String(process.env.STT_PROVIDER || "deepgram").toLowerCase();
+// STT provider + Soniox settings. Soniox adopted as default 2026-06-23 (#52)
+// after live A/B: dramatically better JA accuracy + latency than Deepgram.
+// Instant revert: set STT_PROVIDER=deepgram and restart.
+const STT_PROVIDER = String(process.env.STT_PROVIDER || "soniox").toLowerCase();
 const SONIOX_MODEL = process.env.SONIOX_MODEL || "stt-rt-v5";
 const SONIOX_WS_URL = process.env.SONIOX_WS_URL || "wss://stt-rt.soniox.com/transcribe-websocket";
 const numOrNull = (v) => (v !== undefined && v !== "" ? Number(v) : null);
