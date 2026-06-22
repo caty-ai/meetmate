@@ -3,7 +3,7 @@
 
 const http = require("http");
 const https = require("https");
-const { createSTT } = require("./stt");
+const { createSTT } = require("./stt-provider");
 const { streamChat } = require("./llm");
 const { synthesize } = require("./tts-fish");
 const { getExitCommands, detectExitIntent } = require("./exit-handler");
@@ -444,12 +444,15 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   }
 
   const stt = createSTT(dgKey, {
+    provider: config.stt.provider,
+    sonioxKey: config.sonioxKey,
     model: config.stt.model,
     language: config.stt.language,
     sampleRate: config.stt.sampleRate,
     endpointingMs: config.stt.endpointingMs,
     utteranceEndMs: config.stt.utteranceEndMs,
     keyterms: sttExtraKeyterms,
+    soniox: config.stt.soniox,
   });
 
   stt.on("transcript", (text, isFinal, confidence) => {

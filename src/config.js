@@ -10,6 +10,21 @@ const LANG = process.env.AGENT_LANG || "ja";
 
 const LISTEN_ENDPOINTING_MS = Number(process.env.LISTEN_ENDPOINTING_MS || 400);
 const LISTEN_UTTERANCE_END_MS = Number(process.env.LISTEN_UTTERANCE_END_MS || 1200);
+
+// STT provider + Soniox settings. Soniox adopted as default 2026-06-23 (#52)
+// after live A/B: dramatically better JA accuracy + latency than Deepgram.
+// Instant revert: set STT_PROVIDER=deepgram and restart.
+const STT_PROVIDER = String(process.env.STT_PROVIDER || "soniox").toLowerCase();
+const SONIOX_MODEL = process.env.SONIOX_MODEL || "stt-rt-v5";
+const SONIOX_WS_URL = process.env.SONIOX_WS_URL || "wss://stt-rt.soniox.com/transcribe-websocket";
+const numOrNull = (v) => (v !== undefined && v !== "" ? Number(v) : null);
+const SONIOX_ENDPOINT_SENSITIVITY = numOrNull(process.env.SONIOX_ENDPOINT_SENSITIVITY);
+const SONIOX_MAX_ENDPOINT_DELAY_MS = numOrNull(process.env.SONIOX_MAX_ENDPOINT_DELAY_MS);
+const SONIOX_ENDPOINT_LATENCY_LEVEL = numOrNull(process.env.SONIOX_ENDPOINT_LATENCY_LEVEL);
+const SONIOX_CONTEXT_TERMS = (process.env.SONIOX_CONTEXT_TERMS || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
 const AGENT_TEMPERATURE = Number(process.env.AGENT_TEMPERATURE || 0.5);
 const AGENT_MAX_TOKENS = Number(process.env.AGENT_MAX_TOKENS || 300);
 // First-audio timeout: aborts the LLM turn if no chunk arrives in this window.
@@ -121,6 +136,7 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
 
   return {
     dgKey: process.env.DEEPGRAM_API_KEY,
+    sonioxKey: process.env.SONIOX_API_KEY,
     fishKey: process.env.FISH_AUDIO_API_KEY,
     openclawUrl: agent?.gatewayUrl || process.env.OPENCLAW_GATEWAY_URL || null,
     openclawToken: agent?.gatewayToken || process.env.OPENCLAW_GATEWAY_TOKEN || null,
@@ -129,11 +145,20 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
     exitDetection: overrides.exitDetection,
     echoCooldownMs: ECHO_LOOP_COOLDOWN_MS,
     stt: {
-      model: "nova-3",
+      provider: STT_PROVIDER,
+      model: "nova-3", // Deepgram model
       language: LANG,
       sampleRate: SAMPLE_RATE,
       endpointingMs: LISTEN_ENDPOINTING_MS,
       utteranceEndMs: LISTEN_UTTERANCE_END_MS,
+      soniox: {
+        model: SONIOX_MODEL,
+        wsUrl: SONIOX_WS_URL,
+        endpointSensitivity: SONIOX_ENDPOINT_SENSITIVITY,
+        maxEndpointDelayMs: SONIOX_MAX_ENDPOINT_DELAY_MS,
+        endpointLatencyLevel: SONIOX_ENDPOINT_LATENCY_LEVEL,
+        contextTerms: SONIOX_CONTEXT_TERMS,
+      },
     },
     llm: {
       // Do not default to a foundation model here; let Gateway choose.
