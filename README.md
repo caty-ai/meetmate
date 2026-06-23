@@ -3,8 +3,8 @@
 AIエージェントをGoogle Meet / Zoomにリアルタイム参加させ、音声で対話するブリッジサーバー。
 OpenClaw Gateway連携により、任意のエージェントを音声会議に接続可能。
 
-> **現在の安定版: [`v7.5.0-stable`](https://github.com/caty-ai/meetmate/releases/tag/v7.5.0-stable) (2026-05-04)**
-> Fish Audio S2-Pro + emotion tag anchor 方式で stabilize 済。
+> **現在の安定版: [`v7.6.0-stable`](https://github.com/caty-ai/meetmate/releases/tag/v7.6.0-stable) (2026-06-23)**
+> STT を Soniox `stt-rt-v5` に採用（既定）。Fish Audio S2-Pro + emotion tag anchor 方式で stabilize 済。
 
 ## 特徴
 - Google Meet / Zoom 対応
