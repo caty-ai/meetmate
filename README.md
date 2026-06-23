@@ -11,7 +11,7 @@ OpenClaw Gateway連携により、任意のエージェントを音声会議に�
 - OpenClaw Gateway連携（SOUL/memory/skills/tools完全対応）
 - ウェイクワード検出 + バージイン（割り込み）対応
 - TTS: Fish Audio S2-Pro（emotion tag anchor 方式）
-- STT: Deepgram
+- STT: Soniox `stt-rt-v5`（既定 / 2026-06-23 採用）。Deepgram も `STT_PROVIDER=deepgram` で選択可
 - LCM（Lossless Context Management）自動記録
 - Slack連動（ステータス通知・サマリー・全文ログ）
 
@@ -34,7 +34,7 @@ cp .env.example .env
 |---|---|
 | `OPENCLAW_GATEWAY_URL` | OpenClaw Gateway URL（例: `http://localhost:18789`） |
 | `OPENCLAW_GATEWAY_TOKEN` | Gateway 認証トークン |
-| `DEEPGRAM_API_KEY` | STT用 |
+| `SONIOX_API_KEY` | STT用（既定プロバイダ Soniox） |
 | `FISH_AUDIO_API_KEY` | TTS用 |
 | `FISH_AUDIO_VOICE_ID` | TTS音声 ID（声のクローン） |
 | `ATTENDEE_API_KEY` | Meet/Zoom Bot API |
@@ -48,6 +48,21 @@ cp .env.example .env
 | `SLACK_NOTIFY_CHANNEL` | | DM モードなら不要 |
 
 詳細・緊急 rollback 用の env は[音声プロファイル](#音声プロファイル)を参照。
+
+#### STT プロバイダ切替・Soniox チューニング
+| 変数 | 既定 | 用途 |
+|---|---|---|
+| `STT_PROVIDER` | `soniox` | `soniox` または `deepgram`。**Deepgram へ即戻す**には `deepgram` にして再起動 |
+| `SONIOX_API_KEY` | | Soniox APIキー |
+| `SONIOX_MODEL` | `stt-rt-v5` | Soniox リアルタイムモデル |
+| `SONIOX_ENDPOINT_SENSITIVITY` | `0.2`※ | 発話終端の出やすさ（-1.0〜1.0／高いほど早く「話し終わり」判定） |
+| `SONIOX_MAX_ENDPOINT_DELAY_MS` | `1500`※ | 無音後に必ず確定するまでの最大ms（500〜3000） |
+| `SONIOX_ENDPOINT_LATENCY_LEVEL` | （未設定=0） | 0〜3。上げるほど終端を早める |
+| `SONIOX_CONTEXT_TERMS` | | カンマ区切りの重要語（人名・専門用語）。認識補正に使用 |
+
+※ `0.2` / `1500` は 2026-06-23 のライブ調整で決めた会話向けベースライン（`.env` に設定済み）。
+
+**⚡ 応答の戻りを“もっと速く”したいとき**：`SONIOX_MAX_ENDPOINT_DELAY_MS` を `1500` → `1000`（必要なら `800`）に下げると、こちらが話し終えてから Caty が返し始めるまでの待ちが短くなり、体感が速くなる。下げすぎると、ゆっくり話す/言い淀むときに途中で区切られやすくなるので、その場合は `SONIOX_ENDPOINT_SENSITIVITY` を `0.0〜-0.2` に下げて調整する。変更後は meet-server 再起動で反映。
 
 ### 3. `config.json`（エージェント設定の単一ソース）
 ```bash
@@ -75,7 +90,7 @@ npm start
 
 ### 音声パイプライン
 ```
-STT(Deepgram) → ウェイクワード検出 → OpenClaw Gateway(LLM) → TTS(Fish Audio S2-Pro) → Meet/Zoom
+STT(Soniox) → ウェイクワード検出 → OpenClaw Gateway(LLM) → TTS(Fish Audio S2-Pro) → Meet/Zoom
 ```
 
 ### 主要モジュール
@@ -84,7 +99,9 @@ STT(Deepgram) → ウェイクワード検出 → OpenClaw Gateway(LLM) → TTS(
 - `exit-handler.js`: 退出検出・クリーンアップ
 - `pipeline.js`: 音声パイプライン制御
 - `llm.js`: Gateway Chat Completions連携
-- `stt.js`: Deepgram STT
+- `stt-provider.js`: STTプロバイダ切替（soniox既定 / deepgram）
+- `stt-soniox.js`: Soniox STT（stt-rt-v5, WebSocket）
+- `stt.js`: Deepgram STT（フォールバック）
 - `tts-fish.js`: Fish Audio TTS
 
 ## 音声プロファイル
