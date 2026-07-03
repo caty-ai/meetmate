@@ -6,6 +6,7 @@
 const NO_REPLY_RE = /^\s*NO[_\s]?REPLY\s*[。.！!？?]*\s*$/i;
 // Case-sensitive on purpose: we only want to suppress the exact uppercase prefix, not a legitimate "No." reply.
 const TRUNCATED_NO_RE = /^\s*NO[_\s]*[。.！!？?]*\s*$/;
+const GATEWAY_ERROR_RE = /^\s*((error|internal error|upstream error)\s*[:：]|service unavailable|\{"error")/i;
 
 /**
  * Check if a reply text should be suppressed (NO_REPLY pattern, empty, null, whitespace).
@@ -19,6 +20,11 @@ function shouldSuppressReply(text) {
   if (NO_REPLY_RE.test(trimmed)) return true;
   if (TRUNCATED_NO_RE.test(trimmed)) return true;
   return false;
+}
+
+function isGatewayErrorText(text) {
+  const head = String(text || "").trim().slice(0, 80);
+  return GATEWAY_ERROR_RE.test(head);
 }
 
 /**
@@ -47,6 +53,13 @@ async function* filterSilentRepliesStream(source) {
 
     // Once we have enough text to determine it's not a NO_REPLY pattern, release
     const trimmed = accumulated.trim();
+    if (isGatewayErrorText(trimmed)) {
+      for await (const rest of source) {
+        accumulated += rest;
+      }
+      console.log(`🧯 gateway_error_suppressed: "${accumulated.trim()}"`);
+      return;
+    }
     if (trimmed.length > 10 && !NO_REPLY_RE.test(trimmed)) {
       // Definitely not NO_REPLY — release all held chunks
       for (const h of held) yield h;
@@ -65,6 +78,10 @@ async function* filterSilentRepliesStream(source) {
     // Drop — don't yield anything
     return;
   }
+  if (isGatewayErrorText(accumulated)) {
+    console.log(`🧯 gateway_error_suppressed: "${accumulated.trim()}"`);
+    return;
+  }
 
   // Not suppressed — release all held chunks
   for (const h of held) yield h;
@@ -73,5 +90,6 @@ async function* filterSilentRepliesStream(source) {
 module.exports = {
   shouldSuppressReply,
   sanitizeReply,
+  isGatewayErrorText,
   filterSilentRepliesStream,
 };

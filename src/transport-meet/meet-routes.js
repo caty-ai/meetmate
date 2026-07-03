@@ -27,6 +27,7 @@ const ATTENDEE_RETRY_BASE_MS = Number(process.env.ATTENDEE_RETRY_BASE_MS || 800)
 const BODY_LIMIT_BYTES = Number(process.env.BODY_LIMIT_BYTES || 1_000_000);
 const SESSION_GRACE_CLOSE_MS = Number(process.env.SESSION_GRACE_CLOSE_MS || 15_000);
 const ECHO_LOOP_COOLDOWN_MS = Number(process.env.ECHO_LOOP_COOLDOWN_MS || 300);
+const ECHO_GATE_CLOSED_BYPASS = String(process.env.ECHO_GATE_CLOSED_BYPASS || "false").toLowerCase() === "true";
 const JOIN_SHARED_TOKEN = process.env.JOIN_SHARED_TOKEN || "";
 const WS_SHARED_TOKEN = process.env.WS_SHARED_TOKEN || "";
 
@@ -1296,8 +1297,8 @@ function handleWsConnection(client, req) {
       if (parsed.trigger === "realtime_audio.mixed" && parsed?.data?.chunk) {
         const now = Date.now();
         if (turnState.isAgentSpeaking || now < turnState.inputCooldownUntil) {
-          // Gate CLOSED: bypass echo gate so STT can detect cancel words
-          if (turnState.isAgentSpeaking && turnState.gateState === "CLOSED") {
+          // Optional legacy cancel-word bypass; default keeps TTS echo out of STT.
+          if (ECHO_GATE_CLOSED_BYPASS && turnState.isAgentSpeaking && turnState.gateState === "CLOSED") {
             const audio = Buffer.from(parsed.data.chunk, "base64");
             handler.send(audio);
             return;

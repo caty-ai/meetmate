@@ -2,7 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { _test } = require("../src/pipeline");
 
-const { buildMeetingContextBlock, buildMeetingContextPrompt } = _test;
+const { buildMeetingContextBlock, buildMeetingContextPrompt, buildMeetingContextPromptWithEntries } = _test;
 
 function entry(seq, text, overrides = {}) {
   const addressed = overrides.addressed === true;
@@ -12,6 +12,7 @@ function entry(seq, text, overrides = {}) {
     timestamp: `2026-05-04T00:00:0${seq}.000Z`,
     addressed,
     injectToLlm: addressed,
+    sentToLlm: false,
     ...overrides,
   };
 }
@@ -87,4 +88,29 @@ test("meeting context prompt injects context as part of the user message", () =>
   assert.match(prompt, /^【直近の会議の流れ】/);
   assert.match(prompt, /The customer prefers option B/);
   assert.match(prompt, /【指名された発言】\nCaty, decide\./);
+});
+
+test("meeting context excludes entries already sent to LLM", () => {
+  const prior = entry(1, "Caty, prior context.", { addressed: true });
+  const turnN = entry(2, "Caty, use the prior context.", { addressed: true });
+  const turnNPrompt = buildMeetingContextPromptWithEntries(
+    [prior, turnN],
+    turnN,
+    turnN.text,
+    { includeUnaddressed: false }
+  );
+
+  assert.match(turnNPrompt.text, /prior context/);
+  for (const sentEntry of turnNPrompt.entries) sentEntry.sentToLlm = true;
+  turnN.sentToLlm = true;
+
+  const turnNPlusOne = entry(3, "Caty, next question.", { addressed: true });
+  const nextBlock = buildMeetingContextBlock(
+    [prior, turnN, turnNPlusOne],
+    turnNPlusOne,
+    { includeUnaddressed: false }
+  );
+
+  assert.doesNotMatch(nextBlock, /prior context/);
+  assert.doesNotMatch(nextBlock, /use the prior context/);
 });

@@ -3,7 +3,6 @@
 
 const http = require("http");
 const https = require("https");
-const { createSTT } = require("./stt-provider");
 const { streamChat } = require("./llm");
 const { synthesize } = require("./tts-fish");
 const { getExitCommands, detectExitIntent } = require("./exit-handler");
@@ -41,6 +40,7 @@ const ENABLE_PROGRESS_GUARD = String(process.env.ENABLE_PROGRESS_GUARD || "true"
 
 // Multi-participant meeting mode: Injection Gate
 const TRANSCRIPT_BUFFER_MAX = Number(process.env.TRANSCRIPT_BUFFER_MAX || 50);
+const PENDING_QUEUE_MAX = Number(process.env.PENDING_QUEUE_MAX || 3);
 const MEETING_CONTEXT_RAW_UTTERANCES = positiveInt(process.env.MEETING_CONTEXT_RAW_UTTERANCES, 10);
 const MEETING_CONTEXT_RAW_CHARS = positiveInt(process.env.MEETING_CONTEXT_RAW_CHARS, 1800);
 // Master kill-switch for unaddressed-utterance injection. Default OFF — when
@@ -55,12 +55,34 @@ function isCancelWord(text) {
   return CANCEL_RE.test(text.trim());
 }
 
+function stripWakePrefix(text, agents = null, selectedAgentIds = []) {
+  const wakePatterns = [...WAKE_WORDS, ...EXTENDED_WAKE_VARIANTS];
+  const ids = Array.isArray(selectedAgentIds) ? selectedAgentIds : [];
+  if (agents && ids.length > 0) {
+    for (const agentId of ids) {
+      const agent = agents[agentId] || {};
+      for (const word of agent.wakeWords || []) wakePatterns.push(String(word || "").toLowerCase().trim());
+      for (const variant of agent.sttWakeVariants || []) wakePatterns.push(String(variant || "").toLowerCase().trim());
+    }
+  }
+
+  const allWakePatterns = wakePatterns.filter(Boolean).join("|");
+  if (!allWakePatterns) return String(text || "").trim();
+  const wakeStripRe = new RegExp(`^.*?(${allWakePatterns})[ー\\s、,.]*`, "i");
+  return String(text || "").replace(wakeStripRe, "").trim();
+}
+
+function isWakeCancelText(text, agents = null, selectedAgentIds = []) {
+  const cleaned = String(text || "").trim();
+  return isCancelWord(stripWakePrefix(cleaned, agents, selectedAgentIds)) || isCancelWord(cleaned);
+}
+
 function positiveInt(value, fallback) {
   const n = Number(value);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
 }
 
-function buildMeetingContextBlock(transcriptBuffer, currentEntry, options = {}) {
+function selectMeetingContextEntries(transcriptBuffer, currentEntry, options = {}) {
   const maxUtterances = positiveInt(options.maxUtterances, MEETING_CONTEXT_RAW_UTTERANCES);
   const maxChars = positiveInt(options.maxChars, MEETING_CONTEXT_RAW_CHARS);
   const includeUnaddressed = options.includeUnaddressed === true;
@@ -69,38 +91,56 @@ function buildMeetingContextBlock(transcriptBuffer, currentEntry, options = {}) 
   const candidates = transcriptBuffer
     .filter((entry) => {
       if (!entry || entry === currentEntry) return false;
+      if (entry.sentToLlm === true) return false;
       if (!includeUnaddressed && entry.injectToLlm === false) return false;
       if (beforeSeq !== null && typeof entry.seq === "number") return entry.seq < beforeSeq;
       return true;
     })
     .slice(-maxUtterances);
 
-  const lines = [];
+  const selected = [];
   let usedChars = 0;
   for (let i = candidates.length - 1; i >= 0; i -= 1) {
     const text = String(candidates[i].text || "").trim();
     if (!text) continue;
     const line = `[${candidates[i].timestamp || "unknown-time"}] ${text}`;
-    const separatorChars = lines.length > 0 ? 1 : 0;
+    const separatorChars = selected.length > 0 ? 1 : 0;
     if (usedChars + separatorChars + line.length <= maxChars) {
-      lines.unshift(line);
+      selected.unshift({ entry: candidates[i], line });
       usedChars += separatorChars + line.length;
       continue;
     }
-    if (lines.length === 0) {
-      lines.unshift(maxChars <= 3 ? line.slice(0, maxChars) : `${line.slice(0, maxChars - 3)}...`);
+    if (selected.length === 0) {
+      selected.unshift({
+        entry: candidates[i],
+        line: maxChars <= 3 ? line.slice(0, maxChars) : `${line.slice(0, maxChars - 3)}...`,
+      });
     }
     break;
   }
 
-  return lines.join("\n");
+  return selected;
+}
+
+function buildMeetingContextBlock(transcriptBuffer, currentEntry, options = {}) {
+  return selectMeetingContextEntries(transcriptBuffer, currentEntry, options)
+    .map((item) => item.line)
+    .join("\n");
 }
 
 function buildMeetingContextPrompt(transcriptBuffer, currentEntry, addressedText, options = {}) {
-  const meetingContext = buildMeetingContextBlock(transcriptBuffer, currentEntry, options);
-  return meetingContext.length > 0
-    ? `【直近の会議の流れ】\n${meetingContext}\n\n【指名された発言】\n${addressedText}`
-    : addressedText;
+  return buildMeetingContextPromptWithEntries(transcriptBuffer, currentEntry, addressedText, options).text;
+}
+
+function buildMeetingContextPromptWithEntries(transcriptBuffer, currentEntry, addressedText, options = {}) {
+  const selected = selectMeetingContextEntries(transcriptBuffer, currentEntry, options);
+  const meetingContext = selected.map((item) => item.line).join("\n");
+  return {
+    text: meetingContext.length > 0
+      ? `【直近の会議の流れ】\n${meetingContext}\n\n【指名された発言】\n${addressedText}`
+      : addressedText,
+    entries: selected.map((item) => item.entry),
+  };
 }
 
 // Wake word detection: only respond when addressed
@@ -345,6 +385,7 @@ function pickProgressPing(index, customVariants = null) {
  */
 function createPipeline(session, turnState, onAudio, config, options = {}) {
   const { EventEmitter } = require("events");
+  const { createSTT } = require("./stt-provider");
   const emitter = new EventEmitter();
 
   // TTS serialization: every speakSentence call chains onto this lock so
@@ -417,6 +458,53 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   };
   // Share gateState with transport layer (echo gate bypass for cancel detection)
   turnState.gateState = gateState;
+
+  function pushTranscriptEntry(entry) {
+    transcriptBuffer.push(entry);
+    while (transcriptBuffer.length > TRANSCRIPT_BUFFER_MAX) transcriptBuffer.shift();
+  }
+
+  function enqueuePending(entry) {
+    const maxPending = Number.isFinite(PENDING_QUEUE_MAX) ? Math.max(0, PENDING_QUEUE_MAX) : 3;
+    // Drop the oldest pending entry when the queue is full; the newest wake always wins.
+    pendingQueue.push(entry);
+    while (pendingQueue.length > maxPending) {
+      const dropped = pendingQueue.shift();
+      console.log(
+        `⚠️  Pending queue full (${maxPending}), dropping oldest: "${String(dropped?.text || "").slice(0, 50)}..."`
+      );
+    }
+  }
+
+  function markSentToLlm(contextEntries, currentEntry) {
+    for (const entry of contextEntries || []) {
+      if (entry) entry.sentToLlm = true;
+    }
+    if (currentEntry) currentEntry.sentToLlm = true;
+  }
+
+  async function handleWakeCancelAbort(cleanedText) {
+    console.log(`🚫  Wake+cancel abort: "${cleanedText.slice(0, 50)}"`);
+    if (currentAbort && !currentAbort.signal?.aborted) {
+      currentAbort.abort();
+      currentAbort = null;
+    }
+    isProcessing = false;
+    gateState = "OPEN";
+    turnState.gateState = gateState;
+    turnState.isAgentSpeaking = false;
+    turnState.inputCooldownUntil = 0;
+
+    const cancelMsg = config.cancelAck;
+    if (cancelMsg) {
+      try {
+        turnState.isAgentSpeaking = true;
+        await speakSentence(cancelMsg, null);
+        appendConversationEntry("assistant", cancelMsg.replace(/^\([^)]*\)\s*/, ""), currentAgentId || null);
+      } catch { /* ignore */ }
+      turnState.isAgentSpeaking = false;
+    }
+  }
 
   function appendConversationEntry(role, content, agentId = null) {
     const entry = {
@@ -494,7 +582,21 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     }
   });
 
-  stt.on("utterance_end", async (userText) => {
+  let utteranceChain = Promise.resolve();
+  stt.on("utterance_end", (userText) => {
+    const cleanedText = String(userText || "").trim();
+    if (isProcessing && cleanedText && isWakeCancelText(cleanedText, agents, selectedAgentIds)) {
+      handleWakeCancelAbort(cleanedText)
+        .catch((err) => console.error("❌  wake+cancel handler error:", err.message || err));
+      return;
+    }
+
+    utteranceChain = utteranceChain
+      .then(() => handleUtteranceEnd(userText))
+      .catch((err) => console.error("❌  utterance_end handler error:", err.message || err));
+  });
+
+  async function handleUtteranceEnd(userText) {
     const cleanedText = String(userText || "").trim();
     if (!cleanedText) return;
 
@@ -553,12 +655,12 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         timestamp: new Date().toISOString(),
         addressed: wakeResult.detected,
         injectToLlm: wakeResult.detected,
+        sentToLlm: false,
       };
 
       if (!wakeResult.detected) {
         // No wake word: keep for wake re-scan/ops logs, but don't inject into LLM context.
-        transcriptBuffer.push(entry);
-        while (transcriptBuffer.length > TRANSCRIPT_BUFFER_MAX) transcriptBuffer.shift();
+        pushTranscriptEntry(entry);
         console.log(`🔇  [会議音声・未指名] "${cleanedText.slice(0, 50)}..."`);
         appendConversationEntry("user", `[会議音声・未指名] ${cleanedText}`, currentAgentId || null);
         return;
@@ -574,41 +676,18 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       if (gateState === "OPEN") {
         gateState = "CLOSED";
         turnState.gateState = gateState;
-        // Add to buffer AFTER taking context snapshot (avoid self-duplication)
-        transcriptBuffer.push(entry);
-        while (transcriptBuffer.length > TRANSCRIPT_BUFFER_MAX) transcriptBuffer.shift();
+        // Keep the current turn in the ordered buffer; context selection excludes it.
+        pushTranscriptEntry(entry);
         console.log("🔔  Wake word detected! Gate → CLOSED");
       } else {
         // Gate is CLOSED: check for wake+cancel combo (immediate abort)
-        // Strip wake word using all known variants (WAKE_WORDS + EXTENDED_WAKE_VARIANTS)
-        const allWakePatterns = [...WAKE_WORDS, ...EXTENDED_WAKE_VARIANTS].join("|");
-        const wakeStripRe = new RegExp(`^.*?(${allWakePatterns})[ー\\s、,.]*`, "i");
-        const textAfterWake = cleanedText.replace(wakeStripRe, "").trim();
-        if (isCancelWord(textAfterWake) || isCancelWord(cleanedText)) {
-          console.log(`🚫  Wake+cancel abort: "${cleanedText.slice(0, 50)}"`);
-          if (currentAbort && !currentAbort.signal?.aborted) {
-            currentAbort.abort();
-            currentAbort = null;
-          }
-          gateState = "OPEN";
-          turnState.gateState = gateState;
-          turnState.isAgentSpeaking = false;
-          turnState.inputCooldownUntil = 0;
-          // Speak cancel acknowledgement if configured
-          const cancelMsg = config.cancelAck;
-          if (cancelMsg) {
-            try {
-              turnState.isAgentSpeaking = true;
-              await speakSentence(cancelMsg, null);
-              appendConversationEntry("assistant", cancelMsg.replace(/^\([^)]*\)\s*/, ""), currentAgentId || null);
-            } catch { /* ignore */ }
-            turnState.isAgentSpeaking = false;
-          }
+        if (isWakeCancelText(cleanedText, agents, selectedAgentIds)) {
+          await handleWakeCancelAbort(cleanedText);
           return;
         }
         // Regular wake during CLOSED: queue (don't add to buffer — merge happens in finally)
         console.log(`⏳  Wake word detected but gate CLOSED, queuing: "${cleanedText.slice(0, 50)}..."`);
-        pendingQueue.push(entry);
+        enqueuePending(entry);
         return;
       }
     }
@@ -629,7 +708,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     }
 
     // Build user text with meeting context injection
-    const textToProcess = buildMeetingContextPrompt(
+    const prompt = buildMeetingContextPromptWithEntries(
       transcriptBuffer,
       currentWakeEntry,
       cleanedText,
@@ -642,11 +721,13 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     if (forceImmediateAck) {
       hasSentInitialWakeAck = true;
     }
-    await processUserInput(textToProcess, {
+    await processUserInput(prompt.text, {
       forceImmediateAck,
       ackSourceText: cleanedText,
+      contextEntries: prompt.entries,
+      currentEntry: currentWakeEntry,
     });
-  });
+  }
 
   stt.on("error", (err) => {
     console.error("❌  STT error:", err.message || err);
@@ -654,10 +735,14 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
 
   // ── Process user input: LLM → TTS ──────────────────────────────
   async function processUserInput(userText, options = {}) {
+    gateState = "CLOSED";
+    turnState.gateState = gateState;
     const {
       hasRetriedOnFallback = false,
       forceImmediateAck = false,
       ackSourceText = userText,
+      contextEntries = [],
+      currentEntry = null,
     } = options;
     isProcessing = true;
     const abort = new AbortController();
@@ -999,6 +1084,9 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
 
       // ★ NO_REPLY guard: if entire LLM response is a silent reply, skip TTS
       if (shouldSuppressReply(fullResponse)) {
+        if (fullResponse.trim()) {
+          markSentToLlm(contextEntries, currentEntry);
+        }
         console.log(`🔇  silent_reply_detected (pipeline): "${fullResponse.trim()}" — skipping TTS`);
         console.log(`🔇  [diag] NO_REPLY context dump:`);
         console.log(`🔇  [diag]   STT input: "${lastUserTranscript.slice(0, 200)}"`);
@@ -1026,6 +1114,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       if (fullResponse.trim()) {
         console.log(`💬  [assistant] ${fullResponse.trim()}`);
         appendConversationEntry("assistant", fullResponse.trim(), requestAgentId || null);
+        markSentToLlm(contextEntries, currentEntry);
       }
     } catch (err) {
       if (abort.signal.aborted) {
@@ -1045,7 +1134,12 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       ) {
         console.warn(`⚠️  Agent "${requestAgentId}" gateway unavailable. Falling back to "${defaultAgentId}"`);
         switchAgent(defaultAgentId);
-        await processUserInput(userText, { hasRetriedOnFallback: true, ackSourceText });
+        await processUserInput(userText, {
+          hasRetriedOnFallback: true,
+          ackSourceText,
+          contextEntries,
+          currentEntry,
+        });
         return;
       }
       console.error("❌  Pipeline error:", err.message || err.code || JSON.stringify(err));
@@ -1065,31 +1159,29 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       isProcessing = false;
       currentAbort = null;
 
-      // Multi-participant mode: Open gate and re-scan pending queue
-      {
-        gateState = "OPEN";
-        turnState.gateState = gateState;
-        // Merge pending into buffer
-        for (const entry of pendingQueue) {
-          transcriptBuffer.push(entry);
-          while (transcriptBuffer.length > TRANSCRIPT_BUFFER_MAX) transcriptBuffer.shift();
-        }
-        const pendingCopy = [...pendingQueue];
-        pendingQueue.length = 0;
+      try {
+        // Multi-participant mode: re-scan pending before making OPEN visible.
+        if (pendingQueue.length > 0) {
+          for (const entry of pendingQueue) {
+            pushTranscriptEntry(entry);
+          }
+          const pendingCopy = [...pendingQueue];
+          pendingQueue.length = 0;
 
-        // Re-scan for wake words in pending
-        for (let i = 0; i < pendingCopy.length; i++) {
-          const entry = pendingCopy[i];
-          const wakeResult = detectWakeAgent(entry.text, agents, selectedAgentIds, defaultAgentId);
-          if (wakeResult.detected) {
+          for (let i = 0; i < pendingCopy.length; i++) {
+            const entry = pendingCopy[i];
+            const wakeResult = detectWakeAgent(entry.text, agents, selectedAgentIds, defaultAgentId);
+            if (!wakeResult.detected) continue;
+
             console.log(`🔔  Pending wake word found: "${entry.text.slice(0, 50)}"`);
             if (wakeResult.agentId && wakeResult.agentId !== currentAgentId) {
               switchAgent(wakeResult.agentId);
             }
-            // Push remaining unprocessed entries back to pendingQueue for next cycle
-            pendingQueue.push(...pendingCopy.slice(i + 1));
-            // Process this pending wake call
-            const pendingText = buildMeetingContextPrompt(
+            // Keep later pending turns bounded; the current replay keeps the gate CLOSED.
+            for (const remaining of pendingCopy.slice(i + 1)) {
+              enqueuePending(remaining);
+            }
+            const pendingPrompt = buildMeetingContextPromptWithEntries(
               transcriptBuffer,
               entry,
               entry.text,
@@ -1101,14 +1193,21 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
             if (forceImmediateAck) {
               hasSentInitialWakeAck = true;
             }
-            await processUserInput(pendingText, {
+            await processUserInput(pendingPrompt.text, {
               forceImmediateAck,
               ackSourceText: entry.text,
+              contextEntries: pendingPrompt.entries,
+              currentEntry: entry,
             });
-            break; // Process first wake only; rest are in pendingQueue for next finally cycle
+            return; // Recursive replay owns the final OPEN transition.
           }
         }
+      } catch (err) {
+        console.error("❌  Pending replay error:", err.message || err);
       }
+
+      gateState = "OPEN";
+      turnState.gateState = gateState;
     }
   }
 
@@ -1218,7 +1317,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   setTimeout(() => sendGreeting(), 2000);
 
   // ── Public API ──────────────────────────────────────────────────
-  return {
+  const api = {
     sendAudio(buffer) {
       stt.send(buffer);
     },
@@ -1234,12 +1333,23 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     once: emitter.once.bind(emitter),
     removeListener: emitter.removeListener.bind(emitter),
   };
+  if (options._testExposeInternals) {
+    api._test = {
+      handleUtteranceEnd,
+      getGateState: () => gateState,
+      getPendingQueueLength: () => pendingQueue.length,
+    };
+  }
+  return api;
 }
 
 module.exports = {
   createPipeline,
   _test: {
+    selectMeetingContextEntries,
+    isWakeCancelText,
     buildMeetingContextBlock,
     buildMeetingContextPrompt,
+    buildMeetingContextPromptWithEntries,
   },
 };

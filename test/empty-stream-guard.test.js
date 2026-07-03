@@ -69,4 +69,19 @@ describe("filterSilentRepliesStream (empty stream guard)", () => {
     const result = await collect(filterSilentRepliesStream(fromChunks(["OK"])));
     assert.deepEqual(result, ["OK"]);
   });
+
+  it("yields nothing for gateway error text", async () => {
+    const result = await collect(filterSilentRepliesStream(fromChunks(["Error: internal error"])));
+    assert.deepEqual(result, []);
+  });
+
+  it("passes through explanatory text that starts with Error", async () => {
+    const result = await collect(filterSilentRepliesStream(fromChunks(["Error codes range from 400 to 503"])));
+    assert.deepEqual(result, ["Error codes range from 400 to 503"]);
+  });
+
+  it("passes through normal text after gateway error guard", async () => {
+    const result = await collect(filterSilentRepliesStream(fromChunks(["通常の返答です。"])));
+    assert.deepEqual(result, ["通常の返答です。"]);
+  });
 });

@@ -10,11 +10,10 @@
 //      - endpoint detection returns a special final token { text: "<end>" }
 //   5. Send an empty frame to finish; server replies { finished: true } and closes.
 
-const WebSocket = require("ws");
 const { EventEmitter } = require("events");
-const { buildKeyterms } = require("./stt");
 
 const DEFAULT_SONIOX_WS_URL = "wss://stt-rt.soniox.com/transcribe-websocket";
+const STT_ACCUMULATED_MAX_CHARS = Number(process.env.STT_ACCUMULATED_MAX_CHARS || 120);
 
 // Read an optional numeric setting: prefer the explicit option, fall back to
 // the env var, return null when neither is set (so we omit it from config).
@@ -41,6 +40,8 @@ function createSonioxSTT(apiKey, options = {}) {
   const language = options.language || "ja";
   const sampleRate = options.sampleRate || 16_000;
   const wsUrl = options.wsUrl || process.env.SONIOX_WS_URL || DEFAULT_SONIOX_WS_URL;
+  // Test-only injection points keep the wrapper hermetic without changing production defaults.
+  const WebSocketCtor = options._wsCtor || require("ws");
 
   const endpointSensitivity = numOpt(
     options.endpointSensitivity,
@@ -67,9 +68,10 @@ function createSonioxSTT(apiKey, options = {}) {
   let closedByUser = false;
   const pending = []; // audio buffered until the socket is open
 
-  const ws = new WebSocket(wsUrl);
+  const ws = new WebSocketCtor(wsUrl);
 
   ws.on("open", () => {
+    const buildKeyterms = options._buildKeyterms || require("./stt").buildKeyterms;
     const keyterms = buildKeyterms(options.keyterms || []);
 
     const config = {
@@ -159,6 +161,12 @@ function createSonioxSTT(apiKey, options = {}) {
     if (newFinal) {
       accumulated += newFinal;
       emitter.emit("transcript", newFinal, true, confidence);
+      if (accumulated.length >= STT_ACCUMULATED_MAX_CHARS && accumulated.trim()) {
+        const utterance = accumulated.trim();
+        accumulated = "";
+        console.log(`✂️  STT accumulated cap reached (${STT_ACCUMULATED_MAX_CHARS} chars), forcing utterance_end`);
+        emitter.emit("utterance_end", utterance);
+      }
     }
     if (interim) {
       emitter.emit("transcript", interim, false, confidence);
@@ -193,7 +201,7 @@ function createSonioxSTT(apiKey, options = {}) {
 
   emitter.send = function (audioBuffer) {
     if (closedByUser) return;
-    if (!opened || ws.readyState !== WebSocket.OPEN) {
+    if (!opened || ws.readyState !== WebSocketCtor.OPEN) {
       pending.push(audioBuffer);
       return;
     }
@@ -210,7 +218,7 @@ function createSonioxSTT(apiKey, options = {}) {
     pending.length = 0;
     try {
       // Empty frame = graceful finish; server flushes then closes.
-      if (ws.readyState === WebSocket.OPEN) ws.send("");
+      if (ws.readyState === WebSocketCtor.OPEN) ws.send("");
     } catch {
       // no-op
     }

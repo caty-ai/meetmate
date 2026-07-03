@@ -4,6 +4,8 @@
 const { createClient, LiveTranscriptionEvents } = require("@deepgram/sdk");
 const { EventEmitter } = require("events");
 
+const STT_ACCUMULATED_MAX_CHARS = Number(process.env.STT_ACCUMULATED_MAX_CHARS || 120);
+
 /**
  * Build keyterm prompts for Nova-3.
  * Nova-3 uses `keyterm` (not `keywords`). No intensifier needed — just the term.
@@ -119,6 +121,12 @@ function createSTT(dgKey, options = {}) {
 
       if (isFinal) {
         accumulated += text;
+        if (accumulated.length >= STT_ACCUMULATED_MAX_CHARS && accumulated.trim()) {
+          const utterance = accumulated.trim();
+          accumulated = "";
+          console.log(`✂️  STT accumulated cap reached (${STT_ACCUMULATED_MAX_CHARS} chars), forcing utterance_end`);
+          emitter.emit("utterance_end", utterance);
+        }
       }
 
       // speech_final = user paused long enough for this to be a complete thought

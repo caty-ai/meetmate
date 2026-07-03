@@ -15,3 +15,5 @@ logs/
 
 # Instance-specific config (contains secrets via ${ENV_VAR})
 config.json
+.omx/
+.omc/
