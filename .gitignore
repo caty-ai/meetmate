@@ -9,6 +9,7 @@ node_modules/
 # runtime logs and artifacts
 logs/
 *.log
+assets/tts-cache/
 
 # OS
 .DS_Store

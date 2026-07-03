@@ -5,6 +5,7 @@ const http = require("http");
 const https = require("https");
 const { streamChat } = require("./llm");
 const { synthesize } = require("./tts-fish");
+const { createTtsCache } = require("./tts-cache");
 const { getExitCommands, detectExitIntent } = require("./exit-handler");
 const { shouldSuppressReply } = require("./speech-policy");
 
@@ -385,6 +386,23 @@ function pickProgressPing(index, customVariants = null) {
   return variants[index % variants.length];
 }
 
+function collectFixedTtsPhrases(config, greeting) {
+  return [
+    ...(config.ackVariants && config.ackVariants.length > 0 ? config.ackVariants : DEFAULT_ACK_VARIANTS),
+    ...(config.progressPings && config.progressPings.length > 0 ? config.progressPings : PROGRESS_PING_VARIANTS),
+    greeting || config.greeting,
+    config.exitFarewell || "[warm] 了解です！退出しますね。お疲れさまでした！",
+    config.cancelAck,
+    config.timeoutFallback || LLM_TIMEOUT_FALLBACK_VOICE,
+    HANDOFF_SUCCESS_VOICE,
+    HANDOFF_FAILURE_VOICE,
+  ].filter(Boolean);
+}
+
+function isTtsCacheEnabled() {
+  return process.env.TTS_CACHE_ENABLED !== "false";
+}
+
 /**
  * Create the decomposed voice pipeline.
  *
@@ -405,6 +423,9 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   // onAudio. ttsHasSpoken selects first-utterance lead vs later gaps.
   let ttsLock = Promise.resolve();
   let ttsHasSpoken = false;
+  const usePipelineTtsCache = !options._testExposeInternals;
+  const ttsCache = createTtsCache({ synthesizeFn: synthesize });
+  const prewarmAbort = new AbortController();
 
   const dgKey = config.dgKey;
   const fishKey = config.fishKey;
@@ -511,7 +532,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     if (cancelMsg) {
       try {
         turnState.isAgentSpeaking = true;
-        await speakSentence(cancelMsg, null);
+        await speakSentence(cancelMsg, null, { cacheable: true });
         appendConversationEntry("assistant", cancelMsg.replace(/^\([^)]*\)\s*/, ""), currentAgentId || null);
       } catch { /* ignore */ }
       turnState.isAgentSpeaking = false;
@@ -630,7 +651,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       const farewellLog = farewellVoice.replace(/^[\[(][^\])]*[\])]\s*/, "");
       turnState.isAgentSpeaking = true;
       try {
-        await speakSentence(farewellVoice, null);
+        await speakSentence(farewellVoice, null, { cacheable: true });
       } catch {
         // ignore TTS error during exit
       }
@@ -892,7 +913,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       turnState.isAgentSpeaking = true;
       const timeoutMsg = config.timeoutFallback || LLM_TIMEOUT_FALLBACK_VOICE;
       try {
-        await speakSentence(timeoutMsg, null);
+        await speakSentence(timeoutMsg, null, { cacheable: true });
       } catch { /* ignore TTS error during fallback */ }
       appendAssistantLog(timeoutMsg);
 
@@ -915,7 +936,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
           turnState.isAgentSpeaking = true;
           const followup = success ? HANDOFF_SUCCESS_VOICE : HANDOFF_FAILURE_VOICE;
           try {
-            await speakSentence(followup, null);
+            await speakSentence(followup, null, { cacheable: true });
           } catch { /* ignore TTS error during fallback */ }
           appendAssistantLog(followup.replace(/^\([^)]*\)\s*/, ""));
           turnState.isAgentSpeaking = false;
@@ -951,7 +972,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       progressPingIndex += 1;
       turnState.isAgentSpeaking = true;
       console.log(`⏳  Progress ping: "${ping}"`);
-      await speakSentence(ping, abort.signal);
+      await speakSentence(ping, abort.signal, { cacheable: true });
       if (!abort.signal.aborted) {
         appendAssistantLog(ping.replace(/^\([^)]*\)\s*/, ""));
         turnState.isAgentSpeaking = false;
@@ -970,7 +991,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         const ack = pickImmediateAck(ackDecisionText, currentAgentConfig.ackVariants || config.ackVariants);
         turnState.isAgentSpeaking = true;
         console.log(`⚡  Immediate ack: "${ack}"`);
-        await speakSentence(ack, abort.signal);
+        await speakSentence(ack, abort.signal, { cacheable: true });
         if (!abort.signal.aborted) {
           appendAssistantLog(ack.replace(/^\([^)]*\)\s*/, ""));
           // Insert silence after ack (same as greeting→purpose transition)
@@ -1228,12 +1249,20 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   // (ack, progress ping, LLM chunks, timeout fallback, greeting…) never
   // overlap into onAudio. A short silence (TTS_GAP_MS) is inserted between
   // utterances for natural breath; the first speak gets a TTS_LEAD_MS pad.
-  async function speakSentence(text, signal) {
+  async function withTtsLock(fn) {
     const prev = ttsLock;
     let release;
     ttsLock = new Promise((r) => { release = r; });
     try {
       await prev.catch(() => {});
+      return await fn();
+    } finally {
+      release();
+    }
+  }
+
+  async function speakSentence(text, signal, opts = {}) {
+    return withTtsLock(async () => {
       if (signal?.aborted) return;
       if (!ttsHasSpoken) {
         if (TTS_LEAD_MS > 0) {
@@ -1245,15 +1274,14 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         onAudio(gap);
       }
       ttsHasSpoken = true;
-      await _speakSentenceRaw(text, signal);
-    } finally {
-      release();
-    }
+      await _speakSentenceRaw(text, signal, opts);
+    });
   }
 
-  async function _speakSentenceRaw(text, signal) {
+  async function _speakSentenceRaw(text, signal, opts = {}) {
     try {
-      await synthesize(text, {
+      const synthesizeFn = opts.cacheable === true && usePipelineTtsCache ? ttsCache.synthesize : synthesize;
+      await synthesizeFn(text, {
         apiKey: fishKey,
         referenceId: agentState.voiceId || config.tts.referenceId || null,
         sampleRate: config.tts.sampleRate,
@@ -1271,12 +1299,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     }
   }
 
-  // ── Greeting ────────────────────────────────────────────────────
-  async function sendGreeting() {
-    if (hasSelectedAgents && defaultAgentId && currentAgentId !== defaultAgentId) {
-      switchAgent(defaultAgentId);
-    }
-
+  function resolveGreetingText() {
     let greeting = config.greeting;
     if (hasSelectedAgents && defaultAgentId && agents[defaultAgentId]) {
       const defaultGreeting = agents[defaultAgentId].greeting || config.greeting;
@@ -1291,6 +1314,36 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         greeting = defaultGreeting;
       }
     }
+    return greeting;
+  }
+
+  function startTtsCachePrewarm() {
+    if (!usePipelineTtsCache) return;
+    if (!isTtsCacheEnabled() || process.env.TTS_CACHE_PREWARM === "false") return;
+    const phrases = [...new Set(collectFixedTtsPhrases(config, resolveGreetingText()))];
+    if (phrases.length === 0) return;
+
+    const baseOptions = {
+      apiKey: fishKey,
+      referenceId: agentState.voiceId || config.tts.referenceId || null,
+      sampleRate: config.tts.sampleRate,
+      latency: config.tts.latency,
+      speed: config.tts.speed,
+      signal: prewarmAbort.signal,
+    };
+
+    ttsCache.prewarm(phrases.map((text) => ({ text })), baseOptions).catch((err) => {
+      console.warn("⚠️  TTS cache prewarm failed:", err.message || err);
+    });
+  }
+
+  // ── Greeting ────────────────────────────────────────────────────
+  async function sendGreeting() {
+    if (hasSelectedAgents && defaultAgentId && currentAgentId !== defaultAgentId) {
+      switchAgent(defaultAgentId);
+    }
+
+    let greeting = resolveGreetingText();
     if (!greeting) return;
 
     // If purposeStatement exists, append it to greeting for seamless delivery
@@ -1312,11 +1365,13 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     isProcessing = true;
     turnState.isAgentSpeaking = true;
     try {
-      await speakSentence(greeting, greetAbort.signal);
+      await speakSentence(greeting, greetAbort.signal, { cacheable: true });
       if (purposeStatement && !greetAbort.signal.aborted) {
         // Small pause between greeting and purpose
         const silence = generateSilence(SENTENCE_PAUSE_MS || 500, config.tts.sampleRate);
         onAudio(silence);
+        // purposeStatement is free text per meeting — caching it would grow
+        // assets/tts-cache/ unboundedly for a phrase spoken once (#67 scope).
         await speakSentence(purposeStatement, greetAbort.signal);
       }
     } catch (err) {
@@ -1331,7 +1386,11 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   }
 
   // Send greeting (+ purpose statement if available) after a short delay
-  setTimeout(() => sendGreeting(), 2000);
+  setTimeout(() => {
+    sendGreeting().finally(() => {
+      startTtsCachePrewarm();
+    });
+  }, 2000);
 
   // ── Public API ──────────────────────────────────────────────────
   const api = {
@@ -1343,6 +1402,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         currentAbort.abort();
         currentAbort = null;
       }
+      prewarmAbort.abort();
       stt.close();
     },
     /** EventEmitter for exit_requested and other pipeline events. */
