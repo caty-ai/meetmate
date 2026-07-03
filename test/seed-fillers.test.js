@@ -15,6 +15,13 @@ const expectedTexts = new Set([
   "了解したよ！少し待ってね！",
   "うんうん、それについて考えてみるね！",
   "うんうん、ちゃんと聞こえてるよ。少し考えるね。",
+  // #75: ping / farewell / greeting / timeout recorded takes
+  "いま処理中だよ、もう少し待ってね。",
+  "進めてるよ、あと少しで返せそう。",
+  "ごめん、もう少しだけ待ってね。",
+  "お疲れさまでした！また何かあったら呼んでくださいね。",
+  "こんにちは！ケイティです。よろしくお願いします！",
+  "ちょっと時間がかかってるから、詳細はあとでSlackで共有するね。",
 ]);
 
 function readManifest() {
@@ -34,13 +41,13 @@ function withUnsetFishModel(fn) {
   }
 }
 
-test("filler manifest parses and contains exactly 9 entries", () => {
+test("filler manifest parses and contains exactly 15 entries", () => {
   const manifest = readManifest();
 
-  assert.equal(manifest.entries.length, 9);
+  assert.equal(manifest.entries.length, 15);
 });
 
-test("filler manifest texts match the 7 unique Caty aizuchi phrases", () => {
+test("filler manifest texts match the 13 unique Caty fixed phrases", () => {
   const manifest = readManifest();
 
   assert.deepEqual(new Set(manifest.entries.map((entry) => entry.text)), expectedTexts);
@@ -52,7 +59,7 @@ test("dedupByKey keeps filler0 and skips later duplicate takes for the shared ph
 
   const result = withUnsetFishModel(() => dedupByKey(manifest.entries, params));
 
-  assert.equal(result.unique.length, 7);
+  assert.equal(result.unique.length, 13);
   assert.equal(result.unique[0].entry.file, "filler0.mp3");
   assert.deepEqual(
     result.duplicates.map((duplicate) => ({

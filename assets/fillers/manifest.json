@@ -1,14 +1,65 @@
 {
-  "provenance": "internal-project gateway/fillers @89aa762 (raw takes, no loudnorm @baba3b8)",
+  "provenance": "internal-project gateway/fillers @89aa762 (raw takes, no loudnorm @baba3b8) / ping,farewell,greeting,timeout takes: ユーザー via Fish Audio 2026-07-03 (#75)",
   "entries": [
-    { "file": "filler0.mp3", "text": "はい！今確認するね！" },
-    { "file": "filler1.mp3", "text": "はい！今確認するね！" },
-    { "file": "filler2.mp3", "text": "はい！今確認するね！" },
-    { "file": "filler3.mp3", "text": "うんうん！ちょっと考えてみるね！" },
-    { "file": "filler4.mp3", "text": "OKだよ！ちょっとだけ待ってね！" },
-    { "file": "filler5.mp3", "text": "うんうん、ちょっと整理してみるね！" },
-    { "file": "filler6.mp3", "text": "了解したよ！少し待ってね！" },
-    { "file": "filler7.mp3", "text": "うんうん、それについて考えてみるね！" },
-    { "file": "filler8.mp3", "text": "うんうん、ちゃんと聞こえてるよ。少し考えるね。" }
+    {
+      "file": "filler0.mp3",
+      "text": "はい！今確認するね！"
+    },
+    {
+      "file": "filler1.mp3",
+      "text": "はい！今確認するね！"
+    },
+    {
+      "file": "filler2.mp3",
+      "text": "はい！今確認するね！"
+    },
+    {
+      "file": "filler3.mp3",
+      "text": "うんうん！ちょっと考えてみるね！"
+    },
+    {
+      "file": "filler4.mp3",
+      "text": "OKだよ！ちょっとだけ待ってね！"
+    },
+    {
+      "file": "filler5.mp3",
+      "text": "うんうん、ちょっと整理してみるね！"
+    },
+    {
+      "file": "filler6.mp3",
+      "text": "了解したよ！少し待ってね！"
+    },
+    {
+      "file": "filler7.mp3",
+      "text": "うんうん、それについて考えてみるね！"
+    },
+    {
+      "file": "filler8.mp3",
+      "text": "うんうん、ちゃんと聞こえてるよ。少し考えるね。"
+    },
+    {
+      "file": "ping0.mp3",
+      "text": "いま処理中だよ、もう少し待ってね。"
+    },
+    {
+      "file": "ping1.mp3",
+      "text": "進めてるよ、あと少しで返せそう。"
+    },
+    {
+      "file": "ping2.mp3",
+      "text": "ごめん、もう少しだけ待ってね。"
+    },
+    {
+      "file": "farewell0.mp3",
+      "text": "お疲れさまでした！また何かあったら呼んでくださいね。"
+    },
+    {
+      "file": "greeting0.mp3",
+      "text": "こんにちは！ケイティです。よろしくお願いします！"
+    },
+    {
+      "file": "timeout0.mp3",
+      "text": "ちょっと時間がかかってるから、詳細はあとでSlackで共有するね。"
+    }
   ]
 }
