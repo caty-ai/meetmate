@@ -5,12 +5,17 @@ OpenClaw Gateway連携により、任意のエージェントを音声会議に�
 
 > **現在の安定版: [`v7.6.0-stable`](https://github.com/caty-ai/meetmate/releases/tag/v7.6.0-stable) (2026-06-23)**
 > STT を Soniox `stt-rt-v5` に採用（既定）。Fish Audio S2-Pro + emotion tag anchor 方式で stabilize 済。
+>
+> **最新プレリリース: [`v7.8.0-rc.2`](https://github.com/caty-ai/meetmate/releases/tag/v7.8.0-rc.2) (2026-07-04・Mac mini 稼働中)**
+> 固定文言 TTS キャッシュ（#67）＋実収録テイク13種（#72/#75）＋絵文字 strip 2層対策（#74）＋ Soniox keepalive・24kHz 音質・複数人ゲート修正（v7.7.0-rc.4 由来 #55/#61/#62/#66）。残検証は複数人ミーティング安定性のみ → 通過で v7.8.0 stable 昇格予定。
 
 ## 特徴
 - Google Meet / Zoom 対応
 - OpenClaw Gateway連携（SOUL/memory/skills/tools完全対応）
 - ウェイクワード検出 + バージイン（割り込み）対応
 - TTS: Fish Audio S2-Pro（emotion tag anchor 方式）
+- 固定文言 TTS キャッシュ: ack/ping/greeting/farewell 等を PCM ディスクキャッシュから即時再生（声の統一・Fish API 往復ゼロ・障害耐性）。実収録テイクの事前シード対応（`scripts/seed-tts-cache-from-fillers.js`）
+- 絵文字ガード: LLM プロンプト禁止 + TTS 直前の機械 strip の2層（感情タグ・日本語記号は温存）
 - STT: Soniox `stt-rt-v5`（既定 / 2026-06-23 採用）。Deepgram も `STT_PROVIDER=deepgram` で選択可
 - LCM（Lossless Context Management）自動記録
 - Slack連動（ステータス通知・サマリー・全文ログ）
@@ -135,11 +140,11 @@ v7.5.0 以降、Fish Audio **S2-Pro** をデフォルトモデルにしていま
 | `PENDING_QUEUE_MAX=3` | gate CLOSED 中の pending wake 最大数 |
 | `ECHO_GATE_CLOSED_BYPASS=true` | 旧 cancel-word 用 echo gate bypass を ON。⚠️ v7.7 で既定 OFF に変更（発話中の音声キャンセルが必要なら true に） |
 
-### 相槌シード（#72）
+### 実収録テイクのシード（#72 / #75）
 
-手元または mini 上で `node scripts/seed-tts-cache-from-fillers.js` を実行すると、`assets/fillers/manifest.json` の Caty 相槌 mp3 から `assets/tts-cache/*.pcm` を事前生成します。`config.json` がない環境では、誤った cache key を作らないため `--voice-id <id>` を明示してください。
+手元または mini 上で `node scripts/seed-tts-cache-from-fillers.js` を実行すると、`assets/fillers/manifest.json` の実収録 mp3（相槌 ack 7種＋progress ping 3種＋退出 farewell＋greeting＋timeout の計13ユニーク文言）から `assets/tts-cache/*.pcm` を事前生成します。`.env` は `src/server.js` と同じ方法で自動ロードされます。`config.json` がない環境では、誤った cache key を作らないため `--voice-id <id>` を明示してください。
 
-cache key は `voiceId` / `FISH_AUDIO_SPEED` / `FISH_AUDIO_MODEL` / `TTS_SAMPLE_RATE` の影響を受けます。いずれかを変えた後は再実行しないと古い seeded PCM はヒットせず、ack 時に Fish Audio の live synthesis へ戻ります。mini の `config.json` の `agent.ackVariants` には、manifest 内の 7 unique texts を文字・句読点まで完全一致で入れてください。
+cache key は `voiceId` / `FISH_AUDIO_SPEED` / `FISH_AUDIO_MODEL` / `TTS_SAMPLE_RATE` の影響を受けます。いずれかを変えた後は再実行しないと古い seeded PCM はヒットせず、Fish Audio の live synthesis へ静かに戻ります。`config.json` の `agent.ackVariants` / `progressPings` / `exitFarewell` / `greeting` / `timeoutFallback` には、manifest 内のテキストを文字・句読点まで完全一致（感情タグなしのプレーン文言）で入れてください。
 
 ## LCM（Lossless Context Management）
 
