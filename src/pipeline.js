@@ -7,7 +7,7 @@ const { streamChat } = require("./llm");
 const { synthesize } = require("./tts-fish");
 const { createTtsCache } = require("./tts-cache");
 const { getExitCommands, detectExitIntent } = require("./exit-handler");
-const { shouldSuppressReply } = require("./speech-policy");
+const { shouldSuppressReply, stripEmojis } = require("./speech-policy");
 
 // Two-tier sentence splitter for Japanese + English
 // Tier 1: Full sentence boundary (。！？!?\n) — long pause
@@ -1279,9 +1279,18 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   }
 
   async function _speakSentenceRaw(text, signal, opts = {}) {
+    const cleaned = stripEmojis(text);
+    if (!cleaned.trim() && String(text || "").trim()) {
+      console.log("🧹 emoji-only utterance skipped");
+      return;
+    }
+    if (cleaned !== text) {
+      console.log(`🧹 stripped emojis from utterance (${text.length - cleaned.length} chars removed)`);
+    }
+
     try {
       const synthesizeFn = opts.cacheable === true && usePipelineTtsCache ? ttsCache.synthesize : synthesize;
-      await synthesizeFn(text, {
+      await synthesizeFn(cleaned, {
         apiKey: fishKey,
         referenceId: agentState.voiceId || config.tts.referenceId || null,
         sampleRate: config.tts.sampleRate,
@@ -1320,7 +1329,13 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   function startTtsCachePrewarm() {
     if (!usePipelineTtsCache) return;
     if (!isTtsCacheEnabled() || process.env.TTS_CACHE_PREWARM === "false") return;
-    const phrases = [...new Set(collectFixedTtsPhrases(config, resolveGreetingText()))];
+    const phrases = [
+      ...new Set(
+        collectFixedTtsPhrases(config, resolveGreetingText())
+          .map((text) => stripEmojis(text))
+          .filter((text) => text.trim())
+      ),
+    ];
     if (phrases.length === 0) return;
 
     const baseOptions = {
