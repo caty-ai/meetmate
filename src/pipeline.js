@@ -27,6 +27,8 @@ const CLAUSE_PAUSE_MS = Number(process.env.CLAUSE_PAUSE_MS || 300);     // claus
 // operations to overlap into onAudio; this gap plus the queue in
 // speakSentence keeps utterances cleanly separated.
 const TTS_GAP_MS = Number(process.env.TTS_GAP_MS || 250);
+const TTS_LEAD_MS = Number(process.env.TTS_LEAD_MS || 200);
+const COMFORT_NOISE_AMPLITUDE = Number(process.env.COMFORT_NOISE_AMPLITUDE || 30);
 
 // UX controls
 const POST_UTTERANCE_BUFFER_MS = Number(process.env.POST_UTTERANCE_BUFFER_MS || 500);
@@ -243,11 +245,21 @@ function detectWakeAgent(text, agents = null, selectedAgentIds = [], defaultAgen
 }
 
 /**
- * Generate a Buffer of PCM silence (16-bit LE zeros) for a given duration.
+ * Generate a Buffer of PCM "silence" (16-bit LE) for a given duration.
+ * Not pure digital zero: fills with low-amplitude white dither so downstream
+ * VAD/noise-gates see a live signal instead of true silence. Set
+ * COMFORT_NOISE_AMPLITUDE=0 to restore byte-exact pure zeros.
  */
 function generateSilence(durationMs, sampleRate) {
   const numSamples = Math.floor((sampleRate * durationMs) / 1000);
-  return Buffer.alloc(numSamples * 2); // 2 bytes per int16 sample
+  const buf = Buffer.alloc(numSamples * 2); // 2 bytes per int16 sample
+  if (COMFORT_NOISE_AMPLITUDE > 0) {
+    for (let i = 0; i < numSamples; i++) {
+      const sample = Math.floor(Math.random() * (2 * COMFORT_NOISE_AMPLITUDE + 1)) - COMFORT_NOISE_AMPLITUDE;
+      buf.writeInt16LE(sample, i * 2);
+    }
+  }
+  return buf;
 }
 
 /**
@@ -390,7 +402,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
 
   // TTS serialization: every speakSentence call chains onto this lock so
   // ack / progress-ping / LLM stream chunks / fallback never overlap into
-  // onAudio. ttsHasSpoken skips the gap before the very first utterance.
+  // onAudio. ttsHasSpoken selects first-utterance lead vs later gaps.
   let ttsLock = Promise.resolve();
   let ttsHasSpoken = false;
 
@@ -1215,7 +1227,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   // Public entry: queues every speakSentence call so independent utterances
   // (ack, progress ping, LLM chunks, timeout fallback, greeting…) never
   // overlap into onAudio. A short silence (TTS_GAP_MS) is inserted between
-  // utterances for natural breath; skipped before the very first speak.
+  // utterances for natural breath; the first speak gets a TTS_LEAD_MS pad.
   async function speakSentence(text, signal) {
     const prev = ttsLock;
     let release;
@@ -1223,7 +1235,12 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     try {
       await prev.catch(() => {});
       if (signal?.aborted) return;
-      if (ttsHasSpoken && TTS_GAP_MS > 0) {
+      if (!ttsHasSpoken) {
+        if (TTS_LEAD_MS > 0) {
+          const lead = generateSilence(TTS_LEAD_MS, config.tts.sampleRate);
+          onAudio(lead);
+        }
+      } else if (TTS_GAP_MS > 0) {
         const gap = generateSilence(TTS_GAP_MS, config.tts.sampleRate);
         onAudio(gap);
       }
@@ -1351,5 +1368,6 @@ module.exports = {
     buildMeetingContextBlock,
     buildMeetingContextPrompt,
     buildMeetingContextPromptWithEntries,
+    generateSilence,
   },
 };

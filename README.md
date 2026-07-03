@@ -127,6 +127,8 @@ v7.5.0 以降、Fish Audio **S2-Pro** をデフォルトモデルにしていま
 | `LLM_RESPONSE_TIMEOUT_MS=0` | first-audio timeout を OFF |
 | `FISH_AUDIO_RETRY_MAX=0` | Fish Audio 429/5xx retry を OFF |
 | `TTS_GAP_MS=0` | TTS 息継ぎ gap を OFF |
+| `COMFORT_NOISE_AMPLITUDE=0` | 無音を完全ゼロに戻す |
+| `TTS_LEAD_MS=0` | 先頭パッド無効化 |
 | `STT_ACCUMULATED_MAX_CHARS=120` | STT 蓄積テキストの強制区切り文字数 |
 | `PENDING_QUEUE_MAX=3` | gate CLOSED 中の pending wake 最大数 |
 | `ECHO_GATE_CLOSED_BYPASS=true` | 旧 cancel-word 用 echo gate bypass を ON。⚠️ v7.7 で既定 OFF に変更（発話中の音声キャンセルが必要なら true に） |
