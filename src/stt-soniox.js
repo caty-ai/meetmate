@@ -14,6 +14,10 @@ const { EventEmitter } = require("events");
 
 const DEFAULT_SONIOX_WS_URL = "wss://stt-rt.soniox.com/transcribe-websocket";
 const STT_ACCUMULATED_MAX_CHARS = Number(process.env.STT_ACCUMULATED_MAX_CHARS || 120);
+const DEFAULT_SONIOX_KEEPALIVE_INTERVAL_MS = 8_000;
+const DEFAULT_SONIOX_PENDING_MAX = 200;
+const DEFAULT_SONIOX_RECONNECT_BASE_DELAY_MS = 500;
+const DEFAULT_SONIOX_RECONNECT_MAX_DELAY_MS = 10_000;
 
 // Read an optional numeric setting: prefer the explicit option, fall back to
 // the env var, return null when neither is set (so we omit it from config).
@@ -21,6 +25,11 @@ function numOpt(optVal, envVal) {
   if (optVal !== undefined && optVal !== null) return Number(optVal);
   if (envVal !== undefined && envVal !== "") return Number(envVal);
   return null;
+}
+
+function positiveInt(value, fallback) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
 }
 
 /**
@@ -42,6 +51,18 @@ function createSonioxSTT(apiKey, options = {}) {
   const wsUrl = options.wsUrl || process.env.SONIOX_WS_URL || DEFAULT_SONIOX_WS_URL;
   // Test-only injection points keep the wrapper hermetic without changing production defaults.
   const WebSocketCtor = options._wsCtor || require("ws");
+  const keepAliveIntervalMs = positiveInt(
+    process.env.SONIOX_KEEPALIVE_INTERVAL_MS,
+    DEFAULT_SONIOX_KEEPALIVE_INTERVAL_MS,
+  );
+  const pendingMax = positiveInt(
+    process.env.SONIOX_PENDING_MAX,
+    DEFAULT_SONIOX_PENDING_MAX,
+  );
+  const reconnectBaseDelayMs = positiveInt(
+    options._reconnectBaseDelayMs,
+    DEFAULT_SONIOX_RECONNECT_BASE_DELAY_MS,
+  );
 
   const endpointSensitivity = numOpt(
     options.endpointSensitivity,
@@ -66,14 +87,18 @@ function createSonioxSTT(apiKey, options = {}) {
   let accumulated = "";
   let opened = false;
   let closedByUser = false;
+  let ws = null;
+  let keepAlive = null;
+  let reconnectTimer = null;
+  let reconnectAttempt = 0;
+  let pendingDropCount = 0;
+  let finalCloseEmitted = false;
   const pending = []; // audio buffered until the socket is open
 
-  const ws = new WebSocketCtor(wsUrl);
+  const buildKeyterms = options._buildKeyterms || require("./stt").buildKeyterms;
+  const keyterms = buildKeyterms(options.keyterms || []);
 
-  ws.on("open", () => {
-    const buildKeyterms = options._buildKeyterms || require("./stt").buildKeyterms;
-    const keyterms = buildKeyterms(options.keyterms || []);
-
+  function buildConfig() {
     const config = {
       api_key: apiKey,
       model,
@@ -97,33 +122,78 @@ function createSonioxSTT(apiKey, options = {}) {
     if (endpointLatencyLevel !== null) {
       config.endpoint_latency_adjustment_level = endpointLatencyLevel;
     }
+    return config;
+  }
 
-    try {
-      ws.send(JSON.stringify(config));
-    } catch (err) {
-      emitter.emit("error", err);
-      return;
+  function clearKeepAlive() {
+    if (keepAlive) {
+      clearInterval(keepAlive);
+      keepAlive = null;
     }
+  }
 
-    opened = true;
-    const label = keyterms.length
-      ? `(context terms: ${keyterms.slice(0, 3).join(", ")}...)`
-      : "(no context terms)";
-    console.log(`🎤  STT(Soniox ${model}): 接続完了 ${label}`);
-    emitter.emit("open");
+  function clearReconnectTimer() {
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+  }
 
-    // Flush any audio that arrived before the socket opened.
+  function startKeepAlive(socket) {
+    clearKeepAlive();
+    keepAlive = setInterval(() => {
+      if (closedByUser) {
+        clearKeepAlive();
+        return;
+      }
+      if (socket !== ws || socket.readyState !== WebSocketCtor.OPEN) return;
+      try {
+        socket.send(JSON.stringify({ type: "keepalive" }));
+      } catch {
+        // The close/error handlers own recovery and error reporting.
+      }
+    }, keepAliveIntervalMs);
+  }
+
+  function flushPending(socket) {
     while (pending.length) {
       try {
-        ws.send(pending.shift());
+        socket.send(pending.shift());
       } catch (err) {
         console.error("❌  STT(Soniox) flush error:", err.message);
         break;
       }
     }
-  });
+    if (pending.length === 0) pendingDropCount = 0;
+  }
 
-  ws.on("message", (raw) => {
+  function flushAccumulatedBeforeReconnect() {
+    if (!accumulated.trim()) {
+      accumulated = "";
+      return;
+    }
+    const utterance = accumulated.trim();
+    accumulated = "";
+    emitter.emit("utterance_end", utterance);
+  }
+
+  function scheduleReconnect() {
+    if (closedByUser) return;
+    reconnectAttempt += 1;
+    const attempt = reconnectAttempt;
+    const delay = Math.min(
+      reconnectBaseDelayMs * (2 ** (attempt - 1)),
+      DEFAULT_SONIOX_RECONNECT_MAX_DELAY_MS,
+    );
+    console.log(`🔁  STT(Soniox): 予期しない切断 — 再接続します (attempt ${attempt})`);
+    clearReconnectTimer();
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      connect();
+    }, delay);
+  }
+
+  function handleMessage(raw) {
     let res;
     try {
       res = JSON.parse(raw.toString());
@@ -138,7 +208,7 @@ function createSonioxSTT(apiKey, options = {}) {
           `Soniox ${res.error_code} ${res.error_type || ""}: ${res.error_message || "unknown"}`,
         ),
       );
-      return;
+      return false;
     }
 
     const tokens = Array.isArray(res.tokens) ? res.tokens : [];
@@ -187,22 +257,87 @@ function createSonioxSTT(apiKey, options = {}) {
         emitter.emit("utterance_end", utterance);
       }
     }
-  });
+  }
 
-  ws.on("error", (err) => {
-    console.error("❌  STT(Soniox) error:", err?.message || err);
-    emitter.emit("error", err);
-  });
+  function connect() {
+    if (closedByUser) return;
+    opened = false;
+    const socket = new WebSocketCtor(wsUrl);
+    ws = socket;
 
-  ws.on("close", () => {
-    console.log("🔴  STT(Soniox): 切断");
-    emitter.emit("close");
-  });
+    socket.on("open", () => {
+      if (closedByUser || socket !== ws) return;
+      try {
+        socket.send(JSON.stringify(buildConfig()));
+      } catch (err) {
+        emitter.emit("error", err);
+        return;
+      }
+
+      opened = true;
+      startKeepAlive(socket);
+      const label = keyterms.length
+        ? `(context terms: ${keyterms.slice(0, 3).join(", ")}...)`
+        : "(no context terms)";
+      console.log(`🎤  STT(Soniox ${model}): 接続完了 ${label}`);
+      emitter.emit("open");
+
+      // Flush any audio that arrived before the socket opened.
+      flushPending(socket);
+    });
+
+    socket.on("message", (raw) => {
+      if (socket !== ws) return;
+      // Reset the reconnect backoff only on healthy frames: an error_code frame
+      // followed by a server close must keep escalating the delay, otherwise a
+      // persistent rejection (e.g. bad API key) becomes a fast reconnect storm.
+      const healthy = handleMessage(raw);
+      if (healthy !== false && reconnectAttempt !== 0) reconnectAttempt = 0;
+    });
+
+    socket.on("error", (err) => {
+      if (socket !== ws) return;
+      clearKeepAlive();
+      console.error("❌  STT(Soniox) error:", err?.message || err);
+      emitter.emit("error", err);
+    });
+
+    socket.on("close", () => {
+      if (socket !== ws) return;
+      clearKeepAlive();
+      opened = false;
+
+      if (closedByUser) {
+        console.log("🔴  STT(Soniox): 切断");
+        if (!finalCloseEmitted) {
+          finalCloseEmitted = true;
+          emitter.emit("close");
+        }
+        return;
+      }
+
+      flushAccumulatedBeforeReconnect();
+      scheduleReconnect();
+    });
+  }
+
+  connect();
+
+  function bufferAudio(audioBuffer) {
+    if (pending.length >= pendingMax) {
+      pending.shift();
+      pendingDropCount += 1;
+      if (pendingDropCount % 100 === 0) {
+        console.warn(`⚠️  STT(Soniox): reconnect buffer overflow, dropped ${pendingDropCount} chunks`);
+      }
+    }
+    pending.push(audioBuffer);
+  }
 
   emitter.send = function (audioBuffer) {
     if (closedByUser) return;
-    if (!opened || ws.readyState !== WebSocketCtor.OPEN) {
-      pending.push(audioBuffer);
+    if (!opened || !ws || ws.readyState !== WebSocketCtor.OPEN) {
+      bufferAudio(audioBuffer);
       return;
     }
     try {
@@ -214,16 +349,18 @@ function createSonioxSTT(apiKey, options = {}) {
 
   emitter.close = function () {
     closedByUser = true;
+    clearKeepAlive();
+    clearReconnectTimer();
     accumulated = "";
     pending.length = 0;
     try {
       // Empty frame = graceful finish; server flushes then closes.
-      if (ws.readyState === WebSocketCtor.OPEN) ws.send("");
+      if (ws?.readyState === WebSocketCtor.OPEN) ws.send("");
     } catch {
       // no-op
     }
     try {
-      ws.close();
+      ws?.close();
     } catch {
       // no-op
     }

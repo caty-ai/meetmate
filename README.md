@@ -59,6 +59,8 @@ cp .env.example .env
 | `SONIOX_MAX_ENDPOINT_DELAY_MS` | `1500`※ | 無音後に必ず確定するまでの最大ms（500〜3000） |
 | `SONIOX_ENDPOINT_LATENCY_LEVEL` | （未設定=0） | 0〜3。上げるほど終端を早める |
 | `SONIOX_CONTEXT_TERMS` | | カンマ区切りの重要語（人名・専門用語）。認識補正に使用 |
+| `SONIOX_KEEPALIVE_INTERVAL_MS` | `8000` | 無音時に接続維持のため送る keepalive フレームの間隔(ms) |
+| `SONIOX_PENDING_MAX` | `200` | 再接続待ち中にバッファする音声チャンク数の上限（超過分は古い順に破棄） |
 
 ※ `0.2` / `1500` は 2026-06-23 のライブ調整で決めた会話向けベースライン（`.env` に設定済み）。
 
