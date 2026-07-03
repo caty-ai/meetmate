@@ -4,7 +4,10 @@ const path = require("node:path");
 const { EventEmitter } = require("node:events");
 
 test("generateSilence emits bounded comfort noise by default", async () => {
-  await withEnvAsync({ COMFORT_NOISE_AMPLITUDE: undefined }, async () => {
+  // WAKE_WORDS must be set before requiring pipeline.js: without it the module
+  // falls back to resolveAgentProfile() → loadConfig(), which fail-fast-exits on
+  // hosts where config.json exists but its ${ENV} placeholders are unresolved.
+  await withEnvAsync({ COMFORT_NOISE_AMPLITUDE: undefined, WAKE_WORDS: "ケイティ" }, async () => {
     await withFreshPipelineModule(({ _test }) => {
       const restoreRandom = stubRandom([0, 0.5, 0.999, 0.25]);
       try {
@@ -29,7 +32,7 @@ test("generateSilence emits bounded comfort noise by default", async () => {
 });
 
 test("COMFORT_NOISE_AMPLITUDE=0 restores byte-exact zero silence", async () => {
-  await withEnvAsync({ COMFORT_NOISE_AMPLITUDE: "0" }, async () => {
+  await withEnvAsync({ COMFORT_NOISE_AMPLITUDE: "0", WAKE_WORDS: "ケイティ" }, async () => {
     await withFreshPipelineModule(({ _test }) => {
       const restoreRandom = stubRandom(() => {
         throw new Error("Math.random should not be called when amplitude is 0");
