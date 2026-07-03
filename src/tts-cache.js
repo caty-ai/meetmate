@@ -191,6 +191,7 @@ function createTtsCache({ dir = defaultCacheDir(), synthesizeFn } = {}) {
 }
 
 module.exports = {
+  cacheKey,
   createTtsCache,
   _test: {
     cacheKey,

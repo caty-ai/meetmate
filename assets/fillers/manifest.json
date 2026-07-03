@@ -1,0 +1,14 @@
+{
+  "provenance": "internal-project gateway/fillers @89aa762 (raw takes, no loudnorm @baba3b8)",
+  "entries": [
+    { "file": "filler0.mp3", "text": "はい！今確認するね！" },
+    { "file": "filler1.mp3", "text": "はい！今確認するね！" },
+    { "file": "filler2.mp3", "text": "はい！今確認するね！" },
+    { "file": "filler3.mp3", "text": "うんうん！ちょっと考えてみるね！" },
+    { "file": "filler4.mp3", "text": "OKだよ！ちょっとだけ待ってね！" },
+    { "file": "filler5.mp3", "text": "うんうん、ちょっと整理してみるね！" },
+    { "file": "filler6.mp3", "text": "了解したよ！少し待ってね！" },
+    { "file": "filler7.mp3", "text": "うんうん、それについて考えてみるね！" },
+    { "file": "filler8.mp3", "text": "うんうん、ちゃんと聞こえてるよ。少し考えるね。" }
+  ]
+}

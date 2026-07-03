@@ -135,6 +135,12 @@ v7.5.0 以降、Fish Audio **S2-Pro** をデフォルトモデルにしていま
 | `PENDING_QUEUE_MAX=3` | gate CLOSED 中の pending wake 最大数 |
 | `ECHO_GATE_CLOSED_BYPASS=true` | 旧 cancel-word 用 echo gate bypass を ON。⚠️ v7.7 で既定 OFF に変更（発話中の音声キャンセルが必要なら true に） |
 
+### 相槌シード（#72）
+
+手元または mini 上で `node scripts/seed-tts-cache-from-fillers.js` を実行すると、`assets/fillers/manifest.json` の Caty 相槌 mp3 から `assets/tts-cache/*.pcm` を事前生成します。`config.json` がない環境では、誤った cache key を作らないため `--voice-id <id>` を明示してください。
+
+cache key は `voiceId` / `FISH_AUDIO_SPEED` / `FISH_AUDIO_MODEL` / `TTS_SAMPLE_RATE` の影響を受けます。いずれかを変えた後は再実行しないと古い seeded PCM はヒットせず、ack 時に Fish Audio の live synthesis へ戻ります。mini の `config.json` の `agent.ackVariants` には、manifest 内の 7 unique texts を文字・句読点まで完全一致で入れてください。
+
 ## LCM（Lossless Context Management）
 
 MeetセッションはOpenClawのLCMで自動記録。セッション終了時にingestされ、長期記憶に保存。
