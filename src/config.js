@@ -5,6 +5,14 @@ const { buildVoiceAddendum } = require("./llm");
 const CONFIG_PATH = path.join(__dirname, "..", "config.json");
 
 const SAMPLE_RATE = 16_000;
+// TTS output rate. The code default is the single source of truth; env is kept
+// as an escape hatch only. Invalid env values (NaN/zero/negative) fall back to
+// the default so a typo can't propagate NaN into Fish Audio / silence buffers.
+const _ttsRateEnv = Number(process.env.TTS_SAMPLE_RATE);
+const TTS_SAMPLE_RATE = Number.isInteger(_ttsRateEnv) && _ttsRateEnv > 0 ? _ttsRateEnv : 24_000;
+if (process.env.TTS_SAMPLE_RATE && TTS_SAMPLE_RATE !== _ttsRateEnv) {
+  console.warn(`⚠️  Invalid TTS_SAMPLE_RATE "${process.env.TTS_SAMPLE_RATE}" — using default 24000`);
+}
 const TTS_PROVIDER = process.env.TTS_PROVIDER || "fish-audio";
 const LANG = process.env.AGENT_LANG || "ja";
 
@@ -172,7 +180,7 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
     tts: {
       provider: "fish-audio",
       referenceId: ttsReferenceId,
-      sampleRate: SAMPLE_RATE,
+      sampleRate: TTS_SAMPLE_RATE,
       latency: process.env.FISH_AUDIO_LATENCY || "balanced",
       // Speech rate, 0.5-2.0 (1.0 = native speed). Default 1.0, chosen
       // 2026-05-04 after switching the default model to s2-pro: 0.9 felt
@@ -210,6 +218,7 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
 module.exports = {
   getPipelineConfig,
   SAMPLE_RATE,
+  TTS_SAMPLE_RATE,
   TTS_PROVIDER,
   SLACK_BOT_TOKEN,
   SLACK_NOTIFY_CHANNEL,

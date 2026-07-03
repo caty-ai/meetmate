@@ -92,6 +92,7 @@ npm start
 ```
 STT(Soniox) → ウェイクワード検出 → OpenClaw Gateway(LLM) → TTS(Fish Audio S2-Pro) → Meet/Zoom
 ```
+入力側 STT は 16kHz、出力側 TTS / `bot_output` は 24kHz。Attendee の入力 leg と出力 leg は独立している。
 
 ### 主要モジュール
 - `agent-profile.js`: エージェント設定解決
@@ -120,6 +121,7 @@ v7.5.0 以降、Fish Audio **S2-Pro** をデフォルトモデルにしていま
 | env | 効果 |
 |---|---|
 | `FISH_AUDIO_MODEL=s1` | S1 model に戻す |
+| `TTS_SAMPLE_RATE=16000` | 出力を旧 16kHz に戻す |
 | `FISH_AUDIO_SPEED=0.9` | speech rate を 0.9 に（既定 1.0） |
 | `ENABLE_IMMEDIATE_ACK=false` | always-ack を OFF |
 | `LLM_RESPONSE_TIMEOUT_MS=0` | first-audio timeout を OFF |

@@ -69,7 +69,7 @@ function abortableSleep(ms, signal) {
  * @param {object} options
  * @param {string} options.apiKey - Fish Audio API key
  * @param {string} [options.referenceId] - Voice model ID (null = default voice)
- * @param {number} [options.sampleRate=16000] - Output sample rate
+ * @param {number} [options.sampleRate=24000] - Output sample rate
  * @param {string} [options.latency="balanced"] - "normal" | "balanced"
  * @param {AbortSignal} [options.signal] - AbortSignal for cancellation
  * @param {function} options.onAudio - Callback for audio chunks: (buffer: Buffer) => void
@@ -102,7 +102,7 @@ async function _synthesizeOnce(text, options = {}) {
   if (!apiKey) throw new Error("FISH_AUDIO_API_KEY is required for TTS");
   if (!text || !text.trim()) return;
 
-  const sampleRate = options.sampleRate || 16_000;
+  const sampleRate = options.sampleRate || 24_000;
   const latency = options.latency || "balanced";
   const onAudio = options.onAudio;
   if (!onAudio) throw new Error("onAudio callback is required");

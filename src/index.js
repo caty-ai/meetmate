@@ -14,7 +14,7 @@ const https = require("https");
 const path = require("path");
 const crypto = require("crypto");
 const { parse } = require("querystring");
-const { getPipelineConfig, SAMPLE_RATE, TTS_PROVIDER, loadConfig } = require("./config");
+const { getPipelineConfig, SAMPLE_RATE, TTS_SAMPLE_RATE, TTS_PROVIDER, loadConfig } = require("./config");
 const { createPipeline } = require("./pipeline");
 const { warmUpGatewaySession } = require("./gateway-warmup");
 
@@ -1144,7 +1144,7 @@ wss.on("connection", (client, req) => {
 
     const payload = {
       trigger: "realtime_audio.bot_output",
-      data: { chunk: buffer.toString("base64"), sample_rate: SAMPLE_RATE },
+      data: { chunk: buffer.toString("base64"), sample_rate: TTS_SAMPLE_RATE },
     };
 
     try {

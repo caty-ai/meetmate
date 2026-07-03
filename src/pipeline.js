@@ -963,7 +963,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
           appendAssistantLog(ack.replace(/^\([^)]*\)\s*/, ""));
           // Insert silence after ack (same as greeting→purpose transition)
           // so the first LLM sentence doesn't collide with the ack playback.
-          const ackSilence = generateSilence(SENTENCE_PAUSE_MS, config.stt.sampleRate);
+          const ackSilence = generateSilence(SENTENCE_PAUSE_MS, config.tts.sampleRate);
           onAudio(ackSilence);
           // Count ack as a spoken segment so the first LLM split-point sentence
           // also gets a pause via the spokenSentenceCount > 0 check.
@@ -1053,7 +1053,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
 
             // Insert pause between segments (sentence=long, clause=short)
             if (spokenSentenceCount > 0 && split.pauseMs > 0) {
-              const silence = generateSilence(split.pauseMs, config.stt.sampleRate);
+              const silence = generateSilence(split.pauseMs, config.tts.sampleRate);
               onAudio(silence);
             }
 
@@ -1224,7 +1224,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       await prev.catch(() => {});
       if (signal?.aborted) return;
       if (ttsHasSpoken && TTS_GAP_MS > 0) {
-        const gap = generateSilence(TTS_GAP_MS, config.stt.sampleRate);
+        const gap = generateSilence(TTS_GAP_MS, config.tts.sampleRate);
         onAudio(gap);
       }
       ttsHasSpoken = true;
@@ -1298,7 +1298,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       await speakSentence(greeting, greetAbort.signal);
       if (purposeStatement && !greetAbort.signal.aborted) {
         // Small pause between greeting and purpose
-        const silence = generateSilence(SENTENCE_PAUSE_MS || 500, config.stt.sampleRate);
+        const silence = generateSilence(SENTENCE_PAUSE_MS || 500, config.tts.sampleRate);
         onAudio(silence);
         await speakSentence(purposeStatement, greetAbort.signal);
       }
