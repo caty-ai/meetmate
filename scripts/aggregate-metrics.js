@@ -45,8 +45,11 @@ function readEvents(filePath) {
 function summarize(events) {
   const turns = new Map();
   const delegationEvents = events.filter((event) =>
-    event.type === "timeout_fallback_fired" || event.type === "handoff_requested"
+    event.type === "timeout_fallback_fired" ||
+    event.type === "handoff_requested" ||
+    event.type === "forced_delegation_fired"
   );
+  const forcedDelegationCount = events.filter((event) => event.type === "forced_delegation_fired").length;
   const suspectedMisroutedTurnIds = new Set();
 
   for (const event of events) {
@@ -111,6 +114,7 @@ function summarize(events) {
     ackTurns,
     ackRate: addressedTurns.length > 0 ? ackTurns / addressedTurns.length : 0,
     delegationCount: delegationEvents.length,
+    forcedDelegationCount,
     suspectedMisroutedCount: suspectedMisroutedTurnIds.size,
   };
 }
@@ -128,6 +132,7 @@ function printSummary(filePath, summary) {
   console.log(`Ack immediacy rate: ${summary.ackTurns}/${summary.turnCount} (${(summary.ackRate * 100).toFixed(1)}%)`);
   console.log("Ack immediacy definition: fraction of turns with any ack_playback_start event.");
   console.log(`Delegation events: ${summary.delegationCount}`);
+  console.log(`Forced delegations (Timer A): ${summary.forcedDelegationCount}`);
   console.log(`Suspected misrouted turns: ${summary.suspectedMisroutedCount}`);
   console.log(`Suspected misroute heuristic: handoff_requested with transcript_char_count <= ${MISROUTED_TRANSCRIPT_CHAR_THRESHOLD} (METRICS_MISROUTE_CHAR_THRESHOLD).`);
   console.log("Note: self-initiated LLM delegations via sessions_spawn are not counted because they are not observable at the REST boundary.");

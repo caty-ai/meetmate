@@ -76,6 +76,7 @@ test("aggregate-metrics summarizes response and delegation data", () => {
     { timestamp_ms: 1_500, type: "first_token", meeting_id: "m", turn_id: "t1" },
     { timestamp_ms: 3_000, type: "utterance_end", meeting_id: "m", turn_id: "t2" },
     { timestamp_ms: 3_800, type: "tts_playback_start", meeting_id: "m", turn_id: "t2" },
+    { timestamp_ms: 3_900, type: "forced_delegation_fired", meeting_id: "m", turn_id: "t2", threshold_ms: 15000, elapsed_ms: 15010 },
     { timestamp_ms: 4_000, type: "handoff_requested", meeting_id: "m", turn_id: "t2", transcript_char_count: 20 },
   ];
   fs.writeFileSync(file, `${events.map((event) => JSON.stringify(event)).join("\n")}\n`);
@@ -89,7 +90,8 @@ test("aggregate-metrics summarizes response and delegation data", () => {
   assert.match(output, /Utterances observed \(incl\. unaddressed\): 2/);
   assert.match(output, /Perceived response time p50\/p90\/max: 100ms \/ 800ms \/ 800ms/);
   assert.match(output, /Ack immediacy rate: 1\/2 \(50\.0%\)/);
-  assert.match(output, /Delegation events: 1/);
+  assert.match(output, /Delegation events: 2/);
+  assert.match(output, /Forced delegations \(Timer A\): 1/);
   assert.match(output, /Suspected misrouted turns: 1/);
 });
 
@@ -104,6 +106,8 @@ test("aggregate-metrics handles empty event sets with sane zeros", () => {
   assert.equal(summary.max, null);
   assert.equal(summary.ackTurns, 0);
   assert.equal(summary.ackRate, 0);
+  assert.equal(summary.delegationCount, 0);
+  assert.equal(summary.forcedDelegationCount, 0);
 
   const dir = tempDir();
   const file = path.join(dir, "empty.jsonl");

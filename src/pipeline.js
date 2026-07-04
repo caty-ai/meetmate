@@ -357,6 +357,7 @@ const PROGRESS_PING_VARIANTS = [
 // itself fails. The real Slack-confirmation line is spoken later, only on
 // success of requestTimeoutHandoff().
 const LLM_TIMEOUT_FALLBACK_VOICE = "[empathetic, unhurried] ごめん、ちょっと時間がかかってるね。少し待ってもらえるかな？";
+const FORCED_DELEGATION_FALLBACK_VOICE = "ちょっと時間がかかってるから、詳細はあとでSlackで共有するね。";
 const HANDOFF_SUCCESS_VOICE = "[soft voice] 続きはSlackに共有しておくね。";
 const HANDOFF_FAILURE_VOICE = "[soft voice] ごめん、うまく繋げられなかったみたい。あとでもう一回試してね。";
 
@@ -399,10 +400,17 @@ function collectFixedTtsPhrases(config, greeting) {
     greeting || config.greeting,
     config.exitFarewell || "[warm] 了解です！退出しますね。お疲れさまでした！",
     config.cancelAck,
+    ...(Number(config?.llm?.firstTokenDelegateMs || 0) > 0 ? [FORCED_DELEGATION_FALLBACK_VOICE] : []),
     config.timeoutFallback || LLM_TIMEOUT_FALLBACK_VOICE,
     HANDOFF_SUCCESS_VOICE,
     HANDOFF_FAILURE_VOICE,
   ].filter(Boolean);
+}
+
+function shouldForceDelegate({ thresholdMs, firstChunkSeen, abortSignal, isProcessing }) {
+  // Lane seam: future fast/work intent policy can replace this timer decision
+  // without touching the abort, spoken handoff, or metrics sequence below.
+  return thresholdMs > 0 && !firstChunkSeen && !abortSignal?.aborted && isProcessing;
 }
 
 function isTtsCacheEnabled() {
@@ -825,11 +833,14 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
 
     let progressTimer = null;
     let llmTimeoutTimer = null;
+    let firstTokenDelegateTimer = null;
+    let firstTokenDelegateStartedAt = 0;
     let progressPingIndex = 0;
     let mainResponseStarted = false;
     let spokenSentenceCount = 0;
     let firstChunkSeen = false;
     let llmFirstResponseTimedOut = false;
+    let forcedDelegationFired = false;
     let llmTimeoutFallbackPlayed = false;
     let handoffAttempted = false;
     let ttsPlaybackStartRecorded = false;
@@ -849,7 +860,19 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       }
     };
 
-    abort.signal.addEventListener("abort", stopLlmTimeoutTimer, { once: true });
+    const stopFirstTokenDelegateTimer = () => {
+      if (firstTokenDelegateTimer) {
+        clearTimeout(firstTokenDelegateTimer);
+        firstTokenDelegateTimer = null;
+      }
+    };
+
+    const stopFirstResponseTimers = () => {
+      stopFirstTokenDelegateTimer();
+      stopLlmTimeoutTimer();
+    };
+
+    abort.signal.addEventListener("abort", stopFirstResponseTimers, { once: true });
 
     const appendAssistantLog = (text) => {
       appendConversationEntry("assistant", text, currentAgentId || null);
@@ -965,19 +988,27 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     };
 
     const maybeSpeakLlmTimeoutFallback = async () => {
-      if (!llmFirstResponseTimedOut || llmTimeoutFallbackPlayed) return;
+      if ((!llmFirstResponseTimedOut && !forcedDelegationFired) || llmTimeoutFallbackPlayed) return;
       llmTimeoutFallbackPlayed = true;
 
       stopProgressTimer();
       turnState.isAgentSpeaking = true;
-      const timeoutMsg = config.timeoutFallback || LLM_TIMEOUT_FALLBACK_VOICE;
+      const timeoutMsg = forcedDelegationFired
+        ? FORCED_DELEGATION_FALLBACK_VOICE
+        : (config.timeoutFallback || LLM_TIMEOUT_FALLBACK_VOICE);
       try {
         await speakSentence(timeoutMsg, null, {
           cacheable: true,
-          onPlaybackStart: () => recordMetric("timeout_fallback_fired", {
-            turn_id: metricsTurnId,
-            text_char_count: timeoutMsg.length,
-          }),
+          onPlaybackStart: () => {
+            if (forcedDelegationFired) {
+              recordTtsPlaybackStartOnce(timeoutMsg, "forced_delegation");
+              return;
+            }
+            recordMetric("timeout_fallback_fired", {
+              turn_id: metricsTurnId,
+              text_char_count: timeoutMsg.length,
+            });
+          },
         });
       } catch { /* ignore TTS error during fallback */ }
       appendAssistantLog(timeoutMsg);
@@ -1019,9 +1050,37 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         if (firstChunkSeen || abort.signal.aborted || !isProcessing) return;
         llmFirstResponseTimedOut = true;
         console.warn(`⏱️  LLM first-response timeout (${timeoutMs}ms) — aborting`);
-        stopLlmTimeoutTimer();
+        stopFirstResponseTimers();
         abort.abort();
       }, timeoutMs);
+    };
+
+    const startFirstTokenDelegateTimer = () => {
+      const thresholdMs = Number(config?.llm?.firstTokenDelegateMs || 0);
+      if (!(thresholdMs > 0)) return;
+
+      firstTokenDelegateStartedAt = Date.now();
+      firstTokenDelegateTimer = setTimeout(() => {
+        if (!shouldForceDelegate({
+          thresholdMs,
+          firstChunkSeen,
+          abortSignal: abort.signal,
+          isProcessing,
+        })) {
+          return;
+        }
+
+        forcedDelegationFired = true;
+        const elapsedMs = Date.now() - firstTokenDelegateStartedAt;
+        recordMetric("forced_delegation_fired", {
+          turn_id: metricsTurnId,
+          threshold_ms: thresholdMs,
+          elapsed_ms: elapsedMs,
+        });
+        console.warn(`⏱️  LLM first-token delegate threshold (${thresholdMs}ms) — aborting for handoff`);
+        stopFirstResponseTimers();
+        abort.abort();
+      }, thresholdMs);
     };
 
     const maybeProgressPing = async () => {
@@ -1102,6 +1161,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       console.log(`📤  [diag] user.content (${userText.length} chars): "${userText.slice(0, 200)}${userText.length > 200 ? "…" : ""}"`);
       console.log(`📤  [diag] messages count=${llmMessages.length}, model=${agentState.model}`);
 
+      startFirstTokenDelegateTimer();
       startLlmTimeoutTimer();
 
       const emitChatMessage = (text, source = "chat tag") => {
@@ -1141,7 +1201,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
 
         if (!firstChunkSeen) {
           firstChunkSeen = true;
-          stopLlmTimeoutTimer();
+          stopFirstResponseTimers();
           console.log(`📥  [diag] firstChunk transition: false→true, chunk="${chunk.slice(0, 40)}"`);
           recordMetric("first_token", {
             turn_id: metricsTurnId,
@@ -1210,7 +1270,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         }
       }
 
-      stopLlmTimeoutTimer();
+      stopFirstResponseTimers();
 
       if (abort.signal.aborted) {
         await maybeSpeakLlmTimeoutFallback();
@@ -1288,6 +1348,8 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       ) {
         console.warn(`⚠️  Agent "${requestAgentId}" gateway unavailable. Falling back to "${defaultAgentId}"`);
         switchAgent(defaultAgentId);
+        stopProgressTimer();
+        stopFirstResponseTimers();
         scheduledGatewayFallbackRetry = true;
         await processUserInput(userText, {
           hasRetriedOnFallback: true,
@@ -1309,7 +1371,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       }
     } finally {
       stopProgressTimer();
-      stopLlmTimeoutTimer();
+      stopFirstResponseTimers();
       turnState.isAgentSpeaking = false;
       turnState.inputCooldownUntil = Date.now() + (config.echoCooldownMs || 300);
       isProcessing = false;

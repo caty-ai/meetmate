@@ -42,6 +42,16 @@ const AGENT_MAX_TOKENS = Number(process.env.AGENT_MAX_TOKENS || 300);
 // fires only on genuine Gateway/tool hangs rather than legitimately slow
 // turns. Set to 0 to disable.
 const LLM_RESPONSE_TIMEOUT_MS = Number(process.env.LLM_RESPONSE_TIMEOUT_MS || 35_000);
+// First-token forced delegation: if no LLM chunk arrives before this threshold,
+// abort the turn and hand it off instead of leaving the user waiting.
+// Set to 0 to disable; invalid values fall back to the production default.
+const _firstTokenDelegateEnv = process.env.FIRST_TOKEN_DELEGATE_MS;
+const _firstTokenDelegateParsed = _firstTokenDelegateEnv === undefined || String(_firstTokenDelegateEnv).trim() === ""
+  ? 15_000
+  : Number(_firstTokenDelegateEnv);
+const FIRST_TOKEN_DELEGATE_MS = !Number.isFinite(_firstTokenDelegateParsed)
+  ? 15_000
+  : (_firstTokenDelegateParsed > 0 ? _firstTokenDelegateParsed : 0);
 const ECHO_LOOP_COOLDOWN_MS = Number(process.env.ECHO_LOOP_COOLDOWN_MS || 300);
 
 const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN || "";
@@ -175,6 +185,7 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
       temperature: overrides.temperature ?? AGENT_TEMPERATURE,
       maxTokens: overrides.maxTokens ?? AGENT_MAX_TOKENS,
       responseTimeoutMs: overrides.responseTimeoutMs ?? LLM_RESPONSE_TIMEOUT_MS,
+      firstTokenDelegateMs: overrides.firstTokenDelegateMs ?? FIRST_TOKEN_DELEGATE_MS,
       openclawSystemAddendum: llmAddendum,
     },
     tts: {
