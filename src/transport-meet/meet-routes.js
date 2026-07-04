@@ -592,6 +592,48 @@ function requestBotLeave(botId, reason, attendeeKey) {
   req.end();
 }
 
+function sendAttendeeChatMessage(botId, message, attendeeKey) {
+  try {
+    const apiKey = attendeeKey || ATTENDEE_API_KEY;
+    let chatMessage = String(message || "");
+    if (chatMessage.length > 10_000) {
+      const truncated = Array.from(chatMessage).slice(0, 10_000).join("");
+      console.warn(`💬  Attendee chat message truncated: ${chatMessage.length} → ${truncated.length} chars`);
+      chatMessage = truncated;
+    }
+
+    const body = JSON.stringify({ to: "everyone", message: chatMessage });
+    const options = {
+      hostname: ATTENDEE_API_BASE_URL,
+      port: 443,
+      path: `/api/v1/bots/${botId}/send_chat_message`,
+      method: "POST",
+      headers: {
+        Authorization: `Token ${apiKey}`,
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(body),
+      },
+    };
+    const req = https.request(options, (res) => {
+      let data = "";
+      res.on("data", (c) => (data += c));
+      res.on("end", () => {
+        if (res.statusCode >= 400) {
+          console.warn(`💬  Attendee chat message lost: ${botId} → ${res.statusCode} ${data.slice(0, 200)}`);
+        } else {
+          console.log(`💬  Attendee chat enqueue request: ${botId} → ${res.statusCode} ${data.slice(0, 200)} (HTTP 200 means enqueued, not delivered)`);
+        }
+      });
+    });
+    req.on("error", (err) => console.error(`💬  Attendee chat error: ${err.message}`));
+    req.setTimeout(10_000, () => req.destroy());
+    req.write(body);
+    req.end();
+  } catch (err) {
+    console.error(`💬  Attendee chat error: ${err.message || err}`);
+  }
+}
+
 function finalizeSessionIfInactive(sessionId) {
   const active = activeConnections.get(sessionId);
   if (active) return;
@@ -708,6 +750,14 @@ function createHandler(session, turnState, onAudio) {
       agentProfile: profile,
       onAgentSwitch: (from, to) => {
         console.log(`🔄  Agent switch: ${from || "none"} → ${to}`);
+      },
+      onChatMessage: (text) => {
+        const botInfo = sessionBotIds.get(session.id);
+        if (!botInfo?.botId) {
+          console.log(`💬  Bot ID未確定のためchatメッセージを破棄 (sid=${session.id})`);
+          return;
+        }
+        sendAttendeeChatMessage(botInfo.botId, text, botInfo.attendeeKey);
       },
     });
     return { send: (buf) => pipeline.sendAudio(buf), close: () => pipeline.close(), on: pipeline.on?.bind(pipeline) };

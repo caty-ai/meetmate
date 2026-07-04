@@ -7,7 +7,7 @@ const { streamChat } = require("./llm");
 const { synthesize } = require("./tts-fish");
 const { createTtsCache } = require("./tts-cache");
 const { getExitCommands, detectExitIntent } = require("./exit-handler");
-const { shouldSuppressReply, stripEmojis } = require("./speech-policy");
+const { shouldSuppressReply, stripEmojis, extractChatTags } = require("./speech-policy");
 
 // Two-tier sentence splitter for Japanese + English
 // Tier 1: Full sentence boundary (。！？!?\n) — long pause
@@ -306,6 +306,11 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function previewForLog(text, max = 160) {
+  const input = String(text || "").replace(/\s+/g, " ").trim();
+  return input.length > max ? `${input.slice(0, max)}...` : input;
+}
+
 function getAlphaNumericRatio(text) {
   const compact = String(text || "").replace(/\s+/g, "");
   if (!compact) return 0;
@@ -433,6 +438,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   const hasSelectedAgents = selectedAgentIds.length > 0;
   const agents = options.agents || {};
   const agentProfile = options.agentProfile || null;
+  const onChatMessage = options.onChatMessage;
   const defaultAgentId = options.defaultAgentId || selectedAgentIds[0] || null;
   let currentAgentId = defaultAgentId || agentProfile?.agentId || "agent";
 
@@ -1018,6 +1024,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       // ── LLM streaming ──
       let fullResponse = "";
       let sentenceBuffer = "";
+      let chatHoldback = "";
 
       console.log(`🤔  ${requestAgentId || "agent"} thinking…`);
 
@@ -1030,6 +1037,26 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       console.log(`📤  [diag] messages count=${llmMessages.length}, model=${agentState.model}`);
 
       startLlmTimeoutTimer();
+
+      const emitChatMessage = (text, source = "chat tag") => {
+        const message = String(text || "").trim();
+        if (!message) return;
+        if (typeof onChatMessage !== "function") {
+          console.log(`💬  chatタグを送信できないため破棄 (${source}): "${previewForLog(message)}"`);
+          return;
+        }
+        try {
+          Promise.resolve(onChatMessage(message)).catch((err) => {
+            console.error(`❌  chatタグ送信コールバック失敗 (${source}):`, err.message || err);
+          });
+        } catch (err) {
+          console.error(`❌  chatタグ送信コールバック失敗 (${source}):`, err.message || err);
+        }
+      };
+
+      const emitChatMessages = (chats, source = "chat tag") => {
+        for (const text of chats) emitChatMessage(text, source);
+      };
 
       for await (const chunk of streamChat(
         llmMessages,
@@ -1053,7 +1080,12 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         }
 
         fullResponse += chunk;
-        sentenceBuffer += chunk;
+        sentenceBuffer += chatHoldback + chunk;
+        chatHoldback = "";
+        const extractedChat = extractChatTags(sentenceBuffer);
+        sentenceBuffer = extractedChat.speech;
+        chatHoldback = extractedChat.holdback;
+        emitChatMessages(extractedChat.chats);
 
         // #9 First chunk fast path: speak early even before punctuation.
         // Skip when ack was already spoken (spokenSentenceCount > 0) — ack provides
@@ -1131,6 +1163,19 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       }
 
       // Flush remaining text
+      if (chatHoldback) {
+        const unterminatedPrefix = "[[[chat:";
+        const markerIndex = chatHoldback.toLowerCase().indexOf(unterminatedPrefix);
+        if (markerIndex === -1) {
+          console.warn(`💬  chatタグ未満の保留断片を破棄しました: "${previewForLog(chatHoldback)}"`);
+        } else {
+          const content = chatHoldback.slice(markerIndex + unterminatedPrefix.length).trim();
+          console.warn(`⚠️  未終了のchatタグを音声から除外しました: "${previewForLog(chatHoldback)}"`);
+          if (content) emitChatMessage(content, "unterminated chat tag");
+        }
+        chatHoldback = "";
+      }
+
       if (sentenceBuffer.trim() && sentenceBuffer.trim().length >= 3) {
         if (!mainResponseStarted) {
           mainResponseStarted = true;

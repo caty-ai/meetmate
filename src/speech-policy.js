@@ -9,6 +9,7 @@ const TRUNCATED_NO_RE = /^\s*NO[_\s]*[。.！!？?]*\s*$/;
 const GATEWAY_ERROR_RE = /^\s*((error|internal error|upstream error)\s*[:：]|service unavailable|\{"error")/i;
 const EXTENDED_PICTOGRAPHIC_RE = /\p{Extended_Pictographic}/u;
 const KEYCAP_RE = /[0-9#*][\uFE0E\uFE0F]?\u20E3/gu;
+const CHAT_TAG_PREFIX = "[[[chat:";
 
 /**
  * Check if a reply text should be suppressed (NO_REPLY pattern, empty, null, whitespace).
@@ -76,6 +77,65 @@ function shouldStripEmojiCodePoint(char, codePoint) {
   return codePoint >= 0x1F000 && EXTENDED_PICTOGRAPHIC_RE.test(char);
 }
 
+function trailingChatPrefix(text) {
+  const input = String(text || "");
+  const max = Math.min(CHAT_TAG_PREFIX.length - 1, input.length);
+  for (let len = max; len > 0; len -= 1) {
+    const suffix = input.slice(-len).toLowerCase();
+    if (CHAT_TAG_PREFIX.startsWith(suffix)) return input.slice(-len);
+  }
+  return "";
+}
+
+function extractChatTags(buffer) {
+  const input = String(buffer || "");
+  if (!input) return { speech: "", chats: [], holdback: "" };
+
+  const lower = input.toLowerCase();
+  const speechParts = [];
+  const chats = [];
+  let holdback = "";
+  let cursor = 0;
+
+  while (cursor < input.length) {
+    const start = lower.indexOf(CHAT_TAG_PREFIX, cursor);
+    if (start === -1) {
+      speechParts.push(input.slice(cursor));
+      break;
+    }
+
+    speechParts.push(input.slice(cursor, start));
+    let contentStart = start + CHAT_TAG_PREFIX.length;
+    while (contentStart < input.length && /\s/.test(input[contentStart])) {
+      contentStart += 1;
+    }
+
+    const end = input.indexOf("]]]", contentStart);
+    if (end === -1) {
+      holdback = input.slice(start);
+      cursor = input.length;
+      break;
+    }
+
+    const content = input.slice(contentStart, end).trim();
+    if (content) {
+      chats.push(content);
+    } else {
+      console.log("💬  空のchatタグをスキップしました");
+    }
+    cursor = end + 3;
+  }
+
+  let speech = speechParts.join("");
+  const trailing = trailingChatPrefix(speech);
+  if (trailing) {
+    speech = speech.slice(0, -trailing.length);
+    holdback = trailing + holdback;
+  }
+
+  return { speech, chats, holdback };
+}
+
 /**
  * Wrap an async generator to filter out silent/empty replies.
  * Phase 1: Additional layer on top of existing filterSilentReplies in llm.js.
@@ -130,6 +190,7 @@ module.exports = {
   shouldSuppressReply,
   sanitizeReply,
   stripEmojis,
+  extractChatTags,
   isGatewayErrorText,
   filterSilentRepliesStream,
 };
