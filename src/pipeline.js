@@ -8,6 +8,7 @@ const { synthesize } = require("./tts-fish");
 const { createTtsCache } = require("./tts-cache");
 const { getExitCommands, detectExitIntent } = require("./exit-handler");
 const { shouldSuppressReply, stripEmojis, extractChatTags } = require("./speech-policy");
+const { recordEvent } = require("./metrics");
 
 // Two-tier sentence splitter for Japanese + English
 // Tier 1: Full sentence boundary (。！？!?\n) — long pause
@@ -484,16 +485,19 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   let isProcessing = false;
   let lastUserTranscript = "";
   let hasSentInitialWakeAck = false;
+  let metricsTurnSeq = 0;
+  const ttsPlaybackStartRecordedTurnIds = new Set();
 
   // Multi-participant meeting mode: Injection Gate (wake mode only)
   const transcriptBuffer = []; // Accumulates all utterances (with seq numbers)
   const pendingQueue = []; // Utterances that arrive while Gate is CLOSED
   let gateState = "OPEN"; // "OPEN" = accepting input, "CLOSED" = processing
   let utteranceSeq = 0; // Monotonic sequence counter for ordering
+  const isWakeMode = session?.config?.wakeMode === "wake" || config?.wakeMode === "wake";
   const meetingContextOptions = {
     includeUnaddressed:
       ENABLE_MEETING_CONTEXT_INJECTION &&
-      (session?.config?.wakeMode === "wake" || config?.wakeMode === "wake"),
+      isWakeMode,
   };
   // Share gateState with transport layer (echo gate bypass for cancel detection)
   turnState.gateState = gateState;
@@ -557,6 +561,21 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     if (agentId && session.conversationLogs && Array.isArray(session.conversationLogs[agentId])) {
       session.conversationLogs[agentId].push(entry);
     }
+  }
+
+  function nextMetricsTurnId() {
+    metricsTurnSeq += 1;
+    return `${session?.id || "meeting"}-${metricsTurnSeq}`;
+  }
+
+  function recordMetric(type, fields = {}) {
+    if (!fields.turn_id) return;
+    recordEvent(type, {
+      meeting_id: session?.id || null,
+      session_id: session?.id || null,
+      agent_id: currentAgentId || null,
+      ...fields,
+    });
   }
 
   // ── STT ──────────────────────────────────────────────────────────
@@ -624,6 +643,13 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   let utteranceChain = Promise.resolve();
   stt.on("utterance_end", (userText) => {
     const cleanedText = String(userText || "").trim();
+    const metricsTurnId = cleanedText ? nextMetricsTurnId() : null;
+    if (metricsTurnId) {
+      recordMetric("utterance_end", {
+        turn_id: metricsTurnId,
+        transcript_char_count: cleanedText.length,
+      });
+    }
     if (isProcessing && cleanedText && isWakeCancelText(cleanedText, agents, selectedAgentIds)) {
       handleWakeCancelAbort(cleanedText)
         .catch((err) => console.error("❌  wake+cancel handler error:", err.message || err));
@@ -631,11 +657,11 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     }
 
     utteranceChain = utteranceChain
-      .then(() => handleUtteranceEnd(userText))
+      .then(() => handleUtteranceEnd(userText, metricsTurnId))
       .catch((err) => console.error("❌  utterance_end handler error:", err.message || err));
   });
 
-  async function handleUtteranceEnd(userText) {
+  async function handleUtteranceEnd(userText, metricsTurnId = null) {
     const cleanedText = String(userText || "").trim();
     if (!cleanedText) return;
 
@@ -695,7 +721,14 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         addressed: wakeResult.detected,
         injectToLlm: wakeResult.detected,
         sentToLlm: false,
+        metricsTurnId,
       };
+      if (isWakeMode && metricsTurnId) {
+        recordMetric("wake_decision", {
+          turn_id: metricsTurnId,
+          addressed: entry.addressed,
+        });
+      }
 
       if (!wakeResult.detected) {
         // No wake word: keep for wake re-scan/ops logs, but don't inject into LLM context.
@@ -765,6 +798,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       ackSourceText: cleanedText,
       contextEntries: prompt.entries,
       currentEntry: currentWakeEntry,
+      metricsTurnId,
     });
   }
 
@@ -782,6 +816,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       ackSourceText = userText,
       contextEntries = [],
       currentEntry = null,
+      metricsTurnId = null,
     } = options;
     isProcessing = true;
     const abort = new AbortController();
@@ -797,6 +832,8 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     let llmFirstResponseTimedOut = false;
     let llmTimeoutFallbackPlayed = false;
     let handoffAttempted = false;
+    let ttsPlaybackStartRecorded = false;
+    let scheduledGatewayFallbackRetry = false;
 
     const stopProgressTimer = () => {
       if (progressTimer) {
@@ -816,6 +853,18 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
 
     const appendAssistantLog = (text) => {
       appendConversationEntry("assistant", text, currentAgentId || null);
+    };
+
+    const recordTtsPlaybackStartOnce = (text, source) => {
+      if (ttsPlaybackStartRecorded) return;
+      if (metricsTurnId && ttsPlaybackStartRecordedTurnIds.has(metricsTurnId)) return;
+      ttsPlaybackStartRecorded = true;
+      if (metricsTurnId) ttsPlaybackStartRecordedTurnIds.add(metricsTurnId);
+      recordMetric("tts_playback_start", {
+        turn_id: metricsTurnId,
+        source,
+        text_char_count: String(text || "").length,
+      });
     };
 
     // Returns Promise<boolean>: true if Gateway accepted the handoff (HTTP 2xx/3xx),
@@ -902,6 +951,10 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
 
           req.write(body);
           req.end();
+          recordMetric("handoff_requested", {
+            turn_id: metricsTurnId,
+            transcript_char_count: trimmed.length,
+          });
 
           console.log(`🔄  Timeout handoff spawned for: "${trimmed.slice(0, 80)}${trimmed.length > 80 ? "…" : ""}"`);
         } catch (err) {
@@ -919,7 +972,13 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       turnState.isAgentSpeaking = true;
       const timeoutMsg = config.timeoutFallback || LLM_TIMEOUT_FALLBACK_VOICE;
       try {
-        await speakSentence(timeoutMsg, null, { cacheable: true });
+        await speakSentence(timeoutMsg, null, {
+          cacheable: true,
+          onPlaybackStart: () => recordMetric("timeout_fallback_fired", {
+            turn_id: metricsTurnId,
+            text_char_count: timeoutMsg.length,
+          }),
+        });
       } catch { /* ignore TTS error during fallback */ }
       appendAssistantLog(timeoutMsg);
 
@@ -997,7 +1056,14 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         const ack = pickImmediateAck(ackDecisionText, currentAgentConfig.ackVariants || config.ackVariants);
         turnState.isAgentSpeaking = true;
         console.log(`⚡  Immediate ack: "${ack}"`);
-        await speakSentence(ack, abort.signal, { cacheable: true });
+        await speakSentence(ack, abort.signal, {
+          cacheable: true,
+          onPlaybackStart: () => recordMetric("ack_playback_start", {
+            turn_id: metricsTurnId,
+            ack_text: ack,
+            ack_source_char_count: ackDecisionText.length,
+          }),
+        });
         if (!abort.signal.aborted) {
           appendAssistantLog(ack.replace(/^\([^)]*\)\s*/, ""));
           // Insert silence after ack (same as greeting→purpose transition)
@@ -1077,6 +1143,10 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
           firstChunkSeen = true;
           stopLlmTimeoutTimer();
           console.log(`📥  [diag] firstChunk transition: false→true, chunk="${chunk.slice(0, 40)}"`);
+          recordMetric("first_token", {
+            turn_id: metricsTurnId,
+            chunk_char_count: String(chunk || "").length,
+          });
         }
 
         fullResponse += chunk;
@@ -1097,7 +1167,9 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
           const firstChunk = sentenceBuffer.trim();
           sentenceBuffer = "";
           console.log(`🗣️  ${requestAgentId || "agent"} speaking (first chunk): "${firstChunk}"`);
-          await speakSentence(firstChunk, abort.signal);
+          await speakSentence(firstChunk, abort.signal, {
+            onPlaybackStart: () => recordTtsPlaybackStartOnce(firstChunk, "first_chunk"),
+          });
           if (abort.signal.aborted) break;
           spokenSentenceCount += 1;
           continue;
@@ -1129,7 +1201,9 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
               console.log(`🗣️  ${requestAgentId || "agent"} continue [${splitLabel}]: "${sentence}"`);
             }
 
-            await speakSentence(sentence, abort.signal);
+            await speakSentence(sentence, abort.signal, {
+              onPlaybackStart: () => recordTtsPlaybackStartOnce(sentence, splitLabel),
+            });
             if (abort.signal.aborted) break;
             spokenSentenceCount += 1;
           }
@@ -1185,7 +1259,9 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
           turnState.isAgentSpeaking = true;
         }
         console.log(`🗣️  ${requestAgentId || "agent"} speaking (flush): "${sentenceBuffer.trim()}"`);
-        await speakSentence(sentenceBuffer.trim(), abort.signal);
+        await speakSentence(sentenceBuffer.trim(), abort.signal, {
+          onPlaybackStart: () => recordTtsPlaybackStartOnce(sentenceBuffer.trim(), "flush"),
+        });
       }
 
       // Log assistant response
@@ -1212,11 +1288,13 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       ) {
         console.warn(`⚠️  Agent "${requestAgentId}" gateway unavailable. Falling back to "${defaultAgentId}"`);
         switchAgent(defaultAgentId);
+        scheduledGatewayFallbackRetry = true;
         await processUserInput(userText, {
           hasRetriedOnFallback: true,
           ackSourceText,
           contextEntries,
           currentEntry,
+          metricsTurnId,
         });
         return;
       }
@@ -1236,6 +1314,15 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       turnState.inputCooldownUntil = Date.now() + (config.echoCooldownMs || 300);
       isProcessing = false;
       currentAbort = null;
+      if (!scheduledGatewayFallbackRetry) {
+        recordMetric("turn_end", {
+          turn_id: metricsTurnId,
+          first_token_seen: firstChunkSeen,
+          llm_timeout_fallback_played: llmTimeoutFallbackPlayed,
+          handoff_attempted: handoffAttempted,
+        });
+      }
+      if (metricsTurnId) ttsPlaybackStartRecordedTurnIds.delete(metricsTurnId);
 
       try {
         // Multi-participant mode: re-scan pending before making OPEN visible.
@@ -1276,6 +1363,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
               ackSourceText: entry.text,
               contextEntries: pendingPrompt.entries,
               currentEntry: entry,
+              metricsTurnId: entry.metricsTurnId || null,
             });
             return; // Recursive replay owns the final OPEN transition.
           }
@@ -1335,6 +1423,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
 
     try {
       const synthesizeFn = opts.cacheable === true && usePipelineTtsCache ? ttsCache.synthesize : synthesize;
+      let playbackStarted = false;
       await synthesizeFn(cleaned, {
         apiKey: fishKey,
         referenceId: agentState.voiceId || config.tts.referenceId || null,
@@ -1344,6 +1433,12 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         signal,
         onAudio: (chunk) => {
           if (signal?.aborted) return;
+          if (!playbackStarted) {
+            playbackStarted = true;
+            try {
+              opts.onPlaybackStart?.();
+            } catch { /* metrics callbacks must not affect audio */ }
+          }
           onAudio(chunk);
         },
       });
