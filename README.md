@@ -6,8 +6,8 @@ OpenClaw Gateway連携により、任意のエージェントを音声会議に�
 > **現在の安定版: [`v7.6.0-stable`](https://github.com/caty-ai/meetmate/releases/tag/v7.6.0-stable) (2026-06-23)**
 > STT を Soniox `stt-rt-v5` に採用（既定）。Fish Audio S2-Pro + emotion tag anchor 方式で stabilize 済。
 >
-> **最新プレリリース: [`v7.8.0-rc.2`](https://github.com/caty-ai/meetmate/releases/tag/v7.8.0-rc.2) (2026-07-04・Mac mini 稼働中)**
-> 固定文言 TTS キャッシュ（#67）＋実収録テイク13種（#72/#75）＋絵文字 strip 2層対策（#74）＋ Soniox keepalive・24kHz 音質・複数人ゲート修正（v7.7.0-rc.4 由来 #55/#61/#62/#66）。残検証は複数人ミーティング安定性のみ → 通過で v7.8.0 stable 昇格予定。
+> **最新プレリリース: [`v7.8.0-rc.3`](https://github.com/caty-ai/meetmate/releases/tag/v7.8.0-rc.3) (2026-07-04・Mac mini 稼働中)**
+> Meet チャット投稿（#68: `[[[chat: ...]]]` タグで URL・長文をチャットへ、実機確認済み）＋固定文言 TTS キャッシュ（#67）＋実収録テイク13種（#72/#75）＋絵文字 strip 2層対策（#74）＋ Soniox keepalive・24kHz 音質・複数人ゲート修正（v7.7.0-rc.4 由来 #55/#61/#62/#66）。残検証は複数人ミーティング安定性のみ → 通過で v7.8.0 stable 昇格予定。
 
 ## 特徴
 - Google Meet / Zoom 対応
@@ -16,6 +16,7 @@ OpenClaw Gateway連携により、任意のエージェントを音声会議に�
 - TTS: Fish Audio S2-Pro（emotion tag anchor 方式）
 - 固定文言 TTS キャッシュ: ack/ping/greeting/farewell 等を PCM ディスクキャッシュから即時再生（声の統一・Fish API 往復ゼロ・障害耐性）。実収録テイクの事前シード対応（`scripts/seed-tts-cache-from-fillers.js`）
 - 絵文字ガード: LLM プロンプト禁止 + TTS 直前の機械 strip の2層（感情タグ・日本語記号は温存）
+- 会議チャット投稿（#68）: LLM 応答内の `[[[chat: ...]]]` タグを抽出し、読み上げずに Meet チャットへ投稿（URL・長い詳細の共有用。Attendee `send_chat_message`、Meet は everyone 宛のみ）。絵文字は Attendee サーバー側で 400 拒否（"Message cannot contain emojis or rare script characters."、フォールバック=#81）。リアクション/挙手は Attendee に API なし。送信失敗の warn は `logs/meet-server.stderr.log` 側に出る点に注意
 - STT: Soniox `stt-rt-v5`（既定 / 2026-06-23 採用）。Deepgram も `STT_PROVIDER=deepgram` で選択可
 - LCM（Lossless Context Management）自動記録
 - Slack連動（ステータス通知・サマリー・全文ログ）
