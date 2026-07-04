@@ -3,11 +3,10 @@
 AIエージェントをGoogle Meet / Zoomにリアルタイム参加させ、音声で対話するブリッジサーバー。
 OpenClaw Gateway連携により、任意のエージェントを音声会議に接続可能。
 
-> **現在の安定版: [`v7.6.0-stable`](https://github.com/caty-ai/meetmate/releases/tag/v7.6.0-stable) (2026-06-23)**
-> STT を Soniox `stt-rt-v5` に採用（既定）。Fish Audio S2-Pro + emotion tag anchor 方式で stabilize 済。
+> **現在の安定版: [`v7.8.0-stable`](https://github.com/caty-ai/meetmate/releases/tag/v7.8.0-stable) (2026-07-04・Mac mini 稼働中)**
+> STT=Soniox `stt-rt-v5`（既定）、Fish Audio S2-Pro + emotion tag anchor 方式。Meet チャット投稿（#68: `[[[chat: ...]]]` タグで URL・長文をチャットへ）＋固定文言 TTS キャッシュ＋実収録テイク13種（#67/#72/#75）＋絵文字 strip 2層対策（#74）＋ Soniox keepalive・24kHz 音質・複数人ゲート修正（#55/#61/#62/#66）。複数人社内MT検証（2026-07-04）通過で rc.3 と同コミットから昇格。
 >
-> **最新プレリリース: [`v7.8.0-rc.3`](https://github.com/caty-ai/meetmate/releases/tag/v7.8.0-rc.3) (2026-07-04・Mac mini 稼働中)**
-> Meet チャット投稿（#68: `[[[chat: ...]]]` タグで URL・長文をチャットへ、実機確認済み）＋固定文言 TTS キャッシュ（#67）＋実収録テイク13種（#72/#75）＋絵文字 strip 2層対策（#74）＋ Soniox keepalive・24kHz 音質・複数人ゲート修正（v7.7.0-rc.4 由来 #55/#61/#62/#66）。残検証は複数人ミーティング安定性のみ → 通過で v7.8.0 stable 昇格予定。
+> **次の開発: [#79 委譲強制ハーネス EPIC](https://github.com/caty-ai/meetmate/issues/79)**（要件合意済・スペック=[`docs/deep-interview-79-delegation-harness.md`](docs/deep-interview-79-delegation-harness.md)・子Issue #83-#87）
 
 ## 特徴
 - Google Meet / Zoom 対応
