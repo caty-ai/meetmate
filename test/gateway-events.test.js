@@ -44,7 +44,7 @@ test("builds the verified connect handshake frame and session keys", () => {
   assert.equal(frame.params.maxProtocol, 4);
   assert.equal(frame.params.client.id, "gateway-client");
   assert.equal(frame.params.client.mode, "backend");
-  assert.deepEqual(frame.params.scopes, ["operator.read", "operator.write"]);
+  assert.deepEqual(frame.params.scopes, ["operator.read", "operator.write", "operator.admin"]);
   assert.equal(frame.params.auth.token, "secret");
   assert.equal(gatewayEvents.buildSessionKey("meet-abc-caty", "main"), "agent:main:openai-user:meet-abc-caty");
 });
@@ -113,7 +113,7 @@ test("delegate announce end frame does not emit a delegate reply or fetch reply 
     payload: {
       type: "hello-ok",
       protocol: 4,
-      auth: { role: "operator", scopes: ["operator.read", "operator.write"] },
+      auth: { role: "operator", scopes: ["operator.read", "operator.write", "operator.admin"] },
       features: { methods: [], events: [] },
     },
   });
@@ -231,7 +231,7 @@ test("parses hello-ok response envelope, subscribes, demuxes completion once, an
     payload: {
       type: "hello-ok",
       protocol: 4,
-      auth: { role: "operator", scopes: ["operator.read", "operator.write"] },
+      auth: { role: "operator", scopes: ["operator.read", "operator.write", "operator.admin"] },
       features: { methods: [], events: [] },
     },
   });
@@ -354,7 +354,7 @@ test("subagent-status can complete after reconnect when create frame was missed"
     ok: true,
     payload: {
       type: "hello-ok",
-      auth: { scopes: ["operator.read", "operator.write"] },
+      auth: { scopes: ["operator.read", "operator.write", "operator.admin"] },
     },
   });
   await tick();
@@ -447,7 +447,7 @@ test("end-only completion recovers parent via sessions.resolve before routing", 
     ok: true,
     payload: {
       type: "hello-ok",
-      auth: { scopes: ["operator.read", "operator.write"] },
+      auth: { scopes: ["operator.read", "operator.write", "operator.admin"] },
     },
   });
   await tick();
@@ -526,7 +526,7 @@ test("concurrent parentless completions recover child metadata once", async () =
     ok: true,
     payload: {
       type: "hello-ok",
-      auth: { scopes: ["operator.read", "operator.write"] },
+      auth: { scopes: ["operator.read", "operator.write", "operator.admin"] },
     },
   });
   await tick();
@@ -620,7 +620,7 @@ test("completion dedup waits for successful history fetch and retries duplicate 
     ok: true,
     payload: {
       type: "hello-ok",
-      auth: { scopes: ["operator.read", "operator.write"] },
+      auth: { scopes: ["operator.read", "operator.write", "operator.admin"] },
     },
   });
   await tick();
@@ -697,7 +697,7 @@ test("delegate session end fetches reply text and dedupes by run", async () => {
     type: "res",
     id: sent[0].id,
     ok: true,
-    payload: { type: "hello-ok", auth: { scopes: ["operator.read", "operator.write"] } },
+    payload: { type: "hello-ok", auth: { scopes: ["operator.read", "operator.write", "operator.admin"] } },
   });
   await tick();
 
@@ -772,7 +772,7 @@ test("announce run is detected once and compactSession sends sessions.compact", 
     type: "res",
     id: sent[0].id,
     ok: true,
-    payload: { type: "hello-ok", auth: { scopes: ["operator.read", "operator.write"] } },
+    payload: { type: "hello-ok", auth: { scopes: ["operator.read", "operator.write", "operator.admin"] } },
   });
   await tick();
 
@@ -839,7 +839,7 @@ test("compactSession requires payload ok true and preserves compacted field", as
     type: "res",
     id: sent[0].id,
     ok: true,
-    payload: { type: "hello-ok", auth: { scopes: ["operator.read", "operator.write"] } },
+    payload: { type: "hello-ok", auth: { scopes: ["operator.read", "operator.write", "operator.admin"] } },
   });
   await tick();
 
@@ -898,7 +898,7 @@ test("start is ref-counted and stale socket close does not clobber the live conn
     ok: true,
     payload: {
       type: "hello-ok",
-      auth: { scopes: ["operator.read", "operator.write"] },
+      auth: { scopes: ["operator.read", "operator.write", "operator.admin"] },
     },
   });
   await tick();
@@ -925,7 +925,7 @@ test("start is ref-counted and stale socket close does not clobber the live conn
     ok: true,
     payload: {
       type: "hello-ok",
-      auth: { scopes: ["operator.read", "operator.write"] },
+      auth: { scopes: ["operator.read", "operator.write", "operator.admin"] },
     },
   });
   await tick();
@@ -1084,7 +1084,7 @@ test("abort retry does not schedule after stop clears the pending request", asyn
     ok: true,
     payload: {
       type: "hello-ok",
-      auth: { scopes: ["operator.read", "operator.write"] },
+      auth: { scopes: ["operator.read", "operator.write", "operator.admin"] },
     },
   });
   await tick();

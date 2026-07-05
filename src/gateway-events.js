@@ -4,7 +4,7 @@ const os = require("node:os");
 const pkg = require("../package.json");
 const { recordEvent } = require("./metrics");
 
-const CONNECT_SCOPES = ["operator.read", "operator.write"];
+const CONNECT_SCOPES = ["operator.read", "operator.write", "operator.admin"];
 const DEFAULT_AGENT_ID = "main";
 const DEFAULT_HISTORY_LIMIT = 4;
 const RESULT_TEXT_MAX = 4000;
