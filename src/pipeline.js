@@ -7,8 +7,9 @@ const { streamChat } = require("./llm");
 const { synthesize } = require("./tts-fish");
 const { createTtsCache } = require("./tts-cache");
 const { getExitCommands, detectExitIntent } = require("./exit-handler");
-const { shouldSuppressReply, stripEmojis, extractChatTags } = require("./speech-policy");
+const { shouldSuppressReply, stripEmojis, stripRareScriptCharacters, extractChatTags } = require("./speech-policy");
 const { recordEvent } = require("./metrics");
+const gatewayEventsClient = require("./gateway-events");
 
 // Two-tier sentence splitter for Japanese + English
 // Tier 1: Full sentence boundary (。！？!?\n) — long pause
@@ -360,6 +361,16 @@ const LLM_TIMEOUT_FALLBACK_VOICE = "[empathetic, unhurried] ごめん、ちょ�
 const FORCED_DELEGATION_FALLBACK_VOICE = "ちょっと時間がかかってるから、詳細はあとでSlackで共有するね。";
 const HANDOFF_SUCCESS_VOICE = "[soft voice] 続きはSlackに共有しておくね。";
 const HANDOFF_FAILURE_VOICE = "[soft voice] ごめん、うまく繋げられなかったみたい。あとでもう一回試してね。";
+const FORCED_DELEGATION_FALLBACK_VOICE_MEET = "ちょっと時間がかかってるから、裏でまとめておくね。";
+const HANDOFF_UNCONFIRMED_VOICE_MEET = "[soft voice] 続きは裏に回したよ。まとまったらチャットに貼るね。";
+const HANDOFF_BUSY_VOICE_MEET = "[soft voice] ごめんね、いま立て込んでるから少し待ってね。";
+const REPORT_POST_UNKNOWN_VOICE = "結果まとまったよ、あとでログにも残すね。";
+const HANDOFF_INFLIGHT_TTL_MS = 5 * 60 * 1000;
+const PENDING_HANDOFF_TTL_MS = 5 * 60 * 1000;
+const PENDING_HANDOFF_MAX = 5;
+const REPORT_VOICE_DROP_MS = 90_000;
+const REPORT_QUEUE_MAX = 10;
+const LIVE_USER_SPEECH_HOLD_MS = 1_200;
 
 function shouldSendImmediateAck(text) {
   // Always ack on any addressed turn so the user never hears silence after
@@ -450,6 +461,22 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   const onChatMessage = options.onChatMessage;
   const defaultAgentId = options.defaultAgentId || selectedAgentIds[0] || null;
   let currentAgentId = defaultAgentId || agentProfile?.agentId || "agent";
+  const gatewayEventsConfig = config.gatewayEvents || {};
+  const gatewayEventsEnabled = gatewayEventsConfig.enabled === true;
+  const reportResults = [];
+  const reportQueue = [];
+  const handoffInflight = new Map();
+  const pendingHandoffQueue = [];
+  let lastUserSpeechAt = 0;
+  let liveUserSpeechUntil = 0;
+  let lastHandoffDispatchAt = 0;
+  let pendingHandoffSeq = 0;
+  let pendingHandoffDrainTimer = null;
+  let greetingTimer = null;
+  let reportDrainSleepTimer = null;
+  let reportDrainSleepResolve = null;
+  let reportQueueDraining = false;
+  let stopped = false;
 
   const agentState = {
     openclawUrl: config.openclawUrl,
@@ -586,6 +613,338 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     });
   }
 
+  function recordGatewayMetric(type, fields = {}) {
+    recordEvent(type, {
+      meeting_id: session?.id || null,
+      session_id: session?.id || null,
+      agent_id: currentAgentId || null,
+      ...fields,
+    });
+  }
+
+  function pruneHandoffInflight(now = Date.now()) {
+    for (const [key, item] of handoffInflight) {
+      if (now - item.dispatchedAt >= HANDOFF_INFLIGHT_TTL_MS || item.completed === true) {
+        handoffInflight.delete(key);
+      }
+    }
+    syncGatewayDelegationState();
+  }
+
+  function canDispatchHandoff(now = Date.now()) {
+    if (!gatewayEventsEnabled) return true;
+    pruneHandoffInflight(now);
+    const max = Number(gatewayEventsConfig.handoffInflightMax ?? 2);
+    if (max >= 0 && handoffInflight.size >= max) return false;
+    const cooldownMs = Number(gatewayEventsConfig.handoffCooldownMs ?? 20_000);
+    return !(cooldownMs > 0 && lastHandoffDispatchAt > 0 && now - lastHandoffDispatchAt < cooldownMs);
+  }
+
+  function syncGatewayDelegationState() {
+    session.gatewayDelegationState = {
+      inFlightCount: handoffInflight.size,
+      pendingQueueCount: pendingHandoffQueue.length,
+    };
+  }
+
+  function clearReportDrainSleep() {
+    if (reportDrainSleepTimer) {
+      clearTimeout(reportDrainSleepTimer);
+      reportDrainSleepTimer = null;
+    }
+    if (reportDrainSleepResolve) {
+      const resolve = reportDrainSleepResolve;
+      reportDrainSleepResolve = null;
+      resolve();
+    }
+  }
+
+  function waitForReportDrainGap(ms) {
+    clearReportDrainSleep();
+    return new Promise((resolve) => {
+      reportDrainSleepResolve = resolve;
+      reportDrainSleepTimer = setTimeout(() => {
+        reportDrainSleepTimer = null;
+        reportDrainSleepResolve = null;
+        resolve();
+      }, ms);
+      reportDrainSleepTimer.unref?.();
+    });
+  }
+
+  function markHandoffDispatched(label, source = "forced", now = Date.now()) {
+    if (!gatewayEventsEnabled) return;
+    lastHandoffDispatchAt = now;
+    const key = `pending:${source}:${now}:${handoffInflight.size}`;
+    handoffInflight.set(key, {
+      label: label || "委譲タスク",
+      source,
+      dispatchedAt: now,
+      spawnAtMs: null,
+      completed: false,
+    });
+    recordGatewayMetric("spawn_detected", { source, label: label || "委譲タスク" });
+    syncGatewayDelegationState();
+  }
+
+  function prunePendingHandoffs(now = Date.now()) {
+    for (let i = 0; i < pendingHandoffQueue.length;) {
+      const item = pendingHandoffQueue[i];
+      if (now - item.enqueuedAt >= PENDING_HANDOFF_TTL_MS) {
+        pendingHandoffQueue.splice(i, 1);
+        console.warn("⚠️  pending handoff dropped after TTL:", item.label);
+        recordGatewayMetric("handoff_dropped", { reason: "ttl", label: item.label });
+        continue;
+      }
+      i += 1;
+    }
+    syncGatewayDelegationState();
+  }
+
+  function schedulePendingHandoffDrain(delayMs = null) {
+    if (!gatewayEventsEnabled || stopped) return;
+    if (pendingHandoffDrainTimer) clearTimeout(pendingHandoffDrainTimer);
+    const cooldownMs = Number(gatewayEventsConfig.handoffCooldownMs ?? 20_000);
+    const now = Date.now();
+    const nextCooldownAt = cooldownMs > 0 && lastHandoffDispatchAt > 0
+      ? Math.max(0, lastHandoffDispatchAt + cooldownMs - now)
+      : 0;
+    const delay = delayMs ?? Math.min(
+      PENDING_HANDOFF_TTL_MS,
+      Math.max(100, nextCooldownAt || 100)
+    );
+    pendingHandoffDrainTimer = setTimeout(() => {
+      pendingHandoffDrainTimer = null;
+      drainPendingHandoffs().catch((err) => {
+        console.warn("⚠️  pending handoff drain failed:", err.message || err);
+      });
+    }, delay);
+    pendingHandoffDrainTimer.unref?.();
+  }
+
+  function enqueuePendingHandoff(transcript, label, dispatch) {
+    prunePendingHandoffs();
+    if (pendingHandoffQueue.length >= PENDING_HANDOFF_MAX) {
+      recordGatewayMetric("handoff_dropped", { reason: "queue_full", label });
+      return false;
+    }
+    pendingHandoffSeq += 1;
+    pendingHandoffQueue.push({
+      id: pendingHandoffSeq,
+      transcript,
+      label,
+      dispatch,
+      enqueuedAt: Date.now(),
+      attempts: 0,
+      dispatching: false,
+    });
+    syncGatewayDelegationState();
+    schedulePendingHandoffDrain();
+    return true;
+  }
+
+  async function drainPendingHandoffs() {
+    if (!gatewayEventsEnabled || stopped) return;
+    prunePendingHandoffs();
+    while (!stopped && pendingHandoffQueue.length > 0 && canDispatchHandoff()) {
+      const item = pendingHandoffQueue[0];
+      if (item.dispatching) return;
+      item.dispatching = true;
+      let success = false;
+      try {
+        success = await item.dispatch();
+      } catch (err) {
+        console.warn("⚠️  pending handoff dispatch threw:", err.message || err);
+      }
+      item.attempts = (item.attempts || 0) + 1;
+      if (success) {
+        pendingHandoffQueue.shift();
+      } else if (item.attempts >= 3) {
+        pendingHandoffQueue.shift();
+        console.warn("⚠️  pending handoff dropped after dispatch failures:", item.label);
+        recordGatewayMetric("handoff_dropped", { reason: "dispatch_failed", label: item.label });
+      } else {
+        item.dispatching = false;
+      }
+      syncGatewayDelegationState();
+      if (!success) {
+        console.warn("⚠️  pending handoff dispatch failed:", item.label);
+        break;
+      }
+      prunePendingHandoffs();
+    }
+    if (pendingHandoffQueue.length > 0) schedulePendingHandoffDrain();
+  }
+
+  async function dispatchOrEnqueueHandoff(transcript, label, dispatch) {
+    if (!gatewayEventsEnabled || canDispatchHandoff()) {
+      return dispatch();
+    }
+    console.warn("⏳  Timeout handoff queued (in-flight cap or cooldown)");
+    return enqueuePendingHandoff(transcript, label, dispatch);
+  }
+
+  function handleGatewaySubagentSpawn(evt) {
+    if (!gatewayEventsEnabled) return;
+    pruneHandoffInflight();
+    const childKey = evt?.childKey || "";
+    if (!childKey) return;
+    const now = Date.now();
+    let source = evt.source || "self";
+    let pendingKey = null;
+    for (const [key, item] of handoffInflight) {
+      if (key.startsWith("pending:")) {
+        pendingKey = key;
+        source = item.source || source;
+        break;
+      }
+    }
+    if (!pendingKey && source !== "forced") return;
+    if (pendingKey) handoffInflight.delete(pendingKey);
+    const spawnAtMs = Number.isFinite(evt.spawnAtMs) ? evt.spawnAtMs : now;
+    handoffInflight.set(childKey, {
+      label: evt.label || "委譲タスク",
+      source,
+      dispatchedAt: spawnAtMs,
+      spawnAtMs,
+      completed: false,
+    });
+    syncGatewayDelegationState();
+  }
+
+  function completeOneHandoff(result) {
+    pruneHandoffInflight();
+    const childKey = result?.childKey || "";
+    const item = childKey ? handoffInflight.get(childKey) : null;
+    let elapsedMs = null;
+    const spawnAtMs = Number(result?.spawnAtMs || item?.spawnAtMs || 0);
+    if (spawnAtMs > 0) {
+      elapsedMs = Date.now() - spawnAtMs;
+    }
+    if (childKey && handoffInflight.has(childKey)) {
+      handoffInflight.delete(childKey);
+    }
+    recordGatewayMetric("delegation_completed", {
+      label: result?.label || "委譲タスク",
+      ...(elapsedMs !== null ? { elapsed_ms: elapsedMs } : {}),
+    });
+    syncGatewayDelegationState();
+    drainPendingHandoffs().catch((err) => {
+      console.warn("⚠️  pending handoff drain failed:", err.message || err);
+    });
+  }
+
+  function appendDelegationResult(result) {
+    const item = {
+      timestamp: new Date().toISOString(),
+      label: result.label || "委譲タスク",
+      status: result.status || "ok",
+      resultText: String(result.resultText || "").trim(),
+    };
+    reportResults.push(item);
+    session.delegationResults = reportResults;
+  }
+
+  function buildCompletionChatMessage(result) {
+    const label = result.label || "委譲タスク";
+    const body = String(result.resultText || "").trim() || "結果本文を取得できませんでした。";
+    const message = stripRareScriptCharacters(stripEmojis(`委譲タスク結果: ${label}\n${body}`)).trim();
+    return message || "委譲タスク結果: 結果本文を取得できませんでした。";
+  }
+
+  function buildCompletionVoiceLine(result, chatPosted = false) {
+    if (!chatPosted) return REPORT_POST_UNKNOWN_VOICE;
+    const label = stripEmojis(String(result.label || "委譲タスク")).slice(0, 40) || "委譲タスク";
+    return `さっきの「${label}」、まとまったよ。チャットに貼ったね。`;
+  }
+
+  function enqueueReportVoiceLine(line) {
+    if (!gatewayEventsEnabled || gatewayEventsConfig.reportVoiceEnabled === false) return;
+    if (stopped) return;
+    if (reportQueue.length >= REPORT_QUEUE_MAX) {
+      reportQueue.shift();
+      console.warn("⚠️  report voice queue overflow; dropped oldest line");
+    }
+    reportQueue.push({
+      line,
+      enqueuedAt: Date.now(),
+    });
+    drainReportQueue().catch((err) => {
+      console.warn("⚠️  report voice queue failed:", err.message || err);
+    });
+  }
+
+  async function drainReportQueue() {
+    if (stopped || reportQueueDraining) return;
+    reportQueueDraining = true;
+    try {
+      while (!stopped && reportQueue.length > 0) {
+        const item = reportQueue[0];
+        const gapMs = Number(gatewayEventsConfig.reportVoiceGapMs ?? 4_000);
+        while (!stopped) {
+          const now = Date.now();
+          if (now - item.enqueuedAt > REPORT_VOICE_DROP_MS) {
+            reportQueue.shift();
+            break;
+          }
+          // Interim STT is the live user-speaking signal here: any non-noise
+          // interim transcript holds this gate briefly even before utterance_end.
+          const liveUserSpeaking = now < liveUserSpeechUntil;
+          const userGapOk = now - lastUserSpeechAt >= gapMs && !liveUserSpeaking;
+          if (!turnState.isAgentSpeaking && userGapOk && !isProcessing) {
+            reportQueue.shift();
+            if (stopped) break;
+            turnState.isAgentSpeaking = true;
+            try {
+              await speakSentence(item.line, null, { cacheable: false });
+              if (stopped) break;
+              appendConversationEntry("assistant", item.line, currentAgentId || null);
+              recordGatewayMetric("report_posted", { channel: "voice" });
+            } catch {
+              // Chat already carries the report.
+            } finally {
+              turnState.isAgentSpeaking = false;
+              turnState.inputCooldownUntil = Date.now() + (config.echoCooldownMs || 300);
+            }
+            break;
+          }
+          await waitForReportDrainGap(Math.min(500, Math.max(100, gapMs || 500)));
+          if (stopped) break;
+        }
+      }
+    } finally {
+      reportQueueDraining = false;
+    }
+  }
+
+  async function handleGatewaySubagentCompletion(result) {
+    if (!gatewayEventsEnabled) return;
+    try {
+      appendDelegationResult(result);
+      completeOneHandoff(result);
+      const chatMessage = buildCompletionChatMessage(result);
+      let chatPosted = false;
+      if (gatewayEventsConfig.reportChatEnabled !== false && typeof onChatMessage === "function" && chatMessage) {
+        chatPosted = await Promise.resolve(onChatMessage(chatMessage))
+          .then((ok) => ok === true)
+          .catch((err) => {
+            console.warn("⚠️  delegation chat report failed:", err.message || err);
+            return false;
+          });
+        if (chatPosted) {
+          recordGatewayMetric("report_posted", { channel: "chat" });
+        } else {
+          console.warn("⚠️  delegation chat report not confirmed");
+        }
+      }
+      enqueueReportVoiceLine(buildCompletionVoiceLine(result, chatPosted));
+      return true;
+    } catch (err) {
+      console.warn("⚠️  gateway completion handling failed:", err.message || err);
+      return false;
+    }
+  }
+
   // ── STT ──────────────────────────────────────────────────────────
   const sttExtraKeyterms = [];
   if (hasSelectedAgents) {
@@ -616,6 +975,11 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     }
 
     const interim = String(text || "").trim();
+    const now = Date.now();
+    if (interim && !isNoiseInterim(interim)) {
+      lastUserSpeechAt = now;
+      liveUserSpeechUntil = now + LIVE_USER_SPEECH_HOLD_MS;
+    }
 
     // Multi-participant mode: Skip barge-in during Gate CLOSED
     // (Cancel detection moved to utterance_end only — interim is too noisy from TTS echo)
@@ -672,6 +1036,8 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   async function handleUtteranceEnd(userText, metricsTurnId = null) {
     const cleanedText = String(userText || "").trim();
     if (!cleanedText) return;
+    lastUserSpeechAt = Date.now();
+    liveUserSpeechUntil = Date.now() + LIVE_USER_SPEECH_HOLD_MS;
 
     // #8 Barge-in companion: small post-utterance buffer to reduce premature turn-taking.
     if (POST_UTTERANCE_BUFFER_MS > 0) {
@@ -908,9 +1274,16 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
 
       return new Promise((resolve) => {
         let settled = false;
+        let gatewayModeHandoff = false;
+        let handoffLabel = previewForLog(trimmed, 60);
+        let handoffMarked = false;
         const finish = (success) => {
           if (settled) return;
           settled = true;
+          if (success && gatewayModeHandoff && !handoffMarked) {
+            handoffMarked = true;
+            markHandoffDispatched(handoffLabel, "forced");
+          }
           resolve(success);
         };
 
@@ -918,13 +1291,26 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
           const gatewayUrl = new URL(agentState.openclawUrl);
           const isHttps = gatewayUrl.protocol === "https:";
           const transport = isHttps ? https : http;
-          const handoffPrompt = [
-            "ユーザーの音声通話中に依頼処理がタイムアウトしました。",
-            "必ず sessions_spawn を使って作業を委譲し、結果をSlackに投稿してください。",
-            "まずユーザー依頼を短く要約し、実行計画を立ててからサブエージェントを起動してください。",
-            "",
-            `ユーザー依頼: ${trimmed}`,
-          ].join("\n");
+          gatewayModeHandoff = gatewayEventsEnabled === true;
+          const handoffPrompt = gatewayModeHandoff
+            ? [
+                "ユーザーの音声通話中に依頼処理がタイムアウトしました。",
+                "必ず sessions_spawn を使って作業を委譲してください。",
+                "まずユーザー依頼を短く要約し、実行計画を立ててからサブエージェントを起動してください。",
+                "サブエージェントの結果を最終回答としてそのまま返してください。会議への報告は音声ハーネス側が行います。",
+                "",
+                `ユーザー依頼: ${trimmed}`,
+              ].join("\n")
+            : [
+                "ユーザーの音声通話中に依頼処理がタイムアウトしました。",
+                "必ず sessions_spawn を使って作業を委譲し、結果をSlackに投稿してください。",
+                "まずユーザー依頼を短く要約し、実行計画を立ててからサブエージェントを起動してください。",
+                "",
+                `ユーザー依頼: ${trimmed}`,
+              ].join("\n");
+          const handoffSessionUser = gatewayModeHandoff && gatewayEventsConfig.handoffDelegateSession !== false
+            ? `${agentState.sessionUser}-delegate`
+            : agentState.sessionUser;
 
           const body = JSON.stringify({
             // Do not hardcode a foundation model; let Gateway choose.
@@ -935,11 +1321,13 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
             messages: [
               {
                 role: "system",
-                content: "あなたは音声タイムアウト時の自動委譲ハンドラーです。結果は必ずSlackに共有してください。",
+                content: gatewayModeHandoff
+                  ? "あなたは音声タイムアウト時の自動委譲ハンドラーです。必ず sessions_spawn に委譲し、結果を最終回答として返してください。"
+                  : "あなたは音声タイムアウト時の自動委譲ハンドラーです。結果は必ずSlackに共有してください。",
               },
               { role: "user", content: handoffPrompt },
             ],
-            user: agentState.sessionUser,
+            user: handoffSessionUser,
           });
 
           const req = transport.request(
@@ -963,13 +1351,21 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
           );
 
           req.on("error", (err) => {
+            if (gatewayModeHandoff && /Timeout handoff request timeout/i.test(String(err?.message || ""))) {
+              console.warn("⚠️  Timeout handoff request timed out after dispatch; treating as dispatched (unconfirmed)");
+              finish(true);
+              return;
+            }
             console.error("❌  Timeout handoff request error:", err.message);
             finish(false);
           });
 
-          req.setTimeout(5_000, () => {
+          req.setTimeout(gatewayModeHandoff ? 15_000 : 5_000, () => {
+            if (gatewayModeHandoff) {
+              console.warn("⚠️  Timeout handoff client timeout; request may still be queued by Gateway");
+              finish(true);
+            }
             req.destroy(new Error("Timeout handoff request timeout"));
-            finish(false);
           });
 
           req.write(body);
@@ -977,6 +1373,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
           recordMetric("handoff_requested", {
             turn_id: metricsTurnId,
             transcript_char_count: trimmed.length,
+            ...(gatewayModeHandoff ? { session_user: handoffSessionUser } : {}),
           });
 
           console.log(`🔄  Timeout handoff spawned for: "${trimmed.slice(0, 80)}${trimmed.length > 80 ? "…" : ""}"`);
@@ -994,7 +1391,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       stopProgressTimer();
       turnState.isAgentSpeaking = true;
       const timeoutMsg = forcedDelegationFired
-        ? FORCED_DELEGATION_FALLBACK_VOICE
+        ? (gatewayEventsEnabled ? FORCED_DELEGATION_FALLBACK_VOICE_MEET : FORCED_DELEGATION_FALLBACK_VOICE)
         : (config.timeoutFallback || LLM_TIMEOUT_FALLBACK_VOICE);
       try {
         await speakSentence(timeoutMsg, null, {
@@ -1023,14 +1420,19 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         const transcriptForHandoff = String(lastUserTranscript || "").trim();
         if (transcriptForHandoff) {
           handoffAttempted = true;
-          // Block the spoken Slack confirmation on actual handoff success
-          // so we never tell the user we shared something we did not.
-          const success = await requestTimeoutHandoff(transcriptForHandoff);
+          const handoffLabel = previewForLog(transcriptForHandoff, 60);
+          const success = await dispatchOrEnqueueHandoff(
+            transcriptForHandoff,
+            handoffLabel,
+            () => requestTimeoutHandoff(transcriptForHandoff)
+          );
           // If user already barged-in or aborted during the handoff await,
           // skip the followup line — they have moved on.
-          if (abort.signal.aborted) return;
+          if (abort.signal.aborted && !forcedDelegationFired) return;
           turnState.isAgentSpeaking = true;
-          const followup = success ? HANDOFF_SUCCESS_VOICE : HANDOFF_FAILURE_VOICE;
+          const followup = success
+            ? (gatewayEventsEnabled ? HANDOFF_UNCONFIRMED_VOICE_MEET : HANDOFF_SUCCESS_VOICE)
+            : (gatewayEventsEnabled && pendingHandoffQueue.length >= PENDING_HANDOFF_MAX ? HANDOFF_BUSY_VOICE_MEET : HANDOFF_FAILURE_VOICE);
           try {
             await speakSentence(followup, null, { cacheable: true });
           } catch { /* ignore TTS error during fallback */ }
@@ -1053,6 +1455,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         stopFirstResponseTimers();
         abort.abort();
       }, timeoutMs);
+      llmTimeoutTimer.unref?.();
     };
 
     const startFirstTokenDelegateTimer = () => {
@@ -1078,9 +1481,22 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
           elapsed_ms: elapsedMs,
         });
         console.warn(`⏱️  LLM first-token delegate threshold (${thresholdMs}ms) — aborting for handoff`);
+        if (gatewayEventsEnabled && gatewayEventsConfig.forcedDelegationAbort !== false) {
+          // Best-effort only: the gateway API can abort the current parent run,
+          // but it cannot rotate parent session keys if that run survives.
+          Promise.resolve(gatewayEventsClient.abortSession(agentState.sessionUser)).then((result) => {
+            const ok = result === true || result?.ok === true;
+            const attempts = Number(result?.attempts || 1);
+            recordGatewayMetric("abort_requested", { ok, attempts });
+          }).catch((err) => {
+            console.warn("⚠️  gateway abort fire-and-forget failed:", err.message || err);
+            recordGatewayMetric("abort_requested", { ok: false, attempts: 1 });
+          });
+        }
         stopFirstResponseTimers();
         abort.abort();
       }, thresholdMs);
+      firstTokenDelegateTimer.unref?.();
     };
 
     const maybeProgressPing = async () => {
@@ -1144,6 +1560,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         progressTimer = setInterval(() => {
           maybeProgressPing().catch(() => {});
         }, PROGRESS_PING_INTERVAL_MS);
+        progressTimer.unref?.();
       }
 
       // ── LLM streaming ──
@@ -1556,6 +1973,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
 
   // ── Greeting ────────────────────────────────────────────────────
   async function sendGreeting() {
+    if (stopped) return;
     if (hasSelectedAgents && defaultAgentId && currentAgentId !== defaultAgentId) {
       switchAgent(defaultAgentId);
     }
@@ -1603,11 +2021,15 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   }
 
   // Send greeting (+ purpose statement if available) after a short delay
-  setTimeout(() => {
+  greetingTimer = setTimeout(() => {
+    greetingTimer = null;
+    if (stopped) return;
     sendGreeting().finally(() => {
+      if (stopped) return;
       startTtsCachePrewarm();
     });
   }, 2000);
+  greetingTimer.unref?.();
 
   // ── Public API ──────────────────────────────────────────────────
   const api = {
@@ -1615,12 +2037,37 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       stt.send(buffer);
     },
     close() {
+      stopped = true;
       if (currentAbort) {
         currentAbort.abort();
         currentAbort = null;
       }
+      reportQueue.length = 0;
+      pendingHandoffQueue.length = 0;
+      clearReportDrainSleep();
+      if (pendingHandoffDrainTimer) {
+        clearTimeout(pendingHandoffDrainTimer);
+        pendingHandoffDrainTimer = null;
+      }
+      if (greetingTimer) {
+        clearTimeout(greetingTimer);
+        greetingTimer = null;
+      }
+      reportQueueDraining = false;
+      syncGatewayDelegationState();
       prewarmAbort.abort();
       stt.close();
+    },
+    handleGatewaySubagentSpawn,
+    handleGatewaySubagentCompletion,
+    getDelegationResults() {
+      return [...reportResults];
+    },
+    getSessionUsers() {
+      return {
+        parent: agentState.sessionUser,
+        delegate: `${agentState.sessionUser}-delegate`,
+      };
     },
     /** EventEmitter for exit_requested and other pipeline events. */
     on: emitter.on.bind(emitter),
@@ -1630,8 +2077,26 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   if (options._testExposeInternals) {
     api._test = {
       handleUtteranceEnd,
+      handleGatewaySubagentSpawn,
+      handleGatewaySubagentCompletion,
       getGateState: () => gateState,
       getPendingQueueLength: () => pendingQueue.length,
+      getReportQueueLength: () => reportQueue.length,
+      getReportQueueLines: () => reportQueue.map((item) => item.line),
+      getPendingHandoffQueueLength: () => pendingHandoffQueue.length,
+      getHandoffInflightCount: () => {
+        pruneHandoffInflight();
+        return handoffInflight.size;
+      },
+      getGatewayDelegationState: () => ({ ...(session.gatewayDelegationState || {}) }),
+      getDelegationResults: () => [...reportResults],
+      canDispatchHandoff,
+      markHandoffDispatched,
+      drainPendingHandoffs,
+      enqueuePendingHandoff,
+      enqueueReportVoiceLine,
+      buildCompletionChatMessage,
+      buildCompletionVoiceLine,
     };
   }
   return api;

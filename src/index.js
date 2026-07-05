@@ -17,6 +17,11 @@ const { parse } = require("querystring");
 const { getPipelineConfig, SAMPLE_RATE, TTS_SAMPLE_RATE, TTS_PROVIDER, loadConfig } = require("./config");
 const { createPipeline } = require("./pipeline");
 const { warmUpGatewaySession } = require("./gateway-warmup");
+const gatewayEvents = require("./gateway-events");
+const { sendAttendeeChatMessage } = require("./attendee-chat");
+const { recordEvent } = require("./metrics");
+const { buildDelegationResultsSection } = require("./delegation-results");
+const { createGatewaySessionTracker } = require("./gateway-session-tracker");
 
 // Track first warm-up for await (subsequent calls are fire-and-forget)
 let _firstWarmupDone = false;
@@ -218,8 +223,44 @@ function getMeetSlackNotifier() {
   return meetSlackNotifier;
 }
 
+function getGatewayConfigForProfile(profile = _startupAgentProfile) {
+  const pipelineConfig = getPipelineConfig({}, null, profile, _configForPort);
+  return {
+    ...pipelineConfig.gatewayEvents,
+    openclawUrl: profile?.gatewayUrl || pipelineConfig.openclawUrl || process.env.OPENCLAW_GATEWAY_URL,
+    openclawToken: profile?.gatewayToken || pipelineConfig.openclawToken || process.env.OPENCLAW_GATEWAY_TOKEN,
+  };
+}
+
+function appendLateDelegationResult(sessionId, evt) {
+  const session = meetingSessions.get(sessionId);
+  if (!session) return false;
+  const item = {
+    timestamp: new Date().toISOString(),
+    label: evt.label || "委譲タスク",
+    status: evt.status || "ok",
+    resultText: String(evt.resultText || "").trim(),
+  };
+  session.delegationResults = session.delegationResults || [];
+  session.delegationResults.push(item);
+  appendLateDelegationToPersistedLogs(session, item);
+  return true;
+}
+
+const gatewayTracker = createGatewaySessionTracker({
+  gatewayEvents,
+  recordEvent,
+  sessions: meetingSessions,
+  activeConnections,
+  getGatewayConfigForProfile,
+  getDefaultAgentId: () => _startupAgentProfile?.agentId || "agent",
+  appendLateResult: appendLateDelegationResult,
+});
+const { trackGatewaySession, untrackGatewaySession, findGatewayRoute } = gatewayTracker;
+
 /** Handle Meet session end: summarize + Slack. */
 async function handleMeetSessionEnd(lifecycle) {
+  untrackGatewaySession(lifecycle.sessionId, { retainIfDelegations: true });
   const notifier = getMeetSlackNotifier();
   notifier.stopElapsedUpdates(lifecycle.sessionId);
   await notifier.postStatus(lifecycle);
@@ -367,6 +408,9 @@ async function postMeetFullTranscript(notifier, lifecycle) {
     lines.push(entry.content);
     lines.push("");
   }
+  const session = meetingSessions.get(lifecycle.sessionId);
+  const delegationSection = buildDelegationResultsSection(session?.delegationResults);
+  if (delegationSection) lines.push(delegationSection);
 
   const text = lines.join("\n");
   const MAX_CHUNK = 3800;
@@ -561,8 +605,10 @@ function saveConversationLog(session) {
     saved_at: new Date().toISOString(),
     tts_provider: TTS_PROVIDER,
     messages: session.conversationLog,
+    delegation_results: session.delegationResults || [],
   };
   fs.writeFileSync(jsonPath, JSON.stringify(jsonData, null, 2));
+  session.conversationLogJsonPath = jsonPath;
   console.log(`📝  会話ログ保存: ${jsonPath}`);
 
   const mdPath = path.join(logDir, `${baseName}.md`);
@@ -574,11 +620,32 @@ function saveConversationLog(session) {
     `- tts_provider: ${TTS_PROVIDER}`,
     "",
     ...session.conversationLog.map((e) => `**${e.role === "assistant" || e.role === "agent" ? (_startupAgentProfile?.displayName || "AI") : "参加者"}** (${e.timestamp}):\n${e.content}\n`),
+    buildDelegationResultsSection(session.delegationResults),
   ].join("\n");
   fs.writeFileSync(mdPath, mdContent);
+  session.conversationLogMdPath = mdPath;
   console.log(`📝  会話ログ(MD)保存: ${mdPath}`);
 
   appendToMemory(session);
+}
+
+function appendLateDelegationToPersistedLogs(session, item) {
+  try {
+    const section = buildDelegationResultsSection([item]);
+    if (session.conversationLogMdPath && fs.existsSync(session.conversationLogMdPath)) {
+      fs.appendFileSync(session.conversationLogMdPath, `\n${section}\n`);
+    }
+    if (session.memoryCallLogPath && fs.existsSync(session.memoryCallLogPath)) {
+      fs.appendFileSync(session.memoryCallLogPath, `\n${section}\n`);
+    }
+    if (session.conversationLogJsonPath && fs.existsSync(session.conversationLogJsonPath)) {
+      const data = JSON.parse(fs.readFileSync(session.conversationLogJsonPath, "utf8"));
+      data.delegation_results = session.delegationResults || [];
+      fs.writeFileSync(session.conversationLogJsonPath, JSON.stringify(data, null, 2));
+    }
+  } catch (err) {
+    console.warn("⚠️  late delegation result persistence failed:", err.message || err);
+  }
 }
 
 function appendToMemory(session) {
@@ -638,8 +705,10 @@ function appendToMemory(session) {
           : "参加者";
         return `**${speaker}**: ${e.content}\n`;
       }),
+      buildDelegationResultsSection(session.delegationResults),
     ].join("\n");
     fs.writeFileSync(callLogPath, fullLog);
+    session.memoryCallLogPath = callLogPath;
     console.log(`🧠  Meetログ memory/calls/ 保存: ${callLogPath}`);
   } catch (err) {
     console.error("⚠️  メモリ追記失敗:", err.message);
@@ -654,7 +723,8 @@ function finalizeSessionIfInactive(sessionId) {
   if (!session) return;
 
   saveConversationLog(session);
-  meetingSessions.delete(sessionId);
+  const retained = untrackGatewaySession(sessionId, { retainIfDelegations: true });
+  if (!retained) meetingSessions.delete(sessionId);
   leavingSessionIds.delete(sessionId);
   leavingLoggedOnce.delete(sessionId);
   console.log(`🧹  Session closed: ${sessionId}`);
@@ -743,14 +813,39 @@ function createHandler(session, turnState, onAudio) {
       greeting: session.config.greeting,
       model: session.config.model,
       wakeMode: session.config.wakeMode,
-    }, null, null, _configForPort);
-    const pipeline = createPipeline(session, turnState, onAudio, config);
+    }, null, _startupAgentProfile, _configForPort);
+    const profile = _startupAgentProfile;
+    const singleAgentMap = profile ? {
+      [profile.agentId]: {
+        ...profile,
+        gatewayUrl: profile.gatewayUrl,
+        gatewayToken: profile.gatewayToken,
+        voiceId: profile.voiceId,
+        model: profile.model,
+      },
+    } : {};
+    const pipeline = createPipeline(session, turnState, onAudio, config, {
+      agents: singleAgentMap,
+      selectedAgentIds: profile?.agentId ? [profile.agentId] : [],
+      defaultAgentId: profile?.agentId || null,
+      agentProfile: profile,
+      onChatMessage: (text) => {
+        if (!session.botId) {
+          console.log(`💬  Bot ID未確定のためchatメッセージを破棄 (sid=${session.id})`);
+          return false;
+        }
+        return sendAttendeeChatMessage(session.botId, text, ATTENDEE_API_KEY);
+      },
+    });
     return {
       send: (buf) => pipeline.sendAudio(buf),
       close: () => pipeline.close(),
       on: pipeline.on,
       once: pipeline.once,
       removeListener: pipeline.removeListener,
+      handleGatewaySubagentSpawn: pipeline.handleGatewaySubagentSpawn,
+      handleGatewaySubagentCompletion: pipeline.handleGatewaySubagentCompletion,
+      getDelegationResults: pipeline.getDelegationResults,
     };
   } else {
     console.log(`🔊  Deepgram Voice Agent モード (sid=${session.id})`);
@@ -1050,7 +1145,8 @@ const server = http.createServer(async (req, res) => {
       if (session) {
         if (session.closeTimer) clearTimeout(session.closeTimer);
         saveConversationLog(session);
-        meetingSessions.delete(targetSid);
+        const retained = untrackGatewaySession(targetSid, { retainIfDelegations: true });
+        if (!retained) meetingSessions.delete(targetSid);
         leavingSessionIds.delete(targetSid);
         leavingLoggedOnce.delete(targetSid);
         console.log(`🧹  Session closed (leave): ${targetSid}`);
@@ -1130,6 +1226,7 @@ wss.on("connection", (client, req) => {
 
     // Bind conversation log for summary
     lifecycle.setConversationLog(session.conversationLog);
+    trackGatewaySession(session, _startupAgentProfile);
   }
 
   const turnState = {

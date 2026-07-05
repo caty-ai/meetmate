@@ -6,6 +6,15 @@ const path = require("node:path");
 const { execFileSync, spawnSync } = require("node:child_process");
 const { summarize } = require("../scripts/aggregate-metrics");
 
+const loadedMetricsModules = new Set();
+
+test.afterEach(() => {
+  for (const metrics of loadedMetricsModules) {
+    metrics._test?.dispose?.();
+  }
+  loadedMetricsModules.clear();
+});
+
 test("recordEvent writes one valid JSONL event with expected fields", async () => {
   const dir = tempDir();
   const metrics = freshMetrics({ METRICS_LOG_DIR: dir, METRICS_DISABLED: undefined });
@@ -174,6 +183,7 @@ test("aggregate-metrics excludes unaddressed wake turns and includes non-wake tu
 function freshMetrics(env) {
   const file = path.join(__dirname, "..", "src", "metrics.js");
   const resolved = require.resolve(file);
+  require.cache[resolved]?.exports?._test?.dispose?.();
   const previousEnv = {};
   for (const [key, value] of Object.entries(env)) {
     previousEnv[key] = process.env[key];
@@ -183,6 +193,7 @@ function freshMetrics(env) {
 
   delete require.cache[resolved];
   const metrics = require(file);
+  loadedMetricsModules.add(metrics);
   delete require.cache[resolved];
 
   for (const [key, value] of Object.entries(previousEnv)) {

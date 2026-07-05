@@ -32,6 +32,14 @@ test("getPipelineConfig parses FIRST_TOKEN_DELEGATE_MS default, override, disabl
   withEnv({ OPENCLAW_GATEWAY_URL: "http://gateway.test", OPENCLAW_GATEWAY_TOKEN: "x", FIRST_TOKEN_DELEGATE_MS: "abc" }, () => {
     assert.equal(freshConfig().getPipelineConfig().llm.firstTokenDelegateMs, 15_000);
   });
+
+  withEnv({ OPENCLAW_GATEWAY_URL: "http://gateway.test", OPENCLAW_GATEWAY_TOKEN: "x", HANDOFF_INFLIGHT_MAX: "0" }, () => {
+    assert.equal(freshConfig().getPipelineConfig().gatewayEvents.handoffInflightMax, 2);
+  });
+
+  withEnv({ OPENCLAW_GATEWAY_URL: "http://gateway.test", OPENCLAW_GATEWAY_TOKEN: "x", HANDOFF_INFLIGHT_MAX: "not-a-number" }, () => {
+    assert.equal(freshConfig().getPipelineConfig().gatewayEvents.handoffInflightMax, 2);
+  });
 });
 
 test("Timer A aborts the LLM, speaks the delegation line, requests handoff, records metrics, and suppresses Timer B", async (t) => {
@@ -45,12 +53,12 @@ test("Timer A aborts the LLM, speaks the delegation line, requests handoff, reco
   const result = await withFreshPipeline(
     async ({ createPipeline, metrics }) => {
       const { pipeline, turnState } = createTestPipeline(createPipeline, {
-        firstTokenDelegateMs: 80,
-        responseTimeoutMs: 220,
+        firstTokenDelegateMs: 40,
+        responseTimeoutMs: 90,
       });
 
       await pipeline._test.handleUtteranceEnd("ケイティ、調べてまとめて", "turn-a");
-      await sleep(260);
+      await sleep(90);
       pipeline.close();
       await metrics._test.flush();
 
@@ -78,8 +86,8 @@ test("Timer A aborts the LLM, speaks the delegation line, requests handoff, reco
   assert.equal(spoken.includes(DELEGATION_LINE), true);
   assert.equal(handoffRequests.length, 1);
   assert.equal(forcedEvent.turn_id, "turn-a");
-  assert.equal(forcedEvent.threshold_ms, 80);
-  assert.equal(forcedEvent.elapsed_ms >= 50, true);
+  assert.equal(forcedEvent.threshold_ms, 40);
+  assert.equal(forcedEvent.elapsed_ms >= 25, true);
   assert.equal(forcedEvent.elapsed_ms < 500, true);
   assert.equal(warnings.some((line) => line.includes("LLM first-response timeout")), false);
   assert.equal(events.some((event) => event.type === "timeout_fallback_fired"), false);
@@ -142,12 +150,12 @@ test("first token before Timer A threshold cancels forced delegation", async () 
   await withFreshPipeline(
     async ({ createPipeline, metrics }) => {
       const { pipeline } = createTestPipeline(createPipeline, {
-        firstTokenDelegateMs: 120,
-        responseTimeoutMs: 300,
+        firstTokenDelegateMs: 80,
+        responseTimeoutMs: 90,
       });
 
       await pipeline._test.handleUtteranceEnd("ケイティ、短く答えて", "turn-c");
-      await sleep(160);
+      await sleep(90);
       pipeline.close();
       await metrics._test.flush();
     },
@@ -157,7 +165,7 @@ test("first token before Timer A threshold cancels forced delegation", async () 
       handoffRequests,
       llm: {
         streamChat: async function* (_messages, opts) {
-          await sleep(10);
+          await sleep(5);
           streamAborted = opts.signal.aborted;
           yield "これは通常応答です。";
         },
@@ -186,8 +194,8 @@ test("gateway fallback retry cancels the outer first-response timers", async () 
   await withFreshPipeline(
     async ({ createPipeline, metrics }) => {
       const { pipeline } = createTestPipeline(createPipeline, {
-        firstTokenDelegateMs: 160,
-        responseTimeoutMs: 500,
+        firstTokenDelegateMs: 80,
+        responseTimeoutMs: 90,
         agents: {
           caty: { wakeWords: ["ケイティ"] },
           analyst: { wakeWords: ["アナリスト"], gatewayUrl: "http://analyst.test" },
@@ -197,7 +205,7 @@ test("gateway fallback retry cancels the outer first-response timers", async () 
       });
 
       await pipeline._test.handleUtteranceEnd("アナリスト、調べてまとめて", "turn-d");
-      await sleep(220);
+      await sleep(90);
       pipeline.close();
       await metrics._test.flush();
     },
@@ -209,11 +217,11 @@ test("gateway fallback retry cancels the outer first-response timers", async () 
         streamChat: async function* (_messages, opts) {
           streamCalls.push(opts.sessionUser);
           if (opts.sessionUser.endsWith("-analyst")) {
-            await sleep(60);
+            await sleep(20);
             throw new Error("ECONNREFUSED analyst gateway");
           }
 
-          await sleep(120);
+          await sleep(40);
           yield "通常のフォールバック応答です。";
         },
         VOICE_SYSTEM_ADDENDUM: "",
@@ -231,6 +239,474 @@ test("gateway fallback retry cancels the outer first-response timers", async () 
   assert.equal(events.some((event) => event.type === "first_token" && event.turn_id === "turn-d"), true);
   assert.equal(events.some((event) => event.type === "forced_delegation_fired" && event.turn_id === "turn-d"), false);
   assert.equal(events.some((event) => event.type === "tts_playback_start" && event.source === "forced_delegation"), false);
+});
+
+test("gateway events enabled makes Timer A abort the server run and handoff on delegate session", async () => {
+  const handoffRequests = [];
+  const abortUsers = [];
+  const spoken = [];
+
+  await withFreshPipeline(
+    async ({ createPipeline }) => {
+      const { pipeline } = createTestPipeline(createPipeline, {
+        firstTokenDelegateMs: 40,
+        responseTimeoutMs: 90,
+        gatewayEventsConfig: {
+          enabled: true,
+          forcedDelegationAbort: true,
+          handoffDelegateSession: true,
+          handoffInflightMax: 2,
+          handoffCooldownMs: 0,
+          reportVoiceGapMs: 1,
+          reportChatEnabled: true,
+          reportVoiceEnabled: true,
+        },
+      });
+
+      await pipeline._test.handleUtteranceEnd("ケイティ、重い調査をして", "turn-gw");
+      await sleep(90);
+      pipeline.close();
+    },
+    {
+      spoken,
+      handoffRequests,
+      gatewayEvents: {
+        abortSession: async (sessionUser) => {
+          abortUsers.push(sessionUser);
+          return true;
+        },
+      },
+      llm: {
+        streamChat: async function* (_messages, opts) {
+          await waitForAbort(opts.signal);
+        },
+        VOICE_SYSTEM_ADDENDUM: "",
+        buildVoiceAddendum: () => "",
+      }
+    }
+  );
+
+  assert.deepEqual(abortUsers, ["meet-forced-delegation-test-caty"]);
+  assert.equal(handoffRequests.length, 1);
+  assert.equal(handoffRequests[0].timeoutMs, 15_000);
+  const body = JSON.parse(handoffRequests[0].body);
+  assert.equal(body.user, "meet-forced-delegation-test-caty-delegate");
+  assert.equal(JSON.stringify(body).includes("Slack"), false);
+  assert.equal(spoken.includes("ちょっと時間がかかってるから、裏でまとめておくね。"), true);
+});
+
+test("gateway handoff guard skips dispatch while cooldown is active", async () => {
+  const handoffRequests = [];
+  const spoken = [];
+
+  await withFreshPipeline(
+    async ({ createPipeline }) => {
+      const { pipeline } = createTestPipeline(createPipeline, {
+        firstTokenDelegateMs: 30,
+        responseTimeoutMs: 90,
+        gatewayEventsConfig: {
+          enabled: true,
+          forcedDelegationAbort: false,
+          handoffDelegateSession: true,
+          handoffInflightMax: 2,
+          handoffCooldownMs: 100,
+          reportVoiceGapMs: 1,
+          reportChatEnabled: true,
+          reportVoiceEnabled: true,
+        },
+      });
+
+      await pipeline._test.handleUtteranceEnd("ケイティ、1つめを調べて", "turn-cool-1");
+      await sleep(20);
+      await pipeline._test.handleUtteranceEnd("ケイティ、2つめを調べて", "turn-cool-2");
+      await sleep(20);
+      pipeline.close();
+    },
+    {
+      spoken,
+      handoffRequests,
+      gatewayEvents: { abortSession: async () => true },
+      llm: {
+        streamChat: async function* (_messages, opts) {
+          await waitForAbort(opts.signal);
+        },
+        VOICE_SYSTEM_ADDENDUM: "",
+        buildVoiceAddendum: () => "",
+      }
+    }
+  );
+
+  assert.equal(handoffRequests.length, 1);
+  assert.equal(spoken.filter((line) => line === "ちょっと時間がかかってるから、裏でまとめておくね。").length, 2);
+});
+
+test("gateway handoff guard skips dispatch while in-flight cap is full", async () => {
+  const handoffRequests = [];
+  const spoken = [];
+
+  await withFreshPipeline(
+    async ({ createPipeline }) => {
+      const { pipeline } = createTestPipeline(createPipeline, {
+        firstTokenDelegateMs: 30,
+        responseTimeoutMs: 90,
+        gatewayEventsConfig: {
+          enabled: true,
+          forcedDelegationAbort: false,
+          handoffDelegateSession: true,
+          handoffInflightMax: 1,
+          handoffCooldownMs: 0,
+          reportVoiceGapMs: 1,
+          reportChatEnabled: true,
+          reportVoiceEnabled: true,
+        },
+      });
+
+      await pipeline._test.handleUtteranceEnd("ケイティ、1つめを調べて", "turn-cap-1");
+      await sleep(60);
+      await pipeline._test.handleUtteranceEnd("ケイティ、2つめを調べて", "turn-cap-2");
+      await sleep(60);
+      assert.equal(pipeline._test.getHandoffInflightCount(), 1);
+      pipeline.close();
+    },
+    {
+      spoken,
+      handoffRequests,
+      gatewayEvents: { abortSession: async () => true },
+      llm: {
+        streamChat: async function* (_messages, opts) {
+          await waitForAbort(opts.signal);
+        },
+        VOICE_SYSTEM_ADDENDUM: "",
+        buildVoiceAddendum: () => "",
+      }
+    }
+  );
+
+  assert.equal(handoffRequests.length, 1);
+  assert.equal(spoken.filter((line) => line === "ちょっと時間がかかってるから、裏でまとめておくね。").length, 2);
+});
+
+test("gateway handoff client timeout is treated as dispatched, not failure", async () => {
+  const handoffRequests = [];
+  const spoken = [];
+  const warnings = [];
+
+  const result = await withFreshPipeline(
+    async ({ createPipeline }) => {
+      const { pipeline } = createTestPipeline(createPipeline, {
+        firstTokenDelegateMs: 30,
+        responseTimeoutMs: 90,
+        gatewayEventsConfig: {
+          enabled: true,
+          forcedDelegationAbort: false,
+          handoffDelegateSession: true,
+          handoffInflightMax: 2,
+          handoffCooldownMs: 0,
+          reportVoiceGapMs: 1,
+          reportChatEnabled: true,
+          reportVoiceEnabled: true,
+        },
+      });
+
+      await pipeline._test.handleUtteranceEnd("ケイティ、タイムアウトしても委譲して", "turn-timeout");
+      await sleep(90);
+      const inflight = pipeline._test.getHandoffInflightCount();
+      pipeline.close();
+      return { inflight };
+    },
+    {
+      spoken,
+      handoffRequests,
+      handoffMode: "client-timeout",
+      warnings,
+      gatewayEvents: { abortSession: async () => true },
+      llm: {
+        streamChat: async function* (_messages, opts) {
+          await waitForAbort(opts.signal);
+        },
+        VOICE_SYSTEM_ADDENDUM: "",
+        buildVoiceAddendum: () => "",
+      }
+    }
+  );
+
+  assert.equal(handoffRequests.length, 1);
+  assert.equal(handoffRequests[0].timeoutMs, 15_000);
+  assert.equal(result.inflight, 1);
+  assert.equal(spoken.includes("[soft voice] ごめん、うまく繋げられなかったみたい。あとでもう一回試してね。"), false);
+  assert.equal(warnings.some((line) => line.includes("client timeout")), true);
+});
+
+test("gateway completion posts sanitized chat immediately and speaks only after a gap", async () => {
+  const spoken = [];
+  const chats = [];
+
+  await withFreshPipeline(
+    async ({ createPipeline }) => {
+      const { pipeline, turnState } = createTestPipeline(createPipeline, {
+        firstTokenDelegateMs: 0,
+        responseTimeoutMs: 0,
+        gatewayEventsConfig: {
+          enabled: true,
+          reportVoiceGapMs: 20,
+          reportChatEnabled: true,
+          reportVoiceEnabled: true,
+        },
+        onChatMessage: (text) => {
+          chats.push(text);
+          return true;
+        },
+      });
+      turnState.isAgentSpeaking = true;
+      await pipeline._test.handleGatewaySubagentCompletion({
+        childKey: "agent:main:subagent:child",
+        parentSessionKey: "agent:main:openai-user:meet-forced-delegation-test-caty",
+        label: "調査👍",
+        status: "ok",
+        resultText: "結果です👍",
+      });
+      assert.deepEqual(chats, ["委譲タスク結果: 調査\n結果です"]);
+
+      await sleep(40);
+      assert.equal(spoken.some((line) => line.includes("まとまったよ")), false);
+      turnState.isAgentSpeaking = false;
+      await sleep(80);
+      pipeline.close();
+    },
+    {
+      spoken,
+      handoffRequests: [],
+      gatewayEvents: { abortSession: async () => true },
+      llm: {
+        streamChat: async function* () {},
+        VOICE_SYSTEM_ADDENDUM: "",
+        buildVoiceAddendum: () => "",
+      },
+    }
+  );
+
+  assert.equal(spoken.some((line) => line === "さっきの「調査」、まとまったよ。チャットに貼ったね。"), true);
+});
+
+test("gateway completion voice gap is gated by fake timers", async (t) => {
+  const spoken = [];
+  const chats = [];
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 0 });
+
+  await withFreshPipeline(
+    async ({ createPipeline }) => {
+      const { pipeline } = createTestPipeline(createPipeline, {
+        firstTokenDelegateMs: 0,
+        responseTimeoutMs: 0,
+        gatewayEventsConfig: {
+          enabled: true,
+          reportVoiceGapMs: 4_000,
+          reportChatEnabled: true,
+          reportVoiceEnabled: true,
+        },
+        onChatMessage: (text) => {
+          chats.push(text);
+          return true;
+        },
+      });
+      await pipeline._test.handleGatewaySubagentCompletion({
+        childKey: "agent:main:subagent:child-gap",
+        parentSessionKey: "agent:main:openai-user:meet-forced-delegation-test-caty",
+        label: "時差確認",
+        status: "ok",
+        resultText: "結果",
+      });
+      assert.equal(chats.length, 1);
+
+      await flushMicrotasks();
+      for (let i = 0; i < 7; i += 1) {
+        t.mock.timers.tick(500);
+        await flushMicrotasks();
+      }
+      assert.equal(spoken.length, 0);
+
+      t.mock.timers.tick(500);
+      await flushMicrotasks();
+      assert.equal(spoken.includes("さっきの「時差確認」、まとまったよ。チャットに貼ったね。"), true);
+      pipeline.close();
+    },
+    {
+      spoken,
+      handoffRequests: [],
+      gatewayEvents: { abortSession: async () => true },
+      llm: {
+        streamChat: async function* () {},
+        VOICE_SYSTEM_ADDENDUM: "",
+        buildVoiceAddendum: () => "",
+      },
+    }
+  );
+});
+
+async function flushMicrotasks() {
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+test("gateway completion voice drain stops after close before speaking", async () => {
+  const spoken = [];
+  const chats = [];
+
+  await withFreshPipeline(
+    async ({ createPipeline }) => {
+      const { pipeline, turnState } = createTestPipeline(createPipeline, {
+        firstTokenDelegateMs: 0,
+        responseTimeoutMs: 0,
+        gatewayEventsConfig: {
+          enabled: true,
+          reportVoiceGapMs: 20,
+          reportChatEnabled: true,
+          reportVoiceEnabled: true,
+        },
+        onChatMessage: (text) => {
+          chats.push(text);
+          return true;
+        },
+      });
+      turnState.isAgentSpeaking = true;
+      await pipeline._test.handleGatewaySubagentCompletion({
+        childKey: "agent:main:subagent:child-close",
+        parentSessionKey: "agent:main:openai-user:meet-forced-delegation-test-caty",
+        label: "終了時",
+        status: "ok",
+        resultText: "閉じた後は読まない",
+      });
+      assert.equal(chats.length, 1);
+      pipeline.close();
+      turnState.isAgentSpeaking = false;
+      await sleep(80);
+    },
+    {
+      spoken,
+      handoffRequests: [],
+      gatewayEvents: { abortSession: async () => true },
+      llm: {
+        streamChat: async function* () {},
+        VOICE_SYSTEM_ADDENDUM: "",
+        buildVoiceAddendum: () => "",
+      },
+    }
+  );
+
+  assert.equal(spoken.some((line) => line.includes("終了時")), false);
+});
+
+test("gateway completion voice queue caps at ten and drops oldest report lines", async () => {
+  const spoken = [];
+  const chats = [];
+  const warnings = [];
+
+  await withFreshPipeline(
+    async ({ createPipeline }) => {
+      const { pipeline, turnState } = createTestPipeline(createPipeline, {
+        firstTokenDelegateMs: 0,
+        responseTimeoutMs: 0,
+        gatewayEventsConfig: {
+          enabled: true,
+          reportVoiceGapMs: 100,
+          reportChatEnabled: true,
+          reportVoiceEnabled: true,
+        },
+        onChatMessage: (text) => {
+          chats.push(text);
+          return true;
+        },
+      });
+      turnState.isAgentSpeaking = true;
+      for (let i = 0; i < 12; i += 1) {
+        await pipeline._test.handleGatewaySubagentCompletion({
+          childKey: `agent:main:subagent:child-${i}`,
+          parentSessionKey: "agent:main:openai-user:meet-forced-delegation-test-caty",
+          label: `調査${i}`,
+          status: "ok",
+          resultText: `結果${i}`,
+        });
+      }
+      assert.equal(pipeline._test.getReportQueueLength(), 10);
+      pipeline.close();
+    },
+    {
+      spoken,
+      handoffRequests: [],
+      warnings,
+      gatewayEvents: { abortSession: async () => true },
+      llm: {
+        streamChat: async function* () {},
+        VOICE_SYSTEM_ADDENDUM: "",
+        buildVoiceAddendum: () => "",
+      },
+    }
+  );
+
+  assert.equal(chats.length, 12);
+  assert.equal(warnings.filter((line) => line.includes("report voice queue overflow")).length, 2);
+  assert.equal(spoken.length, 0);
+});
+
+test("gateway completion decrements matching child and records elapsed from spawn time", async () => {
+  const metricsDir = fs.mkdtempSync(path.join(os.tmpdir(), "gateway-completion-metrics-"));
+  const now = Date.now();
+
+  await withFreshPipeline(
+    async ({ createPipeline, metrics }) => {
+      const { pipeline } = createTestPipeline(createPipeline, {
+        firstTokenDelegateMs: 0,
+        responseTimeoutMs: 0,
+        gatewayEventsConfig: {
+          enabled: true,
+          reportChatEnabled: false,
+          reportVoiceEnabled: false,
+        },
+      });
+      pipeline._test.handleGatewaySubagentSpawn({
+        childKey: "agent:main:subagent:oldest",
+        parentSessionKey: "agent:main:openai-user:meet-forced-delegation-test-caty",
+        label: "古い",
+        source: "forced",
+        spawnAtMs: now - 10_000,
+      });
+      pipeline._test.handleGatewaySubagentSpawn({
+        childKey: "agent:main:subagent:completed",
+        parentSessionKey: "agent:main:openai-user:meet-forced-delegation-test-caty",
+        label: "完了",
+        source: "forced",
+        spawnAtMs: now - 1_000,
+      });
+      pipeline._test.handleGatewaySubagentCompletion({
+        childKey: "agent:main:subagent:completed",
+        parentSessionKey: "agent:main:openai-user:meet-forced-delegation-test-caty",
+        label: "完了",
+        status: "ok",
+        resultText: "結果",
+        spawnAtMs: now - 1_000,
+      });
+      assert.equal(pipeline._test.getHandoffInflightCount(), 1);
+      pipeline.close();
+      await metrics._test.flush();
+    },
+    {
+      metricsDir,
+      handoffRequests: [],
+      gatewayEvents: { abortSession: async () => true },
+      llm: {
+        streamChat: async function* () {},
+        VOICE_SYSTEM_ADDENDUM: "",
+        buildVoiceAddendum: () => "",
+      },
+    }
+  );
+
+  const events = readMetrics(metricsDir);
+  const completed = events.find((event) => event.type === "delegation_completed" && event.label === "完了");
+  assert.equal(Boolean(completed), true);
+  assert.equal(completed.elapsed_ms >= 900, true);
+  assert.equal(completed.elapsed_ms < 5_000, true);
 });
 
 function createTestPipeline(createPipeline, options) {
@@ -256,12 +732,14 @@ function createTestPipeline(createPipeline, options) {
     echoCooldownMs: 1,
     greeting: "",
     exitDetection: false,
+    gatewayEvents: options.gatewayEventsConfig || { enabled: false },
   };
 
   const pipeline = createPipeline(session, turnState, () => {}, config, {
     agents: options.agents || { caty: { wakeWords: ["ケイティ"] } },
     selectedAgentIds: options.selectedAgentIds || ["caty"],
     defaultAgentId: options.defaultAgentId || "caty",
+    onChatMessage: options.onChatMessage,
     _testExposeInternals: true,
   });
 
@@ -276,6 +754,7 @@ async function withFreshPipeline(fn, options = {}) {
     path.join(src, "llm.js"),
     path.join(src, "tts-fish.js"),
     path.join(src, "metrics.js"),
+    path.join(src, "gateway-events.js"),
     path.join(src, "pipeline.js"),
   ];
   const previousCache = new Map(paths.map((p) => [require.resolve(p), require.cache[require.resolve(p)]]));
@@ -290,7 +769,7 @@ async function withFreshPipeline(fn, options = {}) {
     SENTENCE_PAUSE_MS: "0",
     WAKE_WORDS: "ケイティ",
     METRICS_LOG_DIR: options.metricsDir,
-    METRICS_DISABLED: undefined,
+    METRICS_DISABLED: options.metricsDir ? undefined : "1",
   });
 
   const sttExports = {
@@ -305,11 +784,17 @@ async function withFreshPipeline(fn, options = {}) {
 
   const httpModule = require("node:http");
   const previousHttpRequest = httpModule.request;
-  httpModule.request = createFakeRequest(options.handoffRequests || []);
+  httpModule.request = createFakeRequest(options.handoffRequests || [], options.handoffMode);
+  const restoreWarn = options.warnings ? captureConsoleWarn(options.warnings) : null;
+  const createdPipelines = new Set();
+  let loadedMetrics = null;
 
   require.cache[require.resolve(path.join(src, "stt-provider.js"))] = cacheEntry(path.join(src, "stt-provider.js"), sttExports);
   require.cache[require.resolve(path.join(src, "stt.js"))] = cacheEntry(path.join(src, "stt.js"), sttExports);
   require.cache[require.resolve(path.join(src, "llm.js"))] = cacheEntry(path.join(src, "llm.js"), options.llm);
+  if (options.gatewayEvents) {
+    require.cache[require.resolve(path.join(src, "gateway-events.js"))] = cacheEntry(path.join(src, "gateway-events.js"), options.gatewayEvents);
+  }
   require.cache[require.resolve(path.join(src, "tts-fish.js"))] = cacheEntry(path.join(src, "tts-fish.js"), {
     synthesize: async (text, { onAudio }) => {
       options.spoken?.push(text);
@@ -319,9 +804,20 @@ async function withFreshPipeline(fn, options = {}) {
 
   try {
     const pipelineModule = require(path.join(src, "pipeline.js"));
+    const createPipeline = (...args) => {
+      const pipeline = pipelineModule.createPipeline(...args);
+      createdPipelines.add(pipeline);
+      return pipeline;
+    };
     const metrics = require(path.join(src, "metrics.js"));
-    return await fn({ createPipeline: pipelineModule.createPipeline, metrics });
+    loadedMetrics = metrics;
+    return await fn({ createPipeline, metrics });
   } finally {
+    for (const pipeline of createdPipelines) {
+      try { pipeline.close?.(); } catch { /* ignore test cleanup */ }
+    }
+    loadedMetrics?._test?.dispose?.();
+    if (restoreWarn) restoreWarn();
     httpModule.request = previousHttpRequest;
     restoreEnv(previousEnv);
     for (const p of paths) {
@@ -358,15 +854,21 @@ function readMetrics(dir) {
     .map((line) => JSON.parse(line));
 }
 
-function createFakeRequest(requests) {
+function createFakeRequest(requests, mode = "success") {
   return (requestOptions, callback) => {
     const req = new EventEmitter();
     let body = "";
+    let timeoutMs = null;
+    let timeoutCallback = null;
     req.write = (chunk) => {
       body += String(chunk || "");
     };
     req.end = () => {
-      requests.push({ options: requestOptions, body });
+      requests.push({ options: requestOptions, body, timeoutMs });
+      if (mode === "client-timeout") {
+        process.nextTick(() => timeoutCallback?.());
+        return;
+      }
       process.nextTick(() => {
         const res = new EventEmitter();
         res.statusCode = 200;
@@ -374,7 +876,11 @@ function createFakeRequest(requests) {
         callback(res);
       });
     };
-    req.setTimeout = () => req;
+    req.setTimeout = (ms, cb) => {
+      timeoutMs = ms;
+      timeoutCallback = cb;
+      return req;
+    };
     req.destroy = (err) => {
       if (err) process.nextTick(() => req.emit("error", err));
     };

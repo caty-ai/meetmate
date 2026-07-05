@@ -47,9 +47,20 @@ function summarize(events) {
   const delegationEvents = events.filter((event) =>
     event.type === "timeout_fallback_fired" ||
     event.type === "handoff_requested" ||
-    event.type === "forced_delegation_fired"
+    event.type === "handoff_dropped" ||
+    event.type === "forced_delegation_fired" ||
+    event.type === "spawn_detected" ||
+    event.type === "delegation_completed"
   );
   const forcedDelegationCount = events.filter((event) => event.type === "forced_delegation_fired").length;
+  const spawnDetectedCount = events.filter((event) => event.type === "spawn_detected").length;
+  const delegationCompletedCount = events.filter((event) => event.type === "delegation_completed").length;
+  const abortRequestedCount = events.filter((event) => event.type === "abort_requested").length;
+  const abortRequestedOkCount = events.filter((event) => event.type === "abort_requested" && event.ok === true).length;
+  const reportPostedChatCount = events.filter((event) => event.type === "report_posted" && event.channel === "chat").length;
+  const reportPostedVoiceCount = events.filter((event) => event.type === "report_posted" && event.channel === "voice").length;
+  const handoffDroppedTtlCount = events.filter((event) => event.type === "handoff_dropped" && event.reason === "ttl").length;
+  const handoffDroppedQueueFullCount = events.filter((event) => event.type === "handoff_dropped" && event.reason === "queue_full").length;
   const suspectedMisroutedTurnIds = new Set();
 
   for (const event of events) {
@@ -115,6 +126,14 @@ function summarize(events) {
     ackRate: addressedTurns.length > 0 ? ackTurns / addressedTurns.length : 0,
     delegationCount: delegationEvents.length,
     forcedDelegationCount,
+    spawnDetectedCount,
+    delegationCompletedCount,
+    abortRequestedCount,
+    abortRequestedOkCount,
+    reportPostedChatCount,
+    reportPostedVoiceCount,
+    handoffDroppedTtlCount,
+    handoffDroppedQueueFullCount,
     suspectedMisroutedCount: suspectedMisroutedTurnIds.size,
   };
 }
@@ -133,6 +152,11 @@ function printSummary(filePath, summary) {
   console.log("Ack immediacy definition: fraction of turns with any ack_playback_start event.");
   console.log(`Delegation events: ${summary.delegationCount}`);
   console.log(`Forced delegations (Timer A): ${summary.forcedDelegationCount}`);
+  console.log(`Gateway spawns detected: ${summary.spawnDetectedCount}`);
+  console.log(`Gateway delegations completed: ${summary.delegationCompletedCount}`);
+  console.log(`Gateway abort requests: ${summary.abortRequestedOkCount}/${summary.abortRequestedCount} ok`);
+  console.log(`Gateway reports posted: chat=${summary.reportPostedChatCount}, voice=${summary.reportPostedVoiceCount}`);
+  console.log(`Gateway handoffs dropped: ttl=${summary.handoffDroppedTtlCount}, queue_full=${summary.handoffDroppedQueueFullCount}`);
   console.log(`Suspected misrouted turns: ${summary.suspectedMisroutedCount}`);
   console.log(`Suspected misroute heuristic: handoff_requested with transcript_char_count <= ${MISROUTED_TRANSCRIPT_CHAR_THRESHOLD} (METRICS_MISROUTE_CHAR_THRESHOLD).`);
   console.log("Note: self-initiated LLM delegations via sessions_spawn are not counted because they are not observable at the REST boundary.");

@@ -18,6 +18,8 @@ let writeFailed = false;
 let appendFile = fs.promises.appendFile;
 let mkdir = fs.promises.mkdir;
 const pendingWrites = new Set();
+let beforeExitHandler = null;
+let sigtermHandler = null;
 
 if (!METRICS_DISABLED) {
   console.info(`metrics recording enabled: ${METRICS_LOG_FILE}`);
@@ -74,8 +76,10 @@ function flushPendingWrites({ bounded = false } = {}) {
 }
 
 if (!METRICS_DISABLED) {
-  process.once("beforeExit", () => flushPendingWrites().catch(warnOnce));
-  process.once("SIGTERM", () => flushPendingWrites({ bounded: true }).catch(warnOnce));
+  beforeExitHandler = () => flushPendingWrites().catch(warnOnce);
+  sigtermHandler = () => flushPendingWrites({ bounded: true }).catch(warnOnce);
+  process.once("beforeExit", beforeExitHandler);
+  process.once("SIGTERM", sigtermHandler);
 }
 
 module.exports = {
@@ -90,6 +94,16 @@ module.exports = {
     },
     setMkdirForTest(fn) {
       mkdir = fn;
+    },
+    dispose() {
+      if (beforeExitHandler) {
+        process.removeListener("beforeExit", beforeExitHandler);
+        beforeExitHandler = null;
+      }
+      if (sigtermHandler) {
+        process.removeListener("SIGTERM", sigtermHandler);
+        sigtermHandler = null;
+      }
     },
   },
 };

@@ -77,6 +77,26 @@ function shouldStripEmojiCodePoint(char, codePoint) {
   return codePoint >= 0x1F000 && EXTENDED_PICTOGRAPHIC_RE.test(char);
 }
 
+function stripRareScriptCharacters(text) {
+  const input = String(text ?? "");
+  if (!input) return input;
+
+  let cleaned = "";
+  for (const char of input) {
+    if (isAllowedChatCharacter(char)) cleaned += char;
+  }
+
+  return cleaned
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function isAllowedChatCharacter(char) {
+  if (/\s/u.test(char)) return true;
+  return /[\p{Script=Latin}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}\p{Script=Common}\p{Script=Inherited}]/u.test(char);
+}
+
 function trailingChatPrefix(text) {
   const input = String(text || "");
   const max = Math.min(CHAT_TAG_PREFIX.length - 1, input.length);
@@ -190,6 +210,7 @@ module.exports = {
   shouldSuppressReply,
   sanitizeReply,
   stripEmojis,
+  stripRareScriptCharacters,
   extractChatTags,
   isGatewayErrorText,
   filterSilentRepliesStream,

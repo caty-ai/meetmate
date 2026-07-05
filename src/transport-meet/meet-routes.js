@@ -20,6 +20,11 @@ const { SessionLifecycle } = require("../session-events");
 const { SlackNotifier } = require("../slack-notifier");
 const { summarizeConversation } = require("../summarizer");
 const { resolveAgentProfile, AgentNotFoundError } = require("../agent-profile");
+const { sendAttendeeChatMessage: sendAttendeeChatMessageShared } = require("../attendee-chat");
+const gatewayEvents = require("../gateway-events");
+const { recordEvent } = require("../metrics");
+const { buildDelegationResultsSection } = require("../delegation-results");
+const { createGatewaySessionTracker } = require("../gateway-session-tracker");
 
 const ATTENDEE_API_BASE_URL = process.env.ATTENDEE_API_BASE_URL || "app.attendee.dev";
 const ATTENDEE_TIMEOUT_MS = Number(process.env.ATTENDEE_TIMEOUT_MS || 15_000);
@@ -124,7 +129,43 @@ function getMeetSlackNotifier() {
   return meetSlackNotifier;
 }
 
+function getGatewayConfigForProfile(profile = _agentProfile) {
+  const pipelineConfig = getPipelineConfig({}, null, profile, _configJson);
+  return {
+    ...pipelineConfig.gatewayEvents,
+    openclawUrl: profile?.gatewayUrl || pipelineConfig.openclawUrl || process.env.OPENCLAW_GATEWAY_URL,
+    openclawToken: profile?.gatewayToken || pipelineConfig.openclawToken || process.env.OPENCLAW_GATEWAY_TOKEN,
+  };
+}
+
+function appendLateDelegationResult(sessionId, evt) {
+  const session = meetingSessions.get(sessionId);
+  if (!session) return false;
+  const item = {
+    timestamp: new Date().toISOString(),
+    label: evt.label || "委譲タスク",
+    status: evt.status || "ok",
+    resultText: String(evt.resultText || "").trim(),
+  };
+  session.delegationResults = session.delegationResults || [];
+  session.delegationResults.push(item);
+  appendLateDelegationToPersistedLogs(session, item);
+  return true;
+}
+
+const gatewayTracker = createGatewaySessionTracker({
+  gatewayEvents,
+  recordEvent,
+  sessions: meetingSessions,
+  activeConnections,
+  getGatewayConfigForProfile,
+  getDefaultAgentId: () => FIXED_AGENT_ID || "agent",
+  appendLateResult: appendLateDelegationResult,
+});
+const { trackGatewaySession, untrackGatewaySession, findGatewayRoute } = gatewayTracker;
+
 async function handleMeetSessionEnd(lifecycle) {
+  untrackGatewaySession(lifecycle.sessionId, { retainIfDelegations: true });
   const notifier = getMeetSlackNotifier();
   notifier.stopElapsedUpdates(lifecycle.sessionId);
   await notifier.postStatus(lifecycle);
@@ -297,6 +338,9 @@ async function postMeetFullTranscript(notifier, lifecycle) {
     lines.push(entry.content);
     lines.push("");
   }
+  const session = meetingSessions.get(lifecycle.sessionId);
+  const delegationSection = buildDelegationResultsSection(session?.delegationResults);
+  if (delegationSection) lines.push(delegationSection);
 
   const text = lines.join("\n");
   const MAX_CHUNK = 3800;
@@ -472,8 +516,10 @@ function saveConversationLog(session) {
     agents: session.agents || [],
     messages: session.conversationLog,
     conversation_logs: session.conversationLogs || null,
+    delegation_results: session.delegationResults || [],
   };
   fs.writeFileSync(jsonPath, JSON.stringify(jsonData, null, 2));
+  session.conversationLogJsonPath = jsonPath;
   console.log(`📝  会話ログ保存: ${jsonPath}`);
 
   const mdPath = path.join(logDir, `${baseName}.md`);
@@ -490,11 +536,32 @@ function saveConversationLog(session) {
         : "参加者";
       return `**${speaker}** (${e.timestamp}):\n${e.content}\n`;
     }),
+    buildDelegationResultsSection(session.delegationResults),
   ].join("\n");
   fs.writeFileSync(mdPath, mdContent);
+  session.conversationLogMdPath = mdPath;
   console.log(`📝  会話ログ(MD)保存: ${mdPath}`);
 
   appendToMemory(session);
+}
+
+function appendLateDelegationToPersistedLogs(session, item) {
+  try {
+    const section = buildDelegationResultsSection([item]);
+    if (session.conversationLogMdPath && fs.existsSync(session.conversationLogMdPath)) {
+      fs.appendFileSync(session.conversationLogMdPath, `\n${section}\n`);
+    }
+    if (session.memoryCallLogPath && fs.existsSync(session.memoryCallLogPath)) {
+      fs.appendFileSync(session.memoryCallLogPath, `\n${section}\n`);
+    }
+    if (session.conversationLogJsonPath && fs.existsSync(session.conversationLogJsonPath)) {
+      const data = JSON.parse(fs.readFileSync(session.conversationLogJsonPath, "utf8"));
+      data.delegation_results = session.delegationResults || [];
+      fs.writeFileSync(session.conversationLogJsonPath, JSON.stringify(data, null, 2));
+    }
+  } catch (err) {
+    console.warn("⚠️  late delegation result persistence failed:", err.message || err);
+  }
 }
 
 function appendToMemory(session) {
@@ -553,8 +620,10 @@ function appendToMemory(session) {
           : "参加者";
         return `**${speaker}**: ${e.content}\n`;
       }),
+      buildDelegationResultsSection(session.delegationResults),
     ].join("\n");
     fs.writeFileSync(callLogPath, fullLog);
+    session.memoryCallLogPath = callLogPath;
     console.log(`🧠  Meetログ memory/calls/ 保存: ${callLogPath}`);
   } catch (err) {
     console.error("⚠️  メモリ追記失敗:", err.message);
@@ -593,45 +662,7 @@ function requestBotLeave(botId, reason, attendeeKey) {
 }
 
 function sendAttendeeChatMessage(botId, message, attendeeKey) {
-  try {
-    const apiKey = attendeeKey || ATTENDEE_API_KEY;
-    let chatMessage = String(message || "");
-    if (chatMessage.length > 10_000) {
-      const truncated = Array.from(chatMessage).slice(0, 10_000).join("");
-      console.warn(`💬  Attendee chat message truncated: ${chatMessage.length} → ${truncated.length} chars`);
-      chatMessage = truncated;
-    }
-
-    const body = JSON.stringify({ to: "everyone", message: chatMessage });
-    const options = {
-      hostname: ATTENDEE_API_BASE_URL,
-      port: 443,
-      path: `/api/v1/bots/${botId}/send_chat_message`,
-      method: "POST",
-      headers: {
-        Authorization: `Token ${apiKey}`,
-        "Content-Type": "application/json",
-        "Content-Length": Buffer.byteLength(body),
-      },
-    };
-    const req = https.request(options, (res) => {
-      let data = "";
-      res.on("data", (c) => (data += c));
-      res.on("end", () => {
-        if (res.statusCode >= 400) {
-          console.warn(`💬  Attendee chat message lost: ${botId} → ${res.statusCode} ${data.slice(0, 200)}`);
-        } else {
-          console.log(`💬  Attendee chat enqueue request: ${botId} → ${res.statusCode} ${data.slice(0, 200)} (HTTP 200 means enqueued, not delivered)`);
-        }
-      });
-    });
-    req.on("error", (err) => console.error(`💬  Attendee chat error: ${err.message}`));
-    req.setTimeout(10_000, () => req.destroy());
-    req.write(body);
-    req.end();
-  } catch (err) {
-    console.error(`💬  Attendee chat error: ${err.message || err}`);
-  }
+  return sendAttendeeChatMessageShared(botId, message, attendeeKey || ATTENDEE_API_KEY);
 }
 
 function finalizeSessionIfInactive(sessionId) {
@@ -642,8 +673,9 @@ function finalizeSessionIfInactive(sessionId) {
   if (!session) return;
 
   saveConversationLog(session);
-  meetingSessions.delete(sessionId);
   sessionBotIds.delete(sessionId);
+  const retained = untrackGatewaySession(sessionId, { retainIfDelegations: true });
+  if (!retained) meetingSessions.delete(sessionId);
   leavingSessionIds.delete(sessionId);
   console.log(`🧹  Session closed: ${sessionId}`);
 }
@@ -755,12 +787,19 @@ function createHandler(session, turnState, onAudio) {
         const botInfo = sessionBotIds.get(session.id);
         if (!botInfo?.botId) {
           console.log(`💬  Bot ID未確定のためchatメッセージを破棄 (sid=${session.id})`);
-          return;
+          return false;
         }
-        sendAttendeeChatMessage(botInfo.botId, text, botInfo.attendeeKey);
+        return sendAttendeeChatMessage(botInfo.botId, text, botInfo.attendeeKey);
       },
     });
-    return { send: (buf) => pipeline.sendAudio(buf), close: () => pipeline.close(), on: pipeline.on?.bind(pipeline) };
+    return {
+      send: (buf) => pipeline.sendAudio(buf),
+      close: () => pipeline.close(),
+      on: pipeline.on?.bind(pipeline),
+      handleGatewaySubagentSpawn: pipeline.handleGatewaySubagentSpawn,
+      handleGatewaySubagentCompletion: pipeline.handleGatewaySubagentCompletion,
+      getDelegationResults: pipeline.getDelegationResults,
+    };
   }
 
   console.log(`🔊  Deepgram Voice Agent モード (sid=${session.id})`);
@@ -1038,8 +1077,9 @@ async function handleHttp(req, res) {
       if (session) {
         if (session.closeTimer) clearTimeout(session.closeTimer);
         saveConversationLog(session);
-        meetingSessions.delete(sid);
         sessionBotIds.delete(sid);
+        const retained = untrackGatewaySession(sid, { retainIfDelegations: true });
+        if (!retained) meetingSessions.delete(sid);
         console.log(`🧹  Session closed (leave): ${sid}`);
       }
 
@@ -1277,6 +1317,7 @@ function handleWsConnection(client, req) {
     getMeetSlackNotifier().postStatus(lifecycle).catch(() => {});
     getMeetSlackNotifier().startElapsedUpdates(lifecycle);
     lifecycle.setConversationLog(session.conversationLog);
+    trackGatewaySession(session, _agentProfile);
   }
 
   const turnState = {

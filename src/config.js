@@ -54,6 +54,39 @@ const FIRST_TOKEN_DELEGATE_MS = !Number.isFinite(_firstTokenDelegateParsed)
   : (_firstTokenDelegateParsed > 0 ? _firstTokenDelegateParsed : 0);
 const ECHO_LOOP_COOLDOWN_MS = Number(process.env.ECHO_LOOP_COOLDOWN_MS || 300);
 
+function boolEnv(name, fallback) {
+  const raw = process.env[name];
+  if (raw === undefined || String(raw).trim() === "") return fallback;
+  return String(raw).toLowerCase() !== "false";
+}
+
+function nonNegativeMsEnv(name, fallback) {
+  const raw = process.env[name];
+  if (raw === undefined || String(raw).trim() === "") return fallback;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return fallback;
+  return parsed > 0 ? parsed : 0;
+}
+
+function positiveIntEnv(name, fallback) {
+  const raw = process.env[name];
+  if (raw === undefined || String(raw).trim() === "") return fallback;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return fallback;
+  return parsed >= 1 ? Math.floor(parsed) : fallback;
+}
+
+const GATEWAY_EVENTS_ENABLED = boolEnv("GATEWAY_EVENTS_ENABLED", false);
+const FORCED_DELEGATION_ABORT = boolEnv("FORCED_DELEGATION_ABORT", true);
+const HANDOFF_DELEGATE_SESSION = boolEnv("HANDOFF_DELEGATE_SESSION", true);
+// Handoff concurrency is intentionally finite; 0 is invalid, not "unlimited".
+const HANDOFF_INFLIGHT_MAX = positiveIntEnv("HANDOFF_INFLIGHT_MAX", 2);
+const HANDOFF_COOLDOWN_MS = nonNegativeMsEnv("HANDOFF_COOLDOWN_MS", 20_000);
+const REPORT_VOICE_GAP_MS = nonNegativeMsEnv("REPORT_VOICE_GAP_MS", 4_000);
+const REPORT_CHAT_ENABLED = boolEnv("REPORT_CHAT_ENABLED", true);
+const REPORT_VOICE_ENABLED = boolEnv("REPORT_VOICE_ENABLED", true);
+const GATEWAY_EVENTS_AGENT_ID = process.env.GATEWAY_EVENTS_AGENT_ID || "main";
+
 const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN || "";
 const SLACK_NOTIFY_CHANNEL = process.env.SLACK_NOTIFY_CHANNEL || "";
 const SLACK_SUMMARY_CHANNEL = process.env.SLACK_SUMMARY_CHANNEL || "";
@@ -216,6 +249,17 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
     summary: {
       enabled: SUMMARY_ENABLED,
     },
+    gatewayEvents: {
+      enabled: GATEWAY_EVENTS_ENABLED,
+      forcedDelegationAbort: FORCED_DELEGATION_ABORT,
+      handoffDelegateSession: HANDOFF_DELEGATE_SESSION,
+      handoffInflightMax: HANDOFF_INFLIGHT_MAX,
+      handoffCooldownMs: HANDOFF_COOLDOWN_MS,
+      reportVoiceGapMs: REPORT_VOICE_GAP_MS,
+      reportChatEnabled: REPORT_CHAT_ENABLED,
+      reportVoiceEnabled: REPORT_VOICE_ENABLED,
+      agentId: GATEWAY_EVENTS_AGENT_ID,
+    },
     // Per-agent voice extensions
     emotionTags: agentEmotionTags,
     ackVariants: overrides.ackVariants || agentProfile?.ackVariants || agent?.ackVariants || null,
@@ -237,5 +281,14 @@ module.exports = {
   SLACK_SUMMARY_CHANNEL,
   SLACK_STATUS_CHANNEL,
   SUMMARY_ENABLED,
+  GATEWAY_EVENTS_ENABLED,
+  FORCED_DELEGATION_ABORT,
+  HANDOFF_DELEGATE_SESSION,
+  HANDOFF_INFLIGHT_MAX,
+  HANDOFF_COOLDOWN_MS,
+  REPORT_VOICE_GAP_MS,
+  REPORT_CHAT_ENABLED,
+  REPORT_VOICE_ENABLED,
+  GATEWAY_EVENTS_AGENT_ID,
   loadConfig,
 };
