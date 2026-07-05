@@ -365,12 +365,23 @@ const FORCED_DELEGATION_FALLBACK_VOICE_MEET = "ちょっと時間がかかって
 const HANDOFF_UNCONFIRMED_VOICE_MEET = "[soft voice] 続きは裏に回したよ。まとまったらチャットに貼るね。";
 const HANDOFF_BUSY_VOICE_MEET = "[soft voice] ごめんね、いま立て込んでるから少し待ってね。";
 const REPORT_POST_UNKNOWN_VOICE = "結果まとまったよ、あとでログにも残すね。";
+const CIRCUIT_BREAKER_RECOVERY_NOTICE = "[soft voice] ごめんね、ちょっと立て直し中。急ぎはそのまま話しかけてね。";
 const HANDOFF_INFLIGHT_TTL_MS = 5 * 60 * 1000;
 const PENDING_HANDOFF_TTL_MS = 5 * 60 * 1000;
 const PENDING_HANDOFF_MAX = 5;
 const REPORT_VOICE_DROP_MS = 90_000;
 const REPORT_QUEUE_MAX = 10;
 const LIVE_USER_SPEECH_HOLD_MS = 1_200;
+const SEEN_RUN_ID_MAX = 1000;
+const SHORT_UTTERANCE_PING_PATTERNS = [
+  /話せる/u,
+  /大丈夫/u,
+  /聞こえ/u,
+  /おーい/u,
+  /元気/u,
+  /どう[?？]?$/u,
+  /テスト/u,
+];
 
 function shouldSendImmediateAck(text) {
   // Always ack on any addressed turn so the user never hears silence after
@@ -405,6 +416,7 @@ function pickProgressPing(index, customVariants = null) {
 }
 
 function collectFixedTtsPhrases(config, greeting) {
+  const gatewayEventsEnabled = config?.gatewayEvents?.enabled === true;
   return [
     ...(config.ackVariants && config.ackVariants.length > 0 ? config.ackVariants : DEFAULT_ACK_VARIANTS),
     ...(config.progressPings && config.progressPings.length > 0 ? config.progressPings : PROGRESS_PING_VARIANTS),
@@ -415,6 +427,11 @@ function collectFixedTtsPhrases(config, greeting) {
     config.timeoutFallback || LLM_TIMEOUT_FALLBACK_VOICE,
     HANDOFF_SUCCESS_VOICE,
     HANDOFF_FAILURE_VOICE,
+    ...(gatewayEventsEnabled ? [
+      HANDOFF_UNCONFIRMED_VOICE_MEET,
+      HANDOFF_BUSY_VOICE_MEET,
+      CIRCUIT_BREAKER_RECOVERY_NOTICE,
+    ] : []),
   ].filter(Boolean);
 }
 
@@ -422,6 +439,23 @@ function shouldForceDelegate({ thresholdMs, firstChunkSeen, abortSignal, isProce
   // Lane seam: future fast/work intent policy can replace this timer decision
   // without touching the abort, spoken handoff, or metrics sequence below.
   return thresholdMs > 0 && !firstChunkSeen && !abortSignal?.aborted && isProcessing;
+}
+
+function getShortUtteranceSkipReason(text, thresholdChars) {
+  const cleaned = String(text || "").trim();
+  const threshold = Number(thresholdChars || 0);
+  if (!(threshold > 0)) return null;
+  if (cleaned.length > 0 && cleaned.length < threshold) {
+    return SHORT_UTTERANCE_PING_PATTERNS.some((re) => re.test(cleaned)) ? "ping" : "short";
+  }
+  return null;
+}
+
+function rememberBounded(set, key, max = SEEN_RUN_ID_MAX) {
+  set.add(key);
+  if (set.size <= max) return;
+  const first = set.values().next().value;
+  if (first !== undefined) set.delete(first);
 }
 
 function isTtsCacheEnabled() {
@@ -466,6 +500,8 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   const reportResults = [];
   const reportQueue = [];
   const handoffInflight = new Map();
+  const relayedDelegateRunIds = new Set();
+  const compactTimers = new Set();
   const pendingHandoffQueue = [];
   let lastUserSpeechAt = 0;
   let liveUserSpeechUntil = 0;
@@ -477,6 +513,9 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   let reportDrainSleepResolve = null;
   let reportQueueDraining = false;
   let stopped = false;
+  let consecutiveTimerATimeouts = 0;
+  let circuitBreakerOpen = false;
+  let circuitBreakerNoticeQueued = false;
 
   const agentState = {
     openclawUrl: config.openclawUrl,
@@ -622,6 +661,92 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     });
   }
 
+  function currentParentSessionKey() {
+    return gatewayEventsClient.buildSessionKey(
+      agentState.sessionUser,
+      gatewayEventsConfig.agentId || "main"
+    );
+  }
+
+  function currentDelegateSessionKey() {
+    return gatewayEventsClient.buildSessionKey(
+      `${agentState.sessionUser}-delegate`,
+      gatewayEventsConfig.agentId || "main"
+    );
+  }
+
+  async function compactParentSession(reason = "unspecified") {
+    if (!gatewayEventsEnabled || stopped) return false;
+    try {
+      const maxLines = Number(gatewayEventsConfig.parentCompactMaxLines ?? 40);
+      const result = await gatewayEventsClient.compactSession(agentState.sessionUser, { maxLines });
+      const ok = result?.ok === true;
+      recordGatewayMetric("parent_compact", {
+        ok,
+        compacted: result?.compacted === true,
+        reason,
+        ...(result?.reason ? { error: String(result.reason).slice(0, 120) } : {}),
+      });
+      if (!ok) {
+        console.warn(`⚠️  parent compact failed (${reason}): ${result?.reason || "unknown"}`);
+      }
+      return ok;
+    } catch (err) {
+      console.warn(`⚠️  parent compact failed (${reason}):`, err.message || err);
+      recordGatewayMetric("parent_compact", { ok: false, reason, error: String(err?.message || err).slice(0, 120) });
+      return false;
+    }
+  }
+
+  function scheduleParentCompact(reason = "unspecified", delayMs = null, attempt = 0) {
+    if (!gatewayEventsEnabled || stopped) return;
+    const delay = delayMs ?? Number(gatewayEventsConfig.parentCompactDelayMs ?? 5_000);
+    const timer = setTimeout(() => {
+      compactTimers.delete(timer);
+      if (stopped) return;
+      if (isProcessing && attempt < 3) {
+        scheduleParentCompact(reason, delay, attempt + 1);
+        return;
+      }
+      compactParentSession(reason).catch(() => {});
+    }, Math.max(0, delay));
+    timer.unref?.();
+    compactTimers.add(timer);
+  }
+
+  function setCircuitBreakerOpen() {
+    if (!gatewayEventsEnabled || circuitBreakerOpen) return;
+    const threshold = Number(gatewayEventsConfig.circuitBreakerTimeouts ?? 2);
+    if (!(threshold > 0) || consecutiveTimerATimeouts < threshold) return;
+    circuitBreakerOpen = true;
+    circuitBreakerNoticeQueued = false;
+    recordGatewayMetric("circuit_breaker", {
+      state: "open",
+      consecutive_timeouts: consecutiveTimerATimeouts,
+    });
+    scheduleParentCompact("circuit_breaker", 0);
+    if (!circuitBreakerNoticeQueued) {
+      circuitBreakerNoticeQueued = true;
+      enqueueReportVoiceLine(CIRCUIT_BREAKER_RECOVERY_NOTICE);
+    }
+  }
+
+  function recordParentFirstTokenSuccess() {
+    if (!gatewayEventsEnabled) return;
+    const hadTimeouts = consecutiveTimerATimeouts > 0;
+    consecutiveTimerATimeouts = 0;
+    if (circuitBreakerOpen) {
+      circuitBreakerOpen = false;
+      circuitBreakerNoticeQueued = false;
+      recordGatewayMetric("circuit_breaker", {
+        state: "close",
+        consecutive_timeouts: 0,
+      });
+    } else if (hadTimeouts) {
+      circuitBreakerNoticeQueued = false;
+    }
+  }
+
   function pruneHandoffInflight(now = Date.now()) {
     for (const [key, item] of handoffInflight) {
       if (now - item.dispatchedAt >= HANDOFF_INFLIGHT_TTL_MS || item.completed === true) {
@@ -631,18 +756,27 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     syncGatewayDelegationState();
   }
 
+  function activeHandoffInflightCount() {
+    let count = 0;
+    for (const item of handoffInflight.values()) {
+      if (item.relayCompleted === true) continue;
+      count += 1;
+    }
+    return count;
+  }
+
   function canDispatchHandoff(now = Date.now()) {
     if (!gatewayEventsEnabled) return true;
     pruneHandoffInflight(now);
     const max = Number(gatewayEventsConfig.handoffInflightMax ?? 2);
-    if (max >= 0 && handoffInflight.size >= max) return false;
+    if (max >= 0 && activeHandoffInflightCount() >= max) return false;
     const cooldownMs = Number(gatewayEventsConfig.handoffCooldownMs ?? 20_000);
     return !(cooldownMs > 0 && lastHandoffDispatchAt > 0 && now - lastHandoffDispatchAt < cooldownMs);
   }
 
   function syncGatewayDelegationState() {
     session.gatewayDelegationState = {
-      inFlightCount: handoffInflight.size,
+      inFlightCount: activeHandoffInflightCount(),
       pendingQueueCount: pendingHandoffQueue.length,
     };
   }
@@ -672,19 +806,27 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     });
   }
 
-  function markHandoffDispatched(label, source = "forced", now = Date.now()) {
-    if (!gatewayEventsEnabled) return;
+  function markHandoffDispatched(label, source = "forced", now = Date.now(), options = {}) {
+    if (!gatewayEventsEnabled) return null;
     lastHandoffDispatchAt = now;
     const key = `pending:${source}:${now}:${handoffInflight.size}`;
     handoffInflight.set(key, {
       label: label || "委譲タスク",
       source,
       dispatchedAt: now,
+      utteranceExcerpt: previewForLog(options.utteranceExcerpt || label || "", 80),
       spawnAtMs: null,
       completed: false,
+      spawnSeen: false,
+      relayCompleted: false,
     });
-    recordGatewayMetric("spawn_detected", { source, label: label || "委譲タスク" });
+    recordGatewayMetric("handoff_received", {
+      source,
+      pending_key: key,
+      inflight_count: handoffInflight.size,
+    });
     syncGatewayDelegationState();
+    return key;
   }
 
   function prunePendingHandoffs(now = Date.now()) {
@@ -776,9 +918,13 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     if (pendingHandoffQueue.length > 0) schedulePendingHandoffDrain();
   }
 
-  async function dispatchOrEnqueueHandoff(transcript, label, dispatch) {
+  async function dispatchOrEnqueueHandoff(transcript, label, dispatch, options = {}) {
     if (!gatewayEventsEnabled || canDispatchHandoff()) {
       return dispatch();
+    }
+    if (options.shortUtterance === true) {
+      recordGatewayMetric("handoff_dropped", { reason: "short_utterance", label });
+      return false;
     }
     console.warn("⏳  Timeout handoff queued (in-flight cap or cooldown)");
     return enqueuePendingHandoff(transcript, label, dispatch);
@@ -792,14 +938,23 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     const now = Date.now();
     let source = evt.source || "self";
     let pendingKey = null;
+    let relayedPendingKey = null;
     for (const [key, item] of handoffInflight) {
-      if (key.startsWith("pending:")) {
-        pendingKey = key;
-        source = item.source || source;
-        break;
+      if (!key.startsWith("pending:")) continue;
+      if (item.relayCompleted === true) {
+        if (!relayedPendingKey) relayedPendingKey = key;
+        continue;
       }
+      pendingKey = key;
+      source = item.source || source;
+      break;
     }
-    if (!pendingKey && source !== "forced") return;
+    if (!pendingKey && relayedPendingKey) {
+      pendingKey = relayedPendingKey;
+      const relayedItem = handoffInflight.get(relayedPendingKey);
+      source = relayedItem?.source || source;
+    }
+    const pendingItem = pendingKey ? handoffInflight.get(pendingKey) : null;
     if (pendingKey) handoffInflight.delete(pendingKey);
     const spawnAtMs = Number.isFinite(evt.spawnAtMs) ? evt.spawnAtMs : now;
     handoffInflight.set(childKey, {
@@ -807,7 +962,12 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       source,
       dispatchedAt: spawnAtMs,
       spawnAtMs,
+      utteranceExcerpt: pendingItem?.utteranceExcerpt || "",
+      spawnSeen: true,
       completed: false,
+      // User-visible tie-break: whichever surface reaches the user first wins;
+      // the later path stays metrics-only to avoid double-reporting.
+      relayCompleted: pendingItem?.relayCompleted === true,
     });
     syncGatewayDelegationState();
   }
@@ -824,14 +984,17 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     if (childKey && handoffInflight.has(childKey)) {
       handoffInflight.delete(childKey);
     }
+    const suppressedReport = item?.relayCompleted === true;
     recordGatewayMetric("delegation_completed", {
       label: result?.label || "委譲タスク",
       ...(elapsedMs !== null ? { elapsed_ms: elapsedMs } : {}),
+      ...(suppressedReport ? { suppressed_report: true } : {}),
     });
     syncGatewayDelegationState();
     drainPendingHandoffs().catch((err) => {
       console.warn("⚠️  pending handoff drain failed:", err.message || err);
     });
+    return { suppressedReport };
   }
 
   function appendDelegationResult(result) {
@@ -921,7 +1084,8 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     if (!gatewayEventsEnabled) return;
     try {
       appendDelegationResult(result);
-      completeOneHandoff(result);
+      const { suppressedReport } = completeOneHandoff(result);
+      if (suppressedReport) return true;
       const chatMessage = buildCompletionChatMessage(result);
       let chatPosted = false;
       if (gatewayEventsConfig.reportChatEnabled !== false && typeof onChatMessage === "function" && chatMessage) {
@@ -943,6 +1107,122 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       console.warn("⚠️  gateway completion handling failed:", err.message || err);
       return false;
     }
+  }
+
+  function findPendingDelegateHandoff() {
+    let bestKey = null;
+    let bestItem = null;
+    for (const [key, item] of handoffInflight) {
+      if (!key.startsWith("pending:")) continue;
+      if (item.completed || item.spawnSeen) continue;
+      if (item.relayCompleted) continue;
+      if (item.source !== "forced" && item.source !== "delegate") continue;
+      if (!bestItem || item.dispatchedAt < bestItem.dispatchedAt) {
+        bestKey = key;
+        bestItem = item;
+      }
+    }
+    return bestKey ? { key: bestKey, item: bestItem } : null;
+  }
+
+  function buildDelegateReplyChatMessage(text, stale = false) {
+    const body = stripRareScriptCharacters(stripEmojis(String(text || "").trim())).trim();
+    if (!body) return "";
+    return stale ? `(遅くなってごめんね) ${body}` : body;
+  }
+
+  async function handleGatewaySessionReply(evt) {
+    if (!gatewayEventsEnabled || stopped) return false;
+    if (!evt || evt.sessionKey !== currentDelegateSessionKey()) return false;
+    const runId = evt.runId || "unknown";
+    if (relayedDelegateRunIds.has(runId)) return true;
+    const pending = findPendingDelegateHandoff();
+    if (!pending) return false;
+
+    const now = Date.now();
+    const ageMs = Math.max(0, now - Number(pending.item.dispatchedAt || now));
+    const freshMs = Number(gatewayEventsConfig.delegateReplyFreshMs ?? 90_000);
+    const dropMs = Math.max(0, freshMs * 3);
+    const fresh = freshMs <= 0 || ageMs <= freshMs;
+    if (dropMs > 0 && ageMs > dropMs) {
+      rememberBounded(relayedDelegateRunIds, runId);
+      handoffInflight.delete(pending.key);
+      recordGatewayMetric("delegate_replied_no_spawn", {
+        runId,
+        fresh: false,
+        relayed_chat: false,
+        relayed_voice: false,
+        age_ms: ageMs,
+      });
+      syncGatewayDelegationState();
+      return true;
+    }
+
+    if (shouldSuppressReply(evt.resultText)) {
+      rememberBounded(relayedDelegateRunIds, runId);
+      handoffInflight.delete(pending.key);
+      recordGatewayMetric("delegate_replied_no_spawn", {
+        runId,
+        fresh,
+        suppressed: true,
+        relayed_chat: false,
+        relayed_voice: false,
+        age_ms: ageMs,
+      });
+      syncGatewayDelegationState();
+      drainPendingHandoffs().catch((err) => {
+        console.warn("⚠️  pending handoff drain failed:", err.message || err);
+      });
+      return true;
+    }
+
+    const chatMessage = buildDelegateReplyChatMessage(evt.resultText, !fresh);
+    let chatPosted = false;
+    if (chatMessage && gatewayEventsConfig.reportChatEnabled !== false && typeof onChatMessage === "function") {
+      chatPosted = await Promise.resolve(onChatMessage(chatMessage))
+        .then((ok) => ok === true)
+        .catch((err) => {
+          console.warn("⚠️  delegate reply chat relay failed:", err.message || err);
+          return false;
+        });
+      if (chatPosted) recordGatewayMetric("report_posted", { channel: "chat", source: "delegate_reply" });
+    }
+    const voiceRelayed = fresh && Boolean(chatMessage) && gatewayEventsConfig.reportVoiceEnabled !== false;
+    if (voiceRelayed) enqueueReportVoiceLine(chatMessage);
+
+    rememberBounded(relayedDelegateRunIds, runId);
+    const relayedToUser = chatPosted || voiceRelayed;
+    if (relayedToUser) {
+      pending.item.relayCompleted = true;
+      pending.item.relayRunId = runId;
+      pending.item.relayCompletedAt = now;
+      handoffInflight.set(pending.key, pending.item);
+    } else {
+      handoffInflight.delete(pending.key);
+    }
+    recordGatewayMetric("delegate_replied_no_spawn", {
+      runId,
+      fresh,
+      relayed_chat: chatPosted,
+      relayed_voice: voiceRelayed,
+      age_ms: ageMs,
+    });
+    syncGatewayDelegationState();
+    drainPendingHandoffs().catch((err) => {
+      console.warn("⚠️  pending handoff drain failed:", err.message || err);
+    });
+    return true;
+  }
+
+  function handleGatewayAnnounceInjected(evt) {
+    if (!gatewayEventsEnabled || stopped) return false;
+    if (!evt || evt.sessionKey !== currentParentSessionKey()) return false;
+    recordGatewayMetric("auto_announce_injected", {
+      runId: evt.runId || "unknown",
+      phase: evt.phase || "",
+    });
+    scheduleParentCompact("auto_announce", Number(gatewayEventsConfig.parentCompactDelayMs ?? 5_000));
+    return true;
   }
 
   // ── STT ──────────────────────────────────────────────────────────
@@ -1211,6 +1491,9 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     let handoffAttempted = false;
     let ttsPlaybackStartRecorded = false;
     let scheduledGatewayFallbackRetry = false;
+    const shortSkipReason = gatewayEventsEnabled && !circuitBreakerOpen
+      ? getShortUtteranceSkipReason(ackSourceText, gatewayEventsConfig.shortUtteranceSkipChars ?? 24)
+      : null;
 
     const stopProgressTimer = () => {
       if (progressTimer) {
@@ -1282,7 +1565,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
           settled = true;
           if (success && gatewayModeHandoff && !handoffMarked) {
             handoffMarked = true;
-            markHandoffDispatched(handoffLabel, "forced");
+            markHandoffDispatched(handoffLabel, "forced", Date.now(), { utteranceExcerpt: trimmed });
           }
           resolve(success);
         };
@@ -1421,10 +1704,14 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         if (transcriptForHandoff) {
           handoffAttempted = true;
           const handoffLabel = previewForLog(transcriptForHandoff, 60);
+          const queuedShortUtterance = gatewayEventsEnabled
+            && !circuitBreakerOpen
+            && Boolean(getShortUtteranceSkipReason(transcriptForHandoff, gatewayEventsConfig.shortUtteranceSkipChars ?? 24));
           const success = await dispatchOrEnqueueHandoff(
             transcriptForHandoff,
             handoffLabel,
-            () => requestTimeoutHandoff(transcriptForHandoff)
+            () => requestTimeoutHandoff(transcriptForHandoff),
+            { shortUtterance: queuedShortUtterance }
           );
           // If user already barged-in or aborted during the handoff await,
           // skip the followup line — they have moved on.
@@ -1459,6 +1746,14 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     };
 
     const startFirstTokenDelegateTimer = () => {
+      if (gatewayEventsEnabled && shortSkipReason) {
+        recordGatewayMetric("forced_delegation_skipped", {
+          turn_id: metricsTurnId,
+          reason: shortSkipReason,
+          chars: String(ackSourceText || "").trim().length,
+        });
+        return;
+      }
       const thresholdMs = Number(config?.llm?.firstTokenDelegateMs || 0);
       if (!(thresholdMs > 0)) return;
 
@@ -1474,6 +1769,10 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         }
 
         forcedDelegationFired = true;
+        if (gatewayEventsEnabled) {
+          consecutiveTimerATimeouts += 1;
+          setCircuitBreakerOpen();
+        }
         const elapsedMs = Date.now() - firstTokenDelegateStartedAt;
         recordMetric("forced_delegation_fired", {
           turn_id: metricsTurnId,
@@ -1620,6 +1919,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
           firstChunkSeen = true;
           stopFirstResponseTimers();
           console.log(`📥  [diag] firstChunk transition: false→true, chunk="${chunk.slice(0, 40)}"`);
+          recordParentFirstTokenSuccess();
           recordMetric("first_token", {
             turn_id: metricsTurnId,
             chunk_char_count: String(chunk || "").length,
@@ -2053,6 +2353,9 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         clearTimeout(greetingTimer);
         greetingTimer = null;
       }
+      for (const timer of compactTimers) clearTimeout(timer);
+      compactTimers.clear();
+      relayedDelegateRunIds.clear();
       reportQueueDraining = false;
       syncGatewayDelegationState();
       prewarmAbort.abort();
@@ -2060,6 +2363,8 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     },
     handleGatewaySubagentSpawn,
     handleGatewaySubagentCompletion,
+    handleGatewaySessionReply,
+    handleGatewayAnnounceInjected,
     getDelegationResults() {
       return [...reportResults];
     },
@@ -2079,6 +2384,8 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       handleUtteranceEnd,
       handleGatewaySubagentSpawn,
       handleGatewaySubagentCompletion,
+      handleGatewaySessionReply,
+      handleGatewayAnnounceInjected,
       getGateState: () => gateState,
       getPendingQueueLength: () => pendingQueue.length,
       getReportQueueLength: () => reportQueue.length,
@@ -2086,7 +2393,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       getPendingHandoffQueueLength: () => pendingHandoffQueue.length,
       getHandoffInflightCount: () => {
         pruneHandoffInflight();
-        return handoffInflight.size;
+        return activeHandoffInflightCount();
       },
       getGatewayDelegationState: () => ({ ...(session.gatewayDelegationState || {}) }),
       getDelegationResults: () => [...reportResults],
@@ -2097,6 +2404,12 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       enqueueReportVoiceLine,
       buildCompletionChatMessage,
       buildCompletionVoiceLine,
+      compactParentSession,
+      scheduleParentCompact,
+      getCircuitBreakerState: () => ({
+        open: circuitBreakerOpen,
+        consecutiveTimeouts: consecutiveTimerATimeouts,
+      }),
     };
   }
   return api;
@@ -2111,5 +2424,7 @@ module.exports = {
     buildMeetingContextPrompt,
     buildMeetingContextPromptWithEntries,
     generateSilence,
+    collectFixedTtsPhrases,
+    getShortUtteranceSkipReason,
   },
 };

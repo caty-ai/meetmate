@@ -48,13 +48,28 @@ function summarize(events) {
     event.type === "timeout_fallback_fired" ||
     event.type === "handoff_requested" ||
     event.type === "handoff_dropped" ||
+    event.type === "handoff_received" ||
     event.type === "forced_delegation_fired" ||
+    event.type === "forced_delegation_skipped" ||
+    event.type === "delegate_replied_no_spawn" ||
+    event.type === "subagent_spawned" ||
     event.type === "spawn_detected" ||
-    event.type === "delegation_completed"
+    event.type === "delegation_completed" ||
+    event.type === "auto_announce_injected" ||
+    event.type === "parent_compact" ||
+    event.type === "circuit_breaker"
   );
+  const eventTypeCounts = {};
+  for (const event of events) {
+    eventTypeCounts[event.type] = (eventTypeCounts[event.type] || 0) + 1;
+  }
   const forcedDelegationCount = events.filter((event) => event.type === "forced_delegation_fired").length;
   const spawnDetectedCount = events.filter((event) => event.type === "spawn_detected").length;
+  const subagentSpawnedCount = events.filter((event) => event.type === "subagent_spawned").length;
   const delegationCompletedCount = events.filter((event) => event.type === "delegation_completed").length;
+  const delegateReplyFreshCount = events.filter((event) => event.type === "delegate_replied_no_spawn" && event.fresh === true).length;
+  const delegateReplyStaleCount = events.filter((event) => event.type === "delegate_replied_no_spawn" && event.fresh === false).length;
+  const circuitBreakerOpenCount = events.filter((event) => event.type === "circuit_breaker" && event.state === "open").length;
   const abortRequestedCount = events.filter((event) => event.type === "abort_requested").length;
   const abortRequestedOkCount = events.filter((event) => event.type === "abort_requested" && event.ok === true).length;
   const reportPostedChatCount = events.filter((event) => event.type === "report_posted" && event.channel === "chat").length;
@@ -124,10 +139,15 @@ function summarize(events) {
     max: responseTimes.length > 0 ? Math.max(...responseTimes) : null,
     ackTurns,
     ackRate: addressedTurns.length > 0 ? ackTurns / addressedTurns.length : 0,
+    eventTypeCounts,
     delegationCount: delegationEvents.length,
     forcedDelegationCount,
     spawnDetectedCount,
+    subagentSpawnedCount,
     delegationCompletedCount,
+    delegateReplyFreshCount,
+    delegateReplyStaleCount,
+    circuitBreakerOpenCount,
     abortRequestedCount,
     abortRequestedOkCount,
     reportPostedChatCount,
@@ -152,6 +172,9 @@ function printSummary(filePath, summary) {
   console.log("Ack immediacy definition: fraction of turns with any ack_playback_start event.");
   console.log(`Delegation events: ${summary.delegationCount}`);
   console.log(`Forced delegations (Timer A): ${summary.forcedDelegationCount}`);
+  console.log(`Delegate no-spawn replies: fresh=${summary.delegateReplyFreshCount}, stale_or_dropped=${summary.delegateReplyStaleCount}`);
+  console.log(`Circuit breaker opens: ${summary.circuitBreakerOpenCount}`);
+  console.log(`Gateway subagents spawned: ${summary.subagentSpawnedCount}`);
   console.log(`Gateway spawns detected: ${summary.spawnDetectedCount}`);
   console.log(`Gateway delegations completed: ${summary.delegationCompletedCount}`);
   console.log(`Gateway abort requests: ${summary.abortRequestedOkCount}/${summary.abortRequestedCount} ok`);

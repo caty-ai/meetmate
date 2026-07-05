@@ -19,20 +19,35 @@ function createGatewaySessionTracker({
     gatewayEvents.onSubagentSpawn((evt) => {
       const route = findGatewayRoute(evt.parentSessionKey);
       if (!route) return false;
+      const parentKind = route.parentKind;
+      const source = parentKind === "delegate" ? "delegate" : "self";
+      const routedEvt = { ...evt, source, parentKind };
       const entry = routes.get(route.sessionId);
       if (entry && evt.childKey && !entry.children.has(evt.childKey)) {
         entry.children.add(evt.childKey);
       }
       const active = activeConnections.get(route.sessionId);
       if (!entry?.ended && active?.handler?.handleGatewaySubagentSpawn) {
-        active.handler.handleGatewaySubagentSpawn(evt);
+        active.handler.handleGatewaySubagentSpawn(routedEvt);
       }
+      recordEvent("subagent_spawned", {
+        meeting_id: route.sessionId,
+        session_id: route.sessionId,
+        agent_id: route.agentId,
+        source,
+        child_key: evt.childKey || "",
+        parent_kind: parentKind,
+        label: evt.label || "委譲タスク",
+      });
       recordEvent("spawn_detected", {
         meeting_id: route.sessionId,
         session_id: route.sessionId,
         agent_id: route.agentId,
-        source: "self",
+        source,
+        child_key: evt.childKey || "",
+        parent_kind: parentKind,
         label: evt.label || "委譲タスク",
+        deprecated: true,
       });
       return true;
     });
@@ -49,12 +64,45 @@ function createGatewaySessionTracker({
       }
       return appendLateResult(route.sessionId, evt) !== false;
     });
+
+    gatewayEvents.onSessionReply?.((evt) => {
+      const route = findGatewayRoute(evt.sessionKey);
+      if (!route || route.parentKind !== "delegate") return false;
+      const entry = routes.get(route.sessionId);
+      const active = activeConnections.get(route.sessionId);
+      const routedEvt = { ...evt, parentKind: "delegate", source: "delegate" };
+      if (!entry?.ended && active?.handler?.handleGatewaySessionReply) {
+        const handled = active.handler.handleGatewaySessionReply(routedEvt);
+        return handled !== false;
+      }
+      return appendLateResult(route.sessionId, {
+        label: "委譲応答",
+        status: "ok",
+        resultText: String(evt.resultText || "").trim(),
+        runId: evt.runId || "",
+      }) !== false;
+    });
+
+    gatewayEvents.onAnnounceInjected?.((evt) => {
+      const route = findGatewayRoute(evt.sessionKey);
+      if (!route || route.parentKind !== "parent") return false;
+      const entry = routes.get(route.sessionId);
+      const active = activeConnections.get(route.sessionId);
+      if (!entry?.ended && active?.handler?.handleGatewayAnnounceInjected) {
+        const handled = active.handler.handleGatewayAnnounceInjected(evt);
+        return handled !== false;
+      }
+      return false;
+    });
   }
 
   function findGatewayRoute(parentSessionKey) {
     for (const [sessionId, entry] of routes) {
-      if (entry.parentKey === parentSessionKey || entry.delegateKey === parentSessionKey) {
-        return { sessionId, agentId: entry.agentId };
+      if (entry.parentKey === parentSessionKey) {
+        return { sessionId, agentId: entry.agentId, parentKind: "parent" };
+      }
+      if (entry.delegateKey === parentSessionKey) {
+        return { sessionId, agentId: entry.agentId, parentKind: "delegate" };
       }
     }
     return null;

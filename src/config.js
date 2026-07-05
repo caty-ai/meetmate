@@ -76,6 +76,14 @@ function positiveIntEnv(name, fallback) {
   return parsed >= 1 ? Math.floor(parsed) : fallback;
 }
 
+function nonNegativeIntEnv(name, fallback) {
+  const raw = process.env[name];
+  if (raw === undefined || String(raw).trim() === "") return fallback;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return fallback;
+  return parsed > 0 ? Math.floor(parsed) : 0;
+}
+
 const GATEWAY_EVENTS_ENABLED = boolEnv("GATEWAY_EVENTS_ENABLED", false);
 const FORCED_DELEGATION_ABORT = boolEnv("FORCED_DELEGATION_ABORT", true);
 const HANDOFF_DELEGATE_SESSION = boolEnv("HANDOFF_DELEGATE_SESSION", true);
@@ -86,6 +94,11 @@ const REPORT_VOICE_GAP_MS = nonNegativeMsEnv("REPORT_VOICE_GAP_MS", 4_000);
 const REPORT_CHAT_ENABLED = boolEnv("REPORT_CHAT_ENABLED", true);
 const REPORT_VOICE_ENABLED = boolEnv("REPORT_VOICE_ENABLED", true);
 const GATEWAY_EVENTS_AGENT_ID = process.env.GATEWAY_EVENTS_AGENT_ID || "main";
+const DELEGATE_REPLY_FRESH_MS = nonNegativeMsEnv("DELEGATE_REPLY_FRESH_MS", 90_000);
+const PARENT_COMPACT_DELAY_MS = nonNegativeMsEnv("PARENT_COMPACT_DELAY_MS", 5_000);
+const PARENT_COMPACT_MAX_LINES = positiveIntEnv("PARENT_COMPACT_MAX_LINES", 40);
+const SHORT_UTTERANCE_SKIP_CHARS = nonNegativeIntEnv("SHORT_UTTERANCE_SKIP_CHARS", 24);
+const CIRCUIT_BREAKER_TIMEOUTS = nonNegativeIntEnv("CIRCUIT_BREAKER_TIMEOUTS", 2);
 
 const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN || "";
 const SLACK_NOTIFY_CHANNEL = process.env.SLACK_NOTIFY_CHANNEL || "";
@@ -259,6 +272,11 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
       reportChatEnabled: REPORT_CHAT_ENABLED,
       reportVoiceEnabled: REPORT_VOICE_ENABLED,
       agentId: GATEWAY_EVENTS_AGENT_ID,
+      delegateReplyFreshMs: DELEGATE_REPLY_FRESH_MS,
+      parentCompactDelayMs: PARENT_COMPACT_DELAY_MS,
+      parentCompactMaxLines: PARENT_COMPACT_MAX_LINES,
+      shortUtteranceSkipChars: SHORT_UTTERANCE_SKIP_CHARS,
+      circuitBreakerTimeouts: CIRCUIT_BREAKER_TIMEOUTS,
     },
     // Per-agent voice extensions
     emotionTags: agentEmotionTags,

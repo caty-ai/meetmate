@@ -49,6 +49,95 @@ test("builds the verified connect handshake frame and session keys", () => {
   assert.equal(gatewayEvents.buildSessionKey("meet-abc-caty", "main"), "agent:main:openai-user:meet-abc-caty");
 });
 
+test("isDelegateSessionKey only matches delegate suffix", () => {
+  assert.equal(gatewayEvents._test.isDelegateSessionKey("agent:main:openai-user:foo-delegate"), true);
+  assert.equal(gatewayEvents._test.isDelegateSessionKey("agent:main:openai-user:foo-delegate-bar"), false);
+});
+
+test("delegate announce end frame does not emit a delegate reply or fetch reply text", async () => {
+  gatewayEvents._test.reset();
+  const sockets = [];
+  const sent = [];
+  const replies = [];
+  const announces = [];
+
+  class FakeWs {
+    constructor() {
+      this.listeners = new Map();
+      sockets.push(this);
+    }
+    addEventListener(name, cb) {
+      this.listeners.set(name, cb);
+    }
+    send(data) {
+      const frame = JSON.parse(data);
+      sent.push(frame);
+      if (frame.method === "sessions.subscribe") {
+        this.serverMessage({ type: "res", id: frame.id, ok: true, payload: { subscribed: true } });
+      }
+      if (frame.method === "chat.history") {
+        this.serverMessage({
+          type: "res",
+          id: frame.id,
+          ok: true,
+          payload: { messages: [{ role: "assistant", content: "announce text must not relay" }] },
+        });
+      }
+    }
+    close() {
+      this.listeners.get("close")?.({});
+    }
+    serverMessage(frame) {
+      this.listeners.get("message")?.({ data: JSON.stringify(frame) });
+    }
+  }
+
+  gatewayEvents.onSessionReply((evt) => replies.push(evt));
+  gatewayEvents.onAnnounceInjected((evt) => announces.push(evt));
+  gatewayEvents.start({
+    enabled: true,
+    openclawUrl: "http://gateway.test:18789",
+    openclawToken: "secret",
+    WebSocketImpl: FakeWs,
+  });
+
+  sockets[0].serverMessage({
+    type: "event",
+    event: "connect.challenge",
+    payload: { nonce: "n", ts: Date.now() },
+  });
+  sockets[0].serverMessage({
+    type: "res",
+    id: sent[0].id,
+    ok: true,
+    payload: {
+      type: "hello-ok",
+      protocol: 4,
+      auth: { role: "operator", scopes: ["operator.read", "operator.write"] },
+      features: { methods: [], events: [] },
+    },
+  });
+  await tick();
+
+  sockets[0].serverMessage({
+    type: "event",
+    event: "sessions.changed",
+    payload: {
+      sessionKey: "agent:main:openai-user:meet-123-caty-delegate",
+      phase: "end",
+      runId: "announce:v1:xyz",
+    },
+  });
+  await tick();
+  await tick();
+
+  assert.equal(sent.some((frame) => frame.method === "chat.history"), false);
+  assert.deepEqual(replies, []);
+  assert.equal(announces.length, 1);
+  assert.equal(announces[0].runId, "announce:v1:xyz");
+  gatewayEvents._test.reset();
+});
+
 test("disabled start never constructs WebSocket", () => {
   gatewayEvents._test.reset();
   let constructed = 0;
@@ -554,6 +643,209 @@ test("completion dedup waits for successful history fetch and retries duplicate 
   assert.equal(historyAttempts, 2);
   assert.equal(completions.length, 1);
   assert.equal(completions[0].resultText, "retry result");
+  gatewayEvents._test.reset();
+});
+
+test("delegate session end fetches reply text and dedupes by run", async () => {
+  gatewayEvents._test.reset();
+  const sockets = [];
+  const sent = [];
+  const replies = [];
+  let historyCalls = 0;
+
+  class FakeWs {
+    constructor() {
+      this.listeners = new Map();
+      sockets.push(this);
+    }
+    addEventListener(name, cb) {
+      this.listeners.set(name, cb);
+    }
+    send(data) {
+      const frame = JSON.parse(data);
+      sent.push(frame);
+      if (frame.method === "sessions.subscribe") {
+        this.serverMessage({ type: "res", id: frame.id, ok: true, payload: { subscribed: true } });
+      }
+      if (frame.method === "chat.history") {
+        historyCalls += 1;
+        this.serverMessage({
+          type: "res",
+          id: frame.id,
+          ok: true,
+          payload: { messages: [{ role: "assistant", content: "delegate answer" }] },
+        });
+      }
+    }
+    close() {
+      this.listeners.get("close")?.({});
+    }
+    serverMessage(frame) {
+      this.listeners.get("message")?.({ data: JSON.stringify(frame) });
+    }
+  }
+
+  gatewayEvents.onSessionReply((evt) => replies.push(evt));
+  gatewayEvents.start({
+    enabled: true,
+    openclawUrl: "http://gateway.test:18789",
+    openclawToken: "secret",
+    WebSocketImpl: FakeWs,
+  });
+  sockets[0].serverMessage({ type: "event", event: "connect.challenge", payload: { nonce: "n" } });
+  sockets[0].serverMessage({
+    type: "res",
+    id: sent[0].id,
+    ok: true,
+    payload: { type: "hello-ok", auth: { scopes: ["operator.read", "operator.write"] } },
+  });
+  await tick();
+
+  const payload = {
+    sessionKey: "agent:main:openai-user:meet-123-caty-delegate",
+    phase: "end",
+    runId: "chatcmpl_delegate",
+  };
+  sockets[0].serverMessage({ type: "event", event: "sessions.changed", payload });
+  sockets[0].serverMessage({ type: "event", event: "sessions.changed", payload });
+  sockets[0].serverMessage({
+    type: "event",
+    event: "sessions.changed",
+    payload: {
+      sessionKey: "agent:main:openai-user:meet-123-caty",
+      phase: "end",
+      runId: "chatcmpl_parent",
+    },
+  });
+  await tick();
+  await tick();
+
+  assert.equal(historyCalls, 1);
+  assert.equal(replies.length, 1);
+  assert.equal(replies[0].sessionKey, payload.sessionKey);
+  assert.equal(replies[0].runId, "chatcmpl_delegate");
+  assert.equal(replies[0].resultText, "delegate answer");
+  gatewayEvents._test.reset();
+});
+
+test("announce run is detected once and compactSession sends sessions.compact", async () => {
+  gatewayEvents._test.reset();
+  const sockets = [];
+  const sent = [];
+  const announces = [];
+
+  class FakeWs {
+    constructor() {
+      this.listeners = new Map();
+      sockets.push(this);
+    }
+    addEventListener(name, cb) {
+      this.listeners.set(name, cb);
+    }
+    send(data) {
+      const frame = JSON.parse(data);
+      sent.push(frame);
+      if (frame.method === "sessions.subscribe") {
+        this.serverMessage({ type: "res", id: frame.id, ok: true, payload: { subscribed: true } });
+      }
+      if (frame.method === "sessions.compact") {
+        this.serverMessage({ type: "res", id: frame.id, ok: true, payload: { ok: true, compacted: true } });
+      }
+    }
+    close() {
+      this.listeners.get("close")?.({});
+    }
+    serverMessage(frame) {
+      this.listeners.get("message")?.({ data: JSON.stringify(frame) });
+    }
+  }
+
+  gatewayEvents.onAnnounceInjected((evt) => announces.push(evt));
+  gatewayEvents.start({
+    enabled: true,
+    openclawUrl: "http://gateway.test:18789",
+    openclawToken: "secret",
+    WebSocketImpl: FakeWs,
+  });
+  sockets[0].serverMessage({ type: "event", event: "connect.challenge", payload: { nonce: "n" } });
+  sockets[0].serverMessage({
+    type: "res",
+    id: sent[0].id,
+    ok: true,
+    payload: { type: "hello-ok", auth: { scopes: ["operator.read", "operator.write"] } },
+  });
+  await tick();
+
+  const payload = {
+    sessionKey: "agent:main:openai-user:meet-123-caty",
+    phase: "end",
+    runId: "announce:v1:child:run",
+  };
+  sockets[0].serverMessage({ type: "event", event: "sessions.changed", payload });
+  sockets[0].serverMessage({ type: "event", event: "sessions.changed", payload });
+  await tick();
+
+  assert.equal(announces.length, 1);
+  assert.equal(announces[0].phase, "end");
+  const compact = await gatewayEvents.compactSession("meet-123-caty", { maxLines: 40 });
+  assert.equal(compact.ok, true);
+  assert.equal(compact.compacted, true);
+  assert.deepEqual(
+    sent.find((frame) => frame.method === "sessions.compact").params,
+    { key: "agent:main:openai-user:meet-123-caty", maxLines: 40 }
+  );
+  gatewayEvents._test.reset();
+});
+
+test("compactSession requires payload ok true and preserves compacted field", async () => {
+  gatewayEvents._test.reset();
+  const sockets = [];
+  const sent = [];
+
+  class FakeWs {
+    constructor() {
+      this.listeners = new Map();
+      sockets.push(this);
+    }
+    addEventListener(name, cb) {
+      this.listeners.set(name, cb);
+    }
+    send(data) {
+      const frame = JSON.parse(data);
+      sent.push(frame);
+      if (frame.method === "sessions.subscribe") {
+        this.serverMessage({ type: "res", id: frame.id, ok: true, payload: { subscribed: true } });
+      }
+      if (frame.method === "sessions.compact") {
+        this.serverMessage({ type: "res", id: frame.id, ok: true, payload: { compacted: true } });
+      }
+    }
+    close() {
+      this.listeners.get("close")?.({});
+    }
+    serverMessage(frame) {
+      this.listeners.get("message")?.({ data: JSON.stringify(frame) });
+    }
+  }
+
+  gatewayEvents.start({
+    enabled: true,
+    openclawUrl: "http://gateway.test:18789",
+    openclawToken: "secret",
+    WebSocketImpl: FakeWs,
+  });
+  sockets[0].serverMessage({ type: "event", event: "connect.challenge", payload: { nonce: "n" } });
+  sockets[0].serverMessage({
+    type: "res",
+    id: sent[0].id,
+    ok: true,
+    payload: { type: "hello-ok", auth: { scopes: ["operator.read", "operator.write"] } },
+  });
+  await tick();
+
+  const compact = await gatewayEvents.compactSession("meet-123-caty", { maxLines: 40 });
+  assert.equal(compact.ok, false);
+  assert.equal(compact.compacted, true);
   gatewayEvents._test.reset();
 });
 

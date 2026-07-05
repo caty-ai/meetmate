@@ -30,15 +30,21 @@ let socketGeneration = 0;
 const pending = new Map();
 const spawnListeners = new Set();
 const completionListeners = new Set();
+const sessionReplyListeners = new Set();
+const announceInjectedListeners = new Set();
 const reconnectListeners = new Set();
 const seenCompletions = new Set();
 const seenCompletionChildren = new Set();
 const processingCompletions = new Set();
+const seenSessionReplies = new Set();
+const processingSessionReplies = new Set();
+const seenAnnounceRuns = new Set();
 const seenSpawns = new Set();
 const childMeta = new Map();
 const abortJobs = new Map();
 const completionFetchAttempts = new Map();
 const activeTasks = new Set();
+const SEEN_SET_MAX = 1000;
 
 function trackTask(promise) {
   const task = Promise.resolve(promise).finally(() => {
@@ -358,6 +364,25 @@ async function abortSession(sessionUser) {
   return retryAbortSession(sessionKey);
 }
 
+async function compactSession(sessionUser, options = {}) {
+  if (!cfg?.enabled) return { ok: false, reason: "disabled" };
+  const sessionKey = buildSessionKey(sessionUser, cfg.agentId);
+  const params = { key: sessionKey };
+  if (Number.isFinite(Number(options.maxLines)) && Number(options.maxLines) > 0) {
+    params.maxLines = Math.floor(Number(options.maxLines));
+  }
+  try {
+    const payload = await request("sessions.compact", params);
+    return {
+      ok: payload?.ok === true,
+      compacted: payload?.compacted,
+      payload,
+    };
+  } catch (err) {
+    return { ok: false, reason: err?.message || "compact_failed" };
+  }
+}
+
 function onSubagentSpawn(cb) {
   spawnListeners.add(cb);
   return () => spawnListeners.delete(cb);
@@ -366,6 +391,16 @@ function onSubagentSpawn(cb) {
 function onSubagentCompletion(cb) {
   completionListeners.add(cb);
   return () => completionListeners.delete(cb);
+}
+
+function onSessionReply(cb) {
+  sessionReplyListeners.add(cb);
+  return () => sessionReplyListeners.delete(cb);
+}
+
+function onAnnounceInjected(cb) {
+  announceInjectedListeners.add(cb);
+  return () => announceInjectedListeners.delete(cb);
 }
 
 function onReconnect(cb) {
@@ -385,6 +420,7 @@ async function handleSessionsChanged(payload) {
   const sessionKey = payload.sessionKey || "";
   const parentSessionKey = payload.parentSessionKey || "";
   const isSubagent = sessionKey.includes(":subagent:");
+  detectAnnounceInjection(payload, isSubagent);
 
   if (isSubagent && payload.reason === "create") {
     const meta = {
@@ -406,7 +442,14 @@ async function handleSessionsChanged(payload) {
     return;
   }
 
-  if (!isSubagent || (payload.phase !== "end" && payload.reason !== "subagent-status")) return;
+  if (!isSubagent) {
+    if (payload.phase === "end" && isDelegateSessionKey(sessionKey) && !isAnnounceRunId(payload.runId)) {
+      await handleNonSubagentReplyEnd(payload);
+    }
+    return;
+  }
+
+  if (payload.phase !== "end" && payload.reason !== "subagent-status") return;
   const runId = payload.runId || "unknown";
   const dedupKey = `${sessionKey}:${runId}`;
   if (seenCompletionChildren.has(sessionKey) || seenCompletions.has(dedupKey)) return;
@@ -462,6 +505,49 @@ async function handleSessionsChanged(payload) {
   seenCompletionChildren.add(sessionKey);
   processingCompletions.delete(sessionKey);
   completionFetchAttempts.delete(sessionKey);
+}
+
+function detectAnnounceInjection(payload, isSubagent) {
+  if (isSubagent) return;
+  const runId = payload?.runId || "";
+  if (!isAnnounceRunId(runId)) return;
+  if (seenAnnounceRuns.has(runId)) return;
+  rememberBounded(seenAnnounceRuns, runId);
+  emit(announceInjectedListeners, {
+    sessionKey: payload.sessionKey || "",
+    runId,
+    ts: Date.now(),
+    phase: payload.phase || "",
+  });
+}
+
+function isAnnounceRunId(runId) {
+  return /^announce:v1:/.test(String(runId || ""));
+}
+
+function isDelegateSessionKey(sessionKey) {
+  return /-delegate$/.test(String(sessionKey || ""));
+}
+
+async function handleNonSubagentReplyEnd(payload) {
+  const sessionKey = payload.sessionKey || "";
+  const runId = payload.runId || "unknown";
+  const dedupKey = `${sessionKey}:${runId}`;
+  if (seenSessionReplies.has(dedupKey) || processingSessionReplies.has(dedupKey)) return;
+  processingSessionReplies.add(dedupKey);
+  try {
+    const resultText = await fetchResultText(sessionKey);
+    if (resultText === null) return;
+    rememberBounded(seenSessionReplies, dedupKey);
+    emit(sessionReplyListeners, {
+      sessionKey,
+      runId,
+      ts: Date.now(),
+      resultText,
+    });
+  } finally {
+    processingSessionReplies.delete(dedupKey);
+  }
 }
 
 async function fetchResultText(sessionKey) {
@@ -550,6 +636,13 @@ function emit(listeners, payload) {
       console.warn("⚠️  gateway-events listener failed:", err.message || err);
     }
   }
+}
+
+function rememberBounded(set, key, max = SEEN_SET_MAX) {
+  set.add(key);
+  if (set.size <= max) return;
+  const first = set.values().next().value;
+  if (first !== undefined) set.delete(first);
 }
 
 async function emitCompletion(payload) {
@@ -642,13 +735,18 @@ module.exports = {
   verifySessionKey,
   onSubagentSpawn,
   onSubagentCompletion,
+  onSessionReply,
+  onAnnounceInjected,
   onReconnect,
   abortSession,
+  compactSession,
   buildSessionKey,
   _test: {
     buildConnectFrame,
     buildSessionKey,
     extractLastAssistantText,
+    isAnnounceRunId,
+    isDelegateSessionKey,
     normalizeCfg,
     handleSessionsChanged,
     reset() {
@@ -663,9 +761,14 @@ module.exports = {
       warnedNoWebSocket = false;
       spawnListeners.clear();
       completionListeners.clear();
+      sessionReplyListeners.clear();
+      announceInjectedListeners.clear();
       seenCompletions.clear();
       seenCompletionChildren.clear();
       processingCompletions.clear();
+      seenSessionReplies.clear();
+      processingSessionReplies.clear();
+      seenAnnounceRuns.clear();
       seenSpawns.clear();
       childMeta.clear();
       reconnectListeners.clear();

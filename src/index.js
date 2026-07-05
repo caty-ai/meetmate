@@ -845,6 +845,8 @@ function createHandler(session, turnState, onAudio) {
       removeListener: pipeline.removeListener,
       handleGatewaySubagentSpawn: pipeline.handleGatewaySubagentSpawn,
       handleGatewaySubagentCompletion: pipeline.handleGatewaySubagentCompletion,
+      handleGatewaySessionReply: pipeline.handleGatewaySessionReply,
+      handleGatewayAnnounceInjected: pipeline.handleGatewayAnnounceInjected,
       getDelegationResults: pipeline.getDelegationResults,
     };
   } else {

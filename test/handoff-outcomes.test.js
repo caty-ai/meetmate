@@ -168,6 +168,7 @@ function createTestPipeline(createPipeline, gatewayEventsConfig) {
       reportChatEnabled: false,
       reportVoiceEnabled: false,
       reportVoiceGapMs: 1,
+      shortUtteranceSkipChars: 0,
       ...gatewayEventsConfig,
     },
   };
@@ -231,6 +232,7 @@ async function withFreshPipeline(fn, options = {}) {
       options.abortUsers?.push(sessionUser);
       return { ok: true, attempts: 1 };
     },
+    compactSession: async () => ({ ok: true, compacted: true }),
   });
   require.cache[require.resolve(path.join(src, "tts-fish.js"))] = cacheEntry(path.join(src, "tts-fish.js"), {
     synthesize: async (text, { onAudio }) => {

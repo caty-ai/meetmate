@@ -87,6 +87,14 @@ test("aggregate-metrics summarizes response and delegation data", () => {
     { timestamp_ms: 3_800, type: "tts_playback_start", meeting_id: "m", turn_id: "t2" },
     { timestamp_ms: 3_900, type: "forced_delegation_fired", meeting_id: "m", turn_id: "t2", threshold_ms: 15000, elapsed_ms: 15010 },
     { timestamp_ms: 4_000, type: "handoff_requested", meeting_id: "m", turn_id: "t2", transcript_char_count: 20 },
+    { timestamp_ms: 4_100, type: "delegate_replied_no_spawn", meeting_id: "m", runId: "r1", fresh: true },
+    { timestamp_ms: 4_200, type: "delegate_replied_no_spawn", meeting_id: "m", runId: "r2", fresh: false },
+    { timestamp_ms: 4_300, type: "circuit_breaker", meeting_id: "m", state: "open", consecutive_timeouts: 2 },
+    { timestamp_ms: 4_400, type: "subagent_spawned", meeting_id: "m", source: "delegate", child_key: "c" },
+    { timestamp_ms: 4_500, type: "handoff_received", meeting_id: "m", source: "forced", pending_key: "p" },
+    { timestamp_ms: 4_600, type: "auto_announce_injected", meeting_id: "m", runId: "announce:v1:child:run" },
+    { timestamp_ms: 4_700, type: "forced_delegation_skipped", meeting_id: "m", turn_id: "t3", reason: "ping" },
+    { timestamp_ms: 4_800, type: "parent_compact", meeting_id: "m", ok: true, compacted: true },
   ];
   fs.writeFileSync(file, `${events.map((event) => JSON.stringify(event)).join("\n")}\n`);
 
@@ -99,9 +107,18 @@ test("aggregate-metrics summarizes response and delegation data", () => {
   assert.match(output, /Utterances observed \(incl\. unaddressed\): 2/);
   assert.match(output, /Perceived response time p50\/p90\/max: 100ms \/ 800ms \/ 800ms/);
   assert.match(output, /Ack immediacy rate: 1\/2 \(50\.0%\)/);
-  assert.match(output, /Delegation events: 2/);
+  assert.match(output, /Delegation events: 10/);
   assert.match(output, /Forced delegations \(Timer A\): 1/);
+  assert.match(output, /Delegate no-spawn replies: fresh=1, stale_or_dropped=1/);
+  assert.match(output, /Circuit breaker opens: 1/);
+  assert.match(output, /Gateway subagents spawned: 1/);
   assert.match(output, /Suspected misrouted turns: 1/);
+
+  const summary = summarize(events);
+  assert.equal(summary.eventTypeCounts.handoff_received, 1);
+  assert.equal(summary.eventTypeCounts.auto_announce_injected, 1);
+  assert.equal(summary.eventTypeCounts.forced_delegation_skipped, 1);
+  assert.equal(summary.eventTypeCounts.parent_compact, 1);
 });
 
 test("aggregate-metrics handles empty event sets with sane zeros", () => {

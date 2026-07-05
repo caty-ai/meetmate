@@ -51,7 +51,57 @@ test("shared tracker routes spawn to handler, replaces placeholder, and releases
   await completionListeners[0]({ parentSessionKey, childKey, label: "調査", resultText: "done" });
   assert.equal(handler.inFlight.size, 0);
   assert.equal(session.gatewayDelegationState.inFlightCount, 0);
-  assert.equal(metrics.some((event) => event.type === "spawn_detected" && event.session_id === session.id), true);
+  assert.equal(metrics.some((event) => event.type === "subagent_spawned" && event.session_id === session.id && event.source === "self"), true);
+  assert.equal(metrics.some((event) => event.type === "spawn_detected" && event.session_id === session.id && event.deprecated === true), true);
+  tracker.close();
+});
+
+test("shared tracker classifies delegate-session spawn source", async () => {
+  const spawnListeners = [];
+  const completionListeners = [];
+  const gatewayEvents = fakeGatewayEvents(spawnListeners, completionListeners);
+  const session = {
+    id: "sid-delegate",
+    config: { defaultAgentId: "caty" },
+    gatewayDelegationState: { inFlightCount: 1, pendingQueueCount: 0 },
+    delegationResults: [],
+  };
+  const sessions = new Map([[session.id, session]]);
+  const handledSpawns = [];
+  const activeConnections = new Map([[session.id, {
+    handler: {
+      handleGatewaySubagentSpawn(evt) {
+        handledSpawns.push(evt);
+        return true;
+      },
+    },
+  }]]);
+  const metrics = [];
+
+  const tracker = createGatewaySessionTracker({
+    gatewayEvents,
+    recordEvent: (type, fields) => metrics.push({ type, ...fields }),
+    sessions,
+    activeConnections,
+    getGatewayConfigForProfile: () => ({ enabled: true, agentId: "main" }),
+    getDefaultAgentId: () => "caty",
+    appendLateResult: () => false,
+  });
+
+  tracker.trackGatewaySession(session, { agentId: "caty" });
+  await spawnListeners[0]({
+    parentSessionKey: "agent:main:openai-user:meet-sid-delegate-caty-delegate",
+    childKey: "agent:main:subagent:child-delegate",
+    label: "delegate spawn",
+  });
+
+  assert.equal(handledSpawns[0].source, "delegate");
+  assert.equal(handledSpawns[0].parentKind, "delegate");
+  assert.equal(metrics.some((event) => (
+    event.type === "subagent_spawned"
+    && event.source === "delegate"
+    && event.parent_kind === "delegate"
+  )), true);
   tracker.close();
 });
 
@@ -114,6 +164,12 @@ function fakeGatewayEvents(spawnListeners, completionListeners) {
     },
     onSubagentCompletion(cb) {
       completionListeners.push(cb);
+      return () => {};
+    },
+    onSessionReply() {
+      return () => {};
+    },
+    onAnnounceInjected() {
       return () => {};
     },
   };

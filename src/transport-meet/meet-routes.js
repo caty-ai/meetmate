@@ -798,6 +798,8 @@ function createHandler(session, turnState, onAudio) {
       on: pipeline.on?.bind(pipeline),
       handleGatewaySubagentSpawn: pipeline.handleGatewaySubagentSpawn,
       handleGatewaySubagentCompletion: pipeline.handleGatewaySubagentCompletion,
+      handleGatewaySessionReply: pipeline.handleGatewaySessionReply,
+      handleGatewayAnnounceInjected: pipeline.handleGatewayAnnounceInjected,
       getDelegationResults: pipeline.getDelegationResults,
     };
   }

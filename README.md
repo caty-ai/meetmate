@@ -139,6 +139,13 @@ v7.5.0 以降、Fish Audio **S2-Pro** をデフォルトモデルにしていま
 | `STT_ACCUMULATED_MAX_CHARS=120` | STT 蓄積テキストの強制区切り文字数 |
 | `PENDING_QUEUE_MAX=3` | gate CLOSED 中の pending wake 最大数 |
 | `ECHO_GATE_CLOSED_BYPASS=true` | 旧 cancel-word 用 echo gate bypass を ON。⚠️ v7.7 で既定 OFF に変更（発話中の音声キャンセルが必要なら true に） |
+| `GATEWAY_EVENTS_ENABLED` | 既定 `false`。`true` で OpenClaw Gateway operator events / forced delegation harness を有効化 |
+| `FIRST_TOKEN_DELEGATE_MS=15000` | Timer A（first-token forced delegation）しきい値。`0` で無効 |
+| `DELEGATE_REPLY_FRESH_MS=90000` | delegate no-spawn reply を音声でも返す鮮度窓 |
+| `PARENT_COMPACT_DELAY_MS=5000` | auto-announce / breaker 後の parent `sessions.compact` 遅延 |
+| `PARENT_COMPACT_MAX_LINES=40` | parent `sessions.compact` の `maxLines` |
+| `SHORT_UTTERANCE_SKIP_CHARS=24` | 短文・ping の Timer A skip しきい値。`0` で skip 無効 |
+| `CIRCUIT_BREAKER_TIMEOUTS=2` | 連続 Timer A 発火で breaker open する回数。`0` で無効 |
 
 ### 実収録テイクのシード（#72 / #75）
 

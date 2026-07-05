@@ -212,6 +212,332 @@ test("completion chat message strips emoji and rare scripts and never returns em
   });
 });
 
+test("delegate no-spawn reply relays fresh to chat and voice, stale to chat only, and drops too-late replies", async () => {
+  const metricsEvents = [];
+  const chatMessages = [];
+  const spoken = [];
+
+  await withFreshPipeline(async ({ createPipeline }) => {
+    const { pipeline } = createTestPipeline(createPipeline, {
+      gatewayEventsConfig: {
+        enabled: true,
+        agentId: "main",
+        handoffInflightMax: 5,
+        handoffCooldownMs: 0,
+        delegateReplyFreshMs: 50,
+        reportVoiceGapMs: 0,
+      },
+      onChatMessage: async (text) => {
+        chatMessages.push(text);
+        return true;
+      },
+    });
+
+    pipeline._test.markHandoffDispatched("fresh", "forced", Date.now(), { utteranceExcerpt: "fresh" });
+    await pipeline._test.handleGatewaySessionReply({
+      sessionKey: "agent:main:openai-user:meet-gateway-reporting-test-caty-delegate",
+      runId: "run-fresh",
+      resultText: "了解です。",
+    });
+    await flushMicrotasks();
+    assert.equal(chatMessages.at(-1), "了解です。");
+    assert.equal(spoken.includes("了解です。"), true);
+
+    pipeline._test.markHandoffDispatched("stale", "forced", Date.now() - 75, { utteranceExcerpt: "stale" });
+    await pipeline._test.handleGatewaySessionReply({
+      sessionKey: "agent:main:openai-user:meet-gateway-reporting-test-caty-delegate",
+      runId: "run-stale",
+      resultText: "遅い回答です。",
+    });
+    assert.match(chatMessages.at(-1), /^\(遅くなってごめんね\) /);
+    assert.equal(spoken.includes("(遅くなってごめんね) 遅い回答です。"), false);
+
+    pipeline._test.markHandoffDispatched("drop", "forced", Date.now() - 200, { utteranceExcerpt: "drop" });
+    await pipeline._test.handleGatewaySessionReply({
+      sessionKey: "agent:main:openai-user:meet-gateway-reporting-test-caty-delegate",
+      runId: "run-drop",
+      resultText: "古すぎる回答です。",
+    });
+    assert.equal(chatMessages.some((text) => text.includes("古すぎる回答です。")), false);
+
+    const replyEvents = metricsEvents.filter((event) => event.type === "delegate_replied_no_spawn");
+    assert.equal(replyEvents.length, 3);
+    assert.equal(replyEvents.find((event) => event.runId === "run-fresh").relayed_voice, true);
+    assert.equal(replyEvents.find((event) => event.runId === "run-stale").relayed_voice, false);
+    assert.equal(replyEvents.find((event) => event.runId === "run-drop").relayed_chat, false);
+    pipeline.close();
+  }, { metricsEvents, spoken });
+});
+
+test("delegate no-spawn reply suppresses silent text before chat and voice relay", async () => {
+  const metricsEvents = [];
+  const chatMessages = [];
+  const spoken = [];
+
+  await withFreshPipeline(async ({ createPipeline }) => {
+    const { pipeline } = createTestPipeline(createPipeline, {
+      gatewayEventsConfig: {
+        enabled: true,
+        agentId: "main",
+        handoffInflightMax: 5,
+        handoffCooldownMs: 0,
+        delegateReplyFreshMs: 90_000,
+        reportVoiceGapMs: 0,
+      },
+      onChatMessage: async (text) => {
+        chatMessages.push(text);
+        return true;
+      },
+    });
+
+    pipeline._test.markHandoffDispatched("silent", "forced", Date.now(), { utteranceExcerpt: "silent" });
+    await pipeline._test.handleGatewaySessionReply({
+      sessionKey: "agent:main:openai-user:meet-gateway-reporting-test-caty-delegate",
+      runId: "run-no-reply",
+      resultText: "NO_REPLY",
+    });
+    await flushMicrotasks();
+
+    pipeline._test.markHandoffDispatched("empty", "forced", Date.now(), { utteranceExcerpt: "empty" });
+    await pipeline._test.handleGatewaySessionReply({
+      sessionKey: "agent:main:openai-user:meet-gateway-reporting-test-caty-delegate",
+      runId: "run-empty",
+      resultText: "",
+    });
+    await flushMicrotasks();
+
+    pipeline._test.markHandoffDispatched("whitespace", "forced", Date.now(), { utteranceExcerpt: "whitespace" });
+    await pipeline._test.handleGatewaySessionReply({
+      sessionKey: "agent:main:openai-user:meet-gateway-reporting-test-caty-delegate",
+      runId: "run-whitespace",
+      resultText: " \n\t ",
+    });
+    await flushMicrotasks();
+
+    pipeline._test.markHandoffDispatched("normal", "forced", Date.now(), { utteranceExcerpt: "normal" });
+    await pipeline._test.handleGatewaySessionReply({
+      sessionKey: "agent:main:openai-user:meet-gateway-reporting-test-caty-delegate",
+      runId: "run-normal",
+      resultText: "通常の返答です。",
+    });
+    await flushMicrotasks();
+
+    assert.deepEqual(chatMessages, ["通常の返答です。"]);
+    assert.deepEqual(spoken, ["通常の返答です。"]);
+
+    const replyEvents = metricsEvents.filter((event) => event.type === "delegate_replied_no_spawn");
+    assert.equal(replyEvents.length, 4);
+    for (const runId of ["run-no-reply", "run-empty", "run-whitespace"]) {
+      const event = replyEvents.find((candidate) => candidate.runId === runId);
+      assert.equal(event.suppressed, true);
+      assert.equal(event.relayed_chat, false);
+      assert.equal(event.relayed_voice, false);
+    }
+    const normal = replyEvents.find((event) => event.runId === "run-normal");
+    assert.equal(normal.suppressed, undefined);
+    assert.equal(normal.relayed_chat, true);
+    assert.equal(normal.relayed_voice, true);
+    pipeline.close();
+  }, { metricsEvents, spoken });
+});
+
+test("delegate reply is deduped and suppressed after spawn, while completion reports", async () => {
+  const metricsEvents = [];
+  const chatMessages = [];
+
+  await withFreshPipeline(async ({ createPipeline }) => {
+    const { pipeline } = createTestPipeline(createPipeline, {
+      gatewayEventsConfig: {
+        enabled: true,
+        agentId: "main",
+        handoffInflightMax: 5,
+        handoffCooldownMs: 0,
+        delegateReplyFreshMs: 90_000,
+        reportVoiceEnabled: false,
+      },
+      onChatMessage: async (text) => {
+        chatMessages.push(text);
+        return true;
+      },
+    });
+
+    pipeline._test.markHandoffDispatched("dedupe", "forced", Date.now(), { utteranceExcerpt: "dedupe" });
+    const evt = {
+      sessionKey: "agent:main:openai-user:meet-gateway-reporting-test-caty-delegate",
+      runId: "run-dedupe",
+      resultText: "一回だけ",
+    };
+    await pipeline._test.handleGatewaySessionReply(evt);
+    await pipeline._test.handleGatewaySessionReply(evt);
+    assert.deepEqual(chatMessages, ["一回だけ"]);
+
+    pipeline._test.markHandoffDispatched("spawn wins", "forced", Date.now(), { utteranceExcerpt: "spawn wins" });
+    pipeline._test.handleGatewaySubagentSpawn({
+      childKey: "agent:main:subagent:child-spawn",
+      parentSessionKey: "agent:main:openai-user:meet-gateway-reporting-test-caty-delegate",
+      label: "spawn wins",
+      source: "delegate",
+      spawnAtMs: Date.now(),
+    });
+    await pipeline._test.handleGatewaySessionReply({
+      sessionKey: "agent:main:openai-user:meet-gateway-reporting-test-caty-delegate",
+      runId: "run-after-spawn",
+      resultText: "relay should not happen",
+    });
+    await flushMicrotasks();
+    assert.equal(chatMessages.includes("relay should not happen"), false);
+    await pipeline._test.handleGatewaySubagentCompletion({
+      childKey: "agent:main:subagent:child-spawn",
+      parentSessionKey: "agent:main:openai-user:meet-gateway-reporting-test-caty-delegate",
+      label: "spawn wins",
+      status: "ok",
+      resultText: "completion should report",
+      spawnAtMs: Date.now(),
+      runId: "child-run-spawn-wins",
+    });
+    await flushMicrotasks();
+    assert.equal(chatMessages.some((text) => text.includes("completion should report")), true);
+    assert.equal(metricsEvents.filter((event) => event.type === "delegate_replied_no_spawn").length, 1);
+    const completed = metricsEvents.find((event) => event.type === "delegation_completed" && event.label === "spawn wins");
+    assert.equal(Boolean(completed), true);
+    assert.equal(completed.suppressed_report, undefined);
+    pipeline.close();
+  }, { metricsEvents });
+});
+
+test("late spawn completion is metrics-only after delegate reply already relayed", async () => {
+  const metricsEvents = [];
+  const chatMessages = [];
+
+  await withFreshPipeline(async ({ createPipeline }) => {
+    const { pipeline } = createTestPipeline(createPipeline, {
+      gatewayEventsConfig: {
+        enabled: true,
+        agentId: "main",
+        handoffInflightMax: 5,
+        handoffCooldownMs: 0,
+        delegateReplyFreshMs: 90_000,
+        reportVoiceEnabled: false,
+      },
+      onChatMessage: async (text) => {
+        chatMessages.push(text);
+        return true;
+      },
+    });
+
+    pipeline._test.markHandoffDispatched("reply wins", "forced", Date.now(), { utteranceExcerpt: "reply wins" });
+    await pipeline._test.handleGatewaySessionReply({
+      sessionKey: "agent:main:openai-user:meet-gateway-reporting-test-caty-delegate",
+      runId: "run-reply-first",
+      resultText: "reply surfaced first",
+    });
+    await flushMicrotasks();
+    assert.deepEqual(chatMessages, ["reply surfaced first"]);
+    assert.equal(pipeline._test.getGatewayDelegationState().inFlightCount, 0);
+
+    pipeline._test.handleGatewaySubagentSpawn({
+      childKey: "agent:main:subagent:child-reply-first",
+      parentSessionKey: "agent:main:openai-user:meet-gateway-reporting-test-caty-delegate",
+      label: "reply wins",
+      source: "delegate",
+      spawnAtMs: Date.now(),
+    });
+    await flushMicrotasks();
+    assert.equal(pipeline._test.getGatewayDelegationState().inFlightCount, 0);
+
+    await pipeline._test.handleGatewaySubagentCompletion({
+      childKey: "agent:main:subagent:child-reply-first",
+      parentSessionKey: "agent:main:openai-user:meet-gateway-reporting-test-caty-delegate",
+      label: "reply wins",
+      status: "ok",
+      resultText: "late completion should not report",
+      spawnAtMs: Date.now(),
+      runId: "child-run-reply-wins",
+    });
+    await flushMicrotasks();
+
+    assert.equal(chatMessages.some((text) => text.includes("late completion should not report")), false);
+    assert.deepEqual(chatMessages, ["reply surfaced first"]);
+    assert.equal(metricsEvents.some((event) => (
+      event.type === "delegate_replied_no_spawn"
+      && event.runId === "run-reply-first"
+      && event.relayed_chat === true
+    )), true);
+    assert.equal(metricsEvents.some((event) => (
+      event.type === "delegation_completed"
+      && event.label === "reply wins"
+      && event.suppressed_report === true
+    )), true);
+    pipeline.close();
+  }, { metricsEvents });
+});
+
+test("announce injection schedules best-effort parent compact and records failures", async () => {
+  const metricsEvents = [];
+  const compactCalls = [];
+  const gatewayEvents = {
+    abortSession: async () => true,
+    buildSessionKey: (user, agentId) => `agent:${agentId}:openai-user:${user}`,
+    compactSession: async (sessionUser, options) => {
+      compactCalls.push({ sessionUser, options });
+      return { ok: false, reason: "boom" };
+    },
+  };
+
+  await withFreshPipeline(async ({ createPipeline }) => {
+    const { pipeline } = createTestPipeline(createPipeline, {
+      gatewayEventsConfig: {
+        enabled: true,
+        agentId: "main",
+        parentCompactDelayMs: 0,
+        parentCompactMaxLines: 12,
+        reportVoiceEnabled: false,
+      },
+    });
+
+    const handled = pipeline._test.handleGatewayAnnounceInjected({
+      sessionKey: "agent:main:openai-user:meet-gateway-reporting-test-caty",
+      runId: "announce:v1:child:run",
+      phase: "end",
+    });
+    assert.equal(handled, true);
+    await sleep(5);
+    assert.deepEqual(compactCalls, [{ sessionUser: "meet-gateway-reporting-test-caty", options: { maxLines: 12 } }]);
+    assert.equal(metricsEvents.some((event) => event.type === "auto_announce_injected"), true);
+    assert.equal(metricsEvents.some((event) => event.type === "parent_compact" && event.ok === false), true);
+    pipeline.close();
+  }, { metricsEvents, gatewayEvents });
+});
+
+test("parent compact metric records compacted separately from ok", async () => {
+  const metricsEvents = [];
+  const gatewayEvents = {
+    abortSession: async () => true,
+    buildSessionKey: (user, agentId) => `agent:${agentId}:openai-user:${user}`,
+    compactSession: async () => ({ ok: true, compacted: false }),
+  };
+
+  await withFreshPipeline(async ({ createPipeline }) => {
+    const { pipeline } = createTestPipeline(createPipeline, {
+      gatewayEventsConfig: {
+        enabled: true,
+        agentId: "main",
+        reportVoiceEnabled: false,
+      },
+    });
+
+    const ok = await pipeline._test.compactParentSession("unit");
+    assert.equal(ok, true);
+    assert.equal(metricsEvents.some((event) => (
+      event.type === "parent_compact"
+      && event.ok === true
+      && event.compacted === false
+      && event.reason === "unit"
+    )), true);
+    pipeline.close();
+  }, { metricsEvents, gatewayEvents });
+});
+
 function createTestPipeline(createPipeline, options = {}) {
   const session = { id: "gateway-reporting-test", conversationLog: [], config: { wakeMode: "wake" } };
   const turnState = { isAgentSpeaking: false, inputCooldownUntil: 0, droppedEchoFrames: 0 };
@@ -242,6 +568,7 @@ function createTestPipeline(createPipeline, options = {}) {
     agents: { caty: { wakeWords: ["ケイティ"] } },
     selectedAgentIds: ["caty"],
     defaultAgentId: "caty",
+    onChatMessage: options.onChatMessage,
     _testExposeInternals: true,
   });
 
@@ -300,8 +627,10 @@ async function withFreshPipeline(fn, options = {}) {
       options.metricsEvents?.push({ type, ...fields });
     },
   });
-  require.cache[require.resolve(path.join(src, "gateway-events.js"))] = cacheEntry(path.join(src, "gateway-events.js"), {
+  require.cache[require.resolve(path.join(src, "gateway-events.js"))] = cacheEntry(path.join(src, "gateway-events.js"), options.gatewayEvents || {
     abortSession: async () => true,
+    buildSessionKey: (user, agentId) => `agent:${agentId}:openai-user:${user}`,
+    compactSession: async () => ({ ok: true, compacted: true }),
   });
   const createdPipelines = new Set();
 
@@ -367,4 +696,8 @@ async function flushMicrotasks() {
   await Promise.resolve();
   await Promise.resolve();
   await Promise.resolve();
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

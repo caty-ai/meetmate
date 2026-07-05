@@ -40,6 +40,150 @@ test("getPipelineConfig parses FIRST_TOKEN_DELEGATE_MS default, override, disabl
   withEnv({ OPENCLAW_GATEWAY_URL: "http://gateway.test", OPENCLAW_GATEWAY_TOKEN: "x", HANDOFF_INFLIGHT_MAX: "not-a-number" }, () => {
     assert.equal(freshConfig().getPipelineConfig().gatewayEvents.handoffInflightMax, 2);
   });
+
+  withEnv({ OPENCLAW_GATEWAY_URL: "http://gateway.test", OPENCLAW_GATEWAY_TOKEN: "x" }, () => {
+    const gatewayEvents = freshConfig().getPipelineConfig().gatewayEvents;
+    assert.equal(gatewayEvents.delegateReplyFreshMs, 90_000);
+    assert.equal(gatewayEvents.parentCompactDelayMs, 5_000);
+    assert.equal(gatewayEvents.parentCompactMaxLines, 40);
+    assert.equal(gatewayEvents.shortUtteranceSkipChars, 24);
+    assert.equal(gatewayEvents.circuitBreakerTimeouts, 2);
+  });
+
+  withEnv({ OPENCLAW_GATEWAY_URL: "http://gateway.test", OPENCLAW_GATEWAY_TOKEN: "x", CIRCUIT_BREAKER_TIMEOUTS: "0" }, () => {
+    assert.equal(freshConfig().getPipelineConfig().gatewayEvents.circuitBreakerTimeouts, 0);
+  });
+
+  withEnv({ OPENCLAW_GATEWAY_URL: "http://gateway.test", OPENCLAW_GATEWAY_TOKEN: "x", DELEGATE_REPLY_FRESH_MS: "0" }, () => {
+    assert.equal(freshConfig().getPipelineConfig().gatewayEvents.delegateReplyFreshMs, 0);
+  });
+});
+
+test("short utterance skip reasons distinguish ping, substring, and normal long requests", () => {
+  withEnv({ METRICS_DISABLED: "1" }, () => {
+    const pipelinePath = path.join(__dirname, "..", "src", "pipeline.js");
+    delete require.cache[require.resolve(pipelinePath)];
+    const { getShortUtteranceSkipReason } = require(pipelinePath)._test;
+
+    assert.equal(getShortUtteranceSkipReason("今話せる？", 24), "ping");
+    assert.equal(getShortUtteranceSkipReason("聞こえる？", 24), "ping");
+    assert.equal(getShortUtteranceSkipReason("これはかなり長い確認なので大丈夫という言葉が途中にあっても委譲をスキップしないで", 24), null);
+    assert.equal(getShortUtteranceSkipReason("ケイティ、明日の会議の論点を整理して優先順位も付けて", 24), null);
+  });
+});
+
+test("fixed TTS prewarm phrases keep gateway-only Meet lines behind the gateway flag", () => {
+  withEnv({ METRICS_DISABLED: "1" }, () => {
+    const pipelinePath = path.join(__dirname, "..", "src", "pipeline.js");
+    delete require.cache[require.resolve(pipelinePath)];
+    const { collectFixedTtsPhrases } = require(pipelinePath)._test;
+    const baseConfig = {
+      ackVariants: [],
+      progressPings: [],
+      greeting: "",
+      cancelAck: "",
+      llm: { firstTokenDelegateMs: 15_000 },
+      gatewayEvents: { enabled: false },
+    };
+    const mainBaseline = [
+      "[soft voice] 了解、すぐ取りかかるね。",
+      "[soft voice] 了解です。ちょっと待ってね。",
+      "[soft voice] はい、今確認するね。",
+      "[soft voice] いま処理中だよ、もう少し待ってね。",
+      "[soft voice] 進めてるよ、あと少しで返せそう。",
+      "[soft voice] ごめん、もう少しだけ待ってね。",
+      "[warm] 了解です！退出しますね。お疲れさまでした！",
+      DELEGATION_LINE,
+      TIMEOUT_LINE,
+      "[soft voice] 続きはSlackに共有しておくね。",
+      "[soft voice] ごめん、うまく繋げられなかったみたい。あとでもう一回試してね。",
+    ];
+    const gatewayOnly = [
+      "[soft voice] 続きは裏に回したよ。まとまったらチャットに貼るね。",
+      "[soft voice] ごめんね、いま立て込んでるから少し待ってね。",
+      "[soft voice] ごめんね、ちょっと立て直し中。急ぎはそのまま話しかけてね。",
+    ];
+
+    assert.deepEqual(collectFixedTtsPhrases(baseConfig, ""), mainBaseline);
+    assert.deepEqual(
+      collectFixedTtsPhrases({ ...baseConfig, gatewayEvents: { enabled: true } }, "").slice(-3),
+      gatewayOnly
+    );
+  });
+});
+
+test("gateway-enabled short utterance skips Timer A without changing flag-off behavior", async () => {
+  const metricsDir = fs.mkdtempSync(path.join(os.tmpdir(), "short-skip-metrics-"));
+  const handoffRequests = [];
+  const spoken = [];
+
+  await withFreshPipeline(
+    async ({ createPipeline, metrics }) => {
+      const { pipeline } = createTestPipeline(createPipeline, {
+        firstTokenDelegateMs: 20,
+        responseTimeoutMs: 60,
+        gatewayEventsConfig: {
+          enabled: true,
+          shortUtteranceSkipChars: 24,
+          handoffInflightMax: 2,
+          handoffCooldownMs: 0,
+          reportVoiceEnabled: false,
+        },
+      });
+
+      await pipeline._test.handleUtteranceEnd("ケイティ、大丈夫?", "turn-short");
+      pipeline.close();
+      await metrics._test.flush();
+    },
+    {
+      metricsDir,
+      spoken,
+      handoffRequests,
+      llm: {
+        streamChat: async function* (_messages, opts) {
+          await waitForAbort(opts.signal);
+        },
+        VOICE_SYSTEM_ADDENDUM: "",
+        buildVoiceAddendum: () => "",
+      },
+      gatewayEvents: { abortSession: async () => true },
+    }
+  );
+
+  const events = readMetrics(metricsDir);
+  assert.equal(events.some((event) => event.type === "forced_delegation_skipped" && event.reason === "ping"), true);
+  assert.equal(events.some((event) => event.type === "forced_delegation_fired"), false);
+  assert.equal(handoffRequests.length, 1);
+
+  const flagOffMetricsDir = fs.mkdtempSync(path.join(os.tmpdir(), "short-no-skip-metrics-"));
+  const flagOffRequests = [];
+  await withFreshPipeline(
+    async ({ createPipeline, metrics }) => {
+      const { pipeline } = createTestPipeline(createPipeline, {
+        firstTokenDelegateMs: 20,
+        responseTimeoutMs: 60,
+        gatewayEventsConfig: { enabled: false },
+      });
+
+      await pipeline._test.handleUtteranceEnd("ケイティ、大丈夫?", "turn-flag-off");
+      pipeline.close();
+      await metrics._test.flush();
+    },
+    {
+      metricsDir: flagOffMetricsDir,
+      handoffRequests: flagOffRequests,
+      llm: {
+        streamChat: async function* (_messages, opts) {
+          await waitForAbort(opts.signal);
+        },
+        VOICE_SYSTEM_ADDENDUM: "",
+        buildVoiceAddendum: () => "",
+      },
+    }
+  );
+  const flagOffEvents = readMetrics(flagOffMetricsDir);
+  assert.equal(flagOffEvents.some((event) => event.type === "forced_delegation_skipped"), false);
+  assert.equal(flagOffEvents.some((event) => event.type === "forced_delegation_fired"), true);
 });
 
 test("Timer A aborts the LLM, speaks the delegation line, requests handoff, records metrics, and suppresses Timer B", async (t) => {
@@ -185,6 +329,133 @@ test("first token before Timer A threshold cancels forced delegation", async () 
   assert.equal(events.some((event) => event.type === "timeout_fallback_fired"), false);
 });
 
+test("consecutive Timer A firings open circuit breaker and first token closes it", async () => {
+  const handoffRequests = [];
+  const metricsDir = fs.mkdtempSync(path.join(os.tmpdir(), "circuit-breaker-metrics-"));
+  const spoken = [];
+  const compactCalls = [];
+  let callCount = 0;
+
+  await withFreshPipeline(
+    async ({ createPipeline, metrics }) => {
+      const { pipeline } = createTestPipeline(createPipeline, {
+        firstTokenDelegateMs: 20,
+        responseTimeoutMs: 80,
+        gatewayEventsConfig: {
+          enabled: true,
+          agentId: "main",
+          handoffInflightMax: 5,
+          handoffCooldownMs: 0,
+          reportVoiceGapMs: 0,
+          circuitBreakerTimeouts: 2,
+          shortUtteranceSkipChars: 24,
+          parentCompactDelayMs: 0,
+          reportVoiceEnabled: true,
+        },
+      });
+
+      await pipeline._test.handleUtteranceEnd("ケイティ、これはとても長い調査を一つめとして詳しくお願い", "turn-breaker-1");
+      await pipeline._test.handleUtteranceEnd("ケイティ、これはとても長い調査を二つめとして詳しくお願い", "turn-breaker-2");
+      await sleep(10);
+      assert.equal(pipeline._test.getCircuitBreakerState().open, true);
+      assert.equal(
+        [...spoken, ...pipeline._test.getReportQueueLines()].some((text) => text.includes("立て直し中")),
+        true
+      );
+      assert.equal(compactCalls.length >= 1, true);
+
+      await pipeline._test.handleUtteranceEnd("ケイティ、大丈夫?", "turn-breaker-open-short");
+      assert.equal(pipeline._test.getCircuitBreakerState().open, true);
+
+      await pipeline._test.handleUtteranceEnd("ケイティ、通常応答で回復確認をお願いします", "turn-breaker-close");
+      assert.equal(pipeline._test.getCircuitBreakerState().open, false);
+
+      await pipeline._test.handleUtteranceEnd("ケイティ、大丈夫?", "turn-breaker-after-close");
+      pipeline.close();
+      await metrics._test.flush();
+    },
+    {
+      metricsDir,
+      spoken,
+      handoffRequests,
+      gatewayEvents: {
+        abortSession: async () => true,
+        buildSessionKey: (user, agentId) => `agent:${agentId}:openai-user:${user}`,
+        compactSession: async (sessionUser, options) => {
+          compactCalls.push({ sessionUser, options });
+          return { ok: true, compacted: true };
+        },
+      },
+      llm: {
+        streamChat: async function* (_messages, opts) {
+          callCount += 1;
+          if (callCount <= 3) {
+            await waitForAbort(opts.signal);
+            return;
+          }
+          await sleep(1);
+          yield "戻ったよ。";
+        },
+        VOICE_SYSTEM_ADDENDUM: "",
+        buildVoiceAddendum: () => "",
+      },
+    }
+  );
+
+  const events = readMetrics(metricsDir);
+  assert.equal(events.some((event) => event.type === "circuit_breaker" && event.state === "open"), true);
+  assert.equal(events.some((event) => event.type === "circuit_breaker" && event.state === "close"), true);
+  assert.equal(events.some((event) => event.type === "forced_delegation_fired" && event.turn_id === "turn-breaker-open-short"), true);
+  assert.equal(events.some((event) => event.type === "forced_delegation_skipped" && event.turn_id === "turn-breaker-open-short"), false);
+  assert.equal(events.some((event) => event.type === "forced_delegation_skipped" && event.turn_id === "turn-breaker-after-close"), true);
+  assert.equal(events.some((event) => event.type === "forced_delegation_fired" && event.turn_id === "turn-breaker-after-close"), false);
+});
+
+test("CIRCUIT_BREAKER_TIMEOUTS=0 disables breaker opening", async () => {
+  const handoffRequests = [];
+  const metricsDir = fs.mkdtempSync(path.join(os.tmpdir(), "circuit-breaker-disabled-metrics-"));
+
+  await withFreshPipeline(
+    async ({ createPipeline, metrics }) => {
+      const { pipeline } = createTestPipeline(createPipeline, {
+        firstTokenDelegateMs: 20,
+        responseTimeoutMs: 80,
+        gatewayEventsConfig: {
+          enabled: true,
+          handoffInflightMax: 5,
+          handoffCooldownMs: 0,
+          reportVoiceGapMs: 0,
+          circuitBreakerTimeouts: 0,
+          shortUtteranceSkipChars: 0,
+          reportVoiceEnabled: false,
+        },
+      });
+
+      await pipeline._test.handleUtteranceEnd("ケイティ、これは一つめの長い調査依頼です", "turn-no-breaker-1");
+      await pipeline._test.handleUtteranceEnd("ケイティ、これは二つめの長い調査依頼です", "turn-no-breaker-2");
+      assert.equal(pipeline._test.getCircuitBreakerState().open, false);
+      pipeline.close();
+      await metrics._test.flush();
+    },
+    {
+      metricsDir,
+      handoffRequests,
+      gatewayEvents: { abortSession: async () => true },
+      llm: {
+        streamChat: async function* (_messages, opts) {
+          await waitForAbort(opts.signal);
+        },
+        VOICE_SYSTEM_ADDENDUM: "",
+        buildVoiceAddendum: () => "",
+      },
+    }
+  );
+
+  const events = readMetrics(metricsDir);
+  assert.equal(events.filter((event) => event.type === "forced_delegation_fired").length, 2);
+  assert.equal(events.some((event) => event.type === "circuit_breaker" && event.state === "open"), false);
+});
+
 test("gateway fallback retry cancels the outer first-response timers", async () => {
   const handoffRequests = [];
   const metricsDir = fs.mkdtempSync(path.join(os.tmpdir(), "gateway-fallback-timers-"));
@@ -260,6 +531,7 @@ test("gateway events enabled makes Timer A abort the server run and handoff on d
           reportVoiceGapMs: 1,
           reportChatEnabled: true,
           reportVoiceEnabled: true,
+          shortUtteranceSkipChars: 0,
         },
       });
 
@@ -313,6 +585,7 @@ test("gateway handoff guard skips dispatch while cooldown is active", async () =
           reportVoiceGapMs: 1,
           reportChatEnabled: true,
           reportVoiceEnabled: true,
+          shortUtteranceSkipChars: 0,
         },
       });
 
@@ -358,6 +631,7 @@ test("gateway handoff guard skips dispatch while in-flight cap is full", async (
           reportVoiceGapMs: 1,
           reportChatEnabled: true,
           reportVoiceEnabled: true,
+          shortUtteranceSkipChars: 0,
         },
       });
 
@@ -386,6 +660,117 @@ test("gateway handoff guard skips dispatch while in-flight cap is full", async (
   assert.equal(spoken.filter((line) => line === "ちょっと時間がかかってるから、裏でまとめておくね。").length, 2);
 });
 
+test("short timeout handoff blocked by cap is dropped without entering pending FIFO", async () => {
+  const handoffRequests = [];
+  const metricsDir = fs.mkdtempSync(path.join(os.tmpdir(), "short-handoff-drop-metrics-"));
+
+  await withFreshPipeline(
+    async ({ createPipeline, metrics }) => {
+      const { pipeline } = createTestPipeline(createPipeline, {
+        firstTokenDelegateMs: 0,
+        responseTimeoutMs: 20,
+        gatewayEventsConfig: {
+          enabled: true,
+          handoffInflightMax: 1,
+          handoffCooldownMs: 0,
+          reportVoiceEnabled: false,
+          shortUtteranceSkipChars: 24,
+        },
+      });
+
+      pipeline._test.markHandoffDispatched("busy", "forced", Date.now(), { utteranceExcerpt: "busy" });
+      await pipeline._test.handleUtteranceEnd("ケイティ、大丈夫?", "turn-short-cap");
+      assert.equal(pipeline._test.getPendingHandoffQueueLength(), 0);
+      pipeline.close();
+      await metrics._test.flush();
+    },
+    {
+      metricsDir,
+      handoffRequests,
+      llm: {
+        streamChat: async function* (_messages, opts) {
+          await waitForAbort(opts.signal);
+        },
+        VOICE_SYSTEM_ADDENDUM: "",
+        buildVoiceAddendum: () => "",
+      },
+    }
+  );
+
+  const events = readMetrics(metricsDir);
+  assert.equal(handoffRequests.length, 0);
+  assert.equal(events.some((event) => (
+    event.type === "handoff_dropped"
+    && event.reason === "short_utterance"
+    && event.label === "ケイティ、大丈夫?"
+  )), true);
+});
+
+test("DELEGATE_REPLY_FRESH_MS=0 treats old delegate replies as fresh and never drops", async () => {
+  const metricsDir = fs.mkdtempSync(path.join(os.tmpdir(), "delegate-fresh-zero-metrics-"));
+  const chats = [];
+
+  await withFreshPipeline(
+    async ({ createPipeline, metrics }) => {
+      const { pipeline } = createTestPipeline(createPipeline, {
+        firstTokenDelegateMs: 0,
+        responseTimeoutMs: 0,
+        gatewayEventsConfig: {
+          enabled: true,
+          agentId: "main",
+          delegateReplyFreshMs: 0,
+          reportChatEnabled: true,
+          reportVoiceEnabled: true,
+          reportVoiceGapMs: 0,
+        },
+        onChatMessage: (text) => {
+          chats.push(text);
+          return true;
+        },
+      });
+
+      pipeline._test.markHandoffDispatched(
+        "old delegate reply",
+        "forced",
+        Date.now() - 24 * 60 * 60 * 1_000,
+        { utteranceExcerpt: "old delegate reply" }
+      );
+      const handled = await pipeline._test.handleGatewaySessionReply({
+        sessionKey: "agent:main:openai-user:meet-forced-delegation-test-caty-delegate",
+        runId: "run-fresh-zero",
+        resultText: "古いけど新鮮扱い",
+      });
+      assert.equal(handled, true);
+      assert.deepEqual(chats, ["古いけど新鮮扱い"]);
+      assert.equal(pipeline._test.getHandoffInflightCount(), 0);
+      pipeline.close();
+      await metrics._test.flush();
+    },
+    {
+      metricsDir,
+      handoffRequests: [],
+      gatewayEvents: {
+        buildSessionKey: (user, agentId) => `agent:${agentId}:openai-user:${user}`,
+        abortSession: async () => true,
+      },
+      llm: {
+        streamChat: async function* () {},
+        VOICE_SYSTEM_ADDENDUM: "",
+        buildVoiceAddendum: () => "",
+      },
+    }
+  );
+
+  const events = readMetrics(metricsDir);
+  assert.equal(events.some((event) => (
+    event.type === "delegate_replied_no_spawn"
+    && event.runId === "run-fresh-zero"
+    && event.fresh === true
+    && event.relayed_chat === true
+    && event.relayed_voice === true
+  )), true);
+});
+
 test("gateway handoff client timeout is treated as dispatched, not failure", async () => {
   const handoffRequests = [];
   const spoken = [];
@@ -405,6 +790,7 @@ test("gateway handoff client timeout is treated as dispatched, not failure", asy
           reportVoiceGapMs: 1,
           reportChatEnabled: true,
           reportVoiceEnabled: true,
+          shortUtteranceSkipChars: 0,
         },
       });
 
@@ -793,7 +1179,11 @@ async function withFreshPipeline(fn, options = {}) {
   require.cache[require.resolve(path.join(src, "stt.js"))] = cacheEntry(path.join(src, "stt.js"), sttExports);
   require.cache[require.resolve(path.join(src, "llm.js"))] = cacheEntry(path.join(src, "llm.js"), options.llm);
   if (options.gatewayEvents) {
-    require.cache[require.resolve(path.join(src, "gateway-events.js"))] = cacheEntry(path.join(src, "gateway-events.js"), options.gatewayEvents);
+    require.cache[require.resolve(path.join(src, "gateway-events.js"))] = cacheEntry(path.join(src, "gateway-events.js"), {
+      buildSessionKey: (user, agentId) => `agent:${agentId}:openai-user:${user}`,
+      compactSession: async () => ({ ok: true, compacted: true }),
+      ...options.gatewayEvents,
+    });
   }
   require.cache[require.resolve(path.join(src, "tts-fish.js"))] = cacheEntry(path.join(src, "tts-fish.js"), {
     synthesize: async (text, { onAudio }) => {
