@@ -3,10 +3,11 @@
 AIエージェントをGoogle Meet / Zoomにリアルタイム参加させ、音声で対話するブリッジサーバー。
 OpenClaw Gateway連携により、任意のエージェントを音声会議に接続可能。
 
-> **現在の安定版: [`v7.8.0-stable`](https://github.com/caty-ai/meetmate/releases/tag/v7.8.0-stable) (2026-07-04・Mac mini 稼働中)**
-> STT=Soniox `stt-rt-v5`（既定）、Fish Audio S2-Pro + emotion tag anchor 方式。Meet チャット投稿（#68: `[[[chat: ...]]]` タグで URL・長文をチャットへ）＋固定文言 TTS キャッシュ＋実収録テイク13種（#67/#72/#75）＋絵文字 strip 2層対策（#74）＋ Soniox keepalive・24kHz 音質・複数人ゲート修正（#55/#61/#62/#66）。複数人社内MT検証（2026-07-04）通過で rc.3 と同コミットから昇格。
+> **現在の最新版: `v7.9.0-rc.1` (2026-07-07・Mac mini 稼働中・`GATEWAY_EVENTS_ENABLED=true`)** — 安定版は [`v7.8.0-stable`](https://github.com/caty-ai/meetmate/releases/tag/v7.8.0-stable)
+> **[#79 委譲強制ハーネス](https://github.com/caty-ai/meetmate/issues/79) Phase 1 完了・実機スモーク2回で全機能実証済み**（PR #94/#96/#97）: WS operator クライアント＋強制委譲（Timer A→server-side abort→delegate セッション handoff）＋完了報告（チャット即時＋沈黙待ち音声＋会議後ログ）＋delegate 応答 relay＋announce 注入検出→親 compact＋circuit breaker＋短発話 skip＋metrics 分類。詳細は下記「委譲強制ハーネス」節
+> STT=Soniox `stt-rt-v5`（既定）、Fish Audio S2-Pro + emotion tag anchor 方式。Meet チャット投稿（#68）＋固定文言 TTS キャッシュ＋実収録テイク13種（#67/#72/#75）＋絵文字 strip 2層対策（#74）
 >
-> **次の開発: [#79 委譲強制ハーネス EPIC](https://github.com/caty-ai/meetmate/issues/79)**（要件合意済・スペック=[`docs/deep-interview-79-delegation-harness.md`](docs/deep-interview-79-delegation-harness.md)・子Issue #83-#87）
+> **次の開発: [#87 実戦ゲート](https://github.com/caty-ai/meetmate/issues/87)**（社内MT実投入・閾値チューニング）＋ [#98 compact 実圧縮](https://github.com/caty-ai/meetmate/issues/98)（優先度低）。スペック=[`docs/deep-interview-79-delegation-harness.md`](docs/deep-interview-79-delegation-harness.md)
 
 ## 特徴
 - Google Meet / Zoom 対応
@@ -17,6 +18,7 @@ OpenClaw Gateway連携により、任意のエージェントを音声会議に�
 - 絵文字ガード: LLM プロンプト禁止 + TTS 直前の機械 strip の2層（感情タグ・日本語記号は温存）
 - 会議チャット投稿（#68）: LLM 応答内の `[[[chat: ...]]]` タグを抽出し、読み上げずに Meet チャットへ投稿（URL・長い詳細の共有用。Attendee `send_chat_message`、Meet は everyone 宛のみ）。絵文字は Attendee サーバー側で 400 拒否（"Message cannot contain emojis or rare script characters."、フォールバック=#81）。リアクション/挙手は Attendee に API なし。送信失敗の warn は `logs/meet-server.stderr.log` 側に出る点に注意
 - STT: Soniox `stt-rt-v5`（既定 / 2026-06-23 採用）。Deepgram も `STT_PROVIDER=deepgram` で選択可
+- 委譲強制ハーネス（#79 Phase 1）: 重作業をバックグラウンド委譲してフロントは対話専念（下記専用節）
 - LCM（Lossless Context Management）自動記録
 - Slack連動（ステータス通知・サマリー・全文ログ）
 
@@ -139,13 +141,31 @@ v7.5.0 以降、Fish Audio **S2-Pro** をデフォルトモデルにしていま
 | `STT_ACCUMULATED_MAX_CHARS=120` | STT 蓄積テキストの強制区切り文字数 |
 | `PENDING_QUEUE_MAX=3` | gate CLOSED 中の pending wake 最大数 |
 | `ECHO_GATE_CLOSED_BYPASS=true` | 旧 cancel-word 用 echo gate bypass を ON。⚠️ v7.7 で既定 OFF に変更（発話中の音声キャンセルが必要なら true に） |
-| `GATEWAY_EVENTS_ENABLED` | 既定 `false`。`true` で OpenClaw Gateway operator events / forced delegation harness を有効化 |
-| `FIRST_TOKEN_DELEGATE_MS=15000` | Timer A（first-token forced delegation）しきい値。`0` で無効 |
-| `DELEGATE_REPLY_FRESH_MS=90000` | delegate no-spawn reply を音声でも返す鮮度窓 |
-| `PARENT_COMPACT_DELAY_MS=5000` | auto-announce / breaker 後の parent `sessions.compact` 遅延 |
-| `PARENT_COMPACT_MAX_LINES=40` | parent `sessions.compact` の `maxLines` |
-| `SHORT_UTTERANCE_SKIP_CHARS=24` | 短文・ping の Timer A skip しきい値。`0` で skip 無効 |
-| `CIRCUIT_BREAKER_TIMEOUTS=2` | 連続 Timer A 発火で breaker open する回数。`0` で無効 |
+
+## 委譲強制ハーネス（#79 / v7.9.0-rc.1）
+
+**フロント Caty は対話専念、重作業は強制バックグラウンド委譲**。`GATEWAY_EVENTS_ENABLED=true` で有効化（既定 `false`＝旧挙動を bit-for-bit 維持）。実機スモーク2回（2026-07-05 / 07-07）で全機能実証済み。
+
+仕組み（すべて OpenClaw Gateway control-plane WS `sessions.changed` 購読ベース）:
+1. **強制委譲**: first-token が閾値（Timer A）を超えたら server-side `chat.abort` → 専用 delegate セッション `<sessionUser>-delegate` へ handoff（in-flight 上限2＋cooldown＋pending FIFO）
+2. **完了報告**: subagent 完了を検知 → Meet チャット即時投稿＋沈黙ギャップ待ち音声＋会議後ログ「委譲タスク結果」
+3. **delegate 応答 relay**: delegate が spawn せず会話で答えた場合もチャット＋音声で中継（runId dedupe・spawn との相互排他・鮮度窓・NO_REPLY 抑制）
+4. **announce 浄化**: Gateway auto-announce（`announce:v1:*`）の親コンテキスト注入を検知 → best-effort `sessions.compact`（※実圧縮は #98 調整中）
+5. **circuit breaker**: Timer A 連続発火で open（親 compact＋復旧告知1回）→ 親 first-token 成功で close
+6. **短発話 skip**: 短文・会話 ping は委譲せず即答（breaker open 中は例外的に委譲）
+
+| env | 既定 | 用途 |
+|---|---|---|
+| `GATEWAY_EVENTS_ENABLED` | `false` | ハーネス全体の有効化 |
+| `FIRST_TOKEN_DELEGATE_MS` | `15000` | Timer A しきい値。`0` で無効。**mini 実運用は `25000`**（スモーク#1 の帰結） |
+| `DELEGATE_REPLY_FRESH_MS` | `90000` | delegate no-spawn reply を音声でも返す鮮度窓 |
+| `PARENT_COMPACT_DELAY_MS` | `5000` | auto-announce / breaker 後の parent `sessions.compact` 遅延 |
+| `PARENT_COMPACT_MAX_LINES` | `40` | parent `sessions.compact` の `maxLines`（#98 で調整予定） |
+| `SHORT_UTTERANCE_SKIP_CHARS` | `24` | 短文・ping の Timer A skip しきい値。`0` で skip 無効 |
+| `CIRCUIT_BREAKER_TIMEOUTS` | `2` | 連続 Timer A 発火で breaker open する回数。`0` で無効 |
+
+metrics は `logs/metrics.jsonl` に JSONL 追記、集計は `node scripts/aggregate-metrics.js logs/metrics.jsonl`（`handoff_received` / `subagent_spawned` / `delegate_replied_no_spawn` / `auto_announce_injected` / `circuit_breaker` / `forced_delegation_skipped` 等）。
+接続要件: `sessions.compact` は **operator.admin** スコープ必須（abort は operator.write。#97 で CONNECT_SCOPES に追加済み）。
 
 ### 実収録テイクのシード（#72 / #75）
 
