@@ -96,7 +96,11 @@ const REPORT_VOICE_ENABLED = boolEnv("REPORT_VOICE_ENABLED", true);
 const GATEWAY_EVENTS_AGENT_ID = process.env.GATEWAY_EVENTS_AGENT_ID || "main";
 const DELEGATE_REPLY_FRESH_MS = nonNegativeMsEnv("DELEGATE_REPLY_FRESH_MS", 90_000);
 const PARENT_COMPACT_DELAY_MS = nonNegativeMsEnv("PARENT_COMPACT_DELAY_MS", 5_000);
-const PARENT_COMPACT_MAX_LINES = positiveIntEnv("PARENT_COMPACT_MAX_LINES", 40);
+// 0 = omit maxLines so the gateway runs real LLM compaction (issue #98: the
+// line-trim path can never shrink a 1-line giant announce; transcripts are
+// 3-15 lines so maxLines=40 always returned compacted:false). >0 keeps the
+// legacy line-trim behaviour.
+const PARENT_COMPACT_MAX_LINES = nonNegativeIntEnv("PARENT_COMPACT_MAX_LINES", 0);
 const SHORT_UTTERANCE_SKIP_CHARS = nonNegativeIntEnv("SHORT_UTTERANCE_SKIP_CHARS", 24);
 const CIRCUIT_BREAKER_TIMEOUTS = nonNegativeIntEnv("CIRCUIT_BREAKER_TIMEOUTS", 2);
 

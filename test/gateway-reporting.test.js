@@ -509,6 +509,63 @@ test("announce injection schedules best-effort parent compact and records failur
   }, { metricsEvents, gatewayEvents });
 });
 
+test("parent compact omits maxLines by default so the gateway runs real compaction (#98)", async () => {
+  const metricsEvents = [];
+  const compactCalls = [];
+  const gatewayEvents = {
+    abortSession: async () => true,
+    buildSessionKey: (user, agentId) => `agent:${agentId}:openai-user:${user}`,
+    compactSession: async (sessionUser, options) => {
+      compactCalls.push({ sessionUser, options });
+      return { ok: true, compacted: true };
+    },
+  };
+
+  await withFreshPipeline(async ({ createPipeline }) => {
+    const { pipeline } = createTestPipeline(createPipeline, {
+      gatewayEventsConfig: {
+        enabled: true,
+        agentId: "main",
+        parentCompactMaxLines: 0,
+        reportVoiceEnabled: false,
+      },
+    });
+
+    const ok = await pipeline._test.compactParentSession("unit");
+    assert.equal(ok, true);
+    assert.deepEqual(compactCalls, [{ sessionUser: "meet-gateway-reporting-test-caty", options: {} }]);
+    pipeline.close();
+  }, { metricsEvents, gatewayEvents });
+});
+
+test("parent compact omits maxLines when config leaves it unset (#98)", async () => {
+  const metricsEvents = [];
+  const compactCalls = [];
+  const gatewayEvents = {
+    abortSession: async () => true,
+    buildSessionKey: (user, agentId) => `agent:${agentId}:openai-user:${user}`,
+    compactSession: async (sessionUser, options) => {
+      compactCalls.push({ sessionUser, options });
+      return { ok: true, compacted: true };
+    },
+  };
+
+  await withFreshPipeline(async ({ createPipeline }) => {
+    const { pipeline } = createTestPipeline(createPipeline, {
+      gatewayEventsConfig: {
+        enabled: true,
+        agentId: "main",
+        reportVoiceEnabled: false,
+      },
+    });
+
+    const ok = await pipeline._test.compactParentSession("unit");
+    assert.equal(ok, true);
+    assert.deepEqual(compactCalls, [{ sessionUser: "meet-gateway-reporting-test-caty", options: {} }]);
+    pipeline.close();
+  }, { metricsEvents, gatewayEvents });
+});
+
 test("parent compact metric records compacted separately from ok", async () => {
   const metricsEvents = [];
   const gatewayEvents = {
