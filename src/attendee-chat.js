@@ -1,12 +1,34 @@
 const https = require("node:https");
 
+const { stripEmojis } = require("./speech-policy");
+
 const ATTENDEE_API_BASE_URL = process.env.ATTENDEE_API_BASE_URL || "app.attendee.dev";
+
+// Attendee rejects messages containing emojis with a 400 and the whole message
+// is lost (issue #81). Strip them before sending so the text part still lands.
+// Callers that already stripped (delegation-result path in pipeline.js) pass
+// through unchanged, so no double-strip log noise.
+function prepareAttendeeChatMessage(message) {
+  const original = String(message || "");
+  const cleaned = stripEmojis(original);
+  const stripped = cleaned !== original;
+  return { message: cleaned, stripped, skip: cleaned.trim() === "" };
+}
 
 function sendAttendeeChatMessage(botId, message, attendeeKey) {
   return new Promise((resolve) => {
     try {
       const apiKey = attendeeKey || process.env.ATTENDEE_API_KEY || "";
-      let chatMessage = String(message || "");
+      const prepared = prepareAttendeeChatMessage(message);
+      if (prepared.skip) {
+        console.warn(`💬  Attendee chat skipped (empty after emoji strip): ${botId} original=${JSON.stringify(String(message || "").slice(0, 100))}`);
+        resolve(false);
+        return;
+      }
+      if (prepared.stripped) {
+        console.warn(`💬  🧹 chat emojis stripped before send: ${botId} ${String(message || "").length} → ${prepared.message.length} chars`);
+      }
+      let chatMessage = prepared.message;
       if (chatMessage.length > 10_000) {
         const truncated = Array.from(chatMessage).slice(0, 10_000).join("");
         console.warn(`💬  Attendee chat message truncated: ${chatMessage.length} → ${truncated.length} chars`);
@@ -52,4 +74,4 @@ function sendAttendeeChatMessage(botId, message, attendeeKey) {
   });
 }
 
-module.exports = { sendAttendeeChatMessage };
+module.exports = { sendAttendeeChatMessage, prepareAttendeeChatMessage };
