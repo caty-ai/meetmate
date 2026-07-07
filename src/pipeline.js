@@ -678,8 +678,11 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   async function compactParentSession(reason = "unspecified") {
     if (!gatewayEventsEnabled || stopped) return false;
     try {
-      const maxLines = Number(gatewayEventsConfig.parentCompactMaxLines ?? 40);
-      const result = await gatewayEventsClient.compactSession(agentState.sessionUser, { maxLines });
+      const maxLines = Number(gatewayEventsConfig.parentCompactMaxLines ?? 0);
+      const result = await gatewayEventsClient.compactSession(
+        agentState.sessionUser,
+        maxLines > 0 ? { maxLines } : {}
+      );
       const ok = result?.ok === true;
       recordGatewayMetric("parent_compact", {
         ok,

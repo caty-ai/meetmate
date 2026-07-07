@@ -45,9 +45,13 @@ test("getPipelineConfig parses FIRST_TOKEN_DELEGATE_MS default, override, disabl
     const gatewayEvents = freshConfig().getPipelineConfig().gatewayEvents;
     assert.equal(gatewayEvents.delegateReplyFreshMs, 90_000);
     assert.equal(gatewayEvents.parentCompactDelayMs, 5_000);
-    assert.equal(gatewayEvents.parentCompactMaxLines, 40);
+    assert.equal(gatewayEvents.parentCompactMaxLines, 0);
     assert.equal(gatewayEvents.shortUtteranceSkipChars, 24);
     assert.equal(gatewayEvents.circuitBreakerTimeouts, 2);
+  });
+
+  withEnv({ OPENCLAW_GATEWAY_URL: "http://gateway.test", OPENCLAW_GATEWAY_TOKEN: "x", PARENT_COMPACT_MAX_LINES: "12" }, () => {
+    assert.equal(freshConfig().getPipelineConfig().gatewayEvents.parentCompactMaxLines, 12);
   });
 
   withEnv({ OPENCLAW_GATEWAY_URL: "http://gateway.test", OPENCLAW_GATEWAY_TOKEN: "x", CIRCUIT_BREAKER_TIMEOUTS: "0" }, () => {
