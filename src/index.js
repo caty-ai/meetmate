@@ -22,6 +22,7 @@ const { sendAttendeeChatMessage } = require("./attendee-chat");
 const { recordEvent } = require("./metrics");
 const { buildDelegationResultsSection } = require("./delegation-results");
 const { createGatewaySessionTracker } = require("./gateway-session-tracker");
+const { servePublicAsset, sendMetricsSummary } = require("./ui-routes");
 
 // Track first warm-up for await (subsequent calls are fire-and-forget)
 let _firstWarmupDone = false;
@@ -864,6 +865,12 @@ function writePlainResponse(res, status, text) {
 const SERVER_START_TIME = Date.now();
 
 const server = http.createServer(async (req, res) => {
+  const requestUrl = new URL(req.url || "/", "http://localhost");
+
+  if (servePublicAsset(req, res, requestUrl)) return;
+
+  if (await sendMetricsSummary(req, res, requestUrl)) return;
+
   // Health check endpoint for watchdog
   if (req.method === "GET" && req.url === "/health") {
     const uptimeSeconds = ((Date.now() - SERVER_START_TIME) / 1000).toFixed(1);
@@ -952,9 +959,11 @@ const server = http.createServer(async (req, res) => {
       }
 
       const sessionId = crypto.randomUUID();
+      const startedAt = new Date().toISOString();
       const session = {
         id: sessionId,
-        createdAt: new Date().toISOString(),
+        createdAt: startedAt,
+        startedAt,
         meetingUrl,
         config: {
           prompt: toSafeString(formData.prompt) || null,

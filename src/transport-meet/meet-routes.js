@@ -25,6 +25,7 @@ const gatewayEvents = require("../gateway-events");
 const { recordEvent } = require("../metrics");
 const { buildDelegationResultsSection } = require("../delegation-results");
 const { createGatewaySessionTracker } = require("../gateway-session-tracker");
+const { servePublicAsset, sendMetricsSummary } = require("../ui-routes");
 
 const ATTENDEE_API_BASE_URL = process.env.ATTENDEE_API_BASE_URL || "app.attendee.dev";
 const ATTENDEE_TIMEOUT_MS = Number(process.env.ATTENDEE_TIMEOUT_MS || 15_000);
@@ -938,6 +939,10 @@ async function init(options = {}) {
 async function handleHttp(req, res) {
   const url = new URL(req.url || "/", "http://localhost");
 
+  if (servePublicAsset(req, res, url)) return;
+
+  if (await sendMetricsSummary(req, res, url)) return;
+
   if (req.method === "GET" && url.pathname === "/") {
     fs.readFile(path.join(__dirname, "..", "..", "public", "index.html"), (err, data) => {
       if (err) {
@@ -1149,9 +1154,11 @@ async function handleHttp(req, res) {
       }
 
       const sessionId = crypto.randomUUID();
+      const startedAt = new Date().toISOString();
       const session = {
         id: sessionId,
-        createdAt: new Date().toISOString(),
+        createdAt: startedAt,
+        startedAt,
         meetingUrl,
         config: {
           prompt: toSafeString(formData.prompt) || null,
