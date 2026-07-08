@@ -47,7 +47,13 @@ function servePublicAsset(req, res, url = new URL(req.url || "/", "http://localh
 
 async function sendMetricsSummary(req, res, url = new URL(req.url || "/", "http://localhost")) {
   if (req.method !== "GET" || url.pathname !== "/metrics") return false;
-  const summary = await readMetricsSummary(url.searchParams.get("hours"));
+  let summary;
+  try {
+    summary = await readMetricsSummary(url.searchParams.get("hours"));
+  } catch (err) {
+    console.warn("metrics summary failed:", err && err.message);
+    summary = { enabled: false };
+  }
   writeJson(res, 200, summary);
   return true;
 }
@@ -83,6 +89,7 @@ async function readMetricsSummary(hoursParam) {
     } catch {
       continue;
     }
+    if (typeof event !== "object" || event === null) continue;
 
     const timestampMs = Number(event.timestamp_ms);
     if (!Number.isFinite(timestampMs) || timestampMs < cutoff) continue;

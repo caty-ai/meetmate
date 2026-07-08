@@ -39,6 +39,7 @@
   let serverPublicWsUrl = "";
   let lastUrlState = "";
   let endedShownUntilMs = 0;
+  let pollEpoch = 0;
 
   function getStoredTheme() {
     try {
@@ -218,9 +219,11 @@
   }
 
   async function pollActiveSession() {
+    const epoch = pollEpoch;
     try {
       const res = await fetch("/active-session");
       const data = await res.json();
+      if (epoch !== pollEpoch) return;
       updateActiveBanner(data.sessions);
     } catch {
       // ignore polling errors
@@ -261,6 +264,7 @@
         activeWsEl.textContent = "";
         stopElapsedTimer();
         leaveBtn.classList.add("is-hidden");
+        pollEpoch += 1;
         setTimeout(pollActiveSession, 1000);
       } else {
         setStatus("error", `退出エラー: ${text}`);

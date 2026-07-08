@@ -96,6 +96,43 @@ test("servePublicAsset rejects traversal paths", async () => {
   assert.equal(res.statusCode, 404);
 });
 
+test("readMetricsSummary skips null and non-object lines while keeping valid ones", async () => {
+  const dir = tempDir();
+  const now = Date.now();
+  fs.writeFileSync(path.join(dir, "metrics.jsonl"), [
+    "null",
+    JSON.stringify({ timestamp_ms: now - 1_000, type: "turn_end", session_id: "s1" }),
+    "{not-json",
+  ].join("\n"));
+
+  const summary = await withMetricsDir(dir, () => readMetricsSummary("24"));
+
+  assert.equal(summary.enabled, true);
+  assert.equal(summary.totals.turns, 1);
+});
+
+test("readMetricsSummary returns empty totals for an empty metrics file", async () => {
+  const dir = tempDir();
+  fs.writeFileSync(path.join(dir, "metrics.jsonl"), "");
+
+  const summary = await withMetricsDir(dir, () => readMetricsSummary("24"));
+
+  assert.equal(summary.enabled, true);
+  assert.deepEqual(summary.totals, {
+    wakeDecisions: 0,
+    addressed: 0,
+    turns: 0,
+    utterances: 0,
+    ttsPlaybacks: 0,
+  });
+  assert.deepEqual(summary.recentSessions, []);
+});
+
+test("servePublicAsset does not serve non-GET requests for known assets", async () => {
+  const res = await serveAsset("/style.css", "POST");
+  assert.equal(res, false);
+});
+
 function writeMetrics(dir, events) {
   fs.writeFileSync(path.join(dir, "metrics.jsonl"), `${events.map((event) => JSON.stringify(event)).join("\n")}\n`);
 }
@@ -115,9 +152,9 @@ function tempDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "ui-routes-test-"));
 }
 
-function serveAsset(requestPath) {
+function serveAsset(requestPath, method = "GET") {
   return new Promise((resolve, reject) => {
-    const req = { method: "GET", url: requestPath };
+    const req = { method, url: requestPath };
     const res = {
       statusCode: null,
       headers: null,
@@ -134,7 +171,10 @@ function serveAsset(requestPath) {
     try {
       const url = new URL(requestPath, "http://localhost");
       const handled = servePublicAsset(req, res, url);
-      if (!handled) reject(new Error(`unhandled path: ${requestPath}`));
+      if (!handled) {
+        resolve(false);
+        return;
+      }
     } catch (err) {
       reject(err);
     }

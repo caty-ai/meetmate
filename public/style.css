@@ -368,25 +368,6 @@
   .btn-danger:active:not(:disabled) { transform: scale(0.97); }
   .btn-danger:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
 
-  /* underline link (in/out sweep) */
-  .link-underline {
-    position: relative;
-    display: inline-block;
-    text-decoration: none;
-    color: var(--ink-secondary);
-  }
-  .link-underline::after {
-    content: "";
-    position: absolute;
-    left: 0; right: 0; bottom: -2px;
-    height: 1px;
-    background: var(--ink);
-    transform: scaleX(0);
-    transform-origin: right;
-    transition: transform 0.3s var(--ease-inout-strong);
-  }
-  .link-underline:hover::after { transform: scaleX(1); transform-origin: left; }
-
   /* ---------- Active session card ---------- */
   .active-card {
     background: var(--success-soft);
