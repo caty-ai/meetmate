@@ -38,6 +38,7 @@
   let currentAgentId = "default";
   let serverPublicWsUrl = "";
   let lastUrlState = "";
+  let endedShownUntilMs = 0;
 
   function getStoredTheme() {
     try {
@@ -198,12 +199,20 @@
       activeAgentsEl.textContent = `エージェント: ${names}`;
       activeCard.classList.remove("is-hidden", "ended");
       startElapsedTimer(startedAtMs);
+      endedShownUntilMs = 0;
+      leaveBtn.classList.remove("is-hidden");
     } else {
       hasActiveSession = false;
       activeSessionId = null;
-      activeCard.classList.add("is-hidden");
       activeAgentsEl.textContent = "エージェント: -";
       stopElapsedTimer();
+      if (Date.now() < endedShownUntilMs) {
+        // keep showing the "call ended" state until the timeout expires
+      } else {
+        activeCard.classList.add("is-hidden");
+        activeCard.classList.remove("ended");
+        leaveBtn.classList.remove("is-hidden");
+      }
     }
     updateSubmitButtonState();
   }
@@ -245,6 +254,13 @@
 
       if (res.ok) {
         setStatus("success", `退出しました: ${text}`);
+        endedShownUntilMs = Date.now() + 5000;
+        activeCard.classList.add("ended");
+        activeLabelEl.textContent = "通話終了";
+        activeStateEl.textContent = "セッションは正常に終了しました";
+        activeWsEl.textContent = "";
+        stopElapsedTimer();
+        leaveBtn.classList.add("is-hidden");
         setTimeout(pollActiveSession, 1000);
       } else {
         setStatus("error", `退出エラー: ${text}`);
