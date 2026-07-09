@@ -75,7 +75,7 @@ v7.5.0 以降、Fish Audio **S2-Pro** をデフォルトモデルにしていま
 | env | 既定 | 用途 |
 |---|---|---|
 | `GATEWAY_EVENTS_ENABLED` | `false` | ハーネス全体の有効化 |
-| `FIRST_TOKEN_DELEGATE_MS` | `15000` | Timer A しきい値。`0` で無効。**mini 実運用は `25000`**（スモーク#1 の帰結） |
+| `FIRST_TOKEN_DELEGATE_MS` | `15000` | Timer A しきい値。`0` で無効。実運用では `25000` へ緩める例あり（実機スモークの帰結） |
 | `DELEGATE_REPLY_FRESH_MS` | `90000` | delegate no-spawn reply を音声でも返す鮮度窓 |
 | `PARENT_COMPACT_DELAY_MS` | `5000` | auto-announce / breaker 後の parent `sessions.compact` 遅延 |
 | `PARENT_COMPACT_MAX_LINES` | `40` | parent `sessions.compact` の `maxLines`（#98 で調整予定） |
@@ -88,7 +88,7 @@ metrics は `logs/metrics.jsonl` に JSONL 追記、集計は `node scripts/aggr
 
 ## 実収録テイクのシード（#72 / #75）
 
-手元または mini 上で `node scripts/seed-tts-cache-from-fillers.js` を実行すると、`assets/fillers/manifest.json` の実収録 mp3（相槌 ack 7種＋progress ping 3種＋退出 farewell＋greeting＋timeout の計13ユニーク文言）から `assets/tts-cache/*.pcm` を事前生成します。`.env` は `src/server.js` と同じ方法で自動ロードされます。`config.json` がない環境では、誤った cache key を作らないため `--voice-id <id>` を明示してください。
+運用マシン上で `node scripts/seed-tts-cache-from-fillers.js` を実行すると、`assets/fillers/manifest.json` の実収録 mp3（相槌 ack 7種＋progress ping 3種＋退出 farewell＋greeting＋timeout の計13ユニーク文言）から `assets/tts-cache/*.pcm` を事前生成します。`.env` は `src/server.js` と同じ方法で自動ロードされます。`config.json` がない環境では、誤った cache key を作らないため `--voice-id <id>` を明示してください。
 
 cache key は `voiceId` / `FISH_AUDIO_SPEED` / `FISH_AUDIO_MODEL` / `TTS_SAMPLE_RATE` の影響を受けます。いずれかを変えた後は再実行しないと古い seeded PCM はヒットせず、Fish Audio の live synthesis へ静かに戻ります。`config.json` の `agent.ackVariants` / `progressPings` / `exitFarewell` / `greeting` / `timeoutFallback` には、manifest 内のテキストを文字・句読点まで完全一致（感情タグなしのプレーン文言）で入れてください。
 

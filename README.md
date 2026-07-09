@@ -3,7 +3,7 @@
 [![Version](https://img.shields.io/badge/version-v7.9.0--rc.1-blue)](https://github.com/caty-ai/meetmate/releases)
 [![Stable](https://img.shields.io/badge/stable-v7.8.0-brightgreen)](https://github.com/caty-ai/meetmate/releases/tag/v7.8.0-stable)
 [![License: Apache--2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
-[![Node.js](https://img.shields.io/badge/Node.js-%3E%3D18-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![Platform](https://img.shields.io/badge/platform-Google%20Meet%20%7C%20Zoom-4285F4)](#特徴)
 
 AI エージェントを Google Meet / Zoom にリアルタイム参加させ、音声で対話するブリッジサーバー。OpenClaw Gateway 連携により、任意のエージェントを音声会議に接続できます。
@@ -77,8 +77,11 @@ STT (Soniox) → ウェイクワード検出 → OpenClaw Gateway (LLM) → TTS 
 
 ### 前提条件
 
-- Node.js 18 以上
-- 各サービスの API キー（OpenClaw Gateway / Soniox / Fish Audio / Attendee）
+- Node.js 22 以上（`package.json` の `engines` 準拠）
+- **OpenClaw Gateway が稼働していること**（現状の hard prerequisite。LLM 応答は全て Gateway 経由。汎用 LLM バックエンド対応は [#114](https://github.com/caty-ai/meetmate/issues/114) で設計中）
+- 各サービスの API キー（Soniox / Fish Audio / Attendee）
+  - [Attendee](https://attendee.dev/) は Google Meet / Zoom に Bot を参加させる SaaS（self-host 版もあり）。Bot の入退室・音声入出力はすべて Attendee API 経由
+  - Fish Audio の Voice ID は [fish.audio](https://fish.audio/) で使いたい声（自作 or 公開ボイス）のページを開き、URL 末尾の ID をコピー
 
 ### 1. インストール
 
@@ -121,6 +124,8 @@ npm start
 ```
 
 ブラウザで http://localhost:5005 を開き、Meet / Zoom の URL を貼り付けて「参加させる」をクリックします。
+
+> 💡 ウェイクワードの反応が悪い場合は、ブラウザから実際の発話で誤認識バリアントを収集する **wake-calibrate** 機能があります（`/calibrate`）。手順は [docs/setup-guide.md](docs/setup-guide.md#ウェイクワードキャリブレーション) を参照。
 
 ## 設定
 
@@ -179,7 +184,7 @@ npm run dev   # node --watch で自動リロード起動
 Node.js 標準の test runner（`node:test`）を使用しています。外部依存なしで数秒で完走します。
 
 ```bash
-node --test test/*.test.js        # 全テスト（16 スイート / 192 テスト）
+node --test test/*.test.js        # 全テスト（16 スイート / 201 テスト）
 npm run test:meet:repro           # Meet 複数参加者の再現テストのみ
 ```
 
@@ -198,7 +203,7 @@ npm run test:meet:repro           # Meet 複数参加者の再現テストのみ
 
 ## 開発ステータス
 
-- **最新版**: `v7.9.0-rc.1`（2026-07-07・Mac mini 稼働中・`GATEWAY_EVENTS_ENABLED=true`）
+- **最新版**: `v7.9.0-rc.1`（2026-07-07・`GATEWAY_EVENTS_ENABLED=true` で実運用中）
 - **安定版**: [`v7.8.0-stable`](https://github.com/caty-ai/meetmate/releases/tag/v7.8.0-stable)
 - **直近の完了**: [#79 委譲強制ハーネス](https://github.com/caty-ai/meetmate/issues/79) Phase 1（PR #94 / #96 / #97、実機スモーク 2 回で全機能実証済み）
 - **次の開発**: [#87 実戦ゲート](https://github.com/caty-ai/meetmate/issues/87)（社内 MT 実投入・閾値チューニング）、[#98 compact 実圧縮](https://github.com/caty-ai/meetmate/issues/98)（優先度低）

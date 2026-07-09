@@ -30,7 +30,7 @@ docs: restructure README for public release
 
 ## コードスタイル
 
-- Node.js 18+ / CommonJS
+- Node.js 22+ / CommonJS
 - 既存コードのスタイル（命名・コメント密度・エラーハンドリング）に合わせてください
 - 設定値の真実は code の default 1 箇所に置き、env は escape hatch として扱います
 
