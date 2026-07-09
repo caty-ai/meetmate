@@ -1,7 +1,6 @@
 // calibrate-routes.js — Wake word calibration HTTP + WS handlers
 const fs = require("fs");
 const path = require("path");
-const { createClient, LiveTranscriptionEvents } = require("@deepgram/sdk");
 
 const CONFIG_PATH = path.join(__dirname, "..", "..", "config.json");
 const HTML_PATH = path.join(__dirname, "calibrate.html");
@@ -178,22 +177,43 @@ function handleCalibrateWs(ws, _req) {
     return;
   }
 
+  const { createSTT } = require("../stt-provider");
+  const provider = String(process.env.STT_PROVIDER || "soniox").toLowerCase();
   const dgKey = process.env.DEEPGRAM_API_KEY;
-  if (!dgKey) {
+  const sonioxKey = process.env.SONIOX_API_KEY;
+  if (provider === "soniox" && !sonioxKey) {
+    wsSend(ws, { type: "error", message: "SONIOX_API_KEY not configured" });
+    ws.close(1011, "Missing API key");
+    return;
+  }
+  if (provider === "deepgram" && !dgKey) {
     wsSend(ws, { type: "error", message: "DEEPGRAM_API_KEY not configured" });
     ws.close(1011, "Missing API key");
     return;
   }
 
-  // Load language from config
+  // Load language and calibration keyterms from config
   let lang = "ja";
+  let keyterms = [];
   try {
     const config = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
-    lang = config.agent?.lang || "ja";
+    const agent = config.agent || {};
+    lang = agent.lang || "ja";
+    keyterms = [
+      ...(Array.isArray(agent.keyterms) ? agent.keyterms : []),
+      ...(Array.isArray(agent.wakeWords) ? agent.wakeWords : []),
+    ];
   } catch { /* default */ }
 
-  const deepgram = createClient(dgKey);
-  let dgConnection = null;
+  const stt = createSTT(dgKey, {
+    provider,
+    sonioxKey,
+    model: "nova-3",
+    language: lang,
+    sampleRate: 16000,
+    keyterms,
+  });
+
   let timeoutTimer = null;
   let firstAudioReceived = false;
   let closed = false;
@@ -202,43 +222,37 @@ function handleCalibrateWs(ws, _req) {
     if (closed) return;
     closed = true;
     if (timeoutTimer) clearTimeout(timeoutTimer);
-    try { dgConnection?.requestClose?.(); } catch { /* ignore */ }
+    try { stt.close(); } catch { /* ignore */ }
     try { if (ws.readyState <= 1) ws.close(); } catch { /* ignore */ }
   }
 
-  dgConnection = deepgram.listen.live({
-    model: "nova-3",
-    language: lang,
-    interim_results: true,
-    endpointing: 300,
-    sample_rate: 16000,
-    encoding: "linear16",
-    channels: 1,
-  });
-
-  dgConnection.on(LiveTranscriptionEvents.Open, () => {
-    console.log("🎙️  [calibrate] Deepgram connection opened (model=nova-3, lang=" + lang + ")");
+  stt.on("open", () => {
+    console.log(`🎙️  [calibrate] ${provider} connection opened (model=nova-3, lang=${lang})`);
     wsSend(ws, { type: "ready" });
   });
 
-  dgConnection.on(LiveTranscriptionEvents.Transcript, (data) => {
-    const alt = data?.channel?.alternatives?.[0];
-    if (!alt) return;
-    const text = alt.transcript || "";
+  stt.on("transcript", (text, isFinal) => {
     if (!text) return;
-    const isFinal = data.is_final === true;
     console.log(`🎙️  [calibrate] ${isFinal ? "FINAL" : "interim"}: "${text}"`);
-    wsSend(ws, { type: "transcript", text, isFinal });
+    if (!isFinal) {
+      wsSend(ws, { type: "transcript", text, isFinal: false });
+    }
   });
 
-  dgConnection.on(LiveTranscriptionEvents.Error, (err) => {
-    console.error("❌  [calibrate] Deepgram STT error:", err);
+  stt.on("utterance_end", (text) => {
+    if (!text) return;
+    console.log(`🎙️  [calibrate] utterance_end: "${text}"`);
+    wsSend(ws, { type: "transcript", text, isFinal: true });
+  });
+
+  stt.on("error", (err) => {
+    console.error(`❌  [calibrate] ${provider} STT error:`, err);
     wsSend(ws, { type: "error", message: String(err?.message || "STT error") });
     cleanup();
   });
 
-  dgConnection.on(LiveTranscriptionEvents.Close, () => {
-    console.log("🎙️  [calibrate] Deepgram connection closed");
+  stt.on("close", () => {
+    console.log(`🎙️  [calibrate] ${provider} connection closed`);
     if (!closed) {
       wsSend(ws, { type: "error", message: "STT connection closed" });
       cleanup();
@@ -248,7 +262,7 @@ function handleCalibrateWs(ws, _req) {
   ws.on("message", (data) => {
     if (closed) return;
 
-    // Binary audio frames → relay to Deepgram
+    // Binary audio frames → relay to STT provider
     if (Buffer.isBuffer(data) || data instanceof ArrayBuffer) {
       if (!firstAudioReceived) {
         firstAudioReceived = true;
@@ -259,7 +273,7 @@ function handleCalibrateWs(ws, _req) {
         }, TIMEOUT_MS);
       }
       try {
-        dgConnection?.send(Buffer.from(data));
+        stt.send(Buffer.from(data));
       } catch (err) {
         console.error("❌  Calibrate relay error:", err.message);
       }
