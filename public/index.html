@@ -1,624 +1,109 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Meet Participant</title>
-    <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino Sans', sans-serif;
-            background-color: #F7F6F3;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-            margin: 0;
-            padding: 2rem 1rem;
-            color: #37352F;
-        }
-        .container {
-            background: #FFFFFF;
-            padding: 2.5rem;
-            border-radius: 16px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 4px 24px rgba(0,0,0,0.06);
-            width: 100%;
-            max-width: 480px;
-            border: 1px solid rgba(0,0,0,0.06);
-        }
-        h1 {
-            text-align: center;
-            color: #37352F;
-            font-size: 1.6rem;
-            margin-bottom: 0.3rem;
-            font-weight: 700;
-            letter-spacing: -0.01em;
-        }
-        .subtitle {
-            text-align: center;
-            color: #9B9A97;
-            margin-bottom: 1.5rem;
-            font-size: 0.9rem;
-        }
-        .mode-badge {
-            text-align: center;
-            margin-bottom: 2rem;
-        }
-        .mode-badge span {
-            background: #F1F0ED;
-            padding: 0.3rem 0.8rem;
-            border-radius: 20px;
-            font-size: 0.8rem;
-            color: #787774;
-        }
-        form {
-            display: flex;
-            flex-direction: column;
-        }
-        label {
-            margin-top: 1rem;
-            margin-bottom: 0.5rem;
-            color: #787774;
-            font-size: 0.9rem;
-            font-weight: 500;
-        }
-        input,
-        textarea {
-            padding: 0.85rem;
-            border: 1px solid #E3E2DE;
-            border-radius: 10px;
-            font-size: 1rem;
-            font-family: inherit;
-            background-color: #FAFAF8;
-            color: #37352F;
-            transition: border-color 0.15s, box-shadow 0.15s;
-        }
-        textarea {
-            min-height: 84px;
-            resize: vertical;
-            line-height: 1.5;
-        }
-        input:focus,
-        textarea:focus {
-            outline: none;
-            border-color: #E8966D;
-            box-shadow: 0 0 0 3px rgba(232,150,109,0.15);
-        }
-        .field-status {
-            margin-top: 0.5rem;
-            font-size: 0.85rem;
-            color: #CF6D4F;
-            min-height: 1.2rem;
-        }
-        .field-status.success {
-            color: #4B9E6F;
-        }
-        .agent-greeting {
-            margin-top: 0.6rem;
-            color: #9B9A97;
-            font-size: 0.9rem;
-            min-height: 1.2rem;
-        }
-        small {
-            color: #B4B3AF;
-            margin-top: 0.3rem;
-            font-size: 0.82rem;
-        }
-
-        button {
-            margin-top: 1.5rem;
-            padding: 0.9rem;
-            background: #E8966D;
-            color: #FFFFFF;
-            border: none;
-            border-radius: 10px;
-            cursor: pointer;
-            font-size: 1rem;
-            font-weight: 600;
-            transition: background 0.15s, transform 0.1s;
-        }
-        button:hover {
-            background: #D4845E;
-            transform: translateY(-1px);
-        }
-        button:active {
-            transform: translateY(0);
-        }
-        button:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-            transform: none;
-            background: #D2C8BE;
-        }
-        .aux-actions {
-            margin-top: 1rem;
-        }
-        .link-button {
-            display: none;
-            box-sizing: border-box;
-            width: 100%;
-            margin-top: 0.75rem;
-            padding: 0.85rem 1rem;
-            background: #FAFAF8;
-            border: 1px solid #E3E2DE;
-            border-radius: 10px;
-            color: #787774;
-            text-decoration: none;
-            text-align: center;
-            font-size: 0.95rem;
-            font-weight: 600;
-            transition: background 0.15s, transform 0.1s;
-        }
-        .link-button:hover {
-            background: #F1F0ED;
-            transform: translateY(-1px);
-        }
-        .status {
-            margin-top: 1.5rem;
-            padding: 1rem;
-            border-radius: 10px;
-            text-align: center;
-            display: none;
-            line-height: 1.5;
-            font-size: 0.93rem;
-        }
-        .status.success {
-            background: #F0FAF4;
-            border: 1px solid #C3E6D1;
-            color: #2D6A4F;
-            display: block;
-        }
-        .status.error {
-            background: #FDF2F2;
-            border: 1px solid #F0C4C4;
-            color: #9B2C2C;
-            display: block;
-        }
-        .status.loading {
-            background: #F5F3FF;
-            border: 1px solid #DDD6FE;
-            color: #6D5EAB;
-            display: block;
-            animation: pulse 1.5s ease-in-out infinite;
-        }
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
-        }
-
-        /* Active session banner */
-        .active-banner {
-            display: none;
-            background: #F0FAF4;
-            border: 1px solid #C3E6D1;
-            border-radius: 14px;
-            padding: 1.2rem;
-            margin-bottom: 1.5rem;
-            text-align: center;
-        }
-        .active-banner.visible {
-            display: block;
-        }
-        .active-banner .active-icon {
-            font-size: 1.5rem;
-            margin-bottom: 0.5rem;
-        }
-        .active-banner .active-label {
-            color: #2D6A4F;
-            font-weight: 600;
-            font-size: 1rem;
-            margin-bottom: 0.3rem;
-        }
-        .active-banner .active-url {
-            color: #4B9E6F;
-            font-size: 0.82rem;
-            word-break: break-all;
-            margin-bottom: 0.3rem;
-        }
-        .active-banner .active-state {
-            color: #9B9A97;
-            font-size: 0.8rem;
-            margin-bottom: 0.8rem;
-        }
-        .active-banner .active-agents {
-            color: #2D6A4F;
-            font-size: 0.85rem;
-            margin-bottom: 0.6rem;
-        }
-        .leave-btn {
-            margin-top: 0.5rem;
-            padding: 0.7rem 1.5rem;
-            background: #EF6461;
-            color: white;
-            border: none;
-            border-radius: 10px;
-            cursor: pointer;
-            font-size: 0.93rem;
-            font-weight: 600;
-            transition: background 0.15s, transform 0.1s;
-        }
-        .leave-btn:hover {
-            background: #D95450;
-            transform: translateY(-1px);
-        }
-        .leave-btn:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-            transform: none;
-        }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Meet Participant</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
 </head>
 <body>
-    <div class="container">
-        <h1 id="pageTitle">🎙️ AI Meet Participant</h1>
-        <p class="subtitle" id="pageSubtitle">AIエージェントをGoogle Meet / Zoomに参加させる</p>
-        <div class="mode-badge"><span id="modeBadge">🐟 Fish Audio TTS</span></div>
-
-        <!-- Active session banner -->
-        <div id="activeBanner" class="active-banner">
-            <div class="active-icon">🎙️</div>
-            <div class="active-label">通話中</div>
-            <div id="activeUrl" class="active-url"></div>
-            <div id="activeState" class="active-state"></div>
-            <div id="activeAgents" class="active-agents"></div>
-            <button id="leaveBtn" class="leave-btn" onclick="leaveMeeting()">🚪 退出する</button>
+  <div class="page">
+    <div class="header reveal reveal-1">
+      <div class="header-id">
+        <div>
+          <span class="eyebrow">AI Meet Participant</span>
+          <h1 class="agent-name" id="agentName">AI Meet Participant</h1>
         </div>
-
-        <form id="joinForm">
-            <label for="meetingText">📹 Meet情報（カレンダー/Slackの本文を貼り付け）:</label>
-            <textarea
-                id="meetingText"
-                name="meetingText"
-                placeholder="カレンダー招待文やSlackメッセージをそのまま貼り付けてください"
-                title="Google Meet / Zoom URL を含むテキストを貼り付けてください"
-                autofocus
-                required
-            ></textarea>
-            <div id="meetingUrlStatus" class="field-status"></div>
-            <small>貼り付けた内容から Google Meet / Zoom URL を自動で検出します</small>
-
-            <div id="agentInfoDisplay" class="agent-greeting" style="margin-top: 1rem;"></div>
-
-            <button type="submit" id="joinBtn">🚀 Meetに参加させる</button>
-        </form>
-
-        <div id="status" class="status"></div>
-
-        <div class="aux-actions">
-            <a id="calibrateLink" class="link-button" href="/calibrate">🎤 Wake Word Calibrate</a>
-        </div>
-
+        <span class="tts-badge" id="modeBadge">🐟 Fish Audio TTS</span>
+      </div>
+      <button class="theme-toggle" id="themeToggle" type="button" aria-label="ダークモード切り替え">
+        <span id="themeLabel">ライト</span>
+        <span class="switch"></span>
+      </button>
     </div>
 
-    <script>
-        const form = document.getElementById('joinForm');
-        const statusEl = document.getElementById('status');
-        const submitBtn = document.getElementById('joinBtn');
-        const meetingTextEl = document.getElementById('meetingText');
-        const meetingUrlStatusEl = document.getElementById('meetingUrlStatus');
-        const activeBanner = document.getElementById('activeBanner');
-        const activeUrlEl = document.getElementById('activeUrl');
-        const activeStateEl = document.getElementById('activeState');
-        const activeAgentsEl = document.getElementById('activeAgents');
-        const leaveBtn = document.getElementById('leaveBtn');
-        const agentInfoEl = document.getElementById('agentInfoDisplay');
-        const calibrateLink = document.getElementById('calibrateLink');
-        let extractedMeetingUrl = '';
-        let isSubmitting = false;
-        let isLeaving = false;
-        let hasActiveSession = false;
-        let activeSessionId = null;
-        let pollTimer = null;
-        let availableAgents = [];
-        let currentAgentId = "default";
+    <div class="grid">
+      <div class="col-main">
+        <section class="card reveal reveal-2">
+          <h2 class="card-title" id="launchTitle">Bot を起動</h2>
+          <p class="card-sub" id="launchSub">カレンダーや Slack の招待文をそのまま貼り付けてください</p>
 
-        function setStatus(type, text, asHtml = false) {
-            statusEl.className = `status ${type}`;
-            if (asHtml) {
-                statusEl.innerHTML = text;
-            } else {
-                statusEl.textContent = text;
-            }
-        }
+          <form id="joinForm">
+            <label class="field-label" for="meetingText">会議情報を貼り付け</label>
+            <textarea
+              id="meetingText"
+              name="meetingText"
+              placeholder="例）Google カレンダーの招待文をそのままペースト&#10;https://meet.google.com/abc-defg-hij"
+              title="Google Meet / Zoom URL を含むテキストを貼り付けてください"
+              autofocus
+              required
+            ></textarea>
+            <div class="field-status-wrap">
+              <div class="field-status" id="meetingUrlStatus">貼り付け待機中...</div>
+            </div>
+            <span class="field-hint" id="agentInfoDisplay">Google Meet / Zoom の URL を自動検出します</span>
 
-        function updateSubmitButtonState() {
-            const canSubmit = Boolean(extractedMeetingUrl) && !isSubmitting && !hasActiveSession;
-            submitBtn.disabled = !canSubmit;
-            if (hasActiveSession) {
-                submitBtn.textContent = '🔒 通話中（退出してから再参加）';
-            } else if (isSubmitting) {
-                submitBtn.textContent = '⏳ 起動中...';
-            } else {
-                submitBtn.textContent = '🚀 Meetに参加させる';
-            }
-        }
+            <button class="btn btn-primary" id="joinBtn" type="submit" disabled>
+              <span class="btn-label">Meet に参加させる</span>
+            </button>
+          </form>
+          <div class="toast" id="status"></div>
+        </section>
 
-        function stateLabel(state) {
-            const labels = {
-                initiating: '🔄 起動中...',
-                joining: '🔄 参加中...',
-                active: '🟢 通話中',
-                speaking: '🎙️ 発話中',
-                listening: '👂 聴取中',
-                unknown: '🟡 接続中...',
-            };
-            return labels[state] || `🟡 ${state}`;
-        }
+        <section class="active-card reveal reveal-3 is-hidden" id="activeCard">
+          <div class="active-top">
+            <span class="active-label"><span class="pulse-dot"></span> <span id="activeLabel">通話中</span></span>
+            <span class="active-timer" id="elapsedTimer">00:00</span>
+          </div>
+          <div class="active-url" id="activeUrl"></div>
+          <div class="active-meta">
+            <span id="activeState">🟡 接続中...</span>
+            <span id="activeWs">WS 未接続</span>
+            <span id="activeAgents">エージェント: -</span>
+          </div>
+          <div class="active-actions">
+            <button class="btn btn-danger" id="leaveBtn" type="button">退出する</button>
+          </div>
+        </section>
+      </div>
 
-        async function loadAgentsFromServer() {
-            try {
-                const res = await fetch('/agents');
-                const data = await res.json();
-                availableAgents = Array.isArray(data.agents) ? data.agents : [];
-            } catch {
-                availableAgents = [];
-            }
+      <div class="col-side">
+        <section class="card reveal reveal-4" id="metricsCard">
+          <h2 class="card-title">直近セッションの指標</h2>
+          <p class="card-sub" id="metricsSub">Wake Word 検出精度と応答性能</p>
+          <div class="stat-grid" id="metricsStats">
+            <div class="stat">
+              <div class="stat-value">-</div>
+              <div class="stat-label">WAKE 検出</div>
+            </div>
+            <div class="stat">
+              <div class="stat-value">-</div>
+              <div class="stat-label">応答対象</div>
+            </div>
+            <div class="stat">
+              <div class="stat-value">-</div>
+              <div class="stat-label">ターン</div>
+            </div>
+            <div class="stat">
+              <div class="stat-value">-</div>
+              <div class="stat-label">発話回数</div>
+            </div>
+          </div>
+          <div class="recent-list" id="recentSessions">
+            <div class="recent-row">
+              <span>読み込み中...</span>
+              <span class="recent-time">24h</span>
+            </div>
+          </div>
+        </section>
 
-            const agent = availableAgents[0];
-            if (agent) {
-                const dn = agent.displayName || agent.id;
-                agentInfoEl.textContent = `🤖 エージェント: ${dn}`;
-                document.title = `AI Meet Participant — ${dn}`;
-                const titleEl = document.getElementById('pageTitle');
-                if (titleEl) titleEl.textContent = `🎙️ AI Meet Participant — ${dn}`;
-                const subtitleEl = document.getElementById('pageSubtitle');
-                if (subtitleEl) subtitleEl.textContent = `${dn}をGoogle Meet / Zoomに参加させる`;
-                currentAgentId = agent.id;
-            } else {
-                agentInfoEl.textContent = '利用可能なエージェントがありません';
-            }
-        }
-
-        function updateActiveBanner(sessions) {
-            if (sessions && sessions.length > 0) {
-                const s = sessions[0];
-                hasActiveSession = true;
-                activeSessionId = s.sessionId;
-                activeUrlEl.textContent = s.meetingUrl || '';
-                activeStateEl.textContent = stateLabel(s.state) + (s.hasConnection ? '' : ' (WS未接続)');
-                const fallbackName = availableAgents.length ? availableAgents[0].displayName : 'Agent';
-                const names = Array.isArray(s.agentDisplayNames) && s.agentDisplayNames.length
-                    ? s.agentDisplayNames.join(', ')
-                    : fallbackName;
-                activeAgentsEl.textContent = `Agent: ${names}`;
-                activeBanner.classList.add('visible');
-            } else {
-                hasActiveSession = false;
-                activeSessionId = null;
-                activeBanner.classList.remove('visible');
-                activeAgentsEl.textContent = '';
-            }
-            updateSubmitButtonState();
-        }
-
-        async function pollActiveSession() {
-            try {
-                const res = await fetch('/active-session');
-                const data = await res.json();
-                updateActiveBanner(data.sessions);
-            } catch {
-                // ignore
-            }
-        }
-
-        function startPolling() {
-            pollActiveSession();
-            pollTimer = setInterval(pollActiveSession, 3000);
-        }
-
-        function stopPolling() {
-            if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-        }
-
-        async function leaveMeeting() {
-            if (isLeaving) return;
-            isLeaving = true;
-            leaveBtn.disabled = true;
-            leaveBtn.textContent = '⏳ 退出中...';
-
-            try {
-                const body = new URLSearchParams({
-                    sessionId: activeSessionId || '',
-                });
-                const res = await fetch('/leave-meeting', { method: 'POST', body });
-                const text = await res.text();
-
-                if (res.ok) {
-                    setStatus('success', '🚪 ' + text);
-                    // Force refresh after a moment
-                    setTimeout(pollActiveSession, 1000);
-                } else {
-                    setStatus('error', '❌ ' + text);
-                }
-            } catch (err) {
-                setStatus('error', '❌ 退出エラー: ' + err.message);
-            } finally {
-                isLeaving = false;
-                leaveBtn.disabled = false;
-                leaveBtn.textContent = '🚪 退出する';
-            }
-        }
-
-        function decodeEscapedAngles(text) {
-            let decoded = text || '';
-            const maxPasses = 5;
-
-            for (let i = 0; i < maxPasses; i += 1) {
-                const next = decoded
-                    .replace(/&amp;/gi, '&')
-                    .replace(/&lt;/gi, '<')
-                    .replace(/&gt;/gi, '>');
-                if (next === decoded) break;
-                decoded = next;
-            }
-
-            return decoded;
-        }
-
-        function isValidMeetPath(pathname) {
-            return /^\/[a-z0-9]{3}-[a-z0-9]{4}-[a-z0-9]{3}\/?$/i.test(pathname || '');
-        }
-
-        function normalizeMeetingUrl(rawUrl) {
-            if (!rawUrl) return '';
-            let value = rawUrl.trim();
-            if (!/^https?:\/\//i.test(value)) {
-                value = `https://${value}`;
-            }
-            try {
-                const parsed = new URL(value);
-                parsed.protocol = 'https:';
-                const host = parsed.hostname.toLowerCase();
-
-                // Google Meet
-                if (host === 'meet.google.com' && isValidMeetPath(parsed.pathname)) {
-                    return parsed.toString();
-                }
-                // Zoom (*.zoom.us)
-                if (host.endsWith('zoom.us') && /^\/(j|my)\/[a-zA-Z0-9]+/.test(parsed.pathname)) {
-                    return parsed.toString();
-                }
-                return '';
-            } catch {
-                return '';
-            }
-        }
-
-        function extractMeetingUrl(text) {
-            const decoded = decodeEscapedAngles(text || '');
-            // Try Google Meet first
-            const meetRegex = /(?:https?:\/\/)?meet\.google\.com\/[a-z0-9]{3}-[a-z0-9]{4}-[a-z0-9]{3}(?:\?[^\s<>"'|)]*)?/i;
-            const meetMatch = decoded.match(meetRegex);
-            if (meetMatch) return normalizeMeetingUrl(meetMatch[0]);
-
-            // Try Zoom
-            const zoomRegex = /(?:https?:\/\/)?[\w.-]*zoom\.us\/(j|my)\/[a-zA-Z0-9?=&._%-]+/i;
-            const zoomMatch = decoded.match(zoomRegex);
-            if (zoomMatch) return normalizeMeetingUrl(zoomMatch[0]);
-
-            return '';
-        }
-
-        function updateMeetingUrlStatus() {
-            const text = meetingTextEl.value.trim();
-            extractedMeetingUrl = extractMeetingUrl(text);
-
-            if (!text) {
-                meetingUrlStatusEl.textContent = '';
-                meetingUrlStatusEl.className = 'field-status';
-            } else if (extractedMeetingUrl) {
-                meetingUrlStatusEl.textContent = `✅ 検出した URL: ${extractedMeetingUrl}`;
-                meetingUrlStatusEl.className = 'field-status success';
-            } else {
-                meetingUrlStatusEl.textContent = 'Meet / Zoom URLが見つかりません';
-                meetingUrlStatusEl.className = 'field-status';
-            }
-
-            updateSubmitButtonState();
-        }
-
-        // Public WSS URL from server (resolved via /info)
-        let serverPublicWsUrl = '';
-
-        // Auto-compute WebSocket URL from current page host
-        function getAutoWsUrl() {
-            // Prefer server-provided public WSS URL (ngrok)
-            if (serverPublicWsUrl) return serverPublicWsUrl;
-            const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            return `${proto}//${location.host}`;
-        }
-
-        // Fetch server info for mode badge + public WSS URL
-        fetch('/info').then(r => r.json()).then(info => {
-            const badge = document.getElementById('modeBadge');
-            if (info.ttsProvider === 'fish-audio') {
-                badge.textContent = '🐟 Fish Audio TTS';
-            } else {
-                badge.textContent = '🔊 Deepgram Voice Agent';
-            }
-            if (info.publicWsUrl) {
-                serverPublicWsUrl = info.publicWsUrl;
-            }
-        }).catch(() => {});
-
-        fetch('/calibrate/status')
-            .then(r => r.ok ? r.json() : { enabled: false })
-            .then(data => {
-                if (data.enabled) {
-                    calibrateLink.style.display = 'block';
-                }
-            })
-            .catch(() => {});
-
-        loadAgentsFromServer();
-
-        meetingTextEl.addEventListener('input', updateMeetingUrlStatus);
-        meetingTextEl.addEventListener('paste', () => {
-            setTimeout(updateMeetingUrlStatus, 0);
-        });
-        updateMeetingUrlStatus();
-
-        // Start polling for active sessions
-        startPolling();
-
-        form.addEventListener('submit', async function(event) {
-            event.preventDefault();
-
-            updateMeetingUrlStatus();
-            if (!extractedMeetingUrl || isSubmitting || hasActiveSession) {
-                if (hasActiveSession) {
-                    setStatus('error', '🔒 既にアクティブなセッションがあります。退出してから再参加してください。');
-                } else if (!extractedMeetingUrl) {
-                    setStatus('error', '❌ Meet / Zoom URLが見つかりません');
-                }
-                return;
-            }
-
-            isSubmitting = true;
-            updateSubmitButtonState();
-            setStatus('loading', '⏳ Botを起動中...');
-
-            try {
-                const wsUrl = getAutoWsUrl();
-                // Always use group mode (wake-word mode) — single-agent architecture
-                const conversationMode = 'group';
-                const selectedAgentIds = availableAgents.map(a => a.id);
-
-                const botName = availableAgents.length
-                    ? `${availableAgents[0].id} (${availableAgents[0].displayName})`
-                    : 'Agent';
-
-                const formData = new URLSearchParams({
-                    meetingUrl: extractedMeetingUrl,
-                    botName,
-                    wsUrl,
-                    conversationMode,
-                    agentIds: selectedAgentIds.join(','),
-                });
-
-                const response = await fetch('/join-meeting', {
-                    method: 'POST',
-                    body: formData,
-                });
-
-                const text = await response.text();
-                if (response.ok) {
-                    setStatus('success',
-                        '✅ ' + text +
-                        '<br><small style="opacity:0.9">ミーティング画面でBotの参加を確認してください</small>',
-                        true
-                    );
-                    // Immediately poll to show active banner
-                    setTimeout(pollActiveSession, 500);
-                } else {
-                    setStatus('error', '❌ ' + text);
-                }
-            } catch (err) {
-                setStatus('error', '❌ 接続エラー: ' + err.message);
-            } finally {
-                isSubmitting = false;
-                updateSubmitButtonState();
-            }
-        });
-    </script>
+        <section class="card reveal reveal-5" id="toolsCard">
+          <h2 class="card-title tools-title">ツール</h2>
+          <a class="link-button is-hidden" id="calibrateLink" href="/calibrate">🎤 Wake Word Calibrate</a>
+        </section>
+      </div>
+    </div>
+  </div>
 </body>
 </html>
