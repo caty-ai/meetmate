@@ -18,3 +18,7 @@ assets/tts-cache/
 config.json
 .omx/
 .omc/
+
+# Internal dev notes and review artifacts (never publish)
+_handoffs/
+artifacts/
