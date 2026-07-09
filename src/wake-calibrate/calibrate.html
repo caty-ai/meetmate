@@ -335,17 +335,14 @@
             transcriptArea.appendChild(span);
             transcriptArea.scrollTop = transcriptArea.scrollHeight;
 
-            // Record tokens from both final AND interim (interim as fallback)
-            if (text.trim()) {
+            // Record tokens only from completed utterances.
+            if (isFinal && text.trim()) {
                 const tokens = text.split(/[\s、。！？!?,.\-]+/).filter(Boolean);
                 for (const token of tokens) {
                     const norm = normalizeLower(token);
                     if (!norm) continue;
                     if (!detectedVariants[norm]) {
-                        detectedVariants[norm] = { original: token, count: 0, hasFinal: false };
-                    }
-                    if (isFinal) {
-                        detectedVariants[norm].hasFinal = true;
+                        detectedVariants[norm] = { original: token, count: 0 };
                     }
                     detectedVariants[norm].count++;
                 }
