@@ -15,7 +15,7 @@ const { cacheKey } = require("../src/tts-cache");
 const REPO_ROOT = path.join(__dirname, "..");
 const DEFAULT_SAMPLE_RATE = 24_000;
 const DEFAULT_MODEL = "s2-pro";
-const DEFAULT_MANIFEST_PATH = path.join(REPO_ROOT, "assets", "fillers", "manifest.json");
+const DEFAULT_PRESET_MANIFEST_PATH = path.join(REPO_ROOT, "assets", "fillers", "manifest.json");
 const DEFAULT_CONFIG_PATH = path.join(REPO_ROOT, "config.json");
 const DEFAULT_CACHE_DIR = path.join(REPO_ROOT, "assets", "tts-cache");
 
@@ -127,6 +127,7 @@ function parseArgv(argv) {
       "--speed": "speed",
       "--model": "model",
       "--config": "configPath",
+      "--manifest": "manifestPath",
     };
     const key = optionMap[arg];
     if (!key) {
@@ -195,7 +196,7 @@ function seedEntry({ entry, key, paths, params, ffmpegBin }) {
 
 function main(argv = process.argv.slice(2)) {
   const cli = parseArgv(argv);
-  const manifestPath = DEFAULT_MANIFEST_PATH;
+  const manifestPath = cli.manifestPath ? path.resolve(cli.manifestPath) : DEFAULT_PRESET_MANIFEST_PATH;
   const configPath = cli.configPath ? path.resolve(cli.configPath) : DEFAULT_CONFIG_PATH;
   const { exists: configExists, config } = readConfig(configPath);
   const params = resolveTtsParams({ cli, env: process.env, config, configExists });
@@ -247,4 +248,5 @@ module.exports = {
   loadManifest,
   parseArgv,
   resolveTtsParams,
+  DEFAULT_PRESET_MANIFEST_PATH,
 };
