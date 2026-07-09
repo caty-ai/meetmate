@@ -114,15 +114,16 @@ const SUMMARY_ENABLED = String(process.env.SUMMARY_ENABLED || "true").toLowerCas
 function validateSttProviderApiKey(options = {}) {
   const {
     env = process.env,
-    provider = String(env.STT_PROVIDER || STT_PROVIDER).toLowerCase(),
+    provider = String(env.STT_PROVIDER || STT_PROVIDER).trim().toLowerCase(),
     exitProcess = false,
   } = options;
 
+  // Mirrors the stt-provider.js dispatch: "soniox" → Soniox, anything else → Deepgram.
   let message = null;
   if (provider === "soniox" && !env.SONIOX_API_KEY) {
-    message = "❌  Set SONIOX_API_KEY for the soniox STT provider.";
-  } else if (provider === "deepgram" && !env.DEEPGRAM_API_KEY) {
-    message = "❌  Set DEEPGRAM_API_KEY for the deepgram STT provider.";
+    message = "❌  Set SONIOX_API_KEY for the soniox STT provider (STT_PROVIDER=soniox is the default).";
+  } else if (provider !== "soniox" && !env.DEEPGRAM_API_KEY) {
+    message = `❌  Set DEEPGRAM_API_KEY for the "${provider}" STT provider (any value other than "soniox" routes to Deepgram).`;
   }
 
   if (!message) return;
