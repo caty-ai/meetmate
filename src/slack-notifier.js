@@ -2,21 +2,11 @@
 // Uses raw HTTPS (no @slack/web-api dependency)
 
 const https = require("https");
+const { DEFAULT_MESSAGES } = require("./messages");
 
-const STATE_EMOJI = {
-  idle: "⬜ 待機",
-  initiating: "⏳ 受付",
-  ringing: "🔔 発信中",
-  "in-progress": "🟢 通話中",
-  ending: "🔄 終了処理中",
-  completed: "✅ 完了",
-  failed: "❌ 失敗",
-};
+const STATE_EMOJI = DEFAULT_MESSAGES.slack.stateEmoji;
 
-const TRANSPORT_LABEL = {
-  meet: "🎥 Google Meet",
-  zoom: "🎥 Zoom Meeting",
-};
+const TRANSPORT_LABEL = DEFAULT_MESSAGES.slack.transportLabel;
 
 function detectMeetingPlatform(meetingUrl) {
   if (!meetingUrl) return "meet";
@@ -62,6 +52,9 @@ class SlackNotifier {
       options.summaryChannelId || this._defaultChannelId;
     this._statusChannelId =
       options.statusChannelId || this._summaryChannelId || this._defaultChannelId;
+    this._labels = { ...DEFAULT_MESSAGES.slack, ...(options.labels || {}) };
+    this._labels.stateEmoji = { ...STATE_EMOJI, ...(options.labels?.stateEmoji || {}) };
+    this._labels.transportLabel = { ...TRANSPORT_LABEL, ...(options.labels?.transportLabel || {}) };
 
     /** @type {Map<string, {ts: string, channel: string}>} */
     this._statusMessageRef = new Map();
@@ -252,42 +245,43 @@ class SlackNotifier {
     if (transportKey === "meet") {
       transportKey = detectMeetingPlatform(lifecycle.meta.meetingUrl);
     }
-    const transport = TRANSPORT_LABEL[transportKey] || lifecycle.transport;
-    const state = STATE_EMOJI[lifecycle.state] || lifecycle.state;
-    const to = lifecycle.meta.to || lifecycle.meta.meetingUrl || "—";
+    const labels = this._labels;
+    const transport = labels.transportLabel[transportKey] || lifecycle.transport;
+    const state = labels.stateEmoji[lifecycle.state] || lifecycle.state;
+    const to = lifecycle.meta.to || lifecycle.meta.meetingUrl || labels.emptyValue;
     const elapsed = lifecycle.state === "in-progress"
       ? lifecycle.durationFormatted
       : lifecycle.isTerminal
         ? lifecycle.durationFormatted
-        : "—";
+        : labels.emptyValue;
 
     const agentNames = Array.isArray(lifecycle.meta.agents) && lifecycle.meta.agents.length
       ? lifecycle.meta.agents.join(", ")
       : null;
 
     const header = lifecycle.isTerminal && lifecycle.state === "completed"
-      ? `${transport} 完了`
-      : `${transport} ステータス`;
+      ? `${transport} ${labels.statusCompleteSuffix}`
+      : `${transport} ${labels.statusSuffix}`;
 
     const lines = [
       header,
-      "━━━━━━━━━━━━━━━",
+      labels.separator,
     ];
 
     if (agentNames) {
-      lines.push(`🤖 エージェント: ${agentNames}`);
+      lines.push(`${labels.agentLinePrefix}: ${agentNames}`);
     }
 
-    lines.push(`🔗 ミーティング: ${to}`);
+    lines.push(`${labels.meetingLinePrefix}: ${to}`);
 
-    lines.push(`📊 状態: ${state}`);
+    lines.push(`${labels.stateLinePrefix}: ${state}`);
 
     if (lifecycle.isTerminal) {
-      lines.push(`⏱️ 会議時間: ${elapsed}`);
+      lines.push(`${labels.durationLinePrefix}: ${elapsed}`);
     } else if (lifecycle.state === "in-progress") {
-      lines.push(`⏱️ 経過: ${elapsed}`);
+      lines.push(`${labels.elapsedLinePrefix}: ${elapsed}`);
     } else {
-      lines.push(`⏱️ 経過: —`);
+      lines.push(`${labels.elapsedLinePrefix}: ${labels.emptyValue}`);
     }
 
     return lines.join("\n");
@@ -298,16 +292,17 @@ class SlackNotifier {
     if (transportKey === "meet") {
       transportKey = detectMeetingPlatform(lifecycle.meta.meetingUrl);
     }
-    const transport = TRANSPORT_LABEL[transportKey] || lifecycle.transport;
+    const labels = this._labels;
+    const transport = labels.transportLabel[transportKey] || lifecycle.transport;
     const lines = [
-      `📋 ${transport} サマリー`,
-      "━━━━━━━━━━━━━━━",
-      `⏱️ 会議時間: ${lifecycle.durationFormatted}`,
+      `${labels.summaryTitlePrefix} ${transport} ${labels.summaryTitleSuffix}`,
+      labels.separator,
+      `${labels.durationLinePrefix}: ${lifecycle.durationFormatted}`,
       "",
     ];
 
     if (summary.summary && summary.summary.length > 0) {
-      lines.push("📝 要約");
+      lines.push(labels.summarySection);
       for (const item of summary.summary) {
         lines.push(`• ${item}`);
       }
@@ -315,7 +310,7 @@ class SlackNotifier {
     }
 
     if (summary.decisions && summary.decisions.length > 0) {
-      lines.push("✅ 決定事項");
+      lines.push(labels.decisionsSection);
       for (const item of summary.decisions) {
         lines.push(`• ${item}`);
       }
@@ -323,7 +318,7 @@ class SlackNotifier {
     }
 
     if (summary.todos && summary.todos.length > 0) {
-      lines.push("📌 TODO");
+      lines.push(labels.todosSection);
       for (const item of summary.todos) {
         lines.push(`• ${item}`);
       }
@@ -340,8 +335,8 @@ class SlackNotifier {
     ).length;
     const agentNames = Array.isArray(lifecycle.meta.agents) && lifecycle.meta.agents.length
       ? lifecycle.meta.agents.join("/")
-      : "AI";
-    lines.push(`💬 発話数: ${log.length}（ユーザー: ${userMsgs}, ${agentNames}: ${agentMsgs}）`);
+      : labels.defaultAgentLabel;
+    lines.push(`${labels.utteranceStatsPrefix}: ${log.length}（${labels.userLabel}: ${userMsgs}, ${agentNames}: ${agentMsgs}）`);
 
     return lines.join("\n");
   }

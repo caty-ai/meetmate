@@ -4,6 +4,7 @@
 const http = require("http");
 const https = require("https");
 const { URL } = require("url");
+const { DEFAULT_MESSAGES } = require("./messages");
 
 const DEFAULT_WARMUP_TIMEOUT_MS = 8_000;
 
@@ -51,32 +52,20 @@ function warmUpGatewaySession(sessionId, config, briefing = null) {
     }
 
     const briefingText = typeof briefing === "string" ? briefing.trim() : "";
+    const briefingPrompt = config?.gatewayBriefingPrompt || DEFAULT_MESSAGES.prompts.gatewayBriefingSystem;
+    const warmupUserPrompt = config?.gatewayWarmupUserPrompt || DEFAULT_MESSAGES.prompts.gatewayWarmupUser;
     const messages = briefingText
       ? [
           {
             role: "system",
-            content: [
-              "音声通話の準備中です。以下のブリーフィングを読んで準備してください。",
-              "",
-              "【重要】応答は以下のJSON形式のみで返してください：",
-              '{"purposeStatement": "挨拶の直後に話す、電話の目的を伝える1〜2文。自然な話し言葉で。感情タグ付き。"}',
-              "",
-              "例: {\"purposeStatement\": \"[empathetic, unhurried] 今日はレストランの予約の件でお電話させていただきました。来週の金曜日に4名で伺いたいのですが。\"}",
-              "",
-              "ルール:",
-              "- 1〜2文で簡潔に。長くならないこと",
-              "- 自然な敬語の話し言葉にする",
-              "- ブリーフィングの内容を要約・整形する（そのまま読まない）",
-              "- 先頭に感情タグを必ず1個入れる（スタイル安定化のため）。使えるタグ: [soft voice], [warm], [friendly, warm], [empathetic, unhurried], [thoughtful]。迷ったら [soft voice]。",
-              "- JSONのみ出力。説明やマークダウンは不要",
-            ].join("\n"),
+            content: briefingPrompt,
           },
           { role: "user", content: briefingText },
         ]
       : [
           {
             role: "user",
-            content: "セッション準備中。次のメッセージから音声通話が始まります。",
+            content: warmupUserPrompt,
           },
         ];
 

@@ -1,10 +1,10 @@
 // exit-handler.js — Generalized exit command detection and exit sequence
 // Moved from pipeline.js hardcoded EXIT_COMMANDS to agent-configurable exit handling
 
-const DEFAULT_EXIT_COMMANDS = [
-  "退出して", "退出していいよ", "退出", "退出して大丈夫",
-  "退室して", "退室していいよ", "退室", "退室して大丈夫", "退室してもらって",
-];
+const { DEFAULT_MESSAGES } = require("./messages");
+
+const DEFAULT_EXIT_COMMANDS = DEFAULT_MESSAGES.exit.commands;
+const DEFAULT_EXIT_FAREWELL = DEFAULT_MESSAGES.speech.exitFarewell;
 
 /**
  * Get exit commands for an agent. Uses agent-specific commands if available,
@@ -83,7 +83,7 @@ async function runExitSequence(options) {
 
   try {
     // Speak farewell
-    const farewell = options.farewell || agentProfile?.exitFarewell || "[warm] 了解です！退出しますね。お疲れさまでした！";
+    const farewell = options.farewell || agentProfile?.exitFarewell || DEFAULT_EXIT_FAREWELL;
     try {
       await speakFn(farewell, null);
     } catch {
@@ -118,4 +118,5 @@ module.exports = {
   detectExitIntent,
   runExitSequence,
   DEFAULT_EXIT_COMMANDS,
+  DEFAULT_EXIT_FAREWELL,
 };
