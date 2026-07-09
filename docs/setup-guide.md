@@ -11,8 +11,9 @@
 
 | サービス | 取得先 | 用途 | 必須 |
 |---------|--------|------|------|
-| OpenClaw Gateway | 同一マシンで稼働 | LLM（SOUL/memory/tools/skills連携） | ✅ |
-| Deepgram | https://console.deepgram.com/signup | STT（音声認識） | ✅ |
+| OpenClaw Gateway | 同一マシンで稼働 | LLM（SOUL/memory/tools/skills連携）。**現状の hard prerequisite**（汎用 LLM バックエンドは [#114](https://github.com/caty-ai/meetmate/issues/114) で設計中） | ✅ |
+| Soniox | https://console.soniox.com/ | STT（音声認識・既定プロバイダ） | ✅ |
+| Deepgram | https://console.deepgram.com/signup | STT（`STT_PROVIDER=deepgram` 切替時のみ） | 任意 |
 | Attendee | https://app.attendee.dev/accounts/signup/ | Google Meet / Zoom Bot | ✅ |
 | Fish Audio | https://fish.audio/ | TTS（音声合成） | ✅ |
 | ngrok | `brew install ngrok` | WebSocket トンネル（外部接続用） | ✅ |
@@ -20,7 +21,7 @@
 
 ### 前提条件
 
-- Node.js v20+
+- Node.js v22+（`package.json` の `engines` 準拠）
 - OpenClaw Gateway が同一マシンで稼働中
   - Gateway URL: `http://localhost:<port>`（エージェントのポートに合わせる）
   - Gateway Token: `openclaw.json` の `gateway.token` を確認
@@ -42,7 +43,7 @@ npm install
 ```bash
 git clone https://github.com/caty-ai/meetmate.git meetmate-<agent-name>
 cd meetmate-<agent-name>
-git checkout v7.2.0   # 安定版タグを推奨（Wake Calibration含む）
+git checkout <安定版タグ>   # Releases の最新 stable タグを推奨
 npm install
 ```
 
@@ -64,7 +65,7 @@ cp config.json.example config.json
     "emotionTags": true,             // TTS用の感情タグを有効化（推奨: true）
     "model": "openclaw",             // ← 必ず "openclaw"（Gatewayに任せる）
     "wakeWords": ["ルカ", "luca"],   // ウェイクワード（名前）
-    "keyterms": ["ルカ", "Luca"],    // Deepgramキーワードブースト用
+    "keyterms": ["ルカ", "Luca"],    // STT キーワードブースト用（Soniox context terms / Deepgram keyterm）
     "sttWakeVariants": [],           // キャリブレーション後に自動追記される
     // ... 口調・メッセージをエージェントに合わせて編集
   },
@@ -91,7 +92,7 @@ cp config.json.example config.json
 
 > 💡 **`emotionTags`** を `true` にすると、LLM の応答に `(happy)`, `(calm)`, `(excited)` 等の感情タグが付き、TTS の表現力が上がる。`greeting` にも同じ形式でタグを付けると参加時の挨拶が自然になる。使えるタグ: `(calm)`, `(happy)`, `(curious)`, `(soft tone)`, `(excited)`, `(nervous)`, `(grateful)`, `(laughing)`, `(confident)`
 
-> 💡 `tts` / `stt` セクションは `.env` の `TTS_PROVIDER` / `DEEPGRAM_API_KEY` が未設定の場合のフォールバック。通常は `.env` 側が優先される（`config.js` で `process.env.* || config値` の順で解決）。
+> 💡 `tts` / `stt` セクションは `.env` 側が未設定の場合のフォールバック。通常は `.env` 側が優先される（`config.js` で `process.env.* || config値` の順で解決）。STT の既定プロバイダは Soniox（`SONIOX_API_KEY`）で、`stt.apiKey` の `DEEPGRAM_API_KEY` は Deepgram 切替時のフォールバック用。
 
 ### 3. .env（APIキー・シークレット）
 
@@ -105,8 +106,10 @@ cp .env.example .env
 OPENCLAW_GATEWAY_URL=http://localhost:19300    # エージェントのGatewayポート
 OPENCLAW_GATEWAY_TOKEN=your_gateway_token_here
 
-# STT
-DEEPGRAM_API_KEY=your_deepgram_key
+# STT（既定プロバイダ Soniox）
+SONIOX_API_KEY=your_soniox_key
+# STT_PROVIDER=deepgram に切り替える場合のみ必須
+# DEEPGRAM_API_KEY=your_deepgram_key
 
 # Meet/Zoom Bot
 ATTENDEE_API_KEY=your_attendee_key
@@ -120,6 +123,8 @@ TTS_PROVIDER=fish-audio
 ```
 
 > ⚠️ **`TTS_PROVIDER=fish-audio` は必須。** `openai` にすると Deepgram Voice Agent（レガシーモード）で起動し、パイプラインが全く別のルートに入る。
+
+> 💡 **`FISH_AUDIO_VOICE_ID` の取得方法**: [fish.audio](https://fish.audio/) にログインし、使いたい声（自分で作成したクローンボイス or 公開ボイス）のページを開くと、URL が `https://fish.audio/m/<voice-id>/` の形になっている。この `<voice-id>` をコピーして設定する。
 
 ### 4. アバター画像
 
@@ -136,7 +141,6 @@ cp /path/to/your-agent-avatar.png assets/avatar.png
 - **⚠️ 必ず PNG 形式であること**（JPEG を `.png` にリネームしただけでは Attendee API が `400 - Data is not a valid PNG image` で拒否する）
 - 推奨サイズ: 256x256px の正方形 PNG
 - 丸くクロップされて表示されるため、顔が中央にあるとベスト
-- エージェントの画像がない場合: OpenClaw workspace の `creative-assets/` 等を確認
 
 **PNG 形式の確認・変換方法:**
 ```bash
@@ -195,7 +199,7 @@ ngrok http 5006 --domain=your-domain.ngrok-free.dev --config ~/.config/ngrok/ngr
 
 #### 5-4. ngrok 不要な構成
 
-Tailscale + VPS 環境であれば ngrok なしで直接接続可能。Attendee 側の WebSocket URL を Tailscale IP ベース（例: `wss://<tailscale-ip>:5006`）に向ければ、トンネルなしで動作する。
+一例として、サーバーと Attendee（self-host）が同じ Tailscale ネットワーク上にある構成なら ngrok なしで直接接続できる。Attendee 側の WebSocket URL を Tailscale IP ベース（例: `wss://<tailscale-ip>:5006`）に向ければ、トンネルなしで動作する。
 
 ### 6. 起動
 
@@ -368,7 +372,7 @@ SLACK_SUMMARY_CHANNEL=C0XXXXXXXXX   # 会議サマリー + 全文ログ
 ## アーキテクチャ概要
 
 ```
-STT(Deepgram nova-3) → ウェイクワード検出 → OpenClaw Gateway(LLM) → TTS(Fish Audio) → Meet/Zoom
+STT(Soniox stt-rt-v5 既定 / Deepgram 切替可) → ウェイクワード検出 → OpenClaw Gateway(LLM) → TTS(Fish Audio) → Meet/Zoom
 ```
 
 詳細は `docs/architecture.md` を参照。
