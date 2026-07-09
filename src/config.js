@@ -111,6 +111,30 @@ const SLACK_STATUS_CHANNEL = process.env.SLACK_STATUS_CHANNEL || "";
 const SLACK_NOTIFY_ENABLED = String(process.env.SLACK_NOTIFY_ENABLED || "true").toLowerCase() !== "false";
 const SUMMARY_ENABLED = String(process.env.SUMMARY_ENABLED || "true").toLowerCase() !== "false";
 
+function validateSttProviderApiKey(options = {}) {
+  const {
+    env = process.env,
+    provider = String(env.STT_PROVIDER || STT_PROVIDER).toLowerCase(),
+    exitProcess = false,
+  } = options;
+
+  let message = null;
+  if (provider === "soniox" && !env.SONIOX_API_KEY) {
+    message = "❌  Set SONIOX_API_KEY for the soniox STT provider.";
+  } else if (provider === "deepgram" && !env.DEEPGRAM_API_KEY) {
+    message = "❌  Set DEEPGRAM_API_KEY for the deepgram STT provider.";
+  }
+
+  if (!message) return;
+
+  if (exitProcess) {
+    console.error(message);
+    process.exit(1);
+  }
+
+  throw new Error(message);
+}
+
 /**
  * Load config.json (single-agent format).
  * Resolves ${ENV_VAR} placeholders in string values.
@@ -297,6 +321,7 @@ module.exports = {
   SAMPLE_RATE,
   TTS_SAMPLE_RATE,
   TTS_PROVIDER,
+  validateSttProviderApiKey,
   SLACK_BOT_TOKEN,
   SLACK_NOTIFY_CHANNEL,
   SLACK_NOTIFY_ENABLED,
