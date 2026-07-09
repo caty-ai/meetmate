@@ -13,6 +13,7 @@ const {
   TTS_SAMPLE_RATE,
   TTS_PROVIDER,
   loadConfig,
+  validateSttProviderApiKey,
 } = require("../config");
 const { createPipeline } = require("../pipeline");
 const { warmUpGatewaySession, warmUpMultipleAgents } = require("../gateway-warmup");
@@ -815,10 +816,7 @@ function writePlainResponse(res, status, text) {
 }
 
 function validateRequiredEnv() {
-  if (!DG_KEY) {
-    console.error("❌  DEEPGRAM_API_KEY が設定されていません。.env ファイルを確認してください。");
-    process.exit(1);
-  }
+  validateSttProviderApiKey({ exitProcess: true });
 
   if (!ATTENDEE_API_KEY) {
     console.error("❌  ATTENDEE_API_KEY が設定されていません。config.json または .env ファイルを確認してください。");

@@ -14,7 +14,7 @@ const https = require("https");
 const path = require("path");
 const crypto = require("crypto");
 const { parse } = require("querystring");
-const { getPipelineConfig, SAMPLE_RATE, TTS_SAMPLE_RATE, TTS_PROVIDER, loadConfig } = require("./config");
+const { getPipelineConfig, SAMPLE_RATE, TTS_SAMPLE_RATE, TTS_PROVIDER, loadConfig, validateSttProviderApiKey } = require("./config");
 const { createPipeline } = require("./pipeline");
 const { warmUpGatewaySession } = require("./gateway-warmup");
 const gatewayEvents = require("./gateway-events");
@@ -51,10 +51,7 @@ const CONVERSATION_MODES = new Set(["one_to_one", "group"]);
 
 // ── Validate API keys ──────────────────────────────────────────────
 const DG_KEY = process.env.DEEPGRAM_API_KEY;
-if (!DG_KEY) {
-  console.error("❌  DEEPGRAM_API_KEY が設定されていません。.env ファイルを確認してください。");
-  process.exit(1);
-}
+validateSttProviderApiKey({ exitProcess: true });
 
 const ATTENDEE_API_KEY = _configForPort?.attendee?.apiKey || process.env.ATTENDEE_API_KEY;
 if (!ATTENDEE_API_KEY) {
