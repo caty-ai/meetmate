@@ -2,24 +2,9 @@
 
 const http = require("http");
 const https = require("https");
+const { DEFAULT_MESSAGES } = require("./messages");
 
-const SUMMARY_PROMPT = `以下の音声通話/会議の会話ログから、簡潔なサマリーをJSON形式で生成してください。
-
-出力フォーマット（必ずこのJSONのみ出力すること）:
-{
-  "summary": ["要約1", "要約2", "要約3"],
-  "decisions": ["決定事項1"],
-  "todos": ["TODO1"]
-}
-
-ルール:
-- summaryは最大3項目の箇条書き
-- decisionsは決定事項があれば記載（なければ空配列）
-- todosはTODOがあれば記載（なければ空配列）
-- JSONのみ出力。説明やマークダウンは不要
-
-会話ログ:
-`;
+const SUMMARY_PROMPT = DEFAULT_MESSAGES.prompts.summary;
 
 /**
  * Summarize a conversation log using LLM.
@@ -66,7 +51,7 @@ async function summarizeConversation(conversationLog, options = {}) {
     logText = "...(前半省略)\n" + logText;
   }
 
-  const prompt = SUMMARY_PROMPT + logText;
+  const prompt = (options.summaryPrompt || SUMMARY_PROMPT) + logText;
 
   try {
     if (!options.openclawUrl || !options.openclawToken) {
@@ -168,4 +153,4 @@ async function callOpenClaw(prompt, options) {
   return parsed.choices?.[0]?.message?.content || "";
 }
 
-module.exports = { summarizeConversation };
+module.exports = { summarizeConversation, SUMMARY_PROMPT };

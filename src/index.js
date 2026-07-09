@@ -14,7 +14,7 @@ const https = require("https");
 const path = require("path");
 const crypto = require("crypto");
 const { parse } = require("querystring");
-const { getPipelineConfig, SAMPLE_RATE, TTS_SAMPLE_RATE, TTS_PROVIDER, loadConfig, validateSttProviderApiKey } = require("./config");
+const { getPipelineConfig, SAMPLE_RATE, TTS_SAMPLE_RATE, TTS_PROVIDER, loadConfig, validateSttProviderApiKey, resolveMessages } = require("./config");
 const { createPipeline } = require("./pipeline");
 const { warmUpGatewaySession } = require("./gateway-warmup");
 const gatewayEvents = require("./gateway-events");
@@ -32,6 +32,10 @@ const { summarizeConversation } = require("./summarizer");
 const { resolveAgentProfile, AgentNotFoundError } = require("./agent-profile");
 
 const _configForPort = loadConfig();
+const _resolvedMessages = resolveMessages(_configForPort);
+function buildConfiguredDelegationResultsSection(results) {
+  return buildDelegationResultsSection(results, _resolvedMessages.delegation);
+}
 const PORT = Number(_configForPort?.server?.port || process.env.PORT || 5005);
 const ATTENDEE_API_BASE_URL = process.env.ATTENDEE_API_BASE_URL || "app.attendee.dev";
 const ATTENDEE_TIMEOUT_MS = Number(process.env.ATTENDEE_TIMEOUT_MS || 15_000);
@@ -207,6 +211,7 @@ function getMeetSlackNotifier() {
         dmUserId,
         statusChannelId: statusChannel,
         summaryChannelId: summaryChannel,
+        labels: _resolvedMessages.slack,
       }
     );
 
@@ -269,6 +274,7 @@ async function handleMeetSessionEnd(lifecycle) {
       const summary = await summarizeConversation(lifecycle._conversationLog, {
         openclawUrl: process.env.OPENCLAW_GATEWAY_URL,
         openclawToken: process.env.OPENCLAW_GATEWAY_TOKEN,
+        summaryPrompt: _resolvedMessages.prompts.summary,
       });
       await notifier.postSummary(lifecycle, summary);
       console.log("📋  Meetサマリー投稿完了");
@@ -407,7 +413,7 @@ async function postMeetFullTranscript(notifier, lifecycle) {
     lines.push("");
   }
   const session = meetingSessions.get(lifecycle.sessionId);
-  const delegationSection = buildDelegationResultsSection(session?.delegationResults);
+  const delegationSection = buildConfiguredDelegationResultsSection(session?.delegationResults);
   if (delegationSection) lines.push(delegationSection);
 
   const text = lines.join("\n");
@@ -618,7 +624,7 @@ function saveConversationLog(session) {
     `- tts_provider: ${TTS_PROVIDER}`,
     "",
     ...session.conversationLog.map((e) => `**${e.role === "assistant" || e.role === "agent" ? (_startupAgentProfile?.displayName || "AI") : "参加者"}** (${e.timestamp}):\n${e.content}\n`),
-    buildDelegationResultsSection(session.delegationResults),
+    buildConfiguredDelegationResultsSection(session.delegationResults),
   ].join("\n");
   fs.writeFileSync(mdPath, mdContent);
   session.conversationLogMdPath = mdPath;
@@ -629,7 +635,7 @@ function saveConversationLog(session) {
 
 function appendLateDelegationToPersistedLogs(session, item) {
   try {
-    const section = buildDelegationResultsSection([item]);
+    const section = buildConfiguredDelegationResultsSection([item]);
     if (session.conversationLogMdPath && fs.existsSync(session.conversationLogMdPath)) {
       fs.appendFileSync(session.conversationLogMdPath, `\n${section}\n`);
     }
@@ -703,7 +709,7 @@ function appendToMemory(session) {
           : "参加者";
         return `**${speaker}**: ${e.content}\n`;
       }),
-      buildDelegationResultsSection(session.delegationResults),
+      buildConfiguredDelegationResultsSection(session.delegationResults),
     ].join("\n");
     fs.writeFileSync(callLogPath, fullLog);
     session.memoryCallLogPath = callLogPath;
@@ -991,7 +997,7 @@ const server = http.createServer(async (req, res) => {
         exitDetection: conversationMode !== "group",
       }, null, null, _configForPort);
       // pipeline.js builds runtime sessionUser as `meet-${sessionId}-${agentId}`,
-      // so the warm-up key must include agentId to actually warm Caty's session
+      // so the warm-up key must include agentId to actually warm the agent session
       // (matches the fix in src/transport-meet/meet-routes.js).
       const warmupAgentId = _startupAgentProfile?.agentId || "default";
       const warmupSessionKey = `meet-${sessionId}-${warmupAgentId}`;

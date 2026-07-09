@@ -10,6 +10,9 @@ const { getExitCommands, detectExitIntent } = require("./exit-handler");
 const { shouldSuppressReply, stripEmojis, stripRareScriptCharacters, extractChatTags } = require("./speech-policy");
 const { recordEvent } = require("./metrics");
 const gatewayEventsClient = require("./gateway-events");
+const { DEFAULT_MESSAGES, renderTemplate, resolveMessages } = require("./messages");
+
+const DEFAULT_RESOLVED_MESSAGES = resolveMessages();
 
 // Two-tier sentence splitter for Japanese + English
 // Tier 1: Full sentence boundary (。！？!?\n) — long pause
@@ -55,9 +58,21 @@ const MEETING_CONTEXT_RAW_CHARS = positiveInt(process.env.MEETING_CONTEXT_RAW_CH
 const ENABLE_MEETING_CONTEXT_INJECTION = String(process.env.ENABLE_MEETING_CONTEXT_INJECTION || "false").toLowerCase() === "true";
 // Cancel word detection: strict boundary match to avoid false positives
 // (e.g. "ストップウォッチ", "キャンセルポリシー" should NOT trigger)
-const CANCEL_RE = /^[\s\u3000]*(キャンセル|やめて|もういい|中止|ストップ|stop|cancel)[\s\u3000。！!]*$/i;
-function isCancelWord(text) {
-  return CANCEL_RE.test(text.trim());
+const CANCEL_RE = new RegExp(DEFAULT_MESSAGES.regex.cancelPattern, DEFAULT_MESSAGES.regex.cancelFlags);
+function compileRegex(pattern, flags) {
+  return new RegExp(pattern, flags);
+}
+
+function regexFromConfig(regexConfig, patternKey, flagsKey) {
+  return compileRegex(
+    regexConfig?.[patternKey] || DEFAULT_RESOLVED_MESSAGES.regex[patternKey],
+    regexConfig?.[flagsKey] || DEFAULT_RESOLVED_MESSAGES.regex[flagsKey]
+  );
+}
+
+function isCancelWord(text, regexConfig = null) {
+  const cancelRe = regexConfig ? regexFromConfig(regexConfig, "cancelPattern", "cancelFlags") : CANCEL_RE;
+  return cancelRe.test(text.trim());
 }
 
 function stripWakePrefix(text, agents = null, selectedAgentIds = []) {
@@ -77,9 +92,9 @@ function stripWakePrefix(text, agents = null, selectedAgentIds = []) {
   return String(text || "").replace(wakeStripRe, "").trim();
 }
 
-function isWakeCancelText(text, agents = null, selectedAgentIds = []) {
+function isWakeCancelText(text, agents = null, selectedAgentIds = [], regexConfig = null) {
   const cleaned = String(text || "").trim();
-  return isCancelWord(stripWakePrefix(cleaned, agents, selectedAgentIds)) || isCancelWord(cleaned);
+  return isCancelWord(stripWakePrefix(cleaned, agents, selectedAgentIds), regexConfig) || isCancelWord(cleaned, regexConfig);
 }
 
 function positiveInt(value, fallback) {
@@ -185,14 +200,17 @@ function normalizeKana(text) {
  * Only active in Meet/Zoom sessions.
  * Now delegates to exit-handler.js detectExitIntent, with wake word check.
  */
-function isExitCommand(text, agents = null, selectedAgentIds = [], defaultAgentId = null, agentProfile = null) {
+function isExitCommand(text, agents = null, selectedAgentIds = [], defaultAgentId = null, agentProfile = null, exitConfig = null) {
+  const resolvedAgentProfile = agentProfile?.exitCommands?.length
+    ? agentProfile
+    : { ...(agentProfile || {}), exitCommands: exitConfig?.commands || DEFAULT_MESSAGES.exit.commands };
   // Use exit-handler for primary detection
-  if (detectExitIntent(text, agents, selectedAgentIds, defaultAgentId, agentProfile)) {
+  if (detectExitIntent(text, agents, selectedAgentIds, defaultAgentId, resolvedAgentProfile)) {
     return true;
   }
 
   // Also check wake word + exit pattern: e.g. "{agentName}、退出して"
-  const exitCmds = getExitCommands(agentProfile);
+  const exitCmds = getExitCommands(resolvedAgentProfile);
   const lower = text.toLowerCase().trim();
   if (detectWakeAgent(text, agents, selectedAgentIds, defaultAgentId).detected) {
     for (const cmd of exitCmds) {
@@ -331,8 +349,8 @@ function isNoiseInterim(text) {
 }
 
 const IMMEDIATE_ACK_PATTERNS = [
-  /お願い|やって|して|調べ|確認|探し|実装|作業|対応|予約|連絡|電話|送って|まとめ/i,
-  /can you|please|check|find|implement|do this|call|book|summarize/i,
+  new RegExp(DEFAULT_MESSAGES.regex.immediateAckPattern, DEFAULT_MESSAGES.regex.immediateAckFlags),
+  new RegExp(DEFAULT_MESSAGES.regex.immediateAckEnglishPattern, DEFAULT_MESSAGES.regex.immediateAckEnglishFlags),
 ];
 
 // Fixed lines below: every line is anchored with an S2-Pro emotion tag.
@@ -342,30 +360,26 @@ const IMMEDIATE_ACK_PATTERNS = [
 // calls for one: timeout fallback (apology) → [empathetic, unhurried],
 // exit farewell → [warm].
 const DEFAULT_ACK_VARIANTS = [
-  "[soft voice] 了解、すぐ取りかかるね。",
-  "[soft voice] 了解です。ちょっと待ってね。",
-  "[soft voice] はい、今確認するね。",
+  ...DEFAULT_MESSAGES.speech.ackVariants,
 ];
 
 const PROGRESS_PING_VARIANTS = [
-  "[soft voice] いま処理中だよ、もう少し待ってね。",
-  "[soft voice] 進めてるよ、あと少しで返せそう。",
-  "[soft voice] ごめん、もう少しだけ待ってね。",
+  ...DEFAULT_MESSAGES.speech.progressPings,
 ];
 
 // Spoken first when the LLM never returns a chunk within the timeout budget.
 // Intentionally does NOT promise Slack — that would be a lie if the handoff
 // itself fails. The real Slack-confirmation line is spoken later, only on
 // success of requestTimeoutHandoff().
-const LLM_TIMEOUT_FALLBACK_VOICE = "[empathetic, unhurried] ごめん、ちょっと時間がかかってるね。少し待ってもらえるかな？";
-const FORCED_DELEGATION_FALLBACK_VOICE = "ちょっと時間がかかってるから、詳細はあとでSlackで共有するね。";
-const HANDOFF_SUCCESS_VOICE = "[soft voice] 続きはSlackに共有しておくね。";
-const HANDOFF_FAILURE_VOICE = "[soft voice] ごめん、うまく繋げられなかったみたい。あとでもう一回試してね。";
-const FORCED_DELEGATION_FALLBACK_VOICE_MEET = "ちょっと時間がかかってるから、裏でまとめておくね。";
-const HANDOFF_UNCONFIRMED_VOICE_MEET = "[soft voice] 続きは裏に回したよ。まとまったらチャットに貼るね。";
-const HANDOFF_BUSY_VOICE_MEET = "[soft voice] ごめんね、いま立て込んでるから少し待ってね。";
-const REPORT_POST_UNKNOWN_VOICE = "結果まとまったよ、あとでログにも残すね。";
-const CIRCUIT_BREAKER_RECOVERY_NOTICE = "[soft voice] ごめんね、ちょっと立て直し中。急ぎはそのまま話しかけてね。";
+const LLM_TIMEOUT_FALLBACK_VOICE = DEFAULT_MESSAGES.speech.timeoutFallback;
+const FORCED_DELEGATION_FALLBACK_VOICE = DEFAULT_MESSAGES.speech.forcedDelegationFallback;
+const HANDOFF_SUCCESS_VOICE = DEFAULT_MESSAGES.speech.handoffSuccess;
+const HANDOFF_FAILURE_VOICE = DEFAULT_MESSAGES.speech.handoffFailure;
+const FORCED_DELEGATION_FALLBACK_VOICE_MEET = DEFAULT_MESSAGES.speech.forcedDelegationFallbackMeet;
+const HANDOFF_UNCONFIRMED_VOICE_MEET = DEFAULT_MESSAGES.speech.handoffUnconfirmedMeet;
+const HANDOFF_BUSY_VOICE_MEET = DEFAULT_MESSAGES.speech.handoffBusyMeet;
+const REPORT_POST_UNKNOWN_VOICE = DEFAULT_MESSAGES.speech.reportPostUnknown;
+const CIRCUIT_BREAKER_RECOVERY_NOTICE = DEFAULT_MESSAGES.speech.circuitBreakerRecoveryNotice;
 const HANDOFF_INFLIGHT_TTL_MS = 5 * 60 * 1000;
 const PENDING_HANDOFF_TTL_MS = 5 * 60 * 1000;
 const PENDING_HANDOFF_MAX = 5;
@@ -374,18 +388,12 @@ const REPORT_QUEUE_MAX = 10;
 const LIVE_USER_SPEECH_HOLD_MS = 1_200;
 const SEEN_RUN_ID_MAX = 1000;
 const SHORT_UTTERANCE_PING_PATTERNS = [
-  /話せる/u,
-  /大丈夫/u,
-  /聞こえ/u,
-  /おーい/u,
-  /元気/u,
-  /どう[?？]?$/u,
-  /テスト/u,
+  ...DEFAULT_MESSAGES.regex.shortUtterancePingPatterns.map((pattern) => new RegExp(pattern, DEFAULT_MESSAGES.regex.shortUtterancePingFlags)),
 ];
 
 function shouldSendImmediateAck(text) {
   // Always ack on any addressed turn so the user never hears silence after
-  // calling Caty. The caller already gates this to addressed (post-wake)
+  // calling the agent. The caller already gates this to addressed (post-wake)
   // turns, and exit/cancel turns short-circuit before reaching the ack path.
   // Pattern matching is preserved internally so pickImmediateAck() can pick
   // a task-flavored variant for request-like utterances.
@@ -395,14 +403,16 @@ function shouldSendImmediateAck(text) {
   return true;
 }
 
-function pickImmediateAck(text, agentAckVariants = null) {
+function pickImmediateAck(text, agentAckVariants = null, regexConfig = null) {
   const variants = agentAckVariants && agentAckVariants.length > 0
     ? agentAckVariants
     : DEFAULT_ACK_VARIANTS;
+  const taskRe = regexFromConfig(regexConfig, "immediateAckTaskPattern", "immediateAckTaskFlags");
+  const taskVariantRe = regexFromConfig(regexConfig, "immediateAckTaskVariantPattern", "immediateAckTaskVariantFlags");
 
   // Slightly prefer task-oriented wording when user asks for work.
-  if (/調べ|確認|探し|予約|連絡|call|check|find|book/i.test(String(text || ""))) {
-    const taskVariant = variants.find((v) => /確認|調べ|check/i.test(v));
+  if (taskRe.test(String(text || ""))) {
+    const taskVariant = variants.find((v) => taskVariantRe.test(v));
     return taskVariant || variants[0];
   }
   return variants[Math.floor(Math.random() * variants.length)];
@@ -417,22 +427,29 @@ function pickProgressPing(index, customVariants = null) {
 
 function collectFixedTtsPhrases(config, greeting) {
   const gatewayEventsEnabled = config?.gatewayEvents?.enabled === true;
+  const messages = config?.messages || DEFAULT_RESOLVED_MESSAGES.speech;
   return [
-    ...(config.ackVariants && config.ackVariants.length > 0 ? config.ackVariants : DEFAULT_ACK_VARIANTS),
-    ...(config.progressPings && config.progressPings.length > 0 ? config.progressPings : PROGRESS_PING_VARIANTS),
+    ...(config.ackVariants && config.ackVariants.length > 0 ? config.ackVariants : messages.ackVariants),
+    ...(config.progressPings && config.progressPings.length > 0 ? config.progressPings : messages.progressPings),
     greeting || config.greeting,
-    config.exitFarewell || "[warm] 了解です！退出しますね。お疲れさまでした！",
+    config.exitFarewell || messages.exitFarewell,
     config.cancelAck,
-    ...(Number(config?.llm?.firstTokenDelegateMs || 0) > 0 ? [FORCED_DELEGATION_FALLBACK_VOICE] : []),
-    config.timeoutFallback || LLM_TIMEOUT_FALLBACK_VOICE,
-    HANDOFF_SUCCESS_VOICE,
-    HANDOFF_FAILURE_VOICE,
+    ...(Number(config?.llm?.firstTokenDelegateMs || 0) > 0 ? [messages.forcedDelegationFallback] : []),
+    config.timeoutFallback || messages.timeoutFallback,
+    messages.handoffSuccess,
+    messages.handoffFailure,
     ...(gatewayEventsEnabled ? [
-      HANDOFF_UNCONFIRMED_VOICE_MEET,
-      HANDOFF_BUSY_VOICE_MEET,
-      CIRCUIT_BREAKER_RECOVERY_NOTICE,
+      messages.handoffUnconfirmedMeet,
+      messages.handoffBusyMeet,
+      messages.circuitBreakerRecoveryNotice,
     ] : []),
   ].filter(Boolean);
+}
+
+function compileShortUtterancePingPatterns(regexConfig = null) {
+  const patterns = regexConfig?.shortUtterancePingPatterns || DEFAULT_RESOLVED_MESSAGES.regex.shortUtterancePingPatterns;
+  const flags = regexConfig?.shortUtterancePingFlags || DEFAULT_RESOLVED_MESSAGES.regex.shortUtterancePingFlags;
+  return patterns.map((pattern) => new RegExp(pattern, flags));
 }
 
 function shouldForceDelegate({ thresholdMs, firstChunkSeen, abortSignal, isProcessing }) {
@@ -441,12 +458,13 @@ function shouldForceDelegate({ thresholdMs, firstChunkSeen, abortSignal, isProce
   return thresholdMs > 0 && !firstChunkSeen && !abortSignal?.aborted && isProcessing;
 }
 
-function getShortUtteranceSkipReason(text, thresholdChars) {
+function getShortUtteranceSkipReason(text, thresholdChars, regexConfig = null) {
   const cleaned = String(text || "").trim();
   const threshold = Number(thresholdChars || 0);
   if (!(threshold > 0)) return null;
   if (cleaned.length > 0 && cleaned.length < threshold) {
-    return SHORT_UTTERANCE_PING_PATTERNS.some((re) => re.test(cleaned)) ? "ping" : "short";
+    const patterns = regexConfig ? compileShortUtterancePingPatterns(regexConfig) : SHORT_UTTERANCE_PING_PATTERNS;
+    return patterns.some((re) => re.test(cleaned)) ? "ping" : "short";
   }
   return null;
 }
@@ -497,6 +515,10 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   let currentAgentId = defaultAgentId || agentProfile?.agentId || "agent";
   const gatewayEventsConfig = config.gatewayEvents || {};
   const gatewayEventsEnabled = gatewayEventsConfig.enabled === true;
+  const resolvedSpeech = config.messages || DEFAULT_RESOLVED_MESSAGES.speech;
+  const resolvedRegex = config.regex || DEFAULT_RESOLVED_MESSAGES.regex;
+  const resolvedPrompts = config.prompts || DEFAULT_RESOLVED_MESSAGES.prompts;
+  const resolvedDelegation = config.delegation || DEFAULT_RESOLVED_MESSAGES.delegation;
   const reportResults = [];
   const reportQueue = [];
   const handoffInflight = new Map();
@@ -730,7 +752,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     scheduleParentCompact("circuit_breaker", 0);
     if (!circuitBreakerNoticeQueued) {
       circuitBreakerNoticeQueued = true;
-      enqueueReportVoiceLine(CIRCUIT_BREAKER_RECOVERY_NOTICE);
+      enqueueReportVoiceLine(resolvedSpeech.circuitBreakerRecoveryNotice);
     }
   }
 
@@ -814,7 +836,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     lastHandoffDispatchAt = now;
     const key = `pending:${source}:${now}:${handoffInflight.size}`;
     handoffInflight.set(key, {
-      label: label || "委譲タスク",
+      label: label || resolvedDelegation.defaultLabel,
       source,
       dispatchedAt: now,
       utteranceExcerpt: previewForLog(options.utteranceExcerpt || label || "", 80),
@@ -961,7 +983,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     if (pendingKey) handoffInflight.delete(pendingKey);
     const spawnAtMs = Number.isFinite(evt.spawnAtMs) ? evt.spawnAtMs : now;
     handoffInflight.set(childKey, {
-      label: evt.label || "委譲タスク",
+      label: evt.label || resolvedDelegation.defaultLabel,
       source,
       dispatchedAt: spawnAtMs,
       spawnAtMs,
@@ -989,7 +1011,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     }
     const suppressedReport = item?.relayCompleted === true;
     recordGatewayMetric("delegation_completed", {
-      label: result?.label || "委譲タスク",
+      label: result?.label || resolvedDelegation.defaultLabel,
       ...(elapsedMs !== null ? { elapsed_ms: elapsedMs } : {}),
       ...(suppressedReport ? { suppressed_report: true } : {}),
     });
@@ -1003,7 +1025,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   function appendDelegationResult(result) {
     const item = {
       timestamp: new Date().toISOString(),
-      label: result.label || "委譲タスク",
+      label: result.label || resolvedDelegation.defaultLabel,
       status: result.status || "ok",
       resultText: String(result.resultText || "").trim(),
     };
@@ -1012,16 +1034,16 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   }
 
   function buildCompletionChatMessage(result) {
-    const label = result.label || "委譲タスク";
-    const body = String(result.resultText || "").trim() || "結果本文を取得できませんでした。";
-    const message = stripRareScriptCharacters(stripEmojis(`委譲タスク結果: ${label}\n${body}`)).trim();
-    return message || "委譲タスク結果: 結果本文を取得できませんでした。";
+    const label = result.label || resolvedDelegation.defaultLabel;
+    const body = String(result.resultText || "").trim() || resolvedDelegation.missingResult;
+    const message = stripRareScriptCharacters(stripEmojis(`${resolvedDelegation.chatPrefix}: ${label}\n${body}`)).trim();
+    return message || `${resolvedDelegation.chatPrefix}: ${resolvedDelegation.missingResult}`;
   }
 
   function buildCompletionVoiceLine(result, chatPosted = false) {
-    if (!chatPosted) return REPORT_POST_UNKNOWN_VOICE;
-    const label = stripEmojis(String(result.label || "委譲タスク")).slice(0, 40) || "委譲タスク";
-    return `さっきの「${label}」、まとまったよ。チャットに貼ったね。`;
+    if (!chatPosted) return resolvedSpeech.reportPostUnknown;
+    const label = stripEmojis(String(result.label || resolvedDelegation.defaultLabel)).slice(0, 40) || resolvedDelegation.defaultLabel;
+    return renderTemplate(resolvedSpeech.completionVoiceTemplate, { label });
   }
 
   function enqueueReportVoiceLine(line) {
@@ -1131,7 +1153,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   function buildDelegateReplyChatMessage(text, stale = false) {
     const body = stripRareScriptCharacters(stripEmojis(String(text || "").trim())).trim();
     if (!body) return "";
-    return stale ? `(遅くなってごめんね) ${body}` : body;
+    return stale ? `${resolvedSpeech.staleCompletionVoicePrefix}${body}` : body;
   }
 
   async function handleGatewaySessionReply(evt) {
@@ -1305,7 +1327,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         transcript_char_count: cleanedText.length,
       });
     }
-    if (isProcessing && cleanedText && isWakeCancelText(cleanedText, agents, selectedAgentIds)) {
+    if (isProcessing && cleanedText && isWakeCancelText(cleanedText, agents, selectedAgentIds, resolvedRegex)) {
       handleWakeCancelAbort(cleanedText)
         .catch((err) => console.error("❌  wake+cancel handler error:", err.message || err));
       return;
@@ -1330,12 +1352,12 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     console.log(`💬  [user] ${cleanedText}`);
 
     // Exit command detection
-    if (config.exitDetection !== false && isExitCommand(cleanedText, agents, selectedAgentIds, defaultAgentId, agentProfile)) {
+    if (config.exitDetection !== false && isExitCommand(cleanedText, agents, selectedAgentIds, defaultAgentId, agentProfile, config.exit)) {
       console.log("🚪  Exit command detected!");
       appendConversationEntry("user", cleanedText, currentAgentId || null);
 
       // Speak farewell and emit exit event
-      const farewellVoice = config.exitFarewell || "[warm] 了解です！退出しますね。お疲れさまでした！";
+      const farewellVoice = config.exitFarewell || resolvedSpeech.exitFarewell;
       // Strip leading emotion tag (S1 paren or S2 bracket) for clean console log
       const farewellLog = farewellVoice.replace(/^[\[(][^\])]*[\])]\s*/, "");
       turnState.isAgentSpeaking = true;
@@ -1410,7 +1432,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         console.log("🔔  Wake word detected! Gate → CLOSED");
       } else {
         // Gate is CLOSED: check for wake+cancel combo (immediate abort)
-        if (isWakeCancelText(cleanedText, agents, selectedAgentIds)) {
+        if (isWakeCancelText(cleanedText, agents, selectedAgentIds, resolvedRegex)) {
           await handleWakeCancelAbort(cleanedText);
           return;
         }
@@ -1495,7 +1517,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     let ttsPlaybackStartRecorded = false;
     let scheduledGatewayFallbackRetry = false;
     const shortSkipReason = gatewayEventsEnabled && !circuitBreakerOpen
-      ? getShortUtteranceSkipReason(ackSourceText, gatewayEventsConfig.shortUtteranceSkipChars ?? 24)
+      ? getShortUtteranceSkipReason(ackSourceText, gatewayEventsConfig.shortUtteranceSkipChars ?? 24, resolvedRegex)
       : null;
 
     const stopProgressTimer = () => {
@@ -1578,22 +1600,10 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
           const isHttps = gatewayUrl.protocol === "https:";
           const transport = isHttps ? https : http;
           gatewayModeHandoff = gatewayEventsEnabled === true;
-          const handoffPrompt = gatewayModeHandoff
-            ? [
-                "ユーザーの音声通話中に依頼処理がタイムアウトしました。",
-                "必ず sessions_spawn を使って作業を委譲してください。",
-                "まずユーザー依頼を短く要約し、実行計画を立ててからサブエージェントを起動してください。",
-                "サブエージェントの結果を最終回答としてそのまま返してください。会議への報告は音声ハーネス側が行います。",
-                "",
-                `ユーザー依頼: ${trimmed}`,
-              ].join("\n")
-            : [
-                "ユーザーの音声通話中に依頼処理がタイムアウトしました。",
-                "必ず sessions_spawn を使って作業を委譲し、結果をSlackに投稿してください。",
-                "まずユーザー依頼を短く要約し、実行計画を立ててからサブエージェントを起動してください。",
-                "",
-                `ユーザー依頼: ${trimmed}`,
-              ].join("\n");
+          const handoffPrompt = renderTemplate(
+            gatewayModeHandoff ? resolvedPrompts.timeoutHandoffGateway : resolvedPrompts.timeoutHandoffSlack,
+            { request: trimmed }
+          );
           const handoffSessionUser = gatewayModeHandoff && gatewayEventsConfig.handoffDelegateSession !== false
             ? `${agentState.sessionUser}-delegate`
             : agentState.sessionUser;
@@ -1608,8 +1618,8 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
               {
                 role: "system",
                 content: gatewayModeHandoff
-                  ? "あなたは音声タイムアウト時の自動委譲ハンドラーです。必ず sessions_spawn に委譲し、結果を最終回答として返してください。"
-                  : "あなたは音声タイムアウト時の自動委譲ハンドラーです。結果は必ずSlackに共有してください。",
+                  ? resolvedPrompts.timeoutHandoffGatewaySystem
+                  : resolvedPrompts.timeoutHandoffSlackSystem,
               },
               { role: "user", content: handoffPrompt },
             ],
@@ -1677,8 +1687,8 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       stopProgressTimer();
       turnState.isAgentSpeaking = true;
       const timeoutMsg = forcedDelegationFired
-        ? (gatewayEventsEnabled ? FORCED_DELEGATION_FALLBACK_VOICE_MEET : FORCED_DELEGATION_FALLBACK_VOICE)
-        : (config.timeoutFallback || LLM_TIMEOUT_FALLBACK_VOICE);
+        ? (gatewayEventsEnabled ? resolvedSpeech.forcedDelegationFallbackMeet : resolvedSpeech.forcedDelegationFallback)
+        : (config.timeoutFallback || resolvedSpeech.timeoutFallback);
       try {
         await speakSentence(timeoutMsg, null, {
           cacheable: true,
@@ -1697,7 +1707,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       appendAssistantLog(timeoutMsg);
 
       // Release barge-in window so the user can cancel/redirect during the
-      // up-to-5s handoff await. Without this, Caty appears deaf for ~8-9s
+      // up-to-5s handoff await. Without this, the agent appears deaf for ~8-9s
       // between "ちょっと時間がかかってるね" and the Slack confirmation.
       turnState.isAgentSpeaking = false;
       turnState.inputCooldownUntil = Date.now() + (config.echoCooldownMs || 300);
@@ -1709,7 +1719,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
           const handoffLabel = previewForLog(transcriptForHandoff, 60);
           const queuedShortUtterance = gatewayEventsEnabled
             && !circuitBreakerOpen
-            && Boolean(getShortUtteranceSkipReason(transcriptForHandoff, gatewayEventsConfig.shortUtteranceSkipChars ?? 24));
+            && Boolean(getShortUtteranceSkipReason(transcriptForHandoff, gatewayEventsConfig.shortUtteranceSkipChars ?? 24, resolvedRegex));
           const success = await dispatchOrEnqueueHandoff(
             transcriptForHandoff,
             handoffLabel,
@@ -1721,8 +1731,8 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
           if (abort.signal.aborted && !forcedDelegationFired) return;
           turnState.isAgentSpeaking = true;
           const followup = success
-            ? (gatewayEventsEnabled ? HANDOFF_UNCONFIRMED_VOICE_MEET : HANDOFF_SUCCESS_VOICE)
-            : (gatewayEventsEnabled && pendingHandoffQueue.length >= PENDING_HANDOFF_MAX ? HANDOFF_BUSY_VOICE_MEET : HANDOFF_FAILURE_VOICE);
+            ? (gatewayEventsEnabled ? resolvedSpeech.handoffUnconfirmedMeet : resolvedSpeech.handoffSuccess)
+            : (gatewayEventsEnabled && pendingHandoffQueue.length >= PENDING_HANDOFF_MAX ? resolvedSpeech.handoffBusyMeet : resolvedSpeech.handoffFailure);
           try {
             await speakSentence(followup, null, { cacheable: true });
           } catch { /* ignore TTS error during fallback */ }
@@ -1830,7 +1840,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       const currentAgentConfig = agents[currentAgentId] || {};
       const ackDecisionText = String(ackSourceText ?? userText ?? "");
       if ((forceImmediateAck || shouldSendImmediateAck(ackDecisionText)) && !abort.signal.aborted) {
-        const ack = pickImmediateAck(ackDecisionText, currentAgentConfig.ackVariants || config.ackVariants);
+        const ack = pickImmediateAck(ackDecisionText, currentAgentConfig.ackVariants || config.ackVariants, resolvedRegex);
         turnState.isAgentSpeaking = true;
         console.log(`⚡  Immediate ack: "${ack}"`);
         await speakSentence(ack, abort.signal, {
@@ -2085,7 +2095,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       // Speak error message
       try {
         turnState.isAgentSpeaking = true;
-        await speakSentence("すみません、ちょっとエラーが起きちゃいました。", abort.signal);
+        await speakSentence(resolvedSpeech.errorVoice, abort.signal);
       } catch {
         // give up
       }
@@ -2240,7 +2250,8 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         .filter(Boolean);
       if (others.length > 0) {
         const trimmed = String(defaultGreeting || "").replace(/[。.!！?？\s]+$/u, "");
-        greeting = `${trimmed}。今日は${others.join("と")}も一緒だよ！`;
+        greeting = renderTemplate(resolvedSpeech.groupGreetingTemplate, { agents: others.join("と") });
+        if (!greeting.startsWith(trimmed)) greeting = `${trimmed}${greeting}`;
       } else {
         greeting = defaultGreeting;
       }

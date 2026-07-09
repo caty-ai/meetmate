@@ -1,6 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 const { buildVoiceAddendum } = require("./llm");
+const { buildVoiceAddendumFromMessages, resolveMessages } = require("./messages");
 
 const CONFIG_PATH = path.join(__dirname, "..", "config.json");
 
@@ -200,9 +201,12 @@ function loadConfig() {
 function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, configJson = null) {
   const isJapanese = LANG === "ja";
   const envVoiceId = process.env.FISH_AUDIO_VOICE_ID || null;
+  const messages = resolveMessages(configJson);
   // Build voice addendum: use per-agent emotionTags flag
   const agentEmotionTags = agent?.emotionTags !== false; // default true
-  const defaultVoiceAddendum = buildVoiceAddendum({ emotionTags: agentEmotionTags });
+  const defaultVoiceAddendum = messages.prompts.voiceSystemAddendum
+    || buildVoiceAddendumFromMessages(messages, { emotionTags: agentEmotionTags })
+    || buildVoiceAddendum({ emotionTags: agentEmotionTags });
   const llmAddendum = Object.prototype.hasOwnProperty.call(overrides, "openclawSystemAddendum")
     ? overrides.openclawSystemAddendum
     : (agent?.openclawSystemAddendum ?? defaultVoiceAddendum);
@@ -234,6 +238,8 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
     openclawUrl: agent?.gatewayUrl || process.env.OPENCLAW_GATEWAY_URL || null,
     openclawToken: agent?.gatewayToken || process.env.OPENCLAW_GATEWAY_TOKEN || null,
     warmupTimeoutMs: configJson?.gateway?.warmupTimeoutMs || null,
+    gatewayBriefingPrompt: messages.prompts.gatewayBriefingSystem,
+    gatewayWarmupUserPrompt: messages.prompts.gatewayWarmupUser,
     systemPrompt,
     exitDetection: overrides.exitDetection,
     echoCooldownMs: ECHO_LOOP_COOLDOWN_MS,
@@ -287,9 +293,11 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
         configJson?.slack?.statusChannel || SLACK_STATUS_CHANNEL || SLACK_SUMMARY_CHANNEL || SLACK_NOTIFY_CHANNEL,
       summaryChannelId: configJson?.slack?.summaryChannel || SLACK_SUMMARY_CHANNEL || SLACK_NOTIFY_CHANNEL,
       enabled: SLACK_NOTIFY_ENABLED,
+      labels: messages.slack,
     },
     summary: {
       enabled: SUMMARY_ENABLED,
+      prompt: messages.prompts.summary,
     },
     gatewayEvents: {
       enabled: GATEWAY_EVENTS_ENABLED,
@@ -306,13 +314,19 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
       parentCompactMaxLines: PARENT_COMPACT_MAX_LINES,
       shortUtteranceSkipChars: SHORT_UTTERANCE_SKIP_CHARS,
       circuitBreakerTimeouts: CIRCUIT_BREAKER_TIMEOUTS,
+      displayName: messages.gateway.displayName,
     },
+    prompts: messages.prompts,
+    messages: messages.speech,
+    regex: messages.regex,
+    delegation: messages.delegation,
+    exit: messages.exit,
     // Per-agent voice extensions
     emotionTags: agentEmotionTags,
-    ackVariants: overrides.ackVariants || agentProfile?.ackVariants || agent?.ackVariants || null,
-    progressPings: agentProfile?.progressPings || agent?.progressPings || null,
-    timeoutFallback: agentProfile?.timeoutFallback || agent?.timeoutFallback || null,
-    exitFarewell: agentProfile?.exitFarewell || agent?.exitFarewell || null,
+    ackVariants: overrides.ackVariants || agentProfile?.ackVariants || agent?.ackVariants || messages.speech.ackVariants,
+    progressPings: agentProfile?.progressPings || agent?.progressPings || messages.speech.progressPings,
+    timeoutFallback: agentProfile?.timeoutFallback || agent?.timeoutFallback || messages.speech.timeoutFallback,
+    exitFarewell: agentProfile?.exitFarewell || agent?.exitFarewell || messages.speech.exitFarewell,
     cancelAck: agentProfile?.cancelAck || agent?.cancelAck || null,
   };
 }
@@ -339,4 +353,5 @@ module.exports = {
   REPORT_VOICE_ENABLED,
   GATEWAY_EVENTS_AGENT_ID,
   loadConfig,
+  resolveMessages,
 };

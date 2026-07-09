@@ -16,6 +16,7 @@ require("dotenv").config();
 const fs = require("fs");
 const path = require("path");
 const { createSonioxSTT } = require("../src/stt-soniox");
+const { DEFAULT_MESSAGES } = require("../src/messages");
 
 const audioPath = process.argv[2];
 if (!audioPath) {
@@ -36,11 +37,18 @@ if (path.extname(audioPath).toLowerCase() === ".wav" && buf.slice(0, 4).toString
 const SAMPLE_RATE = 16_000;
 const FRAME_MS = 100;
 const FRAME_BYTES = (SAMPLE_RATE * 2 * FRAME_MS) / 1000; // s16le mono
+const configPath = path.join(__dirname, "..", "config.json");
+let configDefaultKeyterms = "";
+try {
+  if (fs.existsSync(configPath)) {
+    configDefaultKeyterms = JSON.parse(fs.readFileSync(configPath, "utf8"))?.soniox?.smokeDefaultKeyterms || "";
+  }
+} catch { /* ignore optional smoke config */ }
 
 const stt = createSonioxSTT(process.env.SONIOX_API_KEY, {
   language: "ja",
   sampleRate: SAMPLE_RATE,
-  keyterms: (process.env.WAKE_WORDS || "ケイティ").split(",").map((s) => s.trim()).filter(Boolean),
+  keyterms: (process.env.WAKE_WORDS || configDefaultKeyterms || DEFAULT_MESSAGES.soniox.smokeDefaultKeyterms).split(",").map((s) => s.trim()).filter(Boolean),
 });
 
 stt.on("open", () => {

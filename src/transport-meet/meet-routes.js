@@ -14,6 +14,7 @@ const {
   TTS_PROVIDER,
   loadConfig,
   validateSttProviderApiKey,
+  resolveMessages,
 } = require("../config");
 const { createPipeline } = require("../pipeline");
 const { warmUpGatewaySession, warmUpMultipleAgents } = require("../gateway-warmup");
@@ -43,6 +44,10 @@ const MEETING_URL_RE = /^https:\/\/(meet\.google\.com\/[a-z0-9-]+|[\w.-]*zoom\.u
 const CONVERSATION_MODES = new Set(["one_to_one", "group"]);
 
 const _configJson = loadConfig();
+const _resolvedMessages = resolveMessages(_configJson);
+function buildConfiguredDelegationResultsSection(results) {
+  return buildDelegationResultsSection(results, _resolvedMessages.delegation);
+}
 const DG_KEY = process.env.DEEPGRAM_API_KEY;
 const ATTENDEE_API_KEY = _configJson?.attendee?.apiKey || process.env.ATTENDEE_API_KEY;
 
@@ -117,6 +122,7 @@ function getMeetSlackNotifier() {
         dmUserId,
         statusChannelId: statusChannel,
         summaryChannelId: summaryChannel,
+        labels: _resolvedMessages.slack,
       }
     );
 
@@ -178,6 +184,7 @@ async function handleMeetSessionEnd(lifecycle) {
       const summary = await summarizeConversation(lifecycle._conversationLog, {
         openclawUrl: process.env.OPENCLAW_GATEWAY_URL,
         openclawToken: process.env.OPENCLAW_GATEWAY_TOKEN,
+        summaryPrompt: _resolvedMessages.prompts.summary,
       });
       await notifier.postSummary(lifecycle, summary);
       console.log("📋  Meetサマリー投稿完了");
@@ -341,7 +348,7 @@ async function postMeetFullTranscript(notifier, lifecycle) {
     lines.push("");
   }
   const session = meetingSessions.get(lifecycle.sessionId);
-  const delegationSection = buildDelegationResultsSection(session?.delegationResults);
+  const delegationSection = buildConfiguredDelegationResultsSection(session?.delegationResults);
   if (delegationSection) lines.push(delegationSection);
 
   const text = lines.join("\n");
@@ -538,7 +545,7 @@ function saveConversationLog(session) {
         : "参加者";
       return `**${speaker}** (${e.timestamp}):\n${e.content}\n`;
     }),
-    buildDelegationResultsSection(session.delegationResults),
+    buildConfiguredDelegationResultsSection(session.delegationResults),
   ].join("\n");
   fs.writeFileSync(mdPath, mdContent);
   session.conversationLogMdPath = mdPath;
@@ -549,7 +556,7 @@ function saveConversationLog(session) {
 
 function appendLateDelegationToPersistedLogs(session, item) {
   try {
-    const section = buildDelegationResultsSection([item]);
+    const section = buildConfiguredDelegationResultsSection([item]);
     if (session.conversationLogMdPath && fs.existsSync(session.conversationLogMdPath)) {
       fs.appendFileSync(session.conversationLogMdPath, `\n${section}\n`);
     }
@@ -622,7 +629,7 @@ function appendToMemory(session) {
           : "参加者";
         return `**${speaker}**: ${e.content}\n`;
       }),
-      buildDelegationResultsSection(session.delegationResults),
+      buildConfiguredDelegationResultsSection(session.delegationResults),
     ].join("\n");
     fs.writeFileSync(callLogPath, fullLog);
     session.memoryCallLogPath = callLogPath;
@@ -1197,7 +1204,7 @@ async function handleHttp(req, res) {
       }, null, profile, _configJson);
       // Must include the agentId — pipeline.js builds sessionUser as
       // `meet-${sessionId}-${agentId}` (see switchAgent in pipeline.js).
-      // Warming the bare `meet-${sessionId}` key left Caty's actual session
+      // Warming the bare `meet-${sessionId}` key left the agent session
       // cold and contributed to first-turn latency / timeout fallbacks.
       warmUpGatewaySession(`meet-${sessionId}-${profile.agentId}`, warmupConfig, briefing);
 

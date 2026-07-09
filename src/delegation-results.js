@@ -1,5 +1,7 @@
-function statusLabel(status) {
-  return status === "ok" || status === "completed" || status === "end" ? "完了" : "未完";
+const { DEFAULT_MESSAGES } = require("./messages");
+
+function statusLabel(status, labels = DEFAULT_MESSAGES.delegation) {
+  return status === "ok" || status === "completed" || status === "end" ? labels.statusComplete : labels.statusIncomplete;
 }
 
 function excerpt(text, max = 500) {
@@ -12,13 +14,13 @@ function normalizeResults(results) {
   return Array.isArray(results) ? results.filter(Boolean) : [];
 }
 
-function buildDelegationResultsSection(results) {
+function buildDelegationResultsSection(results, labels = DEFAULT_MESSAGES.delegation) {
   const items = normalizeResults(results);
   if (items.length === 0) return "";
-  const lines = ["", "## 委譲タスク結果", ""];
+  const lines = ["", labels.sectionHeading, ""];
   for (const item of items) {
-    const label = String(item.label || "委譲タスク").trim();
-    lines.push(`- ${label} (${statusLabel(item.status)}): ${excerpt(item.resultText) || "結果本文なし"}`);
+    const label = String(item.label || labels.defaultLabel).trim();
+    lines.push(`- ${label} (${statusLabel(item.status, labels)}): ${excerpt(item.resultText) || labels.emptyResult}`);
   }
   return lines.join("\n");
 }
