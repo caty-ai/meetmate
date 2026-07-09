@@ -9,6 +9,11 @@ const MAX_WINDOW_HOURS = 168;
 const PUBLIC_ASSETS = new Map([
   ["/style.css", { filename: "style.css", contentType: "text/css; charset=utf-8" }],
   ["/app.js", { filename: "app.js", contentType: "application/javascript; charset=utf-8" }],
+  ["/manifest.json", { filename: "manifest.json", contentType: "application/manifest+json; charset=utf-8" }],
+  ["/icons/icon-192.png", { filename: "icons/icon-192.png", contentType: "image/png" }],
+  ["/icons/icon-512.png", { filename: "icons/icon-512.png", contentType: "image/png" }],
+  ["/icons/icon-maskable-512.png", { filename: "icons/icon-maskable-512.png", contentType: "image/png" }],
+  ["/icons/apple-touch-icon-180.png", { filename: "icons/apple-touch-icon-180.png", contentType: "image/png" }],
 ]);
 
 function hasTraversal(req) {

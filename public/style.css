@@ -512,6 +512,77 @@
 
   a { color: inherit; }
 
+  .install-banner {
+    position: fixed;
+    left: 16px;
+    right: 16px;
+    bottom: 16px;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    max-width: 640px;
+    margin: 0 auto;
+    padding: 12px 14px;
+    background: var(--surface);
+    border: 1px solid var(--hairline-strong);
+    border-radius: 8px;
+    box-shadow: 0 12px 30px rgba(0,0,0,0.12);
+  }
+  .install-copy {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: 13px;
+    color: var(--ink-secondary);
+  }
+  .install-copy strong {
+    color: var(--ink);
+    font-size: 14px;
+  }
+  .install-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+  .install-action,
+  .install-dismiss {
+    appearance: none;
+    cursor: pointer;
+    font-family: var(--sans);
+    font-weight: 700;
+    border-radius: 8px;
+    min-height: 38px;
+  }
+  .install-action {
+    padding: 0 14px;
+    background: var(--ink);
+    color: var(--bg);
+    border: 1px solid var(--ink);
+  }
+  .install-dismiss {
+    width: 38px;
+    padding: 0;
+    background: var(--bg-sunken);
+    color: var(--ink-secondary);
+    border: 1px solid var(--hairline);
+    font-size: 20px;
+    line-height: 1;
+  }
+  .install-action:hover { background: var(--accent-active); border-color: var(--accent-active); }
+  .install-dismiss:hover { border-color: var(--hairline-strong); color: var(--ink); }
+
+  @media (max-width: 560px) {
+    .install-banner {
+      align-items: stretch;
+      flex-direction: column;
+    }
+    .install-actions { justify-content: flex-end; }
+  }
+
   .toast {
     margin-top: 12px;
     font-size: 13px;

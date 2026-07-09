@@ -25,6 +25,13 @@
   const recentSessionsEl = document.getElementById("recentSessions");
   const themeToggle = document.getElementById("themeToggle");
   const themeLabel = document.getElementById("themeLabel");
+  const installBanner = document.getElementById("installBanner");
+  const installTitle = document.getElementById("installTitle");
+  const installMessage = document.getElementById("installMessage");
+  const installButton = document.getElementById("installButton");
+  const installDismiss = document.getElementById("installDismiss");
+
+  const INSTALL_DISMISSED_KEY = "aiMeetParticipantInstallDismissed";
 
   let extractedMeetingUrl = "";
   let isSubmitting = false;
@@ -40,6 +47,7 @@
   let lastUrlState = "";
   let endedShownUntilMs = 0;
   let pollEpoch = 0;
+  let deferredInstallPrompt = null;
 
   function getStoredTheme() {
     try {
@@ -86,6 +94,88 @@
 
     window.matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", () => {
       if (!root.getAttribute("data-theme")) applyThemeUI();
+    });
+  }
+
+  function isStandaloneDisplay() {
+    return window.navigator.standalone === true
+      || window.matchMedia("(display-mode: standalone)").matches;
+  }
+
+  function isInstallDismissed() {
+    try {
+      return localStorage.getItem(INSTALL_DISMISSED_KEY) === "1";
+    } catch {
+      return false;
+    }
+  }
+
+  function rememberInstallDismissed() {
+    try {
+      localStorage.setItem(INSTALL_DISMISSED_KEY, "1");
+    } catch {
+      // ignore storage failures
+    }
+  }
+
+  function isIosSafari() {
+    const ua = navigator.userAgent || "";
+    const platform = navigator.platform || "";
+    const isIos = /iPad|iPhone|iPod/.test(platform)
+      || (platform === "MacIntel" && navigator.maxTouchPoints > 1);
+    const isSafari = /Safari/i.test(ua) && !/(CriOS|FxiOS|EdgiOS|OPiOS|DuckDuckGo)/i.test(ua);
+    return isIos && isSafari;
+  }
+
+  function hideInstallBanner(remember) {
+    installBanner.classList.add("is-hidden");
+    if (remember) rememberInstallDismissed();
+  }
+
+  function showInstallBanner(mode) {
+    installTitle.textContent = "AI Meet Participant";
+    installButton.hidden = mode === "ios";
+    installMessage.textContent = mode === "ios"
+      ? "iOS Safari では共有ボタンをタップし、「ホーム画面に追加」を選ぶとインストールできます。"
+      : "この端末にインストールして単独ウィンドウで開けます。";
+    installBanner.classList.remove("is-hidden");
+  }
+
+  function initInstallPrompt() {
+    if (!installBanner || !installMessage || !installButton || !installDismiss) return;
+    if (isStandaloneDisplay() || isInstallDismissed()) return;
+
+    installDismiss.addEventListener("click", () => {
+      deferredInstallPrompt = null;
+      hideInstallBanner(true);
+    });
+
+    if (isIosSafari()) {
+      showInstallBanner("ios");
+    }
+
+    window.addEventListener("beforeinstallprompt", (event) => {
+      event.preventDefault();
+      deferredInstallPrompt = event;
+      showInstallBanner("chromium");
+    });
+
+    installButton.addEventListener("click", async () => {
+      if (!deferredInstallPrompt) return;
+      const promptEvent = deferredInstallPrompt;
+      deferredInstallPrompt = null;
+      try {
+        await promptEvent.prompt();
+        const choice = await promptEvent.userChoice;
+        hideInstallBanner(choice && choice.outcome === "accepted");
+      } catch {
+        hideInstallBanner(false);
+      }
+    });
+
+    window.addEventListener("appinstalled", () => {
+      deferredInstallPrompt = null;
+      hideInstallBanner(true);
     });
   }
 
@@ -536,6 +626,7 @@
   });
 
   initTheme();
+  initInstallPrompt();
   loadInfo();
   loadAgentsFromServer();
   loadCalibrateStatus();
