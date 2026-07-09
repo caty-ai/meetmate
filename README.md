@@ -2,7 +2,7 @@
 
 [![Version](https://img.shields.io/badge/version-v7.9.0--rc.1-blue)](https://github.com/caty-ai/meetmate/releases)
 [![Stable](https://img.shields.io/badge/stable-v7.8.0-brightgreen)](https://github.com/caty-ai/meetmate/releases/tag/v7.8.0-stable)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: Apache--2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D18-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![Platform](https://img.shields.io/badge/platform-Google%20Meet%20%7C%20Zoom-4285F4)](#特徴)
 
@@ -218,4 +218,4 @@ npm run test:meet:repro           # Meet 複数参加者の再現テストのみ
 
 ## ライセンス
 
-[MIT License](LICENSE)
+[Apache License 2.0](LICENSE) — 詳細は [NOTICE](NOTICE) も参照
