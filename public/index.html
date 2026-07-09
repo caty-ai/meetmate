@@ -3,7 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#ffffff">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <title>AI Meet Participant</title>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon-180.png">
   <link rel="stylesheet" href="/style.css">
   <script src="/app.js" defer></script>
 </head>
@@ -103,6 +108,16 @@
           <a class="link-button is-hidden" id="calibrateLink" href="/calibrate">🎤 Wake Word Calibrate</a>
         </section>
       </div>
+    </div>
+  </div>
+  <div class="install-banner is-hidden" id="installBanner" role="status" aria-live="polite">
+    <div class="install-copy">
+      <strong id="installTitle">AI Meet Participant</strong>
+      <span id="installMessage"></span>
+    </div>
+    <div class="install-actions">
+      <button class="install-action" id="installButton" type="button">インストール</button>
+      <button class="install-dismiss" id="installDismiss" type="button" aria-label="閉じる">×</button>
     </div>
   </div>
 </body>

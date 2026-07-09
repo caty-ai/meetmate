@@ -197,6 +197,17 @@ ngrok http 5006 --domain=your-domain.ngrok-free.dev --config ~/.config/ngrok/ngr
 
 Tailscale + VPS 環境であれば ngrok なしで直接接続可能。Attendee 側の WebSocket URL を Tailscale IP ベース（例: `wss://<tailscale-ip>:5006`）に向ければ、トンネルなしで動作する。
 
+#### 5-5. PWA インストール用の HTTPS
+
+ブラウザの「ホーム画面に追加」やインストール UI を使うには、ダッシュボードを HTTPS で開く必要がある。Tailscale で使う場合は MagicDNS と HTTPS 証明書を有効化したうえで、Tailnet のホスト名を使ってローカルの UI に転送する。
+
+```bash
+tailscale cert <your-tailnet-hostname>
+tailscale serve --https=443 http://127.0.0.1:5006
+```
+
+その後、ブラウザで `https://<your-tailnet-hostname>` を開く。ngrok の `https://your-domain.ngrok-free.dev` 形式のトンネルは最初から HTTPS なので、PWA インストール用の追加設定は不要。
+
 ### 6. 起動
 
 ```bash
