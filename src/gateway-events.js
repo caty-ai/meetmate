@@ -3,9 +3,12 @@
 const os = require("node:os");
 const pkg = require("../package.json");
 const { recordEvent } = require("./metrics");
+const { DEFAULT_MESSAGES } = require("./messages");
 
 const CONNECT_SCOPES = ["operator.read", "operator.write", "operator.admin"];
 const DEFAULT_AGENT_ID = "main";
+const DEFAULT_DISPLAY_NAME = DEFAULT_MESSAGES.gateway.displayName;
+const DEFAULT_DELEGATION_LABEL = DEFAULT_MESSAGES.delegation.defaultLabel;
 const DEFAULT_HISTORY_LIMIT = 4;
 const RESULT_TEXT_MAX = 4000;
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -67,7 +70,7 @@ function normalizeCfg(input = {}) {
     openclawToken: input.openclawToken || input.token || "",
     agentId: input.agentId || DEFAULT_AGENT_ID,
     clientId: "gateway-client",
-    displayName: input.displayName || "Caty MeetServer",
+    displayName: input.displayName || DEFAULT_DISPLAY_NAME,
     version: input.version || pkg.version || "0.0.0",
     platform: input.platform || process.platform || os.platform(),
     mode: "backend",
@@ -97,7 +100,7 @@ function buildConnectFrame(id, options) {
       maxProtocol: 4,
       client: {
         id: "gateway-client",
-        displayName: options.displayName || "Caty MeetServer",
+        displayName: options.displayName || DEFAULT_DISPLAY_NAME,
         version: options.version || pkg.version || "0.0.0",
         platform: options.platform || process.platform || os.platform(),
         mode: "backend",
@@ -425,7 +428,7 @@ async function handleSessionsChanged(payload) {
   if (isSubagent && payload.reason === "create") {
     const meta = {
       parentSessionKey,
-      label: payload.label || payload.taskLabel || "委譲タスク",
+      label: payload.label || payload.taskLabel || DEFAULT_DELEGATION_LABEL,
       spawnAtMs: Date.now(),
     };
     childMeta.set(sessionKey, meta);
@@ -462,7 +465,7 @@ async function handleSessionsChanged(payload) {
     : await recoverChildMeta(sessionKey);
   const meta = {
     parentSessionKey: payload.parentSessionKey || existingMeta.parentSessionKey || recovered?.parentSessionKey || "",
-    label: payload.label || payload.taskLabel || existingMeta.label || recovered?.label || "委譲タスク",
+    label: payload.label || payload.taskLabel || existingMeta.label || recovered?.label || DEFAULT_DELEGATION_LABEL,
     spawnAtMs: existingMeta.spawnAtMs || Date.now(),
   };
   childMeta.set(sessionKey, meta);
