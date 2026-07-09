@@ -217,6 +217,18 @@ function handleCalibrateWs(ws, _req) {
   let timeoutTimer = null;
   let firstAudioReceived = false;
   let closed = false;
+  let pendingFinalText = "";
+  const sttModel = provider === "soniox"
+    ? process.env.SONIOX_MODEL || "stt-rt-v5"
+    : "nova-3";
+
+  function flushPendingFinalText() {
+    const text = pendingFinalText.trim();
+    if (text) {
+      wsSend(ws, { type: "transcript", text, isFinal: true });
+    }
+    pendingFinalText = "";
+  }
 
   function cleanup() {
     if (closed) return;
@@ -227,14 +239,16 @@ function handleCalibrateWs(ws, _req) {
   }
 
   stt.on("open", () => {
-    console.log(`🎙️  [calibrate] ${provider} connection opened (model=nova-3, lang=${lang})`);
+    console.log(`🎙️  [calibrate] ${provider} connection opened (model=${sttModel}, lang=${lang})`);
     wsSend(ws, { type: "ready" });
   });
 
   stt.on("transcript", (text, isFinal) => {
     if (!text) return;
     console.log(`🎙️  [calibrate] ${isFinal ? "FINAL" : "interim"}: "${text}"`);
-    if (!isFinal) {
+    if (isFinal) {
+      pendingFinalText += text;
+    } else {
       wsSend(ws, { type: "transcript", text, isFinal: false });
     }
   });
@@ -243,10 +257,12 @@ function handleCalibrateWs(ws, _req) {
     if (!text) return;
     console.log(`🎙️  [calibrate] utterance_end: "${text}"`);
     wsSend(ws, { type: "transcript", text, isFinal: true });
+    pendingFinalText = "";
   });
 
   stt.on("error", (err) => {
     console.error(`❌  [calibrate] ${provider} STT error:`, err);
+    flushPendingFinalText();
     wsSend(ws, { type: "error", message: String(err?.message || "STT error") });
     cleanup();
   });
@@ -254,6 +270,7 @@ function handleCalibrateWs(ws, _req) {
   stt.on("close", () => {
     console.log(`🎙️  [calibrate] ${provider} connection closed`);
     if (!closed) {
+      flushPendingFinalText();
       wsSend(ws, { type: "error", message: "STT connection closed" });
       cleanup();
     }
@@ -268,6 +285,7 @@ function handleCalibrateWs(ws, _req) {
         firstAudioReceived = true;
         // Start 30s timeout from first audio
         timeoutTimer = setTimeout(() => {
+          flushPendingFinalText();
           wsSend(ws, { type: "timeout" });
           cleanup();
         }, TIMEOUT_MS);
