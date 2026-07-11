@@ -1,8 +1,6 @@
 // gateway-warmup.js — OpenClaw Gateway session warm-up
 // When briefing is provided, also generates a purpose statement for immediate greeting.
 
-const http = require("http");
-const https = require("https");
 const { URL } = require("url");
 const { DEFAULT_MESSAGES } = require("./messages");
 
@@ -69,93 +67,63 @@ function warmUpGatewaySession(sessionId, config, briefing = null) {
           },
         ];
 
-    const body = JSON.stringify({
-      // Do not hardcode a foundation model; let Gateway choose.
-      model: config?.llm?.model || "openclaw",
-      stream: false,
-      temperature: config?.llm?.temperature ?? 0.3,
-      max_tokens: 200,
-      messages,
-      user: sessionUser,
-    });
-
-    const isHttps = gatewayUrl.protocol === "https:";
-    const transport = isHttps ? https : http;
-    const basePath = gatewayUrl.pathname && gatewayUrl.pathname !== "/"
-      ? gatewayUrl.pathname.replace(/\/$/, "")
-      : "";
-    const requestPath = `${basePath}/v1/chat/completions`;
-
     try {
-      const req = transport.request(
-        {
-          hostname: gatewayUrl.hostname,
-          port: gatewayUrl.port || (isHttps ? 443 : 80),
-          path: requestPath,
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${openclawToken}`,
-            "Content-Type": "application/json",
-            "Content-Length": Buffer.byteLength(body),
-          },
-        },
-        (res) => {
-          let responseBody = "";
-          res.on("data", (chunk) => { responseBody += chunk; });
-          res.on("end", () => {
-            if ((res.statusCode || 0) >= 400) {
-              console.error(`❌  Gateway warm-up failed: HTTP ${res.statusCode} (session=${sessionUser})`);
-              done("http_error");
-              return;
-            }
+      const provider = require("./llm-provider").createLlmProvider();
+      provider.complete(messages, {
+        openclawUrl,
+        openclawToken,
+        model: config?.llm?.model || "openclaw",
+        temperature: config?.llm?.temperature ?? 0.3,
+        maxTokens: 200,
+        user: sessionUser,
+        timeoutMs: WARMUP_REQUEST_TIMEOUT_MS,
+        timeoutError: "Gateway warm-up timeout",
+      }).then(({ statusCode, text: responseBody }) => {
+        if ((statusCode || 0) >= 400) {
+          console.error(`❌  Gateway warm-up failed: HTTP ${statusCode} (session=${sessionUser})`);
+          done("http_error");
+          return;
+        }
 
-            // Extract purpose statement from response
-            let purposeStatement = null;
-            if (briefingText) {
-              try {
-                const parsed = JSON.parse(responseBody);
-                const content = parsed?.choices?.[0]?.message?.content || "";
-                // Try JSON parse first
-                try {
-                  const jsonContent = JSON.parse(content);
-                  purposeStatement = jsonContent.purposeStatement || null;
-                } catch {
-                  // If not valid JSON, try to extract from text
-                  const match = content.match(/"purposeStatement"\s*:\s*"([^"]+)"/);
-                  if (match) {
-                    purposeStatement = match[1];
-                  } else if (content.trim().length > 5 && content.trim().length < 200) {
-                    // Use raw content as fallback
-                    purposeStatement = content.trim();
-                  }
-                }
-                if (purposeStatement) {
-                  console.log(`✅  Purpose statement generated: "${purposeStatement}"`);
-                }
-              } catch (err) {
-                console.error(`⚠️  Purpose statement parse error: ${err.message}`);
+        // Extract purpose statement from response
+        let purposeStatement = null;
+        if (briefingText) {
+          try {
+            const parsed = JSON.parse(responseBody);
+            const content = parsed?.choices?.[0]?.message?.content || "";
+            // Try JSON parse first
+            try {
+              const jsonContent = JSON.parse(content);
+              purposeStatement = jsonContent.purposeStatement || null;
+            } catch {
+              // If not valid JSON, try to extract from text
+              const match = content.match(/"purposeStatement"\s*:\s*"([^"]+)"/);
+              if (match) {
+                purposeStatement = match[1];
+              } else if (content.trim().length > 5 && content.trim().length < 200) {
+                // Use raw content as fallback
+                purposeStatement = content.trim();
               }
             }
-
-            console.log(`✅  Gateway warm-up complete (session=${sessionUser})`);
-            done("ok", purposeStatement);
-          });
+            if (purposeStatement) {
+              console.log(`✅  Purpose statement generated: "${purposeStatement}"`);
+            }
+          } catch (err) {
+            console.error(`⚠️  Purpose statement parse error: ${err.message}`);
+          }
         }
-      );
 
-      req.on("error", (err) => {
+        console.log(`✅  Gateway warm-up complete (session=${sessionUser})`);
+        done("ok", purposeStatement);
+      }).catch((err) => {
+        if (err.message === "Gateway warm-up timeout") {
+          console.error(`❌  Gateway warm-up timeout (${WARMUP_REQUEST_TIMEOUT_MS}ms) (session=${sessionUser})`);
+          done("timeout");
+          return;
+        }
         console.error(`❌  Gateway warm-up request error (session=${sessionUser}):`, err.message || err.code || err);
         done("request_error");
       });
-
-      req.setTimeout(WARMUP_REQUEST_TIMEOUT_MS, () => {
-        console.error(`❌  Gateway warm-up timeout (${WARMUP_REQUEST_TIMEOUT_MS}ms) (session=${sessionUser})`);
-        done("timeout");
-        req.destroy();
-      });
-
-      req.write(body);
-      req.end();
 
       console.log(`🔥  Gateway warm-up started (session=${sessionUser}, briefing=${briefingText ? "yes" : "no"})`);
     } catch (err) {

@@ -1,8 +1,6 @@
 // pipeline.js — Orchestrates STT → LLM → TTS pipeline
 // Replaces Deepgram Voice Agent (all-in-one) with decomposed components
 
-const http = require("http");
-const https = require("https");
 const { streamChat } = require("./llm");
 const { synthesize } = require("./tts-fish");
 const { createTtsCache } = require("./tts-cache");
@@ -1596,9 +1594,6 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         };
 
         try {
-          const gatewayUrl = new URL(agentState.openclawUrl);
-          const isHttps = gatewayUrl.protocol === "https:";
-          const transport = isHttps ? https : http;
           gatewayModeHandoff = gatewayEventsEnabled === true;
           const handoffPrompt = renderTemplate(
             gatewayModeHandoff ? resolvedPrompts.timeoutHandoffGateway : resolvedPrompts.timeoutHandoffSlack,
@@ -1607,70 +1602,30 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
           const handoffSessionUser = gatewayModeHandoff && gatewayEventsConfig.handoffDelegateSession !== false
             ? `${agentState.sessionUser}-delegate`
             : agentState.sessionUser;
-
-          const body = JSON.stringify({
-            // Do not hardcode a foundation model; let Gateway choose.
-            model: agentState.model || config.llm.model || "openclaw",
-            stream: false,
-            temperature: 0.2,
-            max_tokens: 700,
-            messages: [
-              {
-                role: "system",
-                content: gatewayModeHandoff
-                  ? resolvedPrompts.timeoutHandoffGatewaySystem
-                  : resolvedPrompts.timeoutHandoffSlackSystem,
-              },
-              { role: "user", content: handoffPrompt },
-            ],
-            user: handoffSessionUser,
-          });
-
-          const req = transport.request(
-            {
-              hostname: gatewayUrl.hostname,
-              port: gatewayUrl.port || (isHttps ? 443 : 80),
-              path: "/v1/chat/completions",
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${agentState.openclawToken}`,
-                "Content-Type": "application/json",
-                "Content-Length": Buffer.byteLength(body),
-              },
-            },
-            (res) => {
-              res.resume();
-              const ok = res.statusCode >= 200 && res.statusCode < 400;
-              if (!ok) console.error(`❌  Timeout handoff failed: HTTP ${res.statusCode}`);
-              finish(ok);
-            }
-          );
-
-          req.on("error", (err) => {
-            if (gatewayModeHandoff && /Timeout handoff request timeout/i.test(String(err?.message || ""))) {
-              console.warn("⚠️  Timeout handoff request timed out after dispatch; treating as dispatched (unconfirmed)");
-              finish(true);
-              return;
-            }
-            console.error("❌  Timeout handoff request error:", err.message);
+          const provider = require("./llm-provider").createLlmProvider();
+          if (typeof provider.timeoutHandoff !== "function") {
             finish(false);
-          });
+            return;
+          }
 
-          req.setTimeout(gatewayModeHandoff ? 15_000 : 5_000, () => {
-            if (gatewayModeHandoff) {
-              console.warn("⚠️  Timeout handoff client timeout; request may still be queued by Gateway");
-              finish(true);
-            }
-            req.destroy(new Error("Timeout handoff request timeout"));
-          });
-
-          req.write(body);
-          req.end();
-          recordMetric("handoff_requested", {
-            turn_id: metricsTurnId,
-            transcript_char_count: trimmed.length,
-            ...(gatewayModeHandoff ? { session_user: handoffSessionUser } : {}),
-          });
+          provider.timeoutHandoff({
+            openclawUrl: agentState.openclawUrl,
+            openclawToken: agentState.openclawToken,
+            model: agentState.model || config.llm.model || "openclaw",
+            systemPrompt: gatewayModeHandoff
+              ? resolvedPrompts.timeoutHandoffGatewaySystem
+              : resolvedPrompts.timeoutHandoffSlackSystem,
+            userPrompt: handoffPrompt,
+            sessionUser: handoffSessionUser,
+            gatewayModeHandoff,
+            onDispatched: () => {
+              recordMetric("handoff_requested", {
+                turn_id: metricsTurnId,
+                transcript_char_count: trimmed.length,
+                ...(gatewayModeHandoff ? { session_user: handoffSessionUser } : {}),
+              });
+            },
+          }).then(finish, () => finish(false));
 
           console.log(`🔄  Timeout handoff spawned for: "${trimmed.slice(0, 80)}${trimmed.length > 80 ? "…" : ""}"`);
         } catch (err) {

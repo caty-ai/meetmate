@@ -6,6 +6,149 @@ const https = require("https");
 const { filterSilentRepliesStream } = require("./speech-policy");
 const { buildVoiceAddendumFromMessages, resolveMessages } = require("./messages");
 
+function resolveCompletionPath(gatewayUrl) {
+  // Design #114 explicitly permits base URLs with path prefixes.
+  const basePath = gatewayUrl.pathname && gatewayUrl.pathname !== "/"
+    ? gatewayUrl.pathname.replace(/\/$/, "")
+    : "";
+  return `${basePath}/v1/chat/completions`;
+}
+
+function buildCompleteBody(messages, options) {
+  return JSON.stringify({
+    model: options.model,
+    stream: false,
+    temperature: options.temperature,
+    max_tokens: options.maxTokens,
+    messages,
+    ...(options.user !== undefined ? { user: options.user } : {}),
+  });
+}
+
+/**
+ * Perform a one-shot, non-streaming OpenClaw completion.
+ * Callers retain status handling, response parsing, and logging policy.
+ */
+function complete(messages, options = {}) {
+  const gatewayUrl = new URL(options.openclawUrl);
+  const isHttps = gatewayUrl.protocol === "https:";
+  const transport = isHttps ? https : http;
+  const body = buildCompleteBody(messages, options);
+  let resolveResponse;
+  let rejectResponse;
+  const response = new Promise((resolve, reject) => {
+    resolveResponse = resolve;
+    rejectResponse = reject;
+  });
+
+  const req = transport.request(
+    {
+      hostname: gatewayUrl.hostname,
+      port: gatewayUrl.port || (isHttps ? 443 : 80),
+      path: resolveCompletionPath(gatewayUrl),
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${options.openclawToken}`,
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(body),
+      },
+    },
+    (res) => {
+      let text = "";
+      res.on("data", (chunk) => { text += chunk; });
+      res.on("end", () => resolveResponse({ statusCode: res.statusCode, text }));
+    },
+  );
+
+  req.on("error", rejectResponse);
+
+  if (options.signal) {
+    options.signal.addEventListener("abort", () => {
+      req.destroy(new Error("LLM request aborted"));
+    }, { once: true });
+  }
+
+  if (options.timeoutMs !== undefined) {
+    req.setTimeout(options.timeoutMs, () => {
+      req.destroy(new Error(options.timeoutError || "OpenClaw request timeout"));
+    });
+  }
+
+  req.write(body);
+  req.end();
+  return response;
+}
+
+/**
+ * Dispatch a timeout handoff while preserving Gateway's special timeout rules.
+ * @returns {Promise<boolean>} Whether the handoff is treated as dispatched.
+ */
+function timeoutHandoff(params) {
+  const gatewayModeHandoff = params.gatewayModeHandoff === true;
+  const gatewayUrl = new URL(params.openclawUrl);
+  const isHttps = gatewayUrl.protocol === "https:";
+  const transport = isHttps ? https : http;
+  const body = buildCompleteBody(
+    [
+      { role: "system", content: params.systemPrompt },
+      { role: "user", content: params.userPrompt },
+    ],
+    {
+      model: params.model,
+      temperature: 0.2,
+      maxTokens: 700,
+      user: params.sessionUser,
+    },
+  );
+  let resolveHandoff;
+  const result = new Promise((resolve) => {
+    resolveHandoff = resolve;
+  });
+
+  const req = transport.request(
+    {
+      hostname: gatewayUrl.hostname,
+      port: gatewayUrl.port || (isHttps ? 443 : 80),
+      path: resolveCompletionPath(gatewayUrl),
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${params.openclawToken}`,
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(body),
+      },
+    },
+    (res) => {
+      res.resume();
+      const ok = res.statusCode >= 200 && res.statusCode < 400;
+      if (!ok) console.error(`❌  Timeout handoff failed: HTTP ${res.statusCode}`);
+      resolveHandoff(ok);
+    },
+  );
+
+  req.on("error", (err) => {
+    if (gatewayModeHandoff && /Timeout handoff request timeout/i.test(String(err?.message || ""))) {
+      console.warn("⚠️  Timeout handoff request timed out after dispatch; treating as dispatched (unconfirmed)");
+      resolveHandoff(true);
+      return;
+    }
+    console.error("❌  Timeout handoff request error:", err.message);
+    resolveHandoff(false);
+  });
+
+  req.setTimeout(gatewayModeHandoff ? 15_000 : 5_000, () => {
+    if (gatewayModeHandoff) {
+      console.warn("⚠️  Timeout handoff client timeout; request may still be queued by Gateway");
+      resolveHandoff(true);
+    }
+    req.destroy(new Error("Timeout handoff request timeout"));
+  });
+
+  req.write(body);
+  req.end();
+  params.onDispatched?.();
+  return result;
+}
+
 // Voice-specific system prompt builder (appended to OpenClaw's SOUL.md)
 // emotionTags: boolean — include emotion tag instructions (default true)
 //
@@ -186,4 +329,10 @@ async function* parseSSE(response, signal) {
   }
 }
 
-module.exports = { streamChat, VOICE_SYSTEM_ADDENDUM, buildVoiceAddendum };
+module.exports = {
+  streamChat,
+  complete,
+  timeoutHandoff,
+  VOICE_SYSTEM_ADDENDUM,
+  buildVoiceAddendum,
+};

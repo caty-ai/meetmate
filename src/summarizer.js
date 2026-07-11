@@ -1,7 +1,5 @@
 // summarizer.js — LLM-based conversation summarizer (OpenClaw Gateway only)
 
-const http = require("http");
-const https = require("https");
 const { DEFAULT_MESSAGES } = require("./messages");
 
 const SUMMARY_PROMPT = DEFAULT_MESSAGES.prompts.summary;
@@ -104,50 +102,23 @@ function parseJsonResponse(text) {
 }
 
 async function callOpenClaw(prompt, options) {
-  const gatewayUrl = new URL(options.openclawUrl);
-  const isHttps = gatewayUrl.protocol === "https:";
-  const transport = isHttps ? https : http;
+  const provider = require("./llm-provider").createLlmProvider();
+  const { statusCode, text: response } = await provider.complete(
+    [{ role: "user", content: prompt }],
+    {
+      openclawUrl: options.openclawUrl,
+      openclawToken: options.openclawToken,
+      model: options.model || "openclaw",
+      temperature: 0.3,
+      maxTokens: 500,
+      timeoutMs: 30_000,
+      timeoutError: "Summarizer timeout",
+    },
+  );
 
-  const body = JSON.stringify({
-    // Do not hardcode a foundation model; let Gateway choose.
-    model: options.model || "openclaw",
-    stream: false,
-    temperature: 0.3,
-    max_tokens: 500,
-    messages: [{ role: "user", content: prompt }],
-  });
-
-  const response = await new Promise((resolve, reject) => {
-    const req = transport.request(
-      {
-        hostname: gatewayUrl.hostname,
-        port: gatewayUrl.port || (isHttps ? 443 : 80),
-        path: "/v1/chat/completions",
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${options.openclawToken}`,
-          "Content-Type": "application/json",
-          "Content-Length": Buffer.byteLength(body),
-        },
-      },
-      (res) => {
-        let data = "";
-        res.on("data", (chunk) => { data += chunk; });
-        res.on("end", () => {
-          if (res.statusCode !== 200) {
-            reject(new Error(`OpenClaw summarizer error (${res.statusCode}): ${data.slice(0, 200)}`));
-            return;
-          }
-          resolve(data);
-        });
-      }
-    );
-
-    req.on("error", reject);
-    req.setTimeout(30_000, () => req.destroy(new Error("Summarizer timeout")));
-    req.write(body);
-    req.end();
-  });
+  if (statusCode !== 200) {
+    throw new Error(`OpenClaw summarizer error (${statusCode}): ${response.slice(0, 200)}`);
+  }
 
   const parsed = JSON.parse(response);
   return parsed.choices?.[0]?.message?.content || "";
