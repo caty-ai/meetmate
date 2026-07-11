@@ -208,27 +208,26 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
   const messages = resolveMessages(configJson);
   const llmJson = configJson?.llm || {};
   const openaiJson = llmJson.openaiCompatible || {};
-  const configuredAgent = configJson?.agent || {};
-  const provider = String(
+  let provider = String(
     overrides.provider
       || agent?.provider
-      || configuredAgent.provider
-      || agentProfile?.provider
       || process.env.LLM_PROVIDER
       || llmJson.provider
       || "openclaw"
   ).trim().toLowerCase();
+  if (provider !== "openclaw" && provider !== "openai-compatible") {
+    console.error(`⚠️  Unknown LLM provider "${provider}"; falling back to "openclaw".`);
+    provider = "openclaw";
+  }
+  if (provider !== "openclaw" && Object.prototype.hasOwnProperty.call(configJson?.prompts || {}, "voiceSystemAddendumTemplate") && !String(configJson.prompts.voiceSystemAddendumTemplate).includes("{openclawRules}")) console.warn("⚠️  Non-OpenClaw voiceSystemAddendumTemplate should include {openclawRules} so OpenClaw-only rules can be omitted.");
   // Build voice addendum: use per-agent emotionTags flag
-  const agentEmotionTags = (agent?.emotionTags ?? configuredAgent.emotionTags ?? agentProfile?.emotionTags) !== false;
+  const agentEmotionTags = agent?.emotionTags !== false;
   const defaultVoiceAddendum = messages.prompts.voiceSystemAddendum
     || buildVoiceAddendumFromMessages(messages, { emotionTags: agentEmotionTags, openclaw: true })
     || buildVoiceAddendum({ emotionTags: agentEmotionTags });
   const llmAddendum = Object.prototype.hasOwnProperty.call(overrides, "openclawSystemAddendum")
     ? overrides.openclawSystemAddendum
-    : (agent?.openclawSystemAddendum
-      ?? configuredAgent.openclawSystemAddendum
-      ?? agentProfile?.openclawSystemAddendum
-      ?? defaultVoiceAddendum);
+    : (agent?.openclawSystemAddendum ?? defaultVoiceAddendum);
   const ttsReferenceId = agent && Object.prototype.hasOwnProperty.call(agent, "voiceId")
     ? (agent.voiceId || envVoiceId)
     : envVoiceId;
@@ -237,18 +236,15 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
   // usable persona even when no prompt was configured explicitly.
   const configuredSystemPrompt = overrides.prompt
     || llmJson.systemPrompt
-    || agent?.systemPrompt
-    || configuredAgent.systemPrompt
-    || agentProfile?.systemPrompt;
+    || messages.prompts.standaloneSystemPrompt;
   const systemAddendum = messages.prompts.voiceSystemAddendum
     || buildVoiceAddendumFromMessages(messages, {
       emotionTags: agentEmotionTags,
       openclaw: false,
     });
-  const standaloneBasePrompt = configuredSystemPrompt || messages.prompts.standaloneSystemPrompt;
   const systemPrompt = provider === "openclaw"
     ? (agentProfile?.systemPrompt || overrides.prompt || "")
-    : `${standaloneBasePrompt}\n\n${systemAddendum}`;
+    : `${configuredSystemPrompt}\n\n${systemAddendum}`;
 
   // Normalize Gateway config here so downstream consumers only read config.llm.
   const resolvedOpenclawUrl = agent?.gatewayUrl
@@ -267,36 +263,26 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
   const envMaxTokens = process.env.AGENT_MAX_TOKENS;
   const llmTemperature = overrides.temperature
     ?? agent?.temperature
-    ?? configuredAgent.temperature
-    ?? agentProfile?.temperature
     ?? (envTemperature !== undefined && envTemperature !== "" ? Number(envTemperature) : undefined)
     ?? llmJson.temperature
     ?? 0.5;
   const llmMaxTokens = overrides.maxTokens
     ?? agent?.maxTokens
-    ?? configuredAgent.maxTokens
-    ?? agentProfile?.maxTokens
     ?? (envMaxTokens !== undefined && envMaxTokens !== "" ? Number(envMaxTokens) : undefined)
     ?? llmJson.maxTokens
     ?? 300;
   const historyMaxTurns = overrides.historyMaxTurns
     ?? agent?.historyMaxTurns
-    ?? configuredAgent.historyMaxTurns
-    ?? agentProfile?.historyMaxTurns
     ?? llmJson.historyMaxTurns
     ?? 12;
   const openaiCompatible = {
     baseUrl: overrides.openaiCompatible?.baseUrl
       || agent?.openaiCompatible?.baseUrl
-      || configuredAgent.openaiCompatible?.baseUrl
-      || agentProfile?.openaiCompatible?.baseUrl
       || process.env.OPENAI_COMPATIBLE_BASE_URL
       || openaiJson.baseUrl
       || null,
     apiKey: overrides.openaiCompatible?.apiKey
       || agent?.openaiCompatible?.apiKey
-      || configuredAgent.openaiCompatible?.apiKey
-      || agentProfile?.openaiCompatible?.apiKey
       || process.env.OPENAI_COMPATIBLE_API_KEY
       || openaiJson.apiKey
       || null,
@@ -342,7 +328,7 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
       provider,
       // Do not default to a foundation model here; let Gateway choose.
       // (If a foundation model is required, set it explicitly via overrides/agent config.)
-      model: overrides.model || agent?.model || configuredAgent.model || agentProfile?.model || llmJson.model || "openclaw",
+      model: overrides.model || agent?.model || llmJson.model || "openclaw",
       temperature: llmTemperature,
       maxTokens: llmMaxTokens,
       systemPrompt,

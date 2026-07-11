@@ -33,7 +33,7 @@ const CLEAN_LLM_ENV = {
   OPENCLAW_GATEWAY_TOKEN: undefined,
 };
 
-test("LLM config precedence is agent, environment, config.json, then defaults", () => {
+test("LLM config precedence is raw agent, environment, config.json, then defaults", () => {
   const restore = setEnv(CLEAN_LLM_ENV);
   const originalError = console.error;
   console.error = () => {};
@@ -102,10 +102,10 @@ test("LLM config precedence is agent, environment, config.json, then defaults", 
         openaiCompatible: { baseUrl: "https://agent.test/v1", apiKey: "agent-key" },
       },
     });
-    assert.equal(config.llm.provider, "openclaw");
-    assert.equal(config.llm.model, "agent-model");
-    assert.equal(config.llm.temperature, 0.4);
-    assert.equal(config.llm.maxTokens, 444);
+    assert.equal(config.llm.provider, "openai-compatible");
+    assert.equal(config.llm.model, "json-model");
+    assert.equal(config.llm.temperature, 0.3);
+    assert.equal(config.llm.maxTokens, 333);
     assert.equal(config.llm.historyMaxTurns, 4);
     assert.deepEqual(config.llm.openaiCompatible, {
       baseUrl: "https://agent.test/v1",
@@ -132,7 +132,8 @@ test("standalone system prompt precedence appends only neutral voice rules", () 
     assert.match(config.llm.systemPrompt, /【絶対禁止事項】/);
 
     config = getPipelineConfig({}, null, { systemPrompt: "profile persona" }, {});
-    assert.match(config.llm.systemPrompt, /^profile persona\n\n/);
+    assert.match(config.llm.systemPrompt, /^あなたは日本語で会話する音声アシスタントです。/);
+    assert.doesNotMatch(config.llm.systemPrompt, /profile persona/);
 
     config = getPipelineConfig({}, null, null, {});
     assert.match(config.llm.systemPrompt, /^あなたは日本語で会話する音声アシスタントです。/);
@@ -169,7 +170,7 @@ test("Gateway credentials are normalized under llm and required only by OpenClaw
   }
 });
 
-test("runtime-shaped configJson.agent preserves OpenClaw addendum overrides", () => {
+test("runtime-shaped configJson.agent does not change OpenClaw LLM resolution", () => {
   const restore = setEnv({
     ...CLEAN_LLM_ENV,
     OPENCLAW_GATEWAY_URL: "https://gateway.test",
@@ -177,19 +178,70 @@ test("runtime-shaped configJson.agent preserves OpenClaw addendum overrides", ()
   });
   try {
     const { getPipelineConfig } = freshConfig();
-    assert.equal(
-      getPipelineConfig({}, null, null, {
-        agent: { openclawSystemAddendum: "agent addendum" },
-      }).llm.openclawSystemAddendum,
-      "agent addendum"
-    );
-    assert.equal(
-      getPipelineConfig({}, null, null, {
-        agent: { openclawSystemAddendum: "" },
-      }).llm.openclawSystemAddendum,
-      ""
-    );
+    const config = getPipelineConfig({}, null, null, {
+      agent: {
+        provider: "openai-compatible",
+        model: "configured-agent-model",
+        temperature: 0.1,
+        maxTokens: 10,
+        emotionTags: false,
+        openclawSystemAddendum: "configured agent addendum",
+      },
+    });
+    assert.equal(config.llm.provider, "openclaw");
+    assert.equal(config.llm.model, "openclaw");
+    assert.equal(config.llm.temperature, 0.5);
+    assert.equal(config.llm.maxTokens, 300);
+    assert.equal(config.emotionTags, true);
+    assert.match(config.llm.openclawSystemAddendum, /すべての発話の先頭に必ず感情タグ/);
+    assert.doesNotMatch(config.llm.openclawSystemAddendum, /configured agent addendum/);
   } finally {
+    restore();
+    delete require.cache[configModulePath];
+  }
+});
+
+test("unknown LLM providers are warned and normalized to OpenClaw", () => {
+  const restore = setEnv(CLEAN_LLM_ENV);
+  const errors = [];
+  const originalError = console.error;
+  console.error = (...args) => errors.push(args.join(" "));
+  try {
+    const config = freshConfig().getPipelineConfig({}, null, null, {
+      llm: { provider: "typo-provider" },
+      gateway: { url: "https://gateway.test", token: "token" },
+    });
+    assert.equal(config.llm.provider, "openclaw");
+    assert.equal(errors.length, 1);
+    assert.match(errors[0], /Unknown LLM provider.*typo-provider.*openclaw/);
+  } finally {
+    console.error = originalError;
+    restore();
+    delete require.cache[configModulePath];
+  }
+});
+
+test("standalone custom voice templates warn when openclawRules is missing", () => {
+  const restore = setEnv(CLEAN_LLM_ENV);
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => warnings.push(args.join(" "));
+  try {
+    const { getPipelineConfig } = freshConfig();
+    getPipelineConfig({}, null, null, {
+      llm: { provider: "openai-compatible" },
+      prompts: { voiceSystemAddendumTemplate: "custom {emotionLine}" },
+    });
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /voiceSystemAddendumTemplate.*\{openclawRules\}/);
+
+    getPipelineConfig({}, null, null, {
+      llm: { provider: "openai-compatible" },
+      prompts: { voiceSystemAddendumTemplate: "custom {openclawRules}" },
+    });
+    assert.equal(warnings.length, 1);
+  } finally {
+    console.warn = originalWarn;
     restore();
     delete require.cache[configModulePath];
   }

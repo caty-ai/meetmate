@@ -2040,7 +2040,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       if (fullResponse.trim()) {
         console.log(`💬  [assistant] ${fullResponse.trim()}`);
         appendConversationEntry("assistant", fullResponse.trim(), requestAgentId || null);
-        if (!isOpenclawProvider && historyMaxTurns > 0) {
+        if (!abort.signal.aborted && !isOpenclawProvider && historyMaxTurns > 0) {
           const turns = clientHistory.get(agentState.sessionUser) || [];
           turns.push({ user: userText, assistant: fullResponse.trim() });
           clientHistory.set(agentState.sessionUser, turns.slice(-historyMaxTurns));

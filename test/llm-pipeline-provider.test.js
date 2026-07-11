@@ -13,7 +13,7 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function withPipeline(provider, configOverrides, fn) {
+async function withPipeline(provider, configOverrides, fn, testOptions = {}) {
   const files = ["pipeline.js", "llm-provider.js", "stt-provider.js", "tts-fish.js"]
     .map((name) => path.join(src, name));
   const previous = new Map(files.map((file) => [require.resolve(file), require.cache[require.resolve(file)]]));
@@ -28,7 +28,7 @@ async function withPipeline(provider, configOverrides, fn) {
   );
   require.cache[require.resolve(path.join(src, "tts-fish.js"))] = cacheEntry(
     path.join(src, "tts-fish.js"),
-    { synthesize: async (_text, { onAudio }) => onAudio(Buffer.alloc(2)) },
+    { synthesize: testOptions.synthesize || (async (_text, { onAudio }) => onAudio(Buffer.alloc(2))) },
   );
   require.cache[require.resolve(path.join(src, "llm-provider.js"))] = cacheEntry(
     path.join(src, "llm-provider.js"),
@@ -178,4 +178,30 @@ test("first-token delegation timer remains OpenClaw-only", { concurrency: false 
     });
     assert.equal(aborted, name === "openclaw", `${name} timer gate`);
   }
+});
+
+test("barge-in during final-buffer TTS does not add the unheard turn to client history", { concurrency: false }, async () => {
+  const calls = [];
+  let abortCurrent;
+  const provider = {
+    name: "openai-compatible",
+    streamChat: async function* (messages) {
+      calls.push(messages.map((message) => ({ ...message })));
+      yield messages.at(-1).content === "barge" ? "short" : "heard。";
+    },
+  };
+
+  await withPipeline(provider, {}, async (pipeline, session) => {
+    abortCurrent = pipeline._test.abortCurrent;
+    await pipeline._test.processUserInput("barge");
+    assert.equal(session.conversationLog.some((entry) => entry.role === "assistant" && entry.content === "short"), true);
+
+    await pipeline._test.processUserInput("after");
+    assert.deepEqual(calls[1].map((message) => message.content), ["standalone system", "after"]);
+  }, {
+    synthesize: async (text, { onAudio }) => {
+      if (text === "short") abortCurrent();
+      onAudio(Buffer.alloc(2));
+    },
+  });
 });

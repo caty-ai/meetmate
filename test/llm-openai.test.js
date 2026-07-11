@@ -126,6 +126,74 @@ test("complete returns status and text using a base-path-aware endpoint", async 
   assert.equal(captured.body.user, "telemetry-user");
 });
 
+test("completion paths add exactly one v1 segment", async (t) => {
+  const paths = [];
+  installMockServer(t, async ({ options }) => {
+    paths.push(options.path);
+    return { chunks: ["{}"] };
+  });
+
+  for (const baseUrl of [
+    "http://mock.test",
+    "http://mock.test/v1",
+    "http://mock.test/openai/v1",
+  ]) {
+    await openai.complete([], { baseUrl, apiKey: "key", model: "model" });
+  }
+
+  assert.deepEqual(paths, [
+    "/v1/chat/completions",
+    "/v1/chat/completions",
+    "/openai/v1/chat/completions",
+  ]);
+});
+
+test("streamChat accepts SSE data fields without a trailing space", async (t) => {
+  installMockServer(t, async () => ({
+    chunks: [
+      'data:{"choices":[{"delta":{"content":"first"}}]}\n\n',
+      'data:{"choices":[{"delta":{"content":" trailing"}}]}',
+    ],
+  }));
+
+  const chunks = await collect(openai.streamChat([], {
+    baseUrl: "http://mock.test",
+    apiKey: "key",
+    model: "model",
+  }));
+
+  assert.deepEqual(chunks, ["first", " trailing"]);
+});
+
+test("complete requires OpenAI-compatible credentials", () => {
+  assert.throws(
+    () => openai.complete([], { model: "model" }),
+    /base URL and API key are required/,
+  );
+});
+
+test("pre-aborted signals short-circuit before any OpenAI-compatible request", async (t) => {
+  const originalRequest = http.request;
+  let requests = 0;
+  http.request = () => {
+    requests += 1;
+    throw new Error("request should not be created");
+  };
+  t.after(() => { http.request = originalRequest; });
+  const controller = new AbortController();
+  controller.abort();
+  const options = {
+    baseUrl: "http://mock.test",
+    apiKey: "key",
+    model: "model",
+    signal: controller.signal,
+  };
+
+  await assert.rejects(collect(openai.streamChat([], options)), /LLM request aborted/);
+  assert.throws(() => openai.complete([], options), /LLM request aborted/);
+  assert.equal(requests, 0);
+});
+
 test("streamChat retries once when the first SSE response is empty", async (t) => {
   let requests = 0;
   installMockServer(t, async () => {

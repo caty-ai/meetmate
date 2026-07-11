@@ -8,7 +8,7 @@ function resolveCompletionPath(baseUrl) {
   const basePath = baseUrl.pathname && baseUrl.pathname !== "/"
     ? baseUrl.pathname.replace(/\/$/, "")
     : "";
-  return `${basePath}/v1/chat/completions`;
+  return `${basePath}${basePath.endsWith("/v1") ? "" : "/v1"}/chat/completions`;
 }
 
 function requestOptions(baseUrl, apiKey, body) {
@@ -51,7 +51,11 @@ function resolveCredentials(options) {
 }
 
 function complete(messages, options = {}) {
+  if (options.signal?.aborted) throw new Error("LLM request aborted");
   const credentials = resolveCredentials(options);
+  if (!credentials.baseUrl || !credentials.apiKey) {
+    throw new Error("OpenAI-compatible base URL and API key are required.");
+  }
   const baseUrl = new URL(credentials.baseUrl);
   const body = buildBody(messages, options, false);
   const request = requestOptions(baseUrl, credentials.apiKey, body);
@@ -78,6 +82,7 @@ function complete(messages, options = {}) {
 }
 
 async function* streamChat(messages, options = {}) {
+  if (options.signal?.aborted) throw new Error("LLM request aborted");
   let chunkCount = 0;
   for await (const chunk of streamOpenAI(messages, options)) {
     chunkCount += 1;
@@ -100,6 +105,7 @@ async function* streamChat(messages, options = {}) {
 }
 
 async function* streamOpenAI(messages, options) {
+  if (options.signal?.aborted) throw new Error("LLM request aborted");
   const credentials = resolveCredentials(options);
   if (!credentials.baseUrl || !credentials.apiKey) {
     throw new Error("OpenAI-compatible base URL and API key are required.");
@@ -142,8 +148,8 @@ async function* parseSSE(response, signal) {
 
     for (const line of lines) {
       const trimmed = line.trim();
-      if (!trimmed || !trimmed.startsWith("data: ")) continue;
-      const data = trimmed.slice(6);
+      if (!trimmed || !/^data:\s?/.test(trimmed)) continue;
+      const data = trimmed.replace(/^data:\s?/, "");
       if (data === "[DONE]") return;
       try {
         const content = JSON.parse(data).choices?.[0]?.delta?.content;
@@ -156,9 +162,10 @@ async function* parseSSE(response, signal) {
 
   if (buffer.trim()) {
     const trimmed = buffer.trim();
-    if (trimmed.startsWith("data: ") && trimmed.slice(6) !== "[DONE]") {
+    const data = trimmed.replace(/^data:\s?/, "");
+    if (/^data:\s?/.test(trimmed) && data !== "[DONE]") {
       try {
-        const content = JSON.parse(trimmed.slice(6)).choices?.[0]?.delta?.content;
+        const content = JSON.parse(data).choices?.[0]?.delta?.content;
         if (content) yield content;
       } catch {
         // skip
