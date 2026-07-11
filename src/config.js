@@ -137,6 +137,32 @@ function validateSttProviderApiKey(options = {}) {
   throw new Error(message);
 }
 
+function resolveConfigEnv(raw, env = process.env) {
+  const unresolved = [];
+  function resolveDeep(obj, keyPath = "") {
+    if (typeof obj === "string") {
+      const match = obj.match(/^\$\{(.+)\}$/);
+      if (match) {
+        const val = env[match[1]];
+        if (val === undefined || val === "") {
+          unresolved.push({ path: keyPath, envVar: match[1] });
+        }
+        return val || "";
+      }
+      return obj;
+    }
+    if (Array.isArray(obj)) return obj.map((v, i) => resolveDeep(v, `${keyPath}[${i}]`));
+    if (obj && typeof obj === "object") {
+      const out = {};
+      for (const [k, v] of Object.entries(obj)) out[k] = resolveDeep(v, keyPath ? `${keyPath}.${k}` : k);
+      return out;
+    }
+    return obj;
+  }
+
+  return { resolved: resolveDeep(raw), unresolved };
+}
+
 /**
  * Load config.json (single-agent format).
  * Resolves ${ENV_VAR} placeholders in string values.
@@ -154,29 +180,7 @@ function loadConfig() {
   }
 
   // Deep-resolve ${ENV_VAR} tokens in all string values
-  const unresolved = [];
-  function resolveDeep(obj, keyPath = "") {
-    if (typeof obj === "string") {
-      const match = obj.match(/^\$\{(.+)\}$/);
-      if (match) {
-        const val = process.env[match[1]];
-        if (val === undefined || val === "") {
-          unresolved.push({ path: keyPath, envVar: match[1] });
-        }
-        return val || "";
-      }
-      return obj;
-    }
-    if (Array.isArray(obj)) return obj.map((v, i) => resolveDeep(v, `${keyPath}[${i}]`));
-    if (obj && typeof obj === "object") {
-      const out = {};
-      for (const [k, v] of Object.entries(obj)) out[k] = resolveDeep(v, keyPath ? `${keyPath}.${k}` : k);
-      return out;
-    }
-    return obj;
-  }
-
-  const resolved = resolveDeep(raw);
+  const { resolved, unresolved } = resolveConfigEnv(raw);
 
   if (unresolved.length > 0) {
     console.error(`❌  config.json has unresolved environment variables:`);
@@ -202,10 +206,24 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
   const isJapanese = LANG === "ja";
   const envVoiceId = process.env.FISH_AUDIO_VOICE_ID || null;
   const messages = resolveMessages(configJson);
+  const llmJson = configJson?.llm || {};
+  const openaiJson = llmJson.openaiCompatible || {};
+  let provider = String(
+    overrides.provider
+      || agent?.provider
+      || process.env.LLM_PROVIDER
+      || llmJson.provider
+      || "openclaw"
+  ).trim().toLowerCase();
+  if (provider !== "openclaw" && provider !== "openai-compatible") {
+    console.error(`⚠️  Unknown LLM provider "${provider}"; falling back to "openclaw".`);
+    provider = "openclaw";
+  }
+  if (provider !== "openclaw" && Object.prototype.hasOwnProperty.call(configJson?.prompts || {}, "voiceSystemAddendumTemplate") && !String(configJson.prompts.voiceSystemAddendumTemplate).includes("{openclawRules}")) console.warn("⚠️  Non-OpenClaw voiceSystemAddendumTemplate should include {openclawRules} so OpenClaw-only rules can be omitted.");
   // Build voice addendum: use per-agent emotionTags flag
-  const agentEmotionTags = agent?.emotionTags !== false; // default true
+  const agentEmotionTags = agent?.emotionTags !== false;
   const defaultVoiceAddendum = messages.prompts.voiceSystemAddendum
-    || buildVoiceAddendumFromMessages(messages, { emotionTags: agentEmotionTags })
+    || buildVoiceAddendumFromMessages(messages, { emotionTags: agentEmotionTags, openclaw: true })
     || buildVoiceAddendum({ emotionTags: agentEmotionTags });
   const llmAddendum = Object.prototype.hasOwnProperty.call(overrides, "openclawSystemAddendum")
     ? overrides.openclawSystemAddendum
@@ -214,15 +232,61 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
     ? (agent.voiceId || envVoiceId)
     : envVoiceId;
 
-  // Resolve system prompt: agentProfile > overrides > empty (Gateway manages system prompts)
-  const systemPrompt = agentProfile?.systemPrompt || overrides.prompt || "";
+  // OpenClaw manages its persona via the Gateway. Standalone providers need a
+  // usable persona even when no prompt was configured explicitly.
+  const configuredSystemPrompt = overrides.prompt
+    || llmJson.systemPrompt
+    || messages.prompts.standaloneSystemPrompt;
+  const systemAddendum = messages.prompts.voiceSystemAddendum
+    || buildVoiceAddendumFromMessages(messages, {
+      emotionTags: agentEmotionTags,
+      openclaw: false,
+    });
+  const systemPrompt = provider === "openclaw"
+    ? (agentProfile?.systemPrompt || overrides.prompt || "")
+    : `${configuredSystemPrompt}\n\n${systemAddendum}`;
 
-  // Validate Gateway config
-  const resolvedOpenclawUrl = agent?.gatewayUrl || process.env.OPENCLAW_GATEWAY_URL || null;
-  const resolvedOpenclawToken = agent?.gatewayToken || process.env.OPENCLAW_GATEWAY_TOKEN || null;
-  if (!resolvedOpenclawUrl || !resolvedOpenclawToken) {
+  // Normalize Gateway config here so downstream consumers only read config.llm.
+  const resolvedOpenclawUrl = agent?.gatewayUrl
+    || process.env.OPENCLAW_GATEWAY_URL
+    || configJson?.gateway?.url
+    || null;
+  const resolvedOpenclawToken = agent?.gatewayToken
+    || process.env.OPENCLAW_GATEWAY_TOKEN
+    || configJson?.gateway?.token
+    || null;
+  if (provider === "openclaw" && (!resolvedOpenclawUrl || !resolvedOpenclawToken)) {
     console.error("❌  OpenClaw Gateway is required. Set OPENCLAW_GATEWAY_URL and OPENCLAW_GATEWAY_TOKEN in config.json or .env.");
   }
+
+  const envTemperature = process.env.AGENT_TEMPERATURE;
+  const envMaxTokens = process.env.AGENT_MAX_TOKENS;
+  const llmTemperature = overrides.temperature
+    ?? agent?.temperature
+    ?? (envTemperature !== undefined && envTemperature !== "" ? Number(envTemperature) : undefined)
+    ?? llmJson.temperature
+    ?? 0.5;
+  const llmMaxTokens = overrides.maxTokens
+    ?? agent?.maxTokens
+    ?? (envMaxTokens !== undefined && envMaxTokens !== "" ? Number(envMaxTokens) : undefined)
+    ?? llmJson.maxTokens
+    ?? 300;
+  const historyMaxTurns = overrides.historyMaxTurns
+    ?? agent?.historyMaxTurns
+    ?? llmJson.historyMaxTurns
+    ?? 12;
+  const openaiCompatible = {
+    baseUrl: overrides.openaiCompatible?.baseUrl
+      || agent?.openaiCompatible?.baseUrl
+      || process.env.OPENAI_COMPATIBLE_BASE_URL
+      || openaiJson.baseUrl
+      || null,
+    apiKey: overrides.openaiCompatible?.apiKey
+      || agent?.openaiCompatible?.apiKey
+      || process.env.OPENAI_COMPATIBLE_API_KEY
+      || openaiJson.apiKey
+      || null,
+  };
 
   // Resolve greeting: agentProfile > overrides > agent > empty (skip if unconfigured)
   const greeting =
@@ -235,8 +299,9 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
     dgKey: process.env.DEEPGRAM_API_KEY,
     sonioxKey: process.env.SONIOX_API_KEY,
     fishKey: process.env.FISH_AUDIO_API_KEY,
-    openclawUrl: agent?.gatewayUrl || process.env.OPENCLAW_GATEWAY_URL || null,
-    openclawToken: agent?.gatewayToken || process.env.OPENCLAW_GATEWAY_TOKEN || null,
+    // Backward-compatible aliases. New consumers read the normalized llm fields.
+    openclawUrl: resolvedOpenclawUrl,
+    openclawToken: resolvedOpenclawToken,
     warmupTimeoutMs: configJson?.gateway?.warmupTimeoutMs || null,
     gatewayBriefingPrompt: messages.prompts.gatewayBriefingSystem,
     gatewayWarmupUserPrompt: messages.prompts.gatewayWarmupUser,
@@ -260,11 +325,19 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
       },
     },
     llm: {
+      provider,
       // Do not default to a foundation model here; let Gateway choose.
       // (If a foundation model is required, set it explicitly via overrides/agent config.)
-      model: overrides.model || agent?.model || "openclaw",
-      temperature: overrides.temperature ?? AGENT_TEMPERATURE,
-      maxTokens: overrides.maxTokens ?? AGENT_MAX_TOKENS,
+      model: overrides.model || agent?.model || llmJson.model || "openclaw",
+      temperature: llmTemperature,
+      maxTokens: llmMaxTokens,
+      systemPrompt,
+      historyMaxTurns,
+      openaiCompatible,
+      gateway: {
+        url: resolvedOpenclawUrl,
+        token: resolvedOpenclawToken,
+      },
       responseTimeoutMs: overrides.responseTimeoutMs ?? LLM_RESPONSE_TIMEOUT_MS,
       firstTokenDelegateMs: overrides.firstTokenDelegateMs ?? FIRST_TOKEN_DELEGATE_MS,
       openclawSystemAddendum: llmAddendum,
@@ -354,4 +427,5 @@ module.exports = {
   GATEWAY_EVENTS_AGENT_ID,
   loadConfig,
   resolveMessages,
+  _test: { resolveConfigEnv },
 };

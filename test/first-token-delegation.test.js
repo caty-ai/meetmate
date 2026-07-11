@@ -1105,11 +1105,10 @@ function createTestPipeline(createPipeline, options) {
   const config = {
     dgKey: "x",
     fishKey: "x",
-    openclawUrl: "http://handoff.test",
-    openclawToken: "x",
     stt: { model: "nova-3", language: "ja", sampleRate: 16_000 },
     llm: {
       model: "test",
+      gateway: { url: "http://handoff.test", token: "x" },
       temperature: 0.5,
       maxTokens: 100,
       firstTokenDelegateMs: options.firstTokenDelegateMs,
@@ -1138,10 +1137,13 @@ function createTestPipeline(createPipeline, options) {
 
 async function withFreshPipeline(fn, options = {}) {
   const src = path.join(__dirname, "..", "src");
+  const llmOpenclawPath = path.join(src, "llm-openclaw.js");
+  const realLlmOpenclaw = require(llmOpenclawPath);
   const paths = [
     path.join(src, "stt-provider.js"),
     path.join(src, "stt.js"),
-    path.join(src, "llm.js"),
+    llmOpenclawPath,
+    path.join(src, "llm-provider.js"),
     path.join(src, "tts-fish.js"),
     path.join(src, "metrics.js"),
     path.join(src, "gateway-events.js"),
@@ -1181,7 +1183,10 @@ async function withFreshPipeline(fn, options = {}) {
 
   require.cache[require.resolve(path.join(src, "stt-provider.js"))] = cacheEntry(path.join(src, "stt-provider.js"), sttExports);
   require.cache[require.resolve(path.join(src, "stt.js"))] = cacheEntry(path.join(src, "stt.js"), sttExports);
-  require.cache[require.resolve(path.join(src, "llm.js"))] = cacheEntry(path.join(src, "llm.js"), options.llm);
+  require.cache[require.resolve(llmOpenclawPath)] = cacheEntry(llmOpenclawPath, {
+    ...realLlmOpenclaw,
+    ...options.llm,
+  });
   if (options.gatewayEvents) {
     require.cache[require.resolve(path.join(src, "gateway-events.js"))] = cacheEntry(path.join(src, "gateway-events.js"), {
       buildSessionKey: (user, agentId) => `agent:${agentId}:openai-user:${user}`,

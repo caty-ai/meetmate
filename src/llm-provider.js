@@ -3,10 +3,12 @@
 // (default: "openclaw"). Keeps streamChat as a plain pass-through so call
 // sites continue supplying backend options directly.
 //
-// provider=openclaw → src/llm-openclaw.js (default, unchanged behavior)
-// unknown provider  → openclaw fallback (openai-compatible arrives in A-7c)
+// provider=openclaw          → src/llm-openclaw.js (default, unchanged behavior)
+// provider=openai-compatible → src/llm-openai.js
+// unknown provider           → openclaw fallback
 
 const { streamChat, complete, timeoutHandoff } = require("./llm-openclaw");
+const openai = require("./llm-openai");
 
 function openclawProvider() {
   return {
@@ -18,6 +20,16 @@ function openclawProvider() {
   };
 }
 
+function openaiCompatibleProvider() {
+  return {
+    name: "openai-compatible",
+    streamChat: openai.streamChat,
+    complete: openai.complete,
+    warmup: undefined,
+    timeoutHandoff: undefined,
+  };
+}
+
 function createLlmProvider(options = {}) {
   const provider = String(
     options.provider || process.env.LLM_PROVIDER || "openclaw",
@@ -25,6 +37,10 @@ function createLlmProvider(options = {}) {
 
   if (provider === "openclaw") {
     return openclawProvider();
+  }
+
+  if (provider === "openai-compatible") {
+    return openaiCompatibleProvider();
   }
 
   console.error(

@@ -308,7 +308,7 @@ test("cached immediate ack keeps agent speaking until paced playback finishes", 
   const paths = [
     path.join(src, "stt-provider.js"),
     path.join(src, "stt.js"),
-    path.join(src, "llm.js"),
+    path.join(src, "llm-provider.js"),
     path.join(src, "tts-fish.js"),
     path.join(src, "tts-cache.js"),
     path.join(src, "pipeline.js"),
@@ -329,10 +329,13 @@ test("cached immediate ack keeps agent speaking until paced playback finishes", 
 
   require.cache[require.resolve(path.join(src, "stt-provider.js"))] = cacheEntry(path.join(src, "stt-provider.js"), sttExports);
   require.cache[require.resolve(path.join(src, "stt.js"))] = cacheEntry(path.join(src, "stt.js"), sttExports);
-  require.cache[require.resolve(path.join(src, "llm.js"))] = cacheEntry(path.join(src, "llm.js"), {
+  const llmMock = {
     streamChat: async function* () {},
     VOICE_SYSTEM_ADDENDUM: "",
     buildVoiceAddendum: () => "",
+  };
+  require.cache[require.resolve(path.join(src, "llm-provider.js"))] = cacheEntry(path.join(src, "llm-provider.js"), {
+    createLlmProvider: () => ({ name: "openclaw", ...llmMock }),
   });
   require.cache[require.resolve(path.join(src, "tts-fish.js"))] = cacheEntry(path.join(src, "tts-fish.js"), {
     synthesize: async () => {

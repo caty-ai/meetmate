@@ -38,7 +38,7 @@ test("sentence-boundary silence uses the TTS sample rate", async () => {
       const paths = [
         path.join(src, "stt-provider.js"),
         path.join(src, "stt.js"),
-        path.join(src, "llm.js"),
+        path.join(src, "llm-provider.js"),
         path.join(src, "tts-fish.js"),
         path.join(src, "pipeline.js"),
       ];
@@ -58,13 +58,16 @@ test("sentence-boundary silence uses the TTS sample rate", async () => {
 
       require.cache[require.resolve(path.join(src, "stt-provider.js"))] = cacheEntry(path.join(src, "stt-provider.js"), sttExports);
       require.cache[require.resolve(path.join(src, "stt.js"))] = cacheEntry(path.join(src, "stt.js"), sttExports);
-      require.cache[require.resolve(path.join(src, "llm.js"))] = cacheEntry(path.join(src, "llm.js"), {
+      const llmMock = {
         streamChat: async function* () {
           yield "これは最初の文章です。";
           yield "これは次の文章です。";
         },
         VOICE_SYSTEM_ADDENDUM: "",
         buildVoiceAddendum: () => "",
+      };
+      require.cache[require.resolve(path.join(src, "llm-provider.js"))] = cacheEntry(path.join(src, "llm-provider.js"), {
+        createLlmProvider: () => ({ name: "openclaw", ...llmMock }),
       });
       require.cache[require.resolve(path.join(src, "tts-fish.js"))] = cacheEntry(path.join(src, "tts-fish.js"), {
         synthesize: async (text, { onAudio }) => {

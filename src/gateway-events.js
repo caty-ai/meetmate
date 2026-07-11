@@ -66,6 +66,7 @@ async function drainActiveTasks() {
 function normalizeCfg(input = {}) {
   return {
     enabled: input.enabled === true,
+    name: String(input.name || input.provider || "openclaw").toLowerCase(),
     openclawUrl: input.openclawUrl || input.url || "",
     openclawToken: input.openclawToken || input.token || "",
     agentId: input.agentId || DEFAULT_AGENT_ID,
@@ -115,6 +116,10 @@ function buildConnectFrame(id, options) {
 function start(input = {}) {
   cfg = normalizeCfg(input);
   if (!cfg.enabled) return false;
+  if (cfg.name !== "openclaw") {
+    console.warn(`⚠️  gateway-events disabled: LLM provider=${cfg.name} is not openclaw`);
+    return false;
+  }
   if (!cfg.openclawUrl || !cfg.openclawToken) {
     console.warn("⚠️  gateway-events disabled: missing OpenClaw URL/token");
     return false;

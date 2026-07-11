@@ -1,5 +1,8 @@
 const DEFAULT_MESSAGES = {
   prompts: {
+    standaloneSystemPrompt: `あなたは日本語で会話する音声アシスタントです。
+ユーザーの話をよく聞き、自然で簡潔な話し言葉で答えてください。
+わからないことは推測せず、必要なら確認してください。`,
     voiceEmotionLine: "- すべての発話の先頭に必ず感情タグを1個入れる（タグなしだと声が暴走するため、スタイル安定化のアンカーとして使う）。使えるタグ: [soft voice]（デフォルト・優しい声）, [warm]（温かみ）, [friendly, warm]（親しみ＋温かみ）, [empathetic, unhurried]（謝罪・落ち着き）, [thoughtful]（考え深く）。迷ったら [soft voice]。\n",
     voiceSystemAddendumTemplate: `あなたは音声通話中です。
 
@@ -9,9 +12,13 @@ const DEFAULT_MESSAGES = {
 - 絵文字は使わない（音声で読み上げできないため。なお [soft voice] のような感情タグは絵文字ではないので必須で使うこと）
 - URL、長い詳細、リスト、コード風テキストは会議チャット専用タグ [[[chat: ...]]] で送る（読み上げられない）。口頭は「チャットに貼っておくね」程度に短くし、1項目1タグ、タグ位置は応答内のどこでもよい。絵文字はチャットにも使えない（会議チャット側が絵文字入りメッセージを拒否するため）
 - 相手の話をしっかり聞いてから応答する
-- 音声では結論→次アクションを優先。詳細はSlackで共有する
+- 音声では結論→次アクションを優先。{openclawSlackRule}
 
-【ツール実行ルール】
+{openclawRules}【絶対禁止事項】
+NO_REPLY は絶対に使わないこと（音声通話ではサイレント応答は不可）。
+何があっても必ずテキストで応答すること。
+返すことがない場合は「了解！何かあったら言ってね」のように一言添えること。`,
+    voiceOpenclawSystemAddendum: `【ツール実行ルール】
 音声通話中は会話を止めないことが最優先。
 
 軽い処理（直接実行OK）:
@@ -31,11 +38,7 @@ const DEFAULT_MESSAGES = {
 セッション履歴にサブエージェントの結果が返ってきている場合は、
 ユーザーの発話に応答した後、「あ、さっきの結果が返ってきたみたい」と自発的に報告すること。
 詳細はSlackを参照するよう案内し、口頭では短い要約を伝える。
-
-【絶対禁止事項】
-NO_REPLY は絶対に使わないこと（音声通話ではサイレント応答は不可）。
-何があっても必ずテキストで応答すること。
-返すことがない場合は「了解！何かあったら言ってね」のように一言添えること。`,
+\n`,
     summary: `以下の音声通話/会議の会話ログから、簡潔なサマリーをJSON形式で生成してください。
 
 出力フォーマット（必ずこのJSONのみ出力すること）:
@@ -204,10 +207,12 @@ function renderTemplate(template, values = {}) {
   });
 }
 
-function buildVoiceAddendumFromMessages(messages = DEFAULT_MESSAGES, { emotionTags = true } = {}) {
+function buildVoiceAddendumFromMessages(messages = DEFAULT_MESSAGES, { emotionTags = true, openclaw = true } = {}) {
   const prompts = messages.prompts || DEFAULT_MESSAGES.prompts;
   return renderTemplate(prompts.voiceSystemAddendumTemplate, {
     emotionLine: emotionTags ? prompts.voiceEmotionLine : "",
+    openclawSlackRule: openclaw ? "詳細はSlackで共有する" : "",
+    openclawRules: openclaw ? prompts.voiceOpenclawSystemAddendum : "",
   });
 }
 
@@ -222,8 +227,10 @@ function resolveMessages(configJson = null) {
 
   return {
     prompts: {
+      standaloneSystemPrompt: getString(prompts.standaloneSystemPrompt, DEFAULT_MESSAGES.prompts.standaloneSystemPrompt),
       voiceEmotionLine: getString(prompts.voiceEmotionLine, DEFAULT_MESSAGES.prompts.voiceEmotionLine),
       voiceSystemAddendumTemplate: getString(prompts.voiceSystemAddendumTemplate, DEFAULT_MESSAGES.prompts.voiceSystemAddendumTemplate),
+      voiceOpenclawSystemAddendum: getString(prompts.voiceOpenclawSystemAddendum, DEFAULT_MESSAGES.prompts.voiceOpenclawSystemAddendum),
       voiceSystemAddendum: getString(prompts.voiceSystemAddendum, ""),
       summary: getString(prompts.summary, DEFAULT_MESSAGES.prompts.summary),
       gatewayBriefingSystem: getString(prompts.gatewayBriefingSystem, DEFAULT_MESSAGES.prompts.gatewayBriefingSystem),
