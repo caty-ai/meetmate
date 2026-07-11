@@ -6,7 +6,17 @@
 // provider=openclaw → src/llm-openclaw.js (default, unchanged behavior)
 // unknown provider  → openclaw fallback (openai-compatible arrives in A-7c)
 
-const { streamChat } = require("./llm-openclaw");
+const { streamChat, complete, timeoutHandoff } = require("./llm-openclaw");
+
+function openclawProvider() {
+  return {
+    name: "openclaw",
+    streamChat,
+    complete,
+    warmup: undefined,
+    timeoutHandoff,
+  };
+}
 
 function createLlmProvider(options = {}) {
   const provider = String(
@@ -14,13 +24,13 @@ function createLlmProvider(options = {}) {
   ).toLowerCase();
 
   if (provider === "openclaw") {
-    return { name: "openclaw", streamChat };
+    return openclawProvider();
   }
 
   console.error(
     "⚠️  LLM provider=" + provider + " は未対応です。openclaw にフォールバックします。",
   );
-  return { name: "openclaw", streamChat };
+  return openclawProvider();
 }
 
 module.exports = { createLlmProvider };

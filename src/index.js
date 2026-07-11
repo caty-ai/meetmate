@@ -338,50 +338,21 @@ async function sendLcmIngest(lifecycle, notifier) {
     { role: "user", content: "[[[lcm:ingest]]] セッション終了。この会話を長期記憶に保存してください。" },
   ];
 
-  const gatewayUrl = new URL(openclawUrl);
-  const isHttps = gatewayUrl.protocol === "https:";
-  const transport = isHttps ? https : http;
-
-  const body = JSON.stringify({
-    // Route to OpenClaw Gateway default agent/model selection.
-    model: "openclaw",
-    stream: false,
-    temperature: 0.3,
-    max_tokens: 1,
-    messages: ingestMessages,
-    user: sessionUser,
-  });
+  new URL(openclawUrl); // Preserve the pre-refactor throw-before-try error boundary.
 
   try {
-    const responseText = await new Promise((resolve, reject) => {
-      const req = transport.request(
-        {
-          hostname: gatewayUrl.hostname,
-          port: gatewayUrl.port || (isHttps ? 443 : 80),
-          path: "/v1/chat/completions",
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${openclawToken}`,
-            "Content-Type": "application/json",
-            "Content-Length": Buffer.byteLength(body),
-          },
-        },
-        (res) => {
-          let data = "";
-          res.on("data", (chunk) => { data += chunk; });
-          res.on("end", () => {
-            if (res.statusCode !== 200) {
-              reject(new Error(`LCM ingest Gateway error (${res.statusCode}): ${data.slice(0, 200)}`));
-              return;
-            }
-            resolve(data);
-          });
-        }
-      );
-      req.on("error", reject);
-      req.write(body);
-      req.end();
+    const provider = require("./llm-provider").createLlmProvider();
+    const { statusCode, text: responseText } = await provider.complete(ingestMessages, {
+      openclawUrl,
+      openclawToken,
+      model: "openclaw",
+      temperature: 0.3,
+      maxTokens: 1,
+      user: sessionUser,
     });
+    if (statusCode !== 200) {
+      throw new Error(`LCM ingest Gateway error (${statusCode}): ${responseText.slice(0, 200)}`);
+    }
 
     const elapsed = Date.now() - ingestStart;
     console.log(`✅  LCM ingest completed (background) — session=${sessionUser}, id=${sid}, ${elapsed}ms`);

@@ -12,6 +12,9 @@ test("default provider is openclaw", () => {
     const provider = createLlmProvider();
     assert.equal(provider.name, "openclaw");
     assert.strictEqual(provider.streamChat, openclaw.streamChat);
+    assert.strictEqual(provider.complete, openclaw.complete);
+    assert.strictEqual(provider.timeoutHandoff, openclaw.timeoutHandoff);
+    assert.equal(provider.warmup, undefined);
   } finally {
     if (previous === undefined) delete process.env.LLM_PROVIDER;
     else process.env.LLM_PROVIDER = previous;
@@ -95,7 +98,9 @@ test("llm compatibility shim preserves export identity and keys", () => {
   assert.deepEqual(Object.keys(shim).sort(), [
     "VOICE_SYSTEM_ADDENDUM",
     "buildVoiceAddendum",
+    "complete",
     "streamChat",
+    "timeoutHandoff",
   ]);
 });
 
