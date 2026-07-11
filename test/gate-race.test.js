@@ -25,7 +25,7 @@ test("utterance handling serializes rapid wake turns without dropping the replay
   const paths = [
     path.join(src, "stt-provider.js"),
     path.join(src, "stt.js"),
-    path.join(src, "llm.js"),
+    path.join(src, "llm-provider.js"),
     path.join(src, "tts-fish.js"),
     path.join(src, "pipeline.js"),
   ];
@@ -51,7 +51,7 @@ test("utterance handling serializes rapid wake turns without dropping the replay
 
   require.cache[require.resolve(path.join(src, "stt-provider.js"))] = cacheEntry(path.join(src, "stt-provider.js"), sttExports);
   require.cache[require.resolve(path.join(src, "stt.js"))] = cacheEntry(path.join(src, "stt.js"), sttExports);
-  require.cache[require.resolve(path.join(src, "llm.js"))] = cacheEntry(path.join(src, "llm.js"), {
+  const llmMock = {
     streamChat: async function* (messages, opts) {
       const label = String(messages[0]?.content || "").match(/タスク[A-C]/)?.[0] || "unknown";
       active += 1;
@@ -68,6 +68,9 @@ test("utterance handling serializes rapid wake turns without dropping the replay
     },
     VOICE_SYSTEM_ADDENDUM: "",
     buildVoiceAddendum: () => "",
+  };
+  require.cache[require.resolve(path.join(src, "llm-provider.js"))] = cacheEntry(path.join(src, "llm-provider.js"), {
+    createLlmProvider: () => ({ name: "openclaw", ...llmMock }),
   });
   require.cache[require.resolve(path.join(src, "tts-fish.js"))] = cacheEntry(path.join(src, "tts-fish.js"), {
     synthesize: async (text, { onAudio }) => {
@@ -147,7 +150,7 @@ test("pending queue replays a wake turn observed while the gate is closed", asyn
   const paths = [
     path.join(src, "stt-provider.js"),
     path.join(src, "stt.js"),
-    path.join(src, "llm.js"),
+    path.join(src, "llm-provider.js"),
     path.join(src, "tts-fish.js"),
     path.join(src, "pipeline.js"),
   ];
@@ -170,7 +173,7 @@ test("pending queue replays a wake turn observed while the gate is closed", asyn
 
   require.cache[require.resolve(path.join(src, "stt-provider.js"))] = cacheEntry(path.join(src, "stt-provider.js"), sttExports);
   require.cache[require.resolve(path.join(src, "stt.js"))] = cacheEntry(path.join(src, "stt.js"), sttExports);
-  require.cache[require.resolve(path.join(src, "llm.js"))] = cacheEntry(path.join(src, "llm.js"), {
+  const llmMock = {
     streamChat: async function* (messages, opts) {
       const label = String(messages[0]?.content || "").match(/タスク[A-B]/)?.[0] || "unknown";
       active += 1;
@@ -185,6 +188,9 @@ test("pending queue replays a wake turn observed while the gate is closed", asyn
     },
     VOICE_SYSTEM_ADDENDUM: "",
     buildVoiceAddendum: () => "",
+  };
+  require.cache[require.resolve(path.join(src, "llm-provider.js"))] = cacheEntry(path.join(src, "llm-provider.js"), {
+    createLlmProvider: () => ({ name: "openclaw", ...llmMock }),
   });
   require.cache[require.resolve(path.join(src, "tts-fish.js"))] = cacheEntry(path.join(src, "tts-fish.js"), {
     synthesize: async (text, { onAudio }) => {

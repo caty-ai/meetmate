@@ -230,8 +230,9 @@ function getGatewayConfigForProfile(profile = _startupAgentProfile) {
   const pipelineConfig = getPipelineConfig({}, null, profile, _configForPort);
   return {
     ...pipelineConfig.gatewayEvents,
-    openclawUrl: profile?.gatewayUrl || pipelineConfig.openclawUrl || process.env.OPENCLAW_GATEWAY_URL,
-    openclawToken: profile?.gatewayToken || pipelineConfig.openclawToken || process.env.OPENCLAW_GATEWAY_TOKEN,
+    name: pipelineConfig.llm.provider,
+    openclawUrl: pipelineConfig.llm.gateway?.url,
+    openclawToken: pipelineConfig.llm.gateway?.token,
   };
 }
 
@@ -302,19 +303,21 @@ async function sendLcmIngest(lifecycle, notifier) {
   const agentId = (_startupAgentProfile?.agentId || "unknown").toLowerCase();
   const lcmKey = `${agentId}:${sid}`;
 
+  const llmConfig = getPipelineConfig({}, null, _startupAgentProfile, _configForPort).llm;
+  const providerName = llmConfig.provider;
+  if (providerName !== "openclaw") {
+    console.log(`⏭️  LCM ingest skipped — LLM provider=${providerName} is not openclaw`);
+    return;
+  }
+
   if (_lcmIngestedSessions.has(lcmKey)) {
     console.log(`⏭️  LCM ingest skipped — already ingested for ${lcmKey}`);
     return;
   }
   _lcmIngestedSessions.set(lcmKey, true);
 
-  // Resolve agent-specific gateway credentials
-  let openclawUrl = process.env.OPENCLAW_GATEWAY_URL;
-  let openclawToken = process.env.OPENCLAW_GATEWAY_TOKEN;
-  if (_startupAgentProfile) {
-    if (_startupAgentProfile.gatewayUrl) openclawUrl = _startupAgentProfile.gatewayUrl;
-    if (_startupAgentProfile.gatewayToken) openclawToken = _startupAgentProfile.gatewayToken;
-  }
+  const openclawUrl = llmConfig.gateway?.url;
+  const openclawToken = llmConfig.gateway?.token;
 
   if (!openclawUrl || !openclawToken) {
     console.log("⏭️  LCM ingest skipped — no Gateway credentials");

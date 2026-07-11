@@ -1,7 +1,7 @@
 // pipeline.js — Orchestrates STT → LLM → TTS pipeline
 // Replaces Deepgram Voice Agent (all-in-one) with decomposed components
 
-const { streamChat } = require("./llm");
+const { createLlmProvider } = require("./llm-provider");
 const { synthesize } = require("./tts-fish");
 const { createTtsCache } = require("./tts-cache");
 const { getExitCommands, detectExitIntent } = require("./exit-handler");
@@ -424,7 +424,10 @@ function pickProgressPing(index, customVariants = null) {
 }
 
 function collectFixedTtsPhrases(config, greeting) {
-  const gatewayEventsEnabled = config?.gatewayEvents?.enabled === true;
+  // The dispatcher falls unknown names back to OpenClaw, so only the one
+  // explicitly supported standalone provider is excluded here.
+  const isOpenclaw = String(config?.llm?.provider || "openclaw").toLowerCase() !== "openai-compatible";
+  const gatewayEventsEnabled = isOpenclaw && config?.gatewayEvents?.enabled === true;
   const messages = config?.messages || DEFAULT_RESOLVED_MESSAGES.speech;
   return [
     ...(config.ackVariants && config.ackVariants.length > 0 ? config.ackVariants : messages.ackVariants),
@@ -432,7 +435,7 @@ function collectFixedTtsPhrases(config, greeting) {
     greeting || config.greeting,
     config.exitFarewell || messages.exitFarewell,
     config.cancelAck,
-    ...(Number(config?.llm?.firstTokenDelegateMs || 0) > 0 ? [messages.forcedDelegationFallback] : []),
+    ...(isOpenclaw && Number(config?.llm?.firstTokenDelegateMs || 0) > 0 ? [messages.forcedDelegationFallback] : []),
     config.timeoutFallback || messages.timeoutFallback,
     messages.handoffSuccess,
     messages.handoffFailure,
@@ -512,7 +515,10 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   const defaultAgentId = options.defaultAgentId || selectedAgentIds[0] || null;
   let currentAgentId = defaultAgentId || agentProfile?.agentId || "agent";
   const gatewayEventsConfig = config.gatewayEvents || {};
-  const gatewayEventsEnabled = gatewayEventsConfig.enabled === true;
+  const llmProvider = createLlmProvider({ provider: config?.llm?.provider });
+  const isOpenclawProvider = llmProvider.name === "openclaw";
+  const gatewayEventsEnabled = isOpenclawProvider && gatewayEventsConfig.enabled === true;
+  const clientHistory = new Map();
   const resolvedSpeech = config.messages || DEFAULT_RESOLVED_MESSAGES.speech;
   const resolvedRegex = config.regex || DEFAULT_RESOLVED_MESSAGES.regex;
   const resolvedPrompts = config.prompts || DEFAULT_RESOLVED_MESSAGES.prompts;
@@ -538,8 +544,8 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   let circuitBreakerNoticeQueued = false;
 
   const agentState = {
-    openclawUrl: config.openclawUrl,
-    openclawToken: config.openclawToken,
+    openclawUrl: config.llm.gateway?.url,
+    openclawToken: config.llm.gateway?.token,
     voiceId: config.tts.referenceId || null,
     model: config.llm.model,
     openclawSystemAddendum: config.llm.openclawSystemAddendum,
@@ -552,8 +558,8 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     const oldId = currentAgentId;
     const agent = agents[agentId];
 
-    agentState.openclawUrl = agent.gatewayUrl || config.openclawUrl;
-    agentState.openclawToken = agent.gatewayToken || config.openclawToken;
+    agentState.openclawUrl = agent.gatewayUrl || config.llm.gateway?.url;
+    agentState.openclawToken = agent.gatewayToken || config.llm.gateway?.token;
     agentState.voiceId = agent.voiceId || config.tts.referenceId || null;
     agentState.model = agent.model || config.llm.model;
     agentState.openclawSystemAddendum = Object.prototype.hasOwnProperty.call(agent, "openclawSystemAddendum")
@@ -572,7 +578,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     switchAgent(defaultAgentId);
   }
 
-  console.log("🔗  OpenClaw Gateway モード ✨");
+  if (isOpenclawProvider) console.log("🔗  OpenClaw Gateway モード ✨");
 
   // Current LLM/TTS abort controller (for interruption)
   let currentAbort = null;
@@ -1573,7 +1579,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         return Promise.resolve(false);
       }
 
-      if (!agentState.openclawUrl || !agentState.openclawToken) {
+      if (isOpenclawProvider && (!agentState.openclawUrl || !agentState.openclawToken)) {
         console.log("⏭️  Timeout handoff skipped (OpenClaw Gateway unavailable)");
         return Promise.resolve(false);
       }
@@ -1602,13 +1608,12 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
           const handoffSessionUser = gatewayModeHandoff && gatewayEventsConfig.handoffDelegateSession !== false
             ? `${agentState.sessionUser}-delegate`
             : agentState.sessionUser;
-          const provider = require("./llm-provider").createLlmProvider();
-          if (typeof provider.timeoutHandoff !== "function") {
+          if (typeof llmProvider.timeoutHandoff !== "function") {
             finish(false);
             return;
           }
 
-          provider.timeoutHandoff({
+          llmProvider.timeoutHandoff({
             openclawUrl: agentState.openclawUrl,
             openclawToken: agentState.openclawToken,
             model: agentState.model || config.llm.model || "openclaw",
@@ -1714,6 +1719,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     };
 
     const startFirstTokenDelegateTimer = () => {
+      if (!isOpenclawProvider) return;
       if (gatewayEventsEnabled && shortSkipReason) {
         recordGatewayMetric("forced_delegation_skipped", {
           turn_id: metricsTurnId,
@@ -1837,8 +1843,25 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
 
       console.log(`🤔  ${requestAgentId || "agent"} thinking…`);
 
-      // OpenClaw Gateway manages conversation history
-      const llmMessages = [{ role: "user", content: userText }];
+      // OpenClaw Gateway manages conversation history. Standalone providers
+      // receive only complete user/assistant pairs from this session; aborted
+      // and failed turns are deliberately discarded.
+      const historyMaxTurns = Math.max(0, Math.floor(Number(config?.llm?.historyMaxTurns ?? 12) || 0));
+      const previousTurns = isOpenclawProvider
+        ? []
+        : historyMaxTurns > 0
+          ? (clientHistory.get(agentState.sessionUser) || []).slice(-historyMaxTurns)
+          : [];
+      const llmMessages = [
+        ...(!isOpenclawProvider && config.llm.systemPrompt
+          ? [{ role: "system", content: config.llm.systemPrompt }]
+          : []),
+        ...previousTurns.flatMap((turn) => [
+          { role: "user", content: turn.user },
+          { role: "assistant", content: turn.assistant },
+        ]),
+        { role: "user", content: userText },
+      ];
 
       // ★ Diagnostic: dump what we're actually sending to Gateway
       console.log(`📤  [diag] Gateway payload — agent=${requestAgentId} user=${agentState.sessionUser}`);
@@ -1868,7 +1891,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         for (const text of chats) emitChatMessage(text, source);
       };
 
-      for await (const chunk of streamChat(
+      for await (const chunk of llmProvider.streamChat(
         llmMessages,
         {
           openclawUrl: agentState.openclawUrl,
@@ -1878,6 +1901,10 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
           model: agentState.model,
           temperature: config.llm.temperature,
           maxTokens: config.llm.maxTokens,
+          ...(!isOpenclawProvider ? {
+            baseUrl: config.llm.openaiCompatible?.baseUrl,
+            apiKey: config.llm.openaiCompatible?.apiKey,
+          } : {}),
           signal: abort.signal,
         }
       )) {
@@ -2013,6 +2040,11 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       if (fullResponse.trim()) {
         console.log(`💬  [assistant] ${fullResponse.trim()}`);
         appendConversationEntry("assistant", fullResponse.trim(), requestAgentId || null);
+        if (!isOpenclawProvider && historyMaxTurns > 0) {
+          const turns = clientHistory.get(agentState.sessionUser) || [];
+          turns.push({ user: userText, assistant: fullResponse.trim() });
+          clientHistory.set(agentState.sessionUser, turns.slice(-historyMaxTurns));
+        }
         markSentToLlm(contextEntries, currentEntry);
       }
     } catch (err) {
@@ -2351,6 +2383,9 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   if (options._testExposeInternals) {
     api._test = {
       handleUtteranceEnd,
+      processUserInput,
+      switchAgent,
+      abortCurrent: () => currentAbort?.abort(),
       handleGatewaySubagentSpawn,
       handleGatewaySubagentCompletion,
       handleGatewaySessionReply,

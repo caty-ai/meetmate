@@ -121,7 +121,7 @@ async function withFreshPipelineModule(fn, overrides = {}) {
   const paths = [
     path.join(src, "stt-provider.js"),
     path.join(src, "stt.js"),
-    path.join(src, "llm.js"),
+    path.join(src, "llm-provider.js"),
     path.join(src, "tts-fish.js"),
     path.join(src, "pipeline.js"),
   ];
@@ -140,10 +140,13 @@ async function withFreshPipelineModule(fn, overrides = {}) {
 
   require.cache[require.resolve(path.join(src, "stt-provider.js"))] = cacheEntry(path.join(src, "stt-provider.js"), overrides.stt || sttExports);
   require.cache[require.resolve(path.join(src, "stt.js"))] = cacheEntry(path.join(src, "stt.js"), overrides.stt || sttExports);
-  require.cache[require.resolve(path.join(src, "llm.js"))] = cacheEntry(path.join(src, "llm.js"), overrides.llm || {
+  const llmMock = overrides.llm || {
     streamChat: async function* () {},
     VOICE_SYSTEM_ADDENDUM: "",
     buildVoiceAddendum: () => "",
+  };
+  require.cache[require.resolve(path.join(src, "llm-provider.js"))] = cacheEntry(path.join(src, "llm-provider.js"), {
+    createLlmProvider: () => ({ name: "openclaw", ...llmMock }),
   });
   require.cache[require.resolve(path.join(src, "tts-fish.js"))] = cacheEntry(path.join(src, "tts-fish.js"), overrides.tts || {
     synthesize: async (_text, { onAudio }) => {
