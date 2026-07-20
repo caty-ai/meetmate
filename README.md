@@ -130,7 +130,7 @@ cp config.json.example config.json
 
 `openai-compatible` は、プレーンな LLM と組み込みのペルソナテンプレートで音声応答する縮退モードです。Gateway 未設定時の OSS としての最低保証であり、OpenClaw 固有の memory / skills / tools は利用できません。Claude モデルは OpenAI 互換プロキシ（例: LiteLLM）経由で利用します。Anthropic ネイティブアダプタはありません（[#114](https://github.com/caty-ai/meetmate/issues/114)）。
 
-`config.json` 側で `openai-compatible` を選ぶ場合は `.env` の `LLM_PROVIDER` も合わせる（環境変数が `config.json` より優先）。`OPENCLAW_GATEWAY_URL` / `OPENCLAW_GATEWAY_TOKEN` は削除・空欄にせずダミー値のまま残し、残したくない場合は `config.json` から `gateway` ブロックごと削除する（`config.json` の `${...}` プレースホルダが未解決だと起動時にエラー終了する）。
+`config.json` 側で `openai-compatible` を選ぶ場合は `.env` の `LLM_PROVIDER` も合わせる（環境変数が `config.json` より優先）。`config.json` の `${...}` プレースホルダは**未解決（未設定・空欄）だと起動時にエラー終了する**ため、使わない機能の env（`OPENCLAW_GATEWAY_URL` / `OPENCLAW_GATEWAY_TOKEN` / `SLACK_BOT_TOKEN` 等）も削除・空欄にせずダミー値のまま残す。残したくない場合は `config.json` から該当ブロックごと削除する。
 
 `config.json` の `llm` スキーマは次のとおりです。
 
@@ -158,7 +158,7 @@ OpenAI 互換 API には `{baseUrl}/v1/chat/completions` を送信します。`b
 ### 4. アバターの配置と起動
 
 ```bash
-# assets/avatar.png にエージェントのアバター画像を配置してから
+# assets/avatar.png は既定画像を同梱済み（自分のエージェント画像に差し替え可）
 npm start
 ```
 
