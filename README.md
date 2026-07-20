@@ -9,7 +9,7 @@
 AI エージェントを Google Meet / Zoom にリアルタイム参加させ、音声で対話するブリッジサーバー。OpenClaw Gateway 連携により、任意のエージェントを音声会議に接続できます。
 
 ```
-STT (Soniox) → ウェイクワード検出 → OpenClaw Gateway (LLM) → TTS (Fish Audio S2-Pro) → Meet / Zoom
+STT (Soniox) → ウェイクワード検出 → LLM (OpenClaw Gateway 既定) → TTS (Fish Audio S2-Pro) → Meet / Zoom
 ```
 
 ## 目次
@@ -63,7 +63,7 @@ STT (Soniox) → ウェイクワード検出 → OpenClaw Gateway (LLM) → TTS 
 |---|---|
 | [`src/pipeline.js`](src/pipeline.js) | 音声パイプライン制御 |
 | [`src/agent-profile.js`](src/agent-profile.js) | エージェント設定解決 |
-| [`src/llm.js`](src/llm.js) | Gateway Chat Completions 連携 |
+| [`src/llm-provider.js`](src/llm-provider.js) | LLM プロバイダ切替（OpenClaw 既定 / OpenAI 互換） |
 | [`src/stt-provider.js`](src/stt-provider.js) | STT プロバイダ切替（soniox 既定 / deepgram） |
 | [`src/stt-soniox.js`](src/stt-soniox.js) | Soniox STT（stt-rt-v5, WebSocket） |
 | [`src/stt.js`](src/stt.js) | Deepgram STT（フォールバック） |
@@ -78,7 +78,9 @@ STT (Soniox) → ウェイクワード検出 → OpenClaw Gateway (LLM) → TTS 
 ### 前提条件
 
 - Node.js 22 以上（`package.json` の `engines` 準拠）
-- **OpenClaw Gateway が稼働していること**（現状の hard prerequisite。LLM 応答は全て Gateway 経由。汎用 LLM バックエンド対応は [#114](https://github.com/caty-ai/meetmate/issues/114) で設計中）
+- LLM プロバイダは `openclaw`（既定）または `openai-compatible`
+  - `openclaw` は OpenClaw Gateway が必要。SOUL / memory / skills / tools を含む完全なエージェント体験を提供
+  - `openai-compatible` は OpenAI 互換 API に接続し、OpenClaw Gateway は不要
 - 各サービスの API キー（Soniox / Fish Audio / Attendee）
   - [Attendee](https://attendee.dev/) は Google Meet / Zoom に Bot を参加させる SaaS（self-host 版もあり）。Bot の入退室・音声入出力はすべて Attendee API 経由
   - Fish Audio の Voice ID は [fish.audio](https://fish.audio/) で使いたい声（自作 or 公開ボイス）のページを開き、URL 末尾の ID をコピー
@@ -99,8 +101,11 @@ cp .env.example .env
 
 | 変数 | 用途 |
 |---|---|
-| `OPENCLAW_GATEWAY_URL` | OpenClaw Gateway URL（例: `http://localhost:18789`） |
-| `OPENCLAW_GATEWAY_TOKEN` | Gateway 認証トークン |
+| `LLM_PROVIDER` | LLM プロバイダ（`openclaw`（既定）/ `openai-compatible`） |
+| `OPENCLAW_GATEWAY_URL` | OpenClaw Gateway URL（`openclaw` で必須。例: `http://localhost:18789`） |
+| `OPENCLAW_GATEWAY_TOKEN` | Gateway 認証トークン（`openclaw` で必須） |
+| `OPENAI_COMPATIBLE_BASE_URL` | OpenAI 互換 API のベース URL（`openai-compatible` で必須） |
+| `OPENAI_COMPATIBLE_API_KEY` | OpenAI 互換 API キー（`openai-compatible` で必須） |
 | `SONIOX_API_KEY` | STT 用（既定プロバイダ Soniox） |
 | `FISH_AUDIO_API_KEY` | TTS 用 |
 | `FISH_AUDIO_VOICE_ID` | TTS 音声 ID（声のクローン） |
@@ -115,6 +120,40 @@ cp config.json.example config.json
 ```
 
 エージェント ID / 表示名 / ウェイクワード / 固定文言（greeting・ackVariants・progressPings など）/ TTS・STT・Slack・Attendee の設定をここに集約しています。`config.json.example` は emotion tag anchor 方式（S2-Pro 用）に揃えてあるので、コピーして変数を埋めれば動きます。
+
+### LLM プロバイダ
+
+| `llm.provider` / `LLM_PROVIDER` | 動作 |
+|---|---|
+| `openclaw` | 既定。OpenClaw Gateway 経由で SOUL / memory / skills / tools を利用 |
+| `openai-compatible` | OpenAI 互換 API を直接利用。OpenClaw Gateway は不要 |
+
+`openai-compatible` は、プレーンな LLM と組み込みのペルソナテンプレートで音声応答する縮退モードです。Gateway 未設定時の OSS としての最低保証であり、OpenClaw 固有の memory / skills / tools は利用できません。Claude モデルは OpenAI 互換プロキシ（例: LiteLLM）経由で利用します。Anthropic ネイティブアダプタはありません（[#114](https://github.com/caty-ai/meetmate/issues/114)）。
+
+`config.json` 側で `openai-compatible` を選ぶ場合は `.env` の `LLM_PROVIDER` も合わせる（環境変数が `config.json` より優先）。`OPENCLAW_GATEWAY_URL` / `OPENCLAW_GATEWAY_TOKEN` は削除・空欄にせずダミー値のまま残し、残したくない場合は `config.json` から `gateway` ブロックごと削除する（`config.json` の `${...}` プレースホルダが未解決だと起動時にエラー終了する）。
+
+`config.json` の `llm` スキーマは次のとおりです。
+
+```json
+{
+  "llm": {
+    "provider": "openclaw",
+    "model": "openclaw",
+    "temperature": 0.5,
+    "maxTokens": 300,
+    "historyMaxTurns": 12,
+    "systemPrompt": "",
+    "openaiCompatible": {
+      "baseUrl": "",
+      "apiKey": ""
+    }
+  }
+}
+```
+
+`provider` / `temperature` / `maxTokens` / `openaiCompatible` の解決順は、セッションごとの overrides → agent 設定 → 環境変数 → `configJson.llm` → 既定値です。対応する環境変数は `LLM_PROVIDER`、`AGENT_TEMPERATURE`、`AGENT_MAX_TOKENS`、`OPENAI_COMPATIBLE_BASE_URL`、`OPENAI_COMPATIBLE_API_KEY` です。`model` と `historyMaxTurns` は環境変数を参照せず、overrides → agent 設定 → `configJson.llm` → 既定値の順です。`openai-compatible` の `systemPrompt` は `overrides.prompt` → `configJson.llm.systemPrompt` → 組み込みペルソナの順で解決し、音声用ルールを付加して使います。
+
+OpenAI 互換 API には `{baseUrl}/v1/chat/completions` を送信します。`baseUrl` のパスがすでに `/v1` で終わる場合は `/v1` を重ねません。未対応のプロバイダ名は警告後に `openclaw` へフォールバックします。
 
 ### 4. アバターの配置と起動
 
