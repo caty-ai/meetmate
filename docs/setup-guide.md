@@ -11,7 +11,7 @@
 
 | サービス | 取得先 | 用途 | 必須 |
 |---------|--------|------|------|
-| OpenClaw Gateway | 同一マシンで稼働 | LLM（SOUL/memory/tools/skills連携）。**現状の hard prerequisite**（汎用 LLM バックエンドは [#114](https://github.com/caty-ai/meetmate/issues/114) で設計中） | ✅ |
+| OpenClaw Gateway | 同一マシンで稼働 | 既定 LLM（SOUL/memory/tools/skills連携）。`LLM_PROVIDER=openclaw` で必須 | 条件付き（既定） |
 | Soniox | https://console.soniox.com/ | STT（音声認識・既定プロバイダ） | ✅ |
 | Deepgram | https://console.deepgram.com/signup | STT（`STT_PROVIDER=deepgram` 切替時のみ） | 任意 |
 | Attendee | https://app.attendee.dev/accounts/signup/ | Google Meet / Zoom Bot | ✅ |
@@ -22,9 +22,10 @@
 ### 前提条件
 
 - Node.js v22+（`package.json` の `engines` 準拠）
-- OpenClaw Gateway が同一マシンで稼働中
+- 既定の `openclaw` プロバイダでは OpenClaw Gateway が同一マシンで稼働中
   - Gateway URL: `http://localhost:<port>`（エージェントのポートに合わせる）
   - Gateway Token: `openclaw.json` の `gateway.token` を確認
+- `LLM_PROVIDER=openai-compatible` を使う場合は OpenClaw Gateway 不要
 - ngrok アカウント（authtoken 設定済み）
 
 ---
@@ -63,11 +64,14 @@ cp config.json.example config.json
     "displayName": "ルカ",           // 表示名（日本語OK、Meet UIに表示）
     "greeting": "(happy) こんにちは！ルカです！",  // 参加時の挨拶（感情タグ付き）
     "emotionTags": true,             // TTS用の感情タグを有効化（推奨: true）
-    "model": "openclaw",             // ← 必ず "openclaw"（Gatewayに任せる）
     "wakeWords": ["ルカ", "luca"],   // ウェイクワード（名前）
     "keyterms": ["ルカ", "Luca"],    // STT キーワードブースト用（Soniox context terms / Deepgram keyterm）
     "sttWakeVariants": [],           // キャリブレーション後に自動追記される
     // ... 口調・メッセージをエージェントに合わせて編集
+  },
+  "llm": {
+    "provider": "openclaw",         // 既定。代替は "openai-compatible"
+    "model": "openclaw"             // OpenClaw では Gateway に任せる
   },
   "gateway": {
     "url": "${OPENCLAW_GATEWAY_URL}",   // .env から読む（トップレベル。agent配下ではない）
@@ -88,7 +92,7 @@ cp config.json.example config.json
 }
 ```
 
-> ⚠️ `model` は必ず `"openclaw"` にすること。モデル名（`anthropic/claude-opus-4-6` 等）を直接書いても Gateway に無視される。
+> ⚠️ 既定の OpenClaw 構成では `llm.model` を `"openclaw"` にすること。`openai-compatible` ではプロキシ側のモデル ID を指定する。
 
 > 💡 **`emotionTags`** を `true` にすると、LLM の応答に `(happy)`, `(calm)`, `(excited)` 等の感情タグが付き、TTS の表現力が上がる。`greeting` にも同じ形式でタグを付けると参加時の挨拶が自然になる。使えるタグ: `(calm)`, `(happy)`, `(curious)`, `(soft tone)`, `(excited)`, `(nervous)`, `(grateful)`, `(laughing)`, `(confident)`
 
@@ -100,9 +104,10 @@ cp config.json.example config.json
 cp .env.example .env
 ```
 
-**必須項目:**
+**必須項目（既定の OpenClaw 構成）:**
 ```bash
 # OpenClaw Gateway
+LLM_PROVIDER=openclaw
 OPENCLAW_GATEWAY_URL=http://localhost:19300    # エージェントのGatewayポート
 OPENCLAW_GATEWAY_TOKEN=your_gateway_token_here
 
@@ -121,6 +126,22 @@ FISH_AUDIO_VOICE_ID=your_voice_id
 # ⚠️ 重要: 必ず fish-audio にすること（"openai" だとレガシーモードになる）
 TTS_PROVIDER=fish-audio
 ```
+
+`LLM_PROVIDER=openai-compatible` の場合は `OPENAI_COMPATIBLE_BASE_URL` と `OPENAI_COMPATIBLE_API_KEY` を**追加**する。`OPENCLAW_GATEWAY_URL` / `OPENCLAW_GATEWAY_TOKEN` の2行は**削除・空欄にせずダミー値のまま残す**（`config.json` の `${...}` プレースホルダが未解決だと起動時にエラー終了する）。残したくない場合は `config.json` から `gateway` ブロックごと削除する。
+
+**OpenAI 互換で動かす最小構成**
+
+```bash
+LLM_PROVIDER=openai-compatible
+OPENAI_COMPATIBLE_BASE_URL=http://localhost:4000
+OPENAI_COMPATIBLE_API_KEY=your_api_key
+```
+
+```json
+"llm": { "provider": "openai-compatible", "model": "your-proxy-model-id" }
+```
+
+gateway の env 2行はダミーのまま残す（上記参照）。
 
 > ⚠️ **`TTS_PROVIDER=fish-audio` は必須。** `openai` にすると Deepgram Voice Agent（レガシーモード）で起動し、パイプラインが全く別のルートに入る。
 
@@ -351,6 +372,7 @@ SLACK_SUMMARY_CHANNEL=C0XXXXXXXXX   # 会議サマリー + 全文ログ
   - `🔊 Deepgram Voice Agent モード` が出ていたら TTS_PROVIDER が間違っている
 
 ### Gateway warm-up がタイムアウトする
+- openai-compatible では join 時に Gateway warm-up エラーがログに出る既知問題あり（無害・修正は #140）。
 - Gateway が起動しているか確認: `curl http://localhost:<port>/v1/models`
 - モデルの初回応答が遅い場合（Grok等: ~18秒）は `config.json` の `gateway.warmupTimeoutMs` を延長（デフォルト8000ms、遅いモデルは30000ms推奨）
 - Gateway Token が正しいか確認
@@ -383,7 +405,7 @@ SLACK_SUMMARY_CHANNEL=C0XXXXXXXXX   # 会議サマリー + 全文ログ
 ## アーキテクチャ概要
 
 ```
-STT(Soniox stt-rt-v5 既定 / Deepgram 切替可) → ウェイクワード検出 → OpenClaw Gateway(LLM) → TTS(Fish Audio) → Meet/Zoom
+STT(Soniox stt-rt-v5 既定 / Deepgram 切替可) → ウェイクワード検出 → LLM(OpenClaw Gateway 既定) → TTS(Fish Audio) → Meet/Zoom
 ```
 
 詳細は `docs/architecture.md` を参照。

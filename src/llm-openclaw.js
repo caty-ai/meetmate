@@ -174,8 +174,8 @@ const VOICE_SYSTEM_ADDENDUM = buildVoiceAddendum({ emotionTags: true });
  * @param {string} [options.sessionUser] - User/session ID for OpenClaw session isolation
  * @param {string} [options.openclawSystemAddendum] - System addendum override for OpenClaw voice mode
  * @param {string} [options.model] - Model ID
- * @param {number} [options.temperature] - Temperature (default: 0.5)
- * @param {number} [options.maxTokens] - Max tokens (default: 300)
+ * @param {number} [options.temperature] - Temperature (fallback: 0.7 when no resolved value is passed; the config layer resolves and passes 0.5 by default)
+ * @param {number} [options.maxTokens] - Max tokens (fallback: 500 when no resolved value is passed; the config layer resolves and passes 300 by default)
  * @param {AbortSignal} [options.signal] - AbortSignal for cancellation
  * @returns {AsyncGenerator<string>} Yields text chunks
  */

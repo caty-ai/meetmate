@@ -1,5 +1,13 @@
 {
   "_comments": {
+    "llm.provider": "LLM provider: openclaw (default) or openai-compatible.",
+    "llm.model": "Provider model ID; keep openclaw for the default provider, or set the proxy model ID for openai-compatible.",
+    "llm.temperature": "LLM sampling temperature; default 0.5.",
+    "llm.maxTokens": "Maximum response tokens; default 300.",
+    "llm.historyMaxTurns": "Local conversation turns retained for standalone providers; default 12.",
+    "llm.systemPrompt": "Standalone provider persona; leave empty to use the built-in persona template.",
+    "llm.openaiCompatible.baseUrl": "OpenAI-compatible proxy base URL; required when llm.provider is openai-compatible.",
+    "llm.openaiCompatible.apiKey": "OpenAI-compatible proxy API key; required when llm.provider is openai-compatible.",
     "prompts.voiceEmotionLine": "Line inserted into the voice system addendum when agent.emotionTags is true.",
     "prompts.voiceSystemAddendumTemplate": "Voice-mode system addendum template; supports {emotionLine}, {openclawSlackRule}, and {openclawRules} placeholders.",
     "prompts.voiceSystemAddendum": "Optional full voice system addendum override; leave empty to use the template.",
@@ -84,7 +92,6 @@
     "name": "YourAgent",
     "displayName": "エージェント名",
     "greeting": "[warm] こんにちは！よろしくお願いします！",
-    "model": "openclaw",
     "emotionTags": true,
     "wakeWords": ["エージェント名", "your-agent"],
     "keyterms": ["エージェント名", "YourAgent"],
@@ -112,6 +119,18 @@
       "completionVoiceTemplate": "さっきの「{label}」、まとまったよ。チャットに貼ったね。",
       "staleCompletionVoicePrefix": "(遅くなってごめんね) ",
       "errorVoice": "すみません、ちょっとエラーが起きちゃいました。"
+    }
+  },
+  "llm": {
+    "provider": "openclaw",
+    "model": "openclaw",
+    "temperature": 0.5,
+    "maxTokens": 300,
+    "historyMaxTurns": 12,
+    "systemPrompt": "",
+    "openaiCompatible": {
+      "baseUrl": "",
+      "apiKey": ""
     }
   },
   "gateway": {

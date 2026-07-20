@@ -4,12 +4,23 @@ README から移設した、運用・チューニング系の詳細リファレ�
 
 ## 目次
 
+- [LLM プロバイダ](#llm-プロバイダ)
 - [STT プロバイダ切替・Soniox チューニング](#stt-プロバイダ切替soniox-チューニング)
 - [音声プロファイル（TTS）](#音声プロファイルtts)
 - [緊急 rollback 用 env](#緊急-rollback-用-env)
 - [委譲強制ハーネス（#79）](#委譲強制ハーネス79)
 - [実収録テイクのシード（#72 / #75）](#実収録テイクのシード72--75)
 - [LCM（Lossless Context Management）](#lcmlossless-context-management)
+
+## LLM プロバイダ
+
+| 変数 | 既定 | 用途 |
+|---|---|---|
+| `LLM_PROVIDER` | `openclaw` | LLM プロバイダを選択 |
+| `OPENAI_COMPATIBLE_BASE_URL` | | OpenAI 互換 API のベース URL |
+| `OPENAI_COMPATIBLE_API_KEY` | | OpenAI 互換 API キー |
+| `AGENT_TEMPERATURE` | `0.5` | LLM の temperature |
+| `AGENT_MAX_TOKENS` | `300` | LLM 応答の最大トークン数 |
 
 ## STT プロバイダ切替・Soniox チューニング
 

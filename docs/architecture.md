@@ -22,28 +22,28 @@ OpenClaw Gateway 連携により、Slack等のチャットと**同一のエー�
        │ WebSocket (PCM audio stream)
        │ ↕ realtime_audio.mixed / bot_output
        ▼
-┌──────────────────────────────────────────────────┐
-│  Bridge Server (Node.js, port 5005)               │
-│                                                    │
-│  ┌──────────┐  ┌──────────┐  ┌──────────────────┐│
-│  │ stt.js   │  │ llm.js   │  │ tts-fish.js      ││
-│  │ Deepgram │→ │ OpenClaw │→ │ Fish Audio S1    ││
-│  │ Nova 3   │  │ Gateway  │  │ (REST streaming) ││
-│  │ (stream) │  │ (SSE)    │  │                  ││
-│  └──────────┘  └──────────┘  └──────────────────┘│
-│                                                    │
-│  pipeline.js — オーケストレーター                    │
-│  ├─ STT → LLM → TTS パイプライン管理               │
-│  ├─ 文ごとの分割＆即時 TTS 送出（低遅延）            │
-│  ├─ 割り込み検出＆処理                              │
-│  ├─ ウェイクワード検出                              │
-│  └─ エコーループ防止                                │
-│                                                    │
-│  index.js — HTTP サーバー + WebSocket + セッション    │
-│  ├─ /join-meeting — Meet 参加 API                   │
-│  ├─ /info — サーバー情報（TTS provider, WSS URL等）  │
-│  └─ WebSocket ↔ Attendee 音声中継                   │
-└──────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│  Bridge Server (Node.js, port 5005)                      │
+│                                                           │
+│  ┌──────────┐  ┌─────────────────┐  ┌──────────────────┐│
+│  │ stt.js   │  │ llm-provider.js │  │ tts-fish.js      ││
+│  │ Soniox   │→ │ LLM             │→ │ Fish Audio S1    ││
+│  │ stt-rt-v5│  │ provider        │  │ (REST streaming) ││
+│  │ (stream) │  │ (SSE)           │  │                  ││
+│  └──────────┘  └─────────────────┘  └──────────────────┘│
+│                                                           │
+│  pipeline.js — オーケストレーター                           │
+│  ├─ STT → LLM → TTS パイプライン管理                      │
+│  ├─ 文ごとの分割＆即時 TTS 送出（低遅延）                   │
+│  ├─ 割り込み検出＆処理                                     │
+│  ├─ ウェイクワード検出                                     │
+│  └─ エコーループ防止                                       │
+│                                                           │
+│  index.js — HTTP サーバー + WebSocket + セッション           │
+│  ├─ /join-meeting — Meet 参加 API                          │
+│  ├─ /info — サーバー情報（TTS provider, WSS URL等）         │
+│  └─ WebSocket ↔ Attendee 音声中継                          │
+└─────────────────────────────────────────────────────────┘
        │
        │ ngrok tunnel (WSS 公開)
        ▼
@@ -61,20 +61,20 @@ OpenClaw Gateway 連携により、Slack等のチャットと**同一のエー�
 ### 2. Bridge Server（自作 Node.js）
 分解パイプラインで構成:
 
-#### stt.js — 音声認識
-- Deepgram Nova 3 ストリーミング STT
+#### stt-provider.js — 音声認識（Soniox 既定 / Deepgram フォールバック）
+- Soniox stt-rt-v5 ストリーミング STT（既定。Deepgram はフォールバック）
 - WebSocket でリアルタイム transcription
 - `smart_format: true` で自然な句読点付与
 
-#### llm.js — LLM（デュアルバックエンド）
-- **Primary**: OpenClaw Gateway (`/v1/chat/completions`, SSE streaming)
+#### llm-provider.js — LLM（デュアルバックエンド）
+- **既定**: OpenClaw Gateway（`src/llm-openclaw.js`、`/v1/chat/completions`、SSE streaming）
   - SOUL.md / AGENTS.md が自動注入
   - memory_search, Slack, Web検索, GitHub, Todoist 等の全ツール利用可能
   - 会話履歴は OpenClaw が自動管理
   - `VOICE_SYSTEM_ADDENDUM` で音声固有の指示（短く話す、感情タグ付与等）を追加
-- **Fallback**: OpenRouter（直接 Claude API）
-  - `OPENCLAW_GATEWAY_TOKEN` 未設定時に自動切替
-  - `src/prompts/caty-system.md` のローカルプロンプトを使用
+- **代替**: OpenAI 互換 API（`src/llm-openai.js`、`LLM_PROVIDER=openai-compatible`）
+  - OpenClaw Gateway は不要。自動切替ではなく明示設定
+  - `llm.systemPrompt`（未設定時は組み込みペルソナテンプレート）を使用
   - 会話履歴はローカル管理
 
 #### tts-fish.js — 音声合成
@@ -104,7 +104,7 @@ OpenClaw Gateway 連携により、Slack等のチャットと**同一のエー�
 3. Attendee → Bridge: WebSocket (realtime_audio.mixed, PCM)
 4. Bridge (stt.js): PCM → Deepgram → テキスト
 5. Bridge (pipeline.js): ウェイクワード判定 → テキストを LLM に送信
-6. Bridge (llm.js): OpenClaw Gateway に SSE リクエスト
+6. Bridge (llm-provider.js): 設定した LLM プロバイダに SSE リクエスト
    └─ OpenClaw: SOUL.md 注入 → memory検索 → ツール実行 → 応答生成
 7. Bridge (pipeline.js): SSE チャンクを文ごとに分割
 8. Bridge (tts-fish.js): 文 → Fish Audio → PCM 音声（文ごとに即時開始）
