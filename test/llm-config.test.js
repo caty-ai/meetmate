@@ -91,21 +91,19 @@ test("LLM config precedence is raw agent, environment, config.json, then default
     assert.equal(config.llm.model, "json-model");
     assert.equal(config.llm.historyMaxTurns, 7);
 
-    config = freshConfig().getPipelineConfig({}, null, null, {
-      ...configJson,
-      agent: {
-        provider: "openclaw",
-        model: "agent-model",
-        temperature: 0.4,
-        maxTokens: 444,
-        historyMaxTurns: 4,
-        openaiCompatible: { baseUrl: "https://agent.test/v1", apiKey: "agent-key" },
-      },
-    });
-    assert.equal(config.llm.provider, "openai-compatible");
-    assert.equal(config.llm.model, "json-model");
-    assert.equal(config.llm.temperature, 0.3);
-    assert.equal(config.llm.maxTokens, 333);
+    const rawAgent = {
+      provider: "openclaw",
+      model: "agent-model",
+      temperature: 0.4,
+      maxTokens: 444,
+      historyMaxTurns: 4,
+      openaiCompatible: { baseUrl: "https://agent.test/v1", apiKey: "agent-key" },
+    };
+    config = freshConfig().getPipelineConfig({}, rawAgent, null, configJson);
+    assert.equal(config.llm.provider, "openclaw");
+    assert.equal(config.llm.model, "agent-model");
+    assert.equal(config.llm.temperature, 0.4);
+    assert.equal(config.llm.maxTokens, 444);
     assert.equal(config.llm.historyMaxTurns, 4);
     assert.deepEqual(config.llm.openaiCompatible, {
       baseUrl: "https://agent.test/v1",
