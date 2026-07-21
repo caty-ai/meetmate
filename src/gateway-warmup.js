@@ -25,6 +25,14 @@ function warmUpGatewaySession(sessionId, config, briefing = null) {
     };
 
     const sessionUser = String(sessionId || "").trim();
+    const configuredProvider = String(process.env.LLM_PROVIDER || "openclaw").toLowerCase();
+    const provider = configuredProvider === "openai-compatible" ? configuredProvider : "openclaw";
+    if (provider !== "openclaw") {
+      console.log(`⏭️  Gateway warm-up skipped (provider=${provider}, session=${sessionUser})`);
+      done(`skipped_provider_${provider}`);
+      return;
+    }
+
     if (!sessionUser) {
       console.log("⏭️  Gateway warm-up skipped (empty session id)");
       done("skipped_empty_session");
