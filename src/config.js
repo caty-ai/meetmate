@@ -1,9 +1,9 @@
 const fs = require("fs");
-const path = require("path");
 const { buildVoiceAddendum } = require("./llm");
 const { buildVoiceAddendumFromMessages, resolveMessages } = require("./messages");
+const { configPath } = require("./paths");
 
-const CONFIG_PATH = path.join(__dirname, "..", "config.json");
+const CONFIG_PATH = configPath();
 
 const SAMPLE_RATE = 16_000;
 // TTS output rate. The code default is the single source of truth; env is kept

@@ -1,12 +1,11 @@
 const fs = require("node:fs");
 const path = require("node:path");
+const { metricsLogDir } = require("./paths");
 
-// Metrics default to a repo-local logs directory. Set METRICS_LOG_DIR to move
-// the JSONL file, or METRICS_DISABLED=1 to make recording a true no-op.
-const DEFAULT_METRICS_LOG_DIR = path.join(__dirname, "..", "logs");
-const METRICS_LOG_DIR = process.env.METRICS_LOG_DIR
-  ? path.resolve(process.env.METRICS_LOG_DIR)
-  : DEFAULT_METRICS_LOG_DIR;
+// Metrics default to the home logs directory (AI_MEET_HOME, else cwd). Set
+// METRICS_LOG_DIR to move the JSONL file (metrics only — conversation logs
+// stay in logsDir()), or METRICS_DISABLED=1 to make recording a true no-op.
+const METRICS_LOG_DIR = metricsLogDir();
 const METRICS_DISABLED = ["1", "true", "yes"].includes(
   String(process.env.METRICS_DISABLED || "").toLowerCase()
 );

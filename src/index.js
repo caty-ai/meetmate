@@ -4,7 +4,8 @@
 //   - "fish-audio": Decomposed pipeline (Deepgram STT → Claude LLM → Fish Audio TTS)
 //   - "deepgram-agent": Legacy all-in-one (Deepgram Voice Agent API)
 
-require("dotenv").config({ path: require("path").join(__dirname, "..", ".env") });
+const { envPath, logsDir, avatarCachePath, bundledAssetPath, bundledPublicDir } = require("./paths");
+require("dotenv").config({ path: envPath() });
 
 const { WebSocketServer, WebSocket } = require("ws");
 const { createClient, AgentEvents } = require("@deepgram/sdk");
@@ -86,7 +87,7 @@ try {
 let botImageData = null;
 
 const BOT_IMAGE_PATH = _startupAgentProfile?.avatarPath
-  || path.join(__dirname, "..", "assets", "avatar.png");
+  || bundledAssetPath("avatar.png");
 const BOT_IMAGE_URL = process.env.BOT_IMAGE_URL
   || _startupAgentProfile?.avatarUrl
   || "";
@@ -114,9 +115,10 @@ const BOT_IMAGE_URL = process.env.BOT_IMAGE_URL
     });
     botImageData = { type: "image/png", data: data.toString("base64") };
     // Cache locally for next startup
-    const assetsDir = path.join(__dirname, "..", "assets");
+    const avatarCache = avatarCachePath();
+    const assetsDir = path.dirname(avatarCache);
     if (!fs.existsSync(assetsDir)) fs.mkdirSync(assetsDir, { recursive: true });
-    fs.writeFileSync(BOT_IMAGE_PATH, data);
+    fs.writeFileSync(avatarCache, data);
     console.log("🖼️  Bot avatar downloaded and cached");
   } catch (err) {
     console.warn("⚠️  Bot avatar load failed:", err.message);
@@ -569,7 +571,7 @@ function saveConversationLog(session) {
     return;
   }
 
-  const logDir = path.join(__dirname, "..", "logs");
+  const logDir = logsDir();
   if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
 
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -858,7 +860,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "GET" && req.url === "/") {
-    fs.readFile(path.join(__dirname, "..", "public", "index.html"), (err, data) => {
+    fs.readFile(path.join(bundledPublicDir(), "index.html"), (err, data) => {
       if (err) {
         writePlainResponse(res, 500, "Error loading index.html");
         return;

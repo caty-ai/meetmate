@@ -1,9 +1,9 @@
 // calibrate-routes.js — Wake word calibration HTTP + WS handlers
 const fs = require("fs");
-const path = require("path");
+const { configPath, bundledPath } = require("../paths");
 
-const CONFIG_PATH = path.join(__dirname, "..", "..", "config.json");
-const HTML_PATH = path.join(__dirname, "calibrate.html");
+const CONFIG_PATH = configPath();
+const HTML_PATH = bundledPath("src", "wake-calibrate", "calibrate.html");
 const LOCK_PATH = CONFIG_PATH + ".lock";
 const TIMEOUT_MS = 30_000;
 

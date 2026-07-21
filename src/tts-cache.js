@@ -7,12 +7,13 @@
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
+const { ttsCacheDir } = require("./paths");
 
 const DEFAULT_SAMPLE_RATE = 24_000;
 const CHUNK_MS = 100;
 
 function defaultCacheDir() {
-  return process.env.TTS_CACHE_DIR || path.join(__dirname, "..", "assets", "tts-cache");
+  return ttsCacheDir();
 }
 
 function normalizeSpeed(speed) {

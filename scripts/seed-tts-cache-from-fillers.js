@@ -4,20 +4,20 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
+const { envPath, configPath, ttsCacheDir, bundledAssetPath } = require("../src/paths");
 
 // Load .env exactly like src/server.js does: on the deploy host the voice id
 // lives in .env (FISH_AUDIO_VOICE_ID), not config.json — without this the
 // computed keys silently never match the running server's.
-require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
+require("dotenv").config({ path: envPath() });
 
 const { cacheKey } = require("../src/tts-cache");
 
-const REPO_ROOT = path.join(__dirname, "..");
 const DEFAULT_SAMPLE_RATE = 24_000;
 const DEFAULT_MODEL = "s2-pro";
-const DEFAULT_PRESET_MANIFEST_PATH = path.join(REPO_ROOT, "assets", "fillers", "manifest.json");
-const DEFAULT_CONFIG_PATH = path.join(REPO_ROOT, "config.json");
-const DEFAULT_CACHE_DIR = path.join(REPO_ROOT, "assets", "tts-cache");
+const DEFAULT_PRESET_MANIFEST_PATH = bundledAssetPath("fillers", "manifest.json");
+const DEFAULT_CONFIG_PATH = configPath();
+const DEFAULT_CACHE_DIR = ttsCacheDir();
 
 function parsePositiveInt(value) {
   const parsed = Number.parseInt(String(value), 10);

@@ -2,8 +2,8 @@
 // 1 server = 1 agent. config.json is the sole source of agent configuration.
 
 const fs = require("fs");
-const path = require("path");
 const { loadConfig } = require("./config");
+const { avatarCachePath, bundledAssetPath } = require("./paths");
 
 class AgentNotFoundError extends Error {
   constructor(agentId) {
@@ -48,7 +48,10 @@ function _buildProfileFromConfig(config) {
   const agentId = agent.id;
 
   // Check avatar: single generic name since 1 server = 1 agent
-  const avatarPath = path.join(__dirname, "..", "assets", "avatar.png");
+  const cachedAvatarPath = avatarCachePath();
+  const avatarPath = fs.existsSync(cachedAvatarPath)
+    ? cachedAvatarPath
+    : bundledAssetPath("avatar.png");
   let avatarExists = false;
   try { avatarExists = fs.existsSync(avatarPath); } catch { /* ignore */ }
 
