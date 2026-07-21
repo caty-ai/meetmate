@@ -1,8 +1,8 @@
 const fs = require("fs");
 const path = require("path");
+const { bundledPublicDir, logsDir } = require("./paths");
 
-const PUBLIC_DIR = path.join(__dirname, "..", "public");
-const DEFAULT_METRICS_LOG_DIR = path.join(__dirname, "..", "logs");
+const PUBLIC_DIR = bundledPublicDir();
 const METRICS_TAIL_BYTES = 5 * 1024 * 1024;
 const MAX_WINDOW_HOURS = 168;
 
@@ -143,10 +143,7 @@ async function readMetricsSummary(hoursParam) {
 }
 
 function getMetricsLogFile() {
-  const dir = process.env.METRICS_LOG_DIR
-    ? path.resolve(process.env.METRICS_LOG_DIR)
-    : DEFAULT_METRICS_LOG_DIR;
-  return path.join(dir, "metrics.jsonl");
+  return path.join(logsDir(), "metrics.jsonl");
 }
 
 function clampHours(value) {

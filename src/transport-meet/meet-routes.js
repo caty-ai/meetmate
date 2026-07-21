@@ -28,6 +28,7 @@ const { recordEvent } = require("../metrics");
 const { buildDelegationResultsSection } = require("../delegation-results");
 const { createGatewaySessionTracker } = require("../gateway-session-tracker");
 const { servePublicAsset, sendMetricsSummary } = require("../ui-routes");
+const { logsDir, avatarCachePath, bundledAssetPath, bundledPublicDir } = require("../paths");
 
 const ATTENDEE_API_BASE_URL = process.env.ATTENDEE_API_BASE_URL || "app.attendee.dev";
 const ATTENDEE_TIMEOUT_MS = Number(process.env.ATTENDEE_TIMEOUT_MS || 15_000);
@@ -62,14 +63,14 @@ const FALLBACK_BOT_IMAGE_URL = process.env.BOT_IMAGE_URL || null;
 
 function getBotImageConfig() {
   if (_agentProfile) {
-    const localPath = _agentProfile.avatarPath || path.join(__dirname, "..", "..", "assets", "avatar.png");
+    const localPath = _agentProfile.avatarPath || bundledAssetPath("avatar.png");
     return {
       path: localPath,
       url: _agentProfile.avatarUrl || FALLBACK_BOT_IMAGE_URL,
     };
   }
   return {
-    path: path.join(__dirname, "..", "..", "assets", "avatar.png"),
+    path: bundledAssetPath("avatar.png"),
     url: FALLBACK_BOT_IMAGE_URL,
   };
 }
@@ -478,7 +479,7 @@ function saveConversationLog(session) {
     return;
   }
 
-  const logDir = path.join(__dirname, "..", "..", "logs");
+  const logDir = logsDir();
   if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
 
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -846,9 +847,10 @@ function startBotImageLoad() {
         }).on("error", reject);
       });
       botImageData = { type: "image/png", data: data.toString("base64") };
-      const assetsDir = path.join(__dirname, "..", "..", "assets");
+      const avatarCache = avatarCachePath();
+      const assetsDir = path.dirname(avatarCache);
       if (!fs.existsSync(assetsDir)) fs.mkdirSync(assetsDir, { recursive: true });
-      fs.writeFileSync(imgConfig.path, data);
+      fs.writeFileSync(avatarCache, data);
       console.log(`🖼️  Bot avatar downloaded and cached: ${path.basename(imgConfig.path)}`);
     } catch (err) {
       console.warn("⚠️  Bot avatar load failed:", err.message);
@@ -918,7 +920,7 @@ async function handleHttp(req, res) {
   if (await sendMetricsSummary(req, res, url)) return;
 
   if (req.method === "GET" && url.pathname === "/") {
-    fs.readFile(path.join(__dirname, "..", "..", "public", "index.html"), (err, data) => {
+    fs.readFile(path.join(bundledPublicDir(), "index.html"), (err, data) => {
       if (err) {
         writePlainResponse(res, 500, "Error loading index.html");
         return;
