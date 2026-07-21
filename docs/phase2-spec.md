@@ -1,5 +1,7 @@
 # Phase 2: Slack UI + Call Summary — Implementation Spec
 
+> ℹ️ 注記（2026-07・#124）: Twilio 電話ブリッジ機能は廃止済み。本文中の Twilio 関連記述は執筆当時の歴史的記述で、現行コードに Twilio 実装は存在しない。Meet 側（Slack 通知・サマリー）の内容は現役。
+
 ## Overview
 
 Phase 2 adds real-time Slack status updates and automatic conversation summaries for both Twilio calls and Google Meet sessions.
