@@ -127,7 +127,7 @@ FISH_AUDIO_VOICE_ID=your_voice_id
 TTS_PROVIDER=fish-audio
 ```
 
-`LLM_PROVIDER=openai-compatible` の場合は `OPENAI_COMPATIBLE_BASE_URL` と `OPENAI_COMPATIBLE_API_KEY` を**追加**する。`OPENCLAW_GATEWAY_URL` / `OPENCLAW_GATEWAY_TOKEN` の2行は**削除・空欄にせずダミー値のまま残す**（`config.json` の `${...}` プレースホルダが未解決だと起動時にエラー終了する）。残したくない場合は `config.json` から `gateway` ブロックごと削除する。
+`LLM_PROVIDER=openai-compatible` の場合は `OPENAI_COMPATIBLE_BASE_URL` と `OPENAI_COMPATIBLE_API_KEY` を**追加**する。`config.json` の `${...}` プレースホルダは未解決（未設定・空欄）だと起動時にエラー終了するため、使わない機能の env（`OPENCLAW_GATEWAY_URL` / `OPENCLAW_GATEWAY_TOKEN` / `SLACK_BOT_TOKEN` 等）も**削除・空欄にせずダミー値のまま残す**。残したくない場合は `config.json` から該当ブロックごと削除する。
 
 **OpenAI 互換で動かす最小構成**
 
@@ -370,6 +370,9 @@ SLACK_SUMMARY_CHANNEL=C0XXXXXXXXX   # 会議サマリー + 全文ログ
 - Fish Audio API キー・Voice ID が正しいか確認
 - サーバーログに `🐟 Fish Audio パイプラインモード` が表示されているか確認
   - `🔊 Deepgram Voice Agent モード` が出ていたら TTS_PROVIDER が間違っている
+
+### 起動時に `config.json has unresolved environment variables` で終了する
+- `config.json` の `${...}` プレースホルダに対応する env が未設定・空欄。`.env` にダミー値を入れる（例: `SLACK_BOT_TOKEN=your_slack_bot_token`）か、使わない機能のブロックを `config.json` から削除する
 
 ### Gateway warm-up がタイムアウトする
 - openai-compatible では join 時に Gateway warm-up エラーがログに出る既知問題あり（無害・修正は #140）。
