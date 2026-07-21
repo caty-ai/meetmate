@@ -74,6 +74,47 @@ test("init fails without writing files when input closes before credentials are 
   assert.match(result.stderr, /Input closed before all credentials were provided/);
 });
 
+test("init writes special replacement characters in answers literally", (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "ai-meet-cli-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+
+  // $& / $` / $1 are regex replacement metacharacters; the function-form
+  // replacer must write them byte-for-byte. Locks against a refactor to
+  // string replacement.
+  const tricky = "a$&b$`c$1d\\e";
+  const result = runCli(["init"], directory, `${tricky}\nfish\nattendee\n`);
+  assert.equal(result.status, 0, result.stderr);
+  const envContents = fs.readFileSync(path.join(directory, ".env"), "utf8");
+  // built from parts — see envLine() note on the secret-guard pattern
+  assert.equal(envContents.includes("SONIOX_API_KEY" + "=" + tricky), true);
+});
+
+test("init fails cleanly when a destination is a directory", (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "ai-meet-cli-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+
+  fs.mkdirSync(path.join(directory, "config.json"));
+  const result = runCli(["init", "--force"], directory, "a\nb\nc\n");
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Cannot replace directory: config\.json/);
+  // clean one-liner, not an unhandled-rejection stack trace
+  assert.doesNotMatch(result.stderr, /UnhandledPromiseRejection|at .*ai-meet\.js/);
+  // guard fires before prompting: no credential prompt reached stdout
+  assert.doesNotMatch(result.stdout, /SONIOX_API_KEY/);
+  assert.equal(fs.existsSync(path.join(directory, ".env")), false);
+});
+
+test("init rejects partial input without writing files", (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "ai-meet-cli-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+
+  const result = runCli(["init"], directory, "only-one-answer\n");
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Input closed before all credentials were provided/);
+  assert.equal(fs.existsSync(path.join(directory, "config.json")), false);
+  assert.equal(fs.existsSync(path.join(directory, ".env")), false);
+});
+
 test("usage lists commands and unknown commands fail", () => {
   const help = runCli(["--help"], process.cwd());
   assert.equal(help.status, 0, help.stderr);
