@@ -2,7 +2,19 @@
   "name": "ai-meet-participant",
   "version": "0.1.0",
   "description": "AIエージェントがGoogle Meet/Zoomにリアルタイム参加し音声で対話するブリッジサーバー",
-  "main": "src/index.js",
+  "private": true,
+  "files": [
+    "bin/",
+    "src/",
+    "public/",
+    "assets/avatar.png",
+    "assets/fillers/",
+    "config.json.example",
+    ".env.example",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
   "scripts": {
     "start": "node src/server.js",
     "start:meet": "node src/index.js",
