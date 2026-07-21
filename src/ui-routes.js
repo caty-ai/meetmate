@@ -1,6 +1,6 @@
 const fs = require("fs");
 const path = require("path");
-const { bundledPublicDir, logsDir } = require("./paths");
+const { bundledPublicDir, metricsLogDir } = require("./paths");
 
 const PUBLIC_DIR = bundledPublicDir();
 const METRICS_TAIL_BYTES = 5 * 1024 * 1024;
@@ -143,7 +143,7 @@ async function readMetricsSummary(hoursParam) {
 }
 
 function getMetricsLogFile() {
-  return path.join(logsDir(), "metrics.jsonl");
+  return path.join(metricsLogDir(), "metrics.jsonl");
 }
 
 function clampHours(value) {

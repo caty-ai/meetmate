@@ -13,9 +13,13 @@ function envPath() {
 }
 
 function logsDir() {
+  return path.join(resolveHome(), "logs");
+}
+
+function metricsLogDir() {
   return process.env.METRICS_LOG_DIR
     ? path.resolve(process.env.METRICS_LOG_DIR)
-    : path.join(resolveHome(), "logs");
+    : logsDir();
 }
 
 function ttsCacheDir() {
@@ -45,6 +49,7 @@ module.exports = {
   configPath,
   envPath,
   logsDir,
+  metricsLogDir,
   ttsCacheDir,
   avatarCachePath,
   bundledPath,

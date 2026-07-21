@@ -28,7 +28,9 @@ test("writable paths prefer explicit cache and metrics overrides over AI_MEET_HO
     METRICS_LOG_DIR: "/tmp/explicit-metrics-log",
   }, () => {
     assert.equal(paths.ttsCacheDir(), "/tmp/explicit-tts-cache");
-    assert.equal(paths.logsDir(), "/tmp/explicit-metrics-log");
+    assert.equal(paths.metricsLogDir(), "/tmp/explicit-metrics-log");
+    // METRICS_LOG_DIR moves metrics only — conversation logs stay home-based
+    assert.equal(paths.logsDir(), "/tmp/ai-meet-home/logs");
     assert.equal(paths.configPath(), "/tmp/ai-meet-home/config.json");
     assert.equal(paths.envPath(), "/tmp/ai-meet-home/.env");
   });
@@ -42,6 +44,7 @@ test("writable paths use AI_MEET_HOME before cwd", () => {
   }, () => {
     assert.equal(paths.ttsCacheDir(), "/tmp/ai-meet-home/assets/tts-cache");
     assert.equal(paths.logsDir(), "/tmp/ai-meet-home/logs");
+    assert.equal(paths.metricsLogDir(), "/tmp/ai-meet-home/logs");
     assert.equal(paths.avatarCachePath(), "/tmp/ai-meet-home/assets/avatar.png");
   });
 });
