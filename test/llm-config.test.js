@@ -122,18 +122,18 @@ test("standalone system prompt precedence appends only neutral voice rules", () 
     const { getPipelineConfig } = freshConfig();
     let config = getPipelineConfig({}, null, { systemPrompt: "profile persona" }, {
       agent: { systemPrompt: "agent persona" },
-      llm: { systemPrompt: "llm persona" },
+      llm: { model: "standalone-model", systemPrompt: "llm persona" },
     });
     assert.match(config.llm.systemPrompt, /^llm persona\n\n/);
     assert.doesNotMatch(config.llm.systemPrompt, /agent persona|profile persona|Slack|sessions_spawn|ツール実行ルール|サブエージェント結果/);
     assert.match(config.llm.systemPrompt, /【応答ルール】/);
     assert.match(config.llm.systemPrompt, /【絶対禁止事項】/);
 
-    config = getPipelineConfig({}, null, { systemPrompt: "profile persona" }, {});
+    config = getPipelineConfig({}, null, { systemPrompt: "profile persona" }, { llm: { model: "standalone-model" } });
     assert.match(config.llm.systemPrompt, /^あなたは日本語で会話する音声アシスタントです。/);
     assert.doesNotMatch(config.llm.systemPrompt, /profile persona/);
 
-    config = getPipelineConfig({}, null, null, {});
+    config = getPipelineConfig({}, null, null, { llm: { model: "standalone-model" } });
     assert.match(config.llm.systemPrompt, /^あなたは日本語で会話する音声アシスタントです。/);
   } finally {
     restore();
@@ -149,7 +149,7 @@ test("Gateway credentials are normalized under llm and required only by OpenClaw
   try {
     const { getPipelineConfig } = freshConfig();
     const standalone = getPipelineConfig({}, null, null, {
-      llm: { provider: "openai-compatible" },
+      llm: { provider: "openai-compatible", model: "standalone-model" },
       gateway: { url: "https://gateway.test/prefix", token: "token" },
     });
     assert.deepEqual(standalone.llm.gateway, {
@@ -163,6 +163,21 @@ test("Gateway credentials are normalized under llm and required only by OpenClaw
     assert.match(errors[0], /OpenClaw Gateway is required/);
   } finally {
     console.error = originalError;
+    restore();
+    delete require.cache[configModulePath];
+  }
+});
+
+test("OpenAI-compatible provider requires an explicit model without changing the OpenClaw default", () => {
+  const restore = setEnv(CLEAN_LLM_ENV);
+  try {
+    const { getPipelineConfig } = freshConfig();
+    assert.throws(
+      () => getPipelineConfig({}, null, null, { llm: { provider: "openai-compatible" } }),
+      /OpenAI-compatible model is required/,
+    );
+    assert.equal(getPipelineConfig().llm.model, "openclaw");
+  } finally {
     restore();
     delete require.cache[configModulePath];
   }
@@ -227,14 +242,14 @@ test("standalone custom voice templates warn when openclawRules is missing", () 
   try {
     const { getPipelineConfig } = freshConfig();
     getPipelineConfig({}, null, null, {
-      llm: { provider: "openai-compatible" },
+      llm: { provider: "openai-compatible", model: "standalone-model" },
       prompts: { voiceSystemAddendumTemplate: "custom {emotionLine}" },
     });
     assert.equal(warnings.length, 1);
     assert.match(warnings[0], /voiceSystemAddendumTemplate.*\{openclawRules\}/);
 
     getPipelineConfig({}, null, null, {
-      llm: { provider: "openai-compatible" },
+      llm: { provider: "openai-compatible", model: "standalone-model" },
       prompts: { voiceSystemAddendumTemplate: "custom {openclawRules}" },
     });
     assert.equal(warnings.length, 1);

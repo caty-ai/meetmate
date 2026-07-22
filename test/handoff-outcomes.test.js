@@ -139,6 +139,21 @@ for (const item of cases) {
   });
 }
 
+test("providers without timeout handoff do not speak the handoff failure line", async () => {
+  const spoken = [];
+  let pipeline;
+  await withFreshPipeline(async ({ createPipeline }) => {
+    try {
+      pipeline = createTestPipeline(createPipeline, { enabled: false });
+      pipeline._test.handleUtteranceEnd("ケイティ、手伝って", "timeout-no-handoff");
+      await sleep(150);
+      assert.equal(spoken.includes("[soft voice] ごめん、うまく繋げられなかったみたい。あとでもう一回試してね。"), false);
+    } finally {
+      pipeline?.close();
+    }
+  }, { spoken, handoffUnavailable: true });
+});
+
 function createTestPipeline(createPipeline, gatewayEventsConfig) {
   const session = { id: "handoff-outcomes", conversationLog: [], config: { wakeMode: "wake" } };
   const turnState = { isAgentSpeaking: false, inputCooldownUntil: 0, droppedEchoFrames: 0 };
@@ -228,7 +243,9 @@ async function withFreshPipeline(fn, options = {}) {
   };
   const { timeoutHandoff } = require(path.join(src, "llm-openclaw.js"));
   require.cache[require.resolve(path.join(src, "llm-provider.js"))] = cacheEntry(path.join(src, "llm-provider.js"), {
-    createLlmProvider: () => ({ name: "openclaw", timeoutHandoff, ...llmMock }),
+    createLlmProvider: () => options.handoffUnavailable
+      ? ({ name: "openai-compatible", ...llmMock })
+      : ({ name: "openclaw", timeoutHandoff, ...llmMock }),
   });
   require.cache[require.resolve(path.join(src, "gateway-events.js"))] = cacheEntry(path.join(src, "gateway-events.js"), {
     abortSession: async (sessionUser) => {

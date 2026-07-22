@@ -251,7 +251,7 @@ async function* streamOpenClaw(messages, options) {
       {
         hostname: gatewayUrl.hostname,
         port: gatewayUrl.port || (isHttps ? 443 : 80),
-        path: "/v1/chat/completions",
+        path: resolveCompletionPath(gatewayUrl),
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,

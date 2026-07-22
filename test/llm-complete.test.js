@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const http = require("node:http");
 const { EventEmitter } = require("node:events");
+const { PassThrough } = require("node:stream");
 
 const openclaw = require("../src/llm-openclaw");
 
@@ -216,6 +217,32 @@ test("complete preserves the summarizer timeout message and omits LCM socket tim
       user: "meet-session-caty",
     });
     assert.equal(lcm.statusCode, 200);
+  } finally {
+    http.request = originalRequest;
+  }
+});
+
+test("streaming OpenClaw calls preserve a gateway path prefix", async () => {
+  const originalRequest = http.request;
+  let requestPath;
+  try {
+    http.request = (options, callback) => {
+      const req = new EventEmitter();
+      req.write = () => {};
+      req.setTimeout = () => req;
+      req.destroy = (err) => process.nextTick(() => req.emit("error", err));
+      req.end = () => process.nextTick(() => {
+        requestPath = options.path;
+        const res = new PassThrough();
+        res.statusCode = 200;
+        callback(res);
+        res.end("data: [DONE]\n\n");
+      });
+      return req;
+    };
+    const streamAuth = (openclawUrl, openclawToken) => ({ openclawUrl, openclawToken });
+    for await (const _chunk of openclaw.streamChat([], streamAuth("http://gateway.test/gw", "secret"))) { /* consume stream */ }
+    assert.equal(requestPath, "/gw/v1/chat/completions");
   } finally {
     http.request = originalRequest;
   }

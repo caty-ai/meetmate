@@ -184,8 +184,7 @@ async function handleMeetSessionEnd(lifecycle) {
   if (summaryEnabled && lifecycle._conversationLog && lifecycle._conversationLog.length > 0) {
     try {
       const summary = await summarizeConversation(lifecycle._conversationLog, {
-        openclawUrl: process.env.OPENCLAW_GATEWAY_URL,
-        openclawToken: process.env.OPENCLAW_GATEWAY_TOKEN,
+        llm: getPipelineConfig({}, null, _agentProfile, _configJson).llm,
         summaryPrompt: _resolvedMessages.prompts.summary,
       });
       await notifier.postSummary(lifecycle, summary);
@@ -544,8 +543,14 @@ function appendLateDelegationToPersistedLogs(session, item) {
 }
 
 function appendToMemory(session) {
+  const provider = getPipelineConfig({}, null, _agentProfile, _configJson).llm.provider;
+  const workspaceOverride = String(process.env.OPENCLAW_WORKSPACE || "").trim();
+  if (provider !== "openclaw" && !workspaceOverride) {
+    console.debug("🐛  Memory write skipped (LLM provider is not openclaw)");
+    return;
+  }
   try {
-    const WORKSPACE = process.env.OPENCLAW_WORKSPACE
+    const WORKSPACE = workspaceOverride
       || path.join(require("os").homedir(), ".openclaw", "workspace");
     const memoryDir = path.join(WORKSPACE, "memory");
     if (!fs.existsSync(memoryDir)) fs.mkdirSync(memoryDir, { recursive: true });
@@ -1437,4 +1442,5 @@ module.exports = {
   init,
   handleHttp,
   handleWsConnection,
+  _test: { appendToMemory },
 };
