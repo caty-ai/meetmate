@@ -1609,6 +1609,9 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
             ? `${agentState.sessionUser}-delegate`
             : agentState.sessionUser;
           if (typeof llmProvider.timeoutHandoff !== "function") {
+            // null (vs false) = handoff not supported by this provider; the
+            // success === null guard below skips followup speech entirely.
+            // openclaw's timeoutHandoff only ever resolves booleans.
             finish(null);
             return;
           }
