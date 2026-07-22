@@ -33,13 +33,12 @@ free ngrok はトンネル1本しか張れないため、同時利用不可。
 src/
   server.js                    ← NEW: 統合エントリポイント（HTTPサーバー + WS + ルーティング）
   transport-meet/
-    meet-routes.js             ← NEW: index.js から Meet 固有の HTTP/WS ハンドラを抽出
+    meet-routes.js             ← NEW: Meet 固有の HTTP/WS ハンドラ
   transport-twilio/
     twilio-routes.js           ← NEW: twilio-bridge.js から Twilio 固有の HTTP/WS ハンドラを抽出
     twilio-bridge.js           ← 残す（後方互換: 単体起動用。ただし通常は server.js を使用）
     call-manager.js            ← 変更なし
     twilio-adapter.js          ← 変更なし
-  index.js                     ← 残す（後方互換: Meet 単体起動用。ただし通常は server.js を使用）
   pipeline.js                  ← 変更なし
   config.js                    ← 変更なし
   llm.js                       ← 変更なし
@@ -63,7 +62,7 @@ src/
 5. 共有リソース（SlackNotifier 等）は各モジュールが独自にインスタンス化して OK（現状と同じ）
 
 ### meet-routes.js の責務
-- `index.js` から以下を抽出：
+- Meet 実装から以下を抽出：
   - `GET /` (index.html), `GET /info`, `POST /join-meeting` の HTTP ハンドラ
   - Meet 用 WebSocket 接続ハンドラ（`wss.on("connection", ...)` のロジック）
   - `meetingSessions`, `activeConnections`, `meetLifecycles` Map 管理
@@ -95,7 +94,6 @@ src/
 {
   "scripts": {
     "start": "node src/server.js",
-    "start:meet": "node src/index.js",
     "start:twilio": "node src/transport-twilio/twilio-bridge.js",
     "dev": "node --watch src/server.js"
   }
@@ -103,7 +101,7 @@ src/
 ```
 
 ## 制約・注意
-- **既存ファイルは壊さない**: `index.js` と `twilio-bridge.js` は後方互換で残す（単体起動できるように）
+- **既存ファイルは壊さない**: `twilio-bridge.js` は後方互換で残す（単体起動できるように）
 - **共通モジュールは変更しない**: pipeline.js, config.js, llm.js, stt.js, tts-fish.js, gateway-warmup.js 等
 - **テスト**: 統合サーバーで以下を確認
   1. `GET /health` → Twilio health JSON

@@ -39,7 +39,7 @@ OpenClaw Gateway 連携により、Slack等のチャットと**同一のエー�
 │  ├─ ウェイクワード検出                                     │
 │  └─ エコーループ防止                                       │
 │                                                           │
-│  index.js — HTTP サーバー + WebSocket + セッション           │
+│  server.js → transport-meet/meet-routes.js                 │
 │  ├─ /join-meeting — Meet 参加 API                          │
 │  ├─ /info — サーバー情報（TTS provider, WSS URL等）         │
 │  └─ WebSocket ↔ Attendee 音声中継                          │

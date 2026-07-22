@@ -56,7 +56,7 @@
 **切り分け基準（#86 Step 0）**: 単なる scope 確認ではなく、**方式 A の全パスを実セッションで end-to-end に read-only 検証**する。検査項目は3つ（いずれも独立の失敗モード）:
 
 1. **WS ハンドシェイク**: mini から control-plane WS へ `connect.challenge`（token ＋ device-auth）で接続できるか。REST の Bearer token が通る事実は HTTP 経路の証明でしかなく、WS challenge/device-auth は別物
-2. **session key 解決**: Caty が持つのは REST `user` フィールドの `sessionUser`（`meet-${id}-${agentId}`、`src/pipeline.js:467` / `src/index.js:890`）のみで、**Gateway 内部の session key は持っていない**。`sessions.list` 等から sessionUser→sessionKey を解決できるか（購読先を特定できなければ scope があっても方式 A は成立しない）
+2. **session key 解決**: Caty が持つのは REST `user` フィールドの `sessionUser`（`meet-${id}-${agentId}`、`src/pipeline.js` / `src/transport-meet/meet-routes.js`）のみで、**Gateway 内部の session key は持っていない**。`sessions.list` 等から sessionUser→sessionKey を解決できるか（購読先を特定できなければ scope があっても方式 A は成立しない）
 3. **subscribe 実受信**: 解決した親セッションを実際に `sessions.subscribe` し、テスト委譲を1回流して `task_completion` が届くこと（`sessions.list` が通っても subscribe scope は独立に拒否されうる）
 
 - 3項目とも成功 → 方式 A でこのリポ完結。**案3 は不要**（将来の best-effort 強化としてのみ保留）。
@@ -89,7 +89,7 @@ Scope: gateway control-plane auth/scope config **or** sub-agent announce hook. N
 - Go の場合に触るファイル:
   - 新規 `src/gateway-events.js`: WS operator クライアント（`connect.challenge` → token + device-auth → `sessions.subscribe` → `task_completion` デマルチプレクス）
   - `src/pipeline.js`: アクティブ `sessionUser` の購読登録/解除。受信時 (a) Meet チャット即時投稿 = `sendAttendeeChatMessage`（#68/PR #80 経路）(b) 音声は沈黙ギャップ待ちキューへ
-  - `src/index.js`: ライフサイクル配線（`src/session-events.js` の `session_start`/`session_end` にフック）
+  - `src/transport-meet/meet-routes.js`: ライフサイクル配線（`src/session-events.js` の `session_start`/`session_end` にフック）
   - `src/config.js`: `GATEWAY_EVENTS_ENABLED`（既定 off）＋既存 `OPENCLAW_GATEWAY_URL/TOKEN` 再利用
 - `task_completion.status`（ok/timeout/error/unknown）で報告文面を出し分け可。`result` 本文がそのまま C3 のチャット要約素材。
 
