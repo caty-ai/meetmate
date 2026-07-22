@@ -186,7 +186,7 @@ NO_REPLY は絶対に使わないこと（音声通話ではサイレント応�
     defaultAgentLabel: "AI",
   },
   gateway: {
-    displayName: "AI MeetServer",
+    displayName: "Meetmate",
   },
   soniox: {
     smokeDefaultKeyterms: "AIエージェント",

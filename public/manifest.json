@@ -1,6 +1,6 @@
 {
-  "name": "AI Meet Participant",
-  "short_name": "AI Meet",
+  "name": "Meetmate",
+  "short_name": "Meetmate",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

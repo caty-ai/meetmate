@@ -133,7 +133,7 @@
   }
 
   function showInstallBanner(mode) {
-    installTitle.textContent = "AI Meet Participant";
+    installTitle.textContent = "Meetmate";
     installButton.hidden = mode === "ios";
     installMessage.textContent = mode === "ios"
       ? "iOS Safari では共有ボタンをタップし、「ホーム画面に追加」を選ぶとインストールできます。"
@@ -232,14 +232,14 @@
     if (agent) {
       const dn = agent.displayName || agent.name || agent.id;
       agentInfoEl.textContent = `エージェント: ${dn}`;
-      document.title = `AI Meet Participant — ${dn}`;
+      document.title = `Meetmate — ${dn}`;
       agentNameEl.textContent = dn;
       launchTitleEl.textContent = `${dn} を起動`;
       launchSubEl.textContent = `${dn}をGoogle Meet / Zoomに参加させる`;
       currentAgentId = agent.id;
     } else {
       agentInfoEl.textContent = "利用可能なエージェントがありません";
-      agentNameEl.textContent = "AI Meet Participant";
+      agentNameEl.textContent = "Meetmate";
     }
   }
 
