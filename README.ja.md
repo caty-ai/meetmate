@@ -193,7 +193,7 @@ OpenAI 互換 API には `{baseUrl}/v1/chat/completions` を送信します。`b
 claude mcp add ai-meet -- npx ai-meet mcp
 ```
 
-環境変数: `AI_MEET_BASE_URL` が操作対象の REST API を指定（既定 `http://localhost:5005`）。`AI_MEET_JOIN_TOKEN` は任意で、`x-join-token` ヘッダと `joinToken` フィールドとして転送されます。
+環境変数: `AI_MEET_BASE_URL` が操作対象の REST API を指定（既定 `http://localhost:5005`）。`AI_MEET_JOIN_TOKEN` は任意で、`x-join-token` ヘッダと `joinToken` フィールドとして転送されます。`AI_MEET_JOIN_TIMEOUT_MS` は `join_meeting` の待ち時間（既定 60000 ms — join はサーバー側で最大 ~50 秒かかり得ます。他ツールは 15 秒）。
 
 | ツール | 動作 |
 |---|---|

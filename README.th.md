@@ -193,7 +193,7 @@ ID / ชื่อที่แสดง / wake word / ประโยคคงท
 claude mcp add ai-meet -- npx ai-meet mcp
 ```
 
-ตัวแปรสภาพแวดล้อม: `AI_MEET_BASE_URL` กำหนด REST API ที่จะควบคุม (ค่าเริ่มต้น `http://localhost:5005`); `AI_MEET_JOIN_TOKEN` เป็นตัวเลือก จะถูกส่งต่อเป็นเฮดเดอร์ `x-join-token` และฟิลด์ `joinToken`
+ตัวแปรสภาพแวดล้อม: `AI_MEET_BASE_URL` กำหนด REST API ที่จะควบคุม (ค่าเริ่มต้น `http://localhost:5005`); `AI_MEET_JOIN_TOKEN` เป็นตัวเลือก จะถูกส่งต่อเป็นเฮดเดอร์ `x-join-token` และฟิลด์ `joinToken`; `AI_MEET_JOIN_TIMEOUT_MS` ปรับเวลารอของ `join_meeting` (ค่าเริ่มต้น 60000 ms — การเข้าร่วมอาจใช้เวลาฝั่งเซิร์ฟเวอร์สูงสุด ~50 วินาที; เครื่องมืออื่นหมดเวลาที่ 15 วินาที)
 
 | เครื่องมือ | การทำงาน |
 |---|---|

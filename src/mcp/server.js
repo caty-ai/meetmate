@@ -2,6 +2,9 @@ const packageJson = require("../../package.json");
 
 const DEFAULT_BASE_URL = "http://localhost:5005";
 const REQUEST_TIMEOUT_MS = 15_000;
+// /join-meeting can legitimately take ~50s server-side (Attendee create retries
+// with backoff), so the join call gets a longer budget than the other tools.
+const JOIN_TIMEOUT_MS = Number(process.env.AI_MEET_JOIN_TIMEOUT_MS) || 60_000;
 
 function normalizeBase(base) {
   return (base || DEFAULT_BASE_URL).replace(/\/+$/, "");
@@ -57,9 +60,19 @@ function resultFor(response, path, includeStatus = false) {
 function createToolHandlers({ base = process.env.AI_MEET_BASE_URL, auth = process.env.AI_MEET_JOIN_TOKEN } = {}) {
   const resolvedBase = normalizeBase(base);
   const authValue = auth || undefined;
+  const guarded = (fn) => async (args) => {
+    try {
+      return await fn(args);
+    } catch (error) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Cannot reach AI Meet at ${resolvedBase}: ${error.message}` }],
+      };
+    }
+  };
 
   return {
-    async joinMeeting({ meetingUrl, briefing, conversationMode }) {
+    joinMeeting: guarded(async ({ meetingUrl, briefing, conversationMode }) => {
       let info;
       try {
         const response = await callApi({ method: "GET", path: "/info", base: resolvedBase });
@@ -77,10 +90,17 @@ function createToolHandlers({ base = process.env.AI_MEET_BASE_URL, auth = proces
         conversationMode,
         auth: authValue,
       });
-      return resultFor(await callApi({ method: "POST", path: "/join-meeting", base: resolvedBase, headers, body }), "/join-meeting");
-    },
+      return resultFor(await callApi({
+        method: "POST",
+        path: "/join-meeting",
+        base: resolvedBase,
+        headers,
+        body,
+        timeoutMs: JOIN_TIMEOUT_MS,
+      }), "/join-meeting");
+    }),
 
-    async leaveMeeting({ sessionId } = {}) {
+    leaveMeeting: guarded(async ({ sessionId } = {}) => {
       const body = sessionId ? new URLSearchParams({ sessionId }).toString() : "";
       return resultFor(await callApi({
         method: "POST",
@@ -89,15 +109,15 @@ function createToolHandlers({ base = process.env.AI_MEET_BASE_URL, auth = proces
         headers: { "content-type": "application/x-www-form-urlencoded" },
         body,
       }), "/leave-meeting");
-    },
+    }),
 
-    async getActiveSession() {
+    getActiveSession: guarded(async () => {
       return resultFor(await callApi({ method: "GET", path: "/active-session", base: resolvedBase }), "/active-session");
-    },
+    }),
 
-    async health() {
+    health: guarded(async () => {
       return resultFor(await callApi({ method: "GET", path: "/health", base: resolvedBase }), "/health", true);
-    },
+    }),
   };
 }
 

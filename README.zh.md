@@ -193,7 +193,7 @@ npm start
 claude mcp add ai-meet -- npx ai-meet mcp
 ```
 
-环境变量：`AI_MEET_BASE_URL` 指定要控制的 REST API（默认 `http://localhost:5005`）；`AI_MEET_JOIN_TOKEN` 可选，会作为 `x-join-token` 头和 `joinToken` 字段转发。
+环境变量：`AI_MEET_BASE_URL` 指定要控制的 REST API（默认 `http://localhost:5005`）；`AI_MEET_JOIN_TOKEN` 可选，会作为 `x-join-token` 头和 `joinToken` 字段转发；`AI_MEET_JOIN_TIMEOUT_MS` 调整 `join_meeting` 的等待时间（默认 60000 ms — 加入在服务器侧最长可能需要约 50 秒；其他工具为 15 秒）。
 
 | 工具 | 行为 |
 |---|---|

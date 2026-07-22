@@ -191,7 +191,7 @@ A thin stdio MCP server lets LLM clients (Claude Code, other agents) control mee
 claude mcp add ai-meet -- npx ai-meet mcp
 ```
 
-Environment: `AI_MEET_BASE_URL` selects the AI Meet REST API to control (default `http://localhost:5005`); `AI_MEET_JOIN_TOKEN` is optional and forwarded as the `x-join-token` header and `joinToken` field.
+Environment: `AI_MEET_BASE_URL` selects the AI Meet REST API to control (default `http://localhost:5005`); `AI_MEET_JOIN_TOKEN` is optional and forwarded as the `x-join-token` header and `joinToken` field; `AI_MEET_JOIN_TIMEOUT_MS` adjusts the `join_meeting` call budget (default 60000 ms — joins can take up to ~50 s server-side; the other tools time out at 15 s).
 
 | Tool | Action |
 |---|---|

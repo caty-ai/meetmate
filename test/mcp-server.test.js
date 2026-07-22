@@ -85,3 +85,32 @@ test("callApi returns HTTP status and response text", async () => {
     assert.deepEqual(await callApi({ method: "GET", path: "/anything", base }), { ok: true, status: 200, text: "ok" });
   });
 });
+
+test("callApi aborts with a timeout error when the server never responds", async () => {
+  await withServer((_request, _response) => { /* never respond */ }, async (base) => {
+    await assert.rejects(
+      callApi({ method: "GET", path: "/slow", base, timeoutMs: 100 }),
+      /timed out after 100ms/,
+    );
+  });
+});
+
+test("handlers surface unreachable servers as isError results with the base URL", async () => {
+  const handlers = createToolHandlers({ base: "http://127.0.0.1:9" });
+  const result = await handlers.health();
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /Cannot reach AI Meet at http:\/\/127\.0\.0\.1:9/);
+});
+
+test("leaveMeeting sends the sessionId only when provided", async () => {
+  const seen = [];
+  await withServer(async (request, response) => {
+    seen.push(await readBody(request));
+    response.end("ok");
+  }, async (base) => {
+    const handlers = createToolHandlers({ base });
+    await handlers.leaveMeeting({ sessionId: "session-abc" });
+    await handlers.leaveMeeting();
+    assert.deepEqual(seen, ["sessionId=session-abc", ""]);
+  });
+});
