@@ -1609,7 +1609,10 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
             ? `${agentState.sessionUser}-delegate`
             : agentState.sessionUser;
           if (typeof llmProvider.timeoutHandoff !== "function") {
-            finish(false);
+            // null (vs false) = handoff not supported by this provider; the
+            // success === null guard below skips followup speech entirely.
+            // openclaw's timeoutHandoff only ever resolves booleans.
+            finish(null);
             return;
           }
 
@@ -1686,6 +1689,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
             () => requestTimeoutHandoff(transcriptForHandoff),
             { shortUtterance: queuedShortUtterance }
           );
+          if (success === null) return;
           // If user already barged-in or aborted during the handoff await,
           // skip the followup line — they have moved on.
           if (abort.signal.aborted && !forcedDelegationFired) return;

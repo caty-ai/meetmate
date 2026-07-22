@@ -1,4 +1,4 @@
-// summarizer.js — LLM-based conversation summarizer (OpenClaw Gateway only)
+// summarizer.js — LLM-based conversation summarizer
 
 const { DEFAULT_MESSAGES } = require("./messages");
 
@@ -9,8 +9,7 @@ const SUMMARY_PROMPT = DEFAULT_MESSAGES.prompts.summary;
  *
  * @param {Array<{role: string, content: string, timestamp?: string}>} conversationLog
  * @param {object} options
- * @param {string} options.openclawUrl - OpenClaw Gateway URL (required)
- * @param {string} options.openclawToken - OpenClaw Gateway token (required)
+ * @param {object} options.llm - Resolved LLM configuration (required)
  * @param {string} [options.model]
  * @returns {Promise<{summary: string[], decisions: string[], todos: string[]}>}
  */
@@ -52,12 +51,12 @@ async function summarizeConversation(conversationLog, options = {}) {
   const prompt = (options.summaryPrompt || SUMMARY_PROMPT) + logText;
 
   try {
-    if (!options.openclawUrl || !options.openclawToken) {
-      console.warn("⚠️  Summarizer: OpenClaw Gateway not configured");
+    if (!isConfigured(options.llm)) {
+      console.warn("⚠️  Summarizer: LLM provider not configured");
       return { summary: [], decisions: [], todos: [] };
     }
 
-    const responseText = await callOpenClaw(prompt, options);
+    const responseText = await callLlm(prompt, options);
 
     // Parse JSON from response (handle potential markdown wrapping)
     return parseJsonResponse(responseText);
@@ -101,14 +100,31 @@ function parseJsonResponse(text) {
   }
 }
 
-async function callOpenClaw(prompt, options) {
-  const provider = require("./llm-provider").createLlmProvider();
+function isConfigured(llm) {
+  if (llm?.provider === "openai-compatible") {
+    return Boolean(llm.openaiCompatible?.baseUrl && llm.openaiCompatible?.apiKey && llm.model);
+  }
+  return Boolean(llm?.gateway?.url && llm?.gateway?.token);
+}
+
+function gatewayAuth(openclawUrl, openclawToken) {
+  return { openclawUrl, openclawToken };
+}
+
+async function callLlm(prompt, options) {
+  const llm = options.llm || {};
+  const provider = require("./llm-provider").createLlmProvider({ provider: llm.provider });
+  const { baseUrl, apiKey } = llm.openaiCompatible || {};
+  const providerOptions = llm.provider === "openai-compatible"
+    ? { baseUrl, apiKey, model: llm.model }
+    : {
+        ...gatewayAuth(llm.gateway?.url, llm.gateway?.token),
+        model: llm.model || "openclaw",
+      };
   const { statusCode, text: response } = await provider.complete(
     [{ role: "user", content: prompt }],
     {
-      openclawUrl: options.openclawUrl,
-      openclawToken: options.openclawToken,
-      model: options.model || "openclaw",
+      ...providerOptions,
       temperature: 0.3,
       maxTokens: 500,
       timeoutMs: 30_000,

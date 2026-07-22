@@ -271,6 +271,11 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
     ?? (envMaxTokens !== undefined && envMaxTokens !== "" ? Number(envMaxTokens) : undefined)
     ?? llmJson.maxTokens
     ?? 300;
+  const llmModel = overrides.model || agent?.model || llmJson.model
+    || (provider === "openclaw" ? "openclaw" : null);
+  if (!llmModel) {
+    throw new Error("❌  OpenAI-compatible model is required. Set llm.model in config.json or configure an agent model.");
+  }
   const historyMaxTurns = overrides.historyMaxTurns
     ?? agent?.historyMaxTurns
     ?? llmJson.historyMaxTurns
@@ -328,7 +333,7 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
       provider,
       // Do not default to a foundation model here; let Gateway choose.
       // (If a foundation model is required, set it explicitly via overrides/agent config.)
-      model: overrides.model || agent?.model || llmJson.model || "openclaw",
+      model: llmModel,
       temperature: llmTemperature,
       maxTokens: llmMaxTokens,
       systemPrompt,
