@@ -1,4 +1,4 @@
-# セットアップガイド — AI Meet Participant v7
+# セットアップガイド — Meetmate v7
 
 > **1エージェント = 1サーバーインスタンス。**
 > `config.json` + `.env` + `assets/avatar.png` の3点で任意のエージェントが動作する。

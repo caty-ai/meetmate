@@ -66,7 +66,7 @@ function createToolHandlers({ base = process.env.AI_MEET_BASE_URL, auth = proces
     } catch (error) {
       return {
         isError: true,
-        content: [{ type: "text", text: `Cannot reach AI Meet at ${resolvedBase}: ${error.message}` }],
+        content: [{ type: "text", text: `Cannot reach Meetmate at ${resolvedBase}: ${error.message}` }],
       };
     }
   };
@@ -127,11 +127,11 @@ async function start() {
     import("@modelcontextprotocol/sdk/server/stdio.js"),
     import("zod"),
   ]);
-  const server = new McpServer({ name: "ai-meet", version: packageJson.version });
+  const server = new McpServer({ name: "meetmate", version: packageJson.version });
   const handlers = createToolHandlers();
 
   server.registerTool("join_meeting", {
-    description: "Join an AI Meet meeting.",
+    description: "Join a Meetmate meeting.",
     inputSchema: {
       meetingUrl: z.string(),
       briefing: z.string().optional(),
@@ -139,11 +139,11 @@ async function start() {
     },
   }, handlers.joinMeeting);
   server.registerTool("leave_meeting", {
-    description: "Leave an AI Meet meeting.",
+    description: "Leave a Meetmate meeting.",
     inputSchema: { sessionId: z.string().optional() },
   }, handlers.leaveMeeting);
-  server.registerTool("get_active_session", { description: "Get active AI Meet sessions." }, handlers.getActiveSession);
-  server.registerTool("health", { description: "Get AI Meet service health." }, handlers.health);
+  server.registerTool("get_active_session", { description: "Get active Meetmate sessions." }, handlers.getActiveSession);
+  server.registerTool("health", { description: "Get Meetmate service health." }, handlers.health);
 
   await server.connect(new StdioServerTransport());
 }

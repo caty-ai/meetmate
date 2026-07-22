@@ -1,4 +1,4 @@
-# AI Meet Participant
+# Meetmate
 
 [English](README.md) | [日本語](README.ja.md) | **中文** | [ไทย](README.th.md)
 
@@ -94,9 +94,9 @@ STT (Soniox) → 唤醒词检测 → LLM (默认 OpenClaw Gateway) → TTS (Fish
 
 ```bash
 mkdir my-agent && cd my-agent
-npm install ai-meet-participant
-npx ai-meet init    # 交互式询问 3 个 API 密钥，然后生成 config.json 和 .env
-npx ai-meet start   # 启动服务器并打印设置界面的 URL
+npm install meetmate
+npx meetmate init    # 交互式询问 3 个 API 密钥，然后生成 config.json 和 .env
+npx meetmate start   # 启动服务器并打印设置界面的 URL
 ```
 
 `init` 会把随包附带的 `config.json.example` / `.env.example` 复制到**当前目录**，并填入你输入的凭据（`SONIOX_API_KEY`、`FISH_AUDIO_API_KEY`、`ATTENDEE_API_KEY`）。若已存在同名文件则拒绝覆盖，除非加 `--force`。之后编辑 `config.json` 设置智能体名称、唤醒词和固定台词。
@@ -188,7 +188,7 @@ npm start
 一个轻量 stdio MCP 服务器，让 LLM 客户端（Claude Code、其他智能体）直接控制会议参与 — 语音管线本身不在 MCP 范围内。注册方式：
 
 ```bash
-claude mcp add ai-meet -- npx ai-meet mcp
+claude mcp add meetmate -- npx meetmate mcp
 ```
 
 环境变量：`AI_MEET_BASE_URL` 指定要控制的 REST API（默认 `http://localhost:5005`）；`AI_MEET_JOIN_TOKEN` 可选，会作为 `x-join-token` 头和 `joinToken` 字段转发；`AI_MEET_JOIN_TIMEOUT_MS` 调整 `join_meeting` 的等待时间（默认 60000 ms — 加入在服务器侧最长可能需要约 50 秒；其他工具为 15 秒）。

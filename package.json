@@ -1,7 +1,7 @@
 {
-  "name": "ai-meet-participant",
+  "name": "meetmate",
   "version": "0.1.0",
-  "description": "AIエージェントがGoogle Meet/Zoomにリアルタイム参加し音声で対話するブリッジサーバー",
+  "description": "Bring your own AI agent into Google Meet & Zoom, as a real voice participant.",
   "private": true,
   "files": [
     "bin/",
@@ -16,7 +16,7 @@
     "NOTICE"
   ],
   "bin": {
-    "ai-meet": "bin/ai-meet.js"
+    "meetmate": "bin/ai-meet.js"
   },
   "scripts": {
     "start": "node src/server.js",
