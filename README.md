@@ -183,6 +183,23 @@ Resolution order for `provider` / `temperature` / `maxTokens` / `openaiCompatibl
 
 Requests go to `{baseUrl}/v1/chat/completions`; if `baseUrl` already ends with `/v1`, it is not doubled. Unknown provider names warn and fall back to `openclaw`.
 
+### MCP server (control plane)
+
+A thin stdio MCP server lets LLM clients (Claude Code, other agents) control meeting participation directly — the voice pipeline itself stays out of MCP scope. Register it with:
+
+```bash
+claude mcp add ai-meet -- npx ai-meet mcp
+```
+
+Environment: `AI_MEET_BASE_URL` selects the AI Meet REST API to control (default `http://localhost:5005`); `AI_MEET_JOIN_TOKEN` is optional and forwarded as the `x-join-token` header and `joinToken` field; `AI_MEET_JOIN_TIMEOUT_MS` adjusts the `join_meeting` call budget (default 60000 ms — joins can take up to ~50 s server-side; the other tools time out at 15 s).
+
+| Tool | Action |
+|---|---|
+| `join_meeting(meetingUrl, briefing?, conversationMode?)` | Join a Meet / Zoom meeting (proxies `POST /join-meeting`; the WebSocket URL is derived automatically) |
+| `leave_meeting(sessionId?)` | Leave the active session (or a specific one) |
+| `get_active_session()` | List active sessions as JSON |
+| `health()` | Service health check |
+
 ## Configuration
 
 Entry points for the most common tweaks. The full reference is [docs/operations.md](docs/operations.md).
