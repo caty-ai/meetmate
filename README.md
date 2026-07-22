@@ -114,7 +114,7 @@ npm start
 
 Open http://localhost:5005, paste a Meet / Zoom URL, and click Join.
 
-> 💡 If wake-word recognition is unreliable, the **wake-calibrate** feature (`/calibrate`) collects misrecognition variants from your real utterances in the browser. See [docs/setup-guide.md](docs/setup-guide.md).
+> 💡 If wake-word recognition is unreliable, the **wake-calibrate** feature (`/calibrate`, enabled with `WAKE_CALIBRATE_ENABLED=1`) collects misrecognition variants from your real utterances in the browser. See [docs/setup-guide.md](docs/setup-guide.md).
 
 ### Data directory (`AI_MEET_HOME`)
 
@@ -198,10 +198,10 @@ Entry points for the most common tweaks. The full reference is [docs/operations.
 ## Troubleshooting
 
 **Q. Responses come back slowly after I stop speaking**
-Lower `SONIOX_MAX_ENDPOINT_DELAY_MS` from `1500` to `1000` (or `800` if needed) and restart the server. If your utterances start getting cut off mid-sentence, lower `SONIOX_ENDPOINT_SENSITIVITY` toward `0.0〜-0.2`. Details: [Soniox tuning](docs/operations.md#stt-プロバイダ切替soniox-チューニング).
+Set `SONIOX_MAX_ENDPOINT_DELAY_MS=1000` in `.env` (when unset, the Soniox server-side default of `2000` applies; try `800` if needed) and restart the server. If your utterances start getting cut off mid-sentence, lower `SONIOX_ENDPOINT_SENSITIVITY` toward `0.0〜-0.2`. Details: [Soniox tuning](docs/operations.md#stt-プロバイダ切替soniox-チューニング).
 
 **Q. Posting to the meeting chat fails**
-Messages containing emojis or rare script characters are rejected with a 400 by the Attendee server ("Message cannot contain emojis or rare script characters."). Send-failure warnings go to `logs/meet-server.stderr.log`; check there first.
+Messages containing emojis or rare script characters are rejected with a 400 by the Attendee server ("Message cannot contain emojis or rare script characters."). Send-failure warnings go to `logs/meet-server.stderr.log` when running under the launchd agent (with a plain `npm start` they appear on the terminal's stderr); check there first.
 
 **Q. The TTS voice is unstable or goes wild**
 S2-Pro tends to destabilize on tag-less utterances, so the design assumes the "anchor scheme": one emotion tag in every utterance ([voice profile](docs/operations.md#音声プロファイルtts)). If it is still unstable, `FISH_AUDIO_MODEL=s1` rolls back to the previous model immediately.
@@ -242,7 +242,7 @@ npm run dev   # auto-reload via node --watch
 Uses the Node.js built-in test runner (`node:test`). No external services required; the whole suite finishes in seconds.
 
 ```bash
-node --test                       # all tests (245 tests across 35 files)
+node --test                       # all tests (35 test files)
 npm run test:meet:repro           # only the Meet multi-participant reproduction test
 ```
 
@@ -257,7 +257,7 @@ npm run test:meet:repro           # only the Meet multi-participant reproduction
 
 ### Logs
 
-Runtime logs go under `logs/`. Application warnings/errors: `logs/meet-server.stderr.log`. Delegation metrics: `logs/metrics.jsonl`.
+Runtime logs go under `logs/`. Application warnings/errors: `logs/meet-server.stderr.log` (under the launchd install; a plain `npm start` prints them to the terminal). Delegation metrics: `logs/metrics.jsonl`.
 
 ## Project status
 

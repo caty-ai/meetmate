@@ -116,7 +116,7 @@ npm start
 
 ブラウザで http://localhost:5005 を開き、Meet / Zoom の URL を貼り付けて「参加させる」をクリックします。
 
-> 💡 ウェイクワードの反応が悪い場合は、ブラウザから実際の発話で誤認識バリアントを収集する **wake-calibrate** 機能があります（`/calibrate`）。手順は [docs/setup-guide.md](docs/setup-guide.md) を参照。
+> 💡 ウェイクワードの反応が悪い場合は、ブラウザから実際の発話で誤認識バリアントを収集する **wake-calibrate** 機能があります（`/calibrate`・`WAKE_CALIBRATE_ENABLED=1` で有効化）。手順は [docs/setup-guide.md](docs/setup-guide.md) を参照。
 
 ### データディレクトリ（`AI_MEET_HOME`）
 
@@ -200,10 +200,10 @@ OpenAI 互換 API には `{baseUrl}/v1/chat/completions` を送信します。`b
 ## トラブルシューティング
 
 **Q. こちらが話し終えてから応答が返るまで遅い**
-`SONIOX_MAX_ENDPOINT_DELAY_MS` を `1500` → `1000`（必要なら `800`）に下げてサーバーを再起動。途中で発話が区切られるようになったら `SONIOX_ENDPOINT_SENSITIVITY` を `0.0〜-0.2` に下げて調整します。詳細は [Soniox チューニング](docs/operations.md#stt-プロバイダ切替soniox-チューニング)。
+`.env` で `SONIOX_MAX_ENDPOINT_DELAY_MS=1000` を設定（未設定時は Soniox サーバー側既定の `2000`。必要なら `800`）してサーバーを再起動。途中で発話が区切られるようになったら `SONIOX_ENDPOINT_SENSITIVITY` を `0.0〜-0.2` に下げて調整します。詳細は [Soniox チューニング](docs/operations.md#stt-プロバイダ切替soniox-チューニング)。
 
 **Q. Meet チャットへの投稿が失敗する**
-絵文字・特殊文字が含まれると Attendee サーバー側で 400 拒否されます（"Message cannot contain emojis or rare script characters."）。送信失敗の warn は `logs/meet-server.stderr.log` に出るので、まずそこを確認してください。
+絵文字・特殊文字が含まれると Attendee サーバー側で 400 拒否されます（"Message cannot contain emojis or rare script characters."）。送信失敗の warn は launchd 常駐時は `logs/meet-server.stderr.log` に出ます（素の `npm start` ではターミナルの stderr に出力）。まずそこを確認してください。
 
 **Q. TTS の声質が不安定・暴走する**
 S2-Pro はタグなし発話で声質が暴走しやすいため、全発話に感情タグを 1 個入れる「アンカー方式」を前提にしています（[音声プロファイル](docs/operations.md#音声プロファイルtts)）。それでも不安定なら `FISH_AUDIO_MODEL=s1` で旧モデルへ即時ロールバックできます。
@@ -242,7 +242,7 @@ npm run dev   # node --watch で自動リロード起動
 Node.js 標準の test runner（`node:test`）を使用しています。外部依存なしで数秒で完走します。
 
 ```bash
-node --test                       # 全テスト（35 ファイル / 245 テスト）
+node --test                       # 全テスト（35 テストファイル）
 npm run test:meet:repro           # Meet 複数参加者の再現テストのみ
 ```
 
@@ -257,7 +257,7 @@ npm run test:meet:repro           # Meet 複数参加者の再現テストのみ
 
 ### ログ
 
-実行ログは `logs/` 配下に出力されます。アプリ側の warn/error は `logs/meet-server.stderr.log`、委譲ハーネスの metrics は `logs/metrics.jsonl` を参照してください。
+実行ログは `logs/` 配下に出力されます。アプリ側の warn/error は `logs/meet-server.stderr.log`（launchd 常駐時。素の `npm start` ではターミナルに出力）、委譲ハーネスの metrics は `logs/metrics.jsonl` を参照してください。
 
 ## 開発ステータス
 

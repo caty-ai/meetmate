@@ -116,7 +116,7 @@ npm start
 
 在浏览器中打开 http://localhost:5005，粘贴 Meet / Zoom 的 URL 并点击加入。
 
-> 💡 如果唤醒词识别不稳定，可用 **wake-calibrate** 功能（`/calibrate`）在浏览器中从真实发音收集误识别变体。参见 [docs/setup-guide.md](docs/setup-guide.md)。
+> 💡 如果唤醒词识别不稳定，可用 **wake-calibrate** 功能（`/calibrate`，通过 `WAKE_CALIBRATE_ENABLED=1` 启用）在浏览器中从真实发音收集误识别变体。参见 [docs/setup-guide.md](docs/setup-guide.md)。
 
 ### 数据目录（`AI_MEET_HOME`）
 
@@ -200,10 +200,10 @@ npm start
 ## 故障排查
 
 **Q. 我说完后回应返回很慢**
-将 `SONIOX_MAX_ENDPOINT_DELAY_MS` 从 `1500` 降到 `1000`（必要时 `800`）并重启服务器。若发言开始被中途截断，将 `SONIOX_ENDPOINT_SENSITIVITY` 向 `0.0〜-0.2` 调低。详见 [Soniox 调优](docs/operations.md#stt-プロバイダ切替soniox-チューニング)。
+在 `.env` 中设置 `SONIOX_MAX_ENDPOINT_DELAY_MS=1000`（未设置时采用 Soniox 服务端默认值 `2000`；必要时 `800`）并重启服务器。若发言开始被中途截断，将 `SONIOX_ENDPOINT_SENSITIVITY` 向 `0.0〜-0.2` 调低。详见 [Soniox 调优](docs/operations.md#stt-プロバイダ切替soniox-チューニング)。
 
 **Q. 向会议聊天发帖失败**
-包含表情符号或罕见文字的消息会被 Attendee 服务器以 400 拒绝（"Message cannot contain emojis or rare script characters."）。发送失败的警告输出到 `logs/meet-server.stderr.log`，请先查看。
+包含表情符号或罕见文字的消息会被 Attendee 服务器以 400 拒绝（"Message cannot contain emojis or rare script characters."）。在 launchd 常驻运行时，发送失败的警告输出到 `logs/meet-server.stderr.log`（直接 `npm start` 时输出到终端 stderr），请先查看。
 
 **Q. TTS 音色不稳定、失控**
 S2-Pro 在无标签发言时容易音色失控，因此设计上假定"锚点方案"：每次发言带一个情感标签（[声音配置](docs/operations.md#音声プロファイルtts)）。若仍不稳定，`FISH_AUDIO_MODEL=s1` 可立即回滚到旧模型。
@@ -244,7 +244,7 @@ npm run dev   # 通过 node --watch 自动重载启动
 使用 Node.js 内置 test runner（`node:test`）。无外部依赖，数秒内跑完全部测试。
 
 ```bash
-node --test                       # 全部测试（35 个文件 / 245 个测试）
+node --test                       # 全部测试（35 个测试文件）
 npm run test:meet:repro           # 仅 Meet 多参与者复现测试
 ```
 
@@ -259,7 +259,7 @@ npm run test:meet:repro           # 仅 Meet 多参与者复现测试
 
 ### 日志
 
-运行日志输出在 `logs/` 下。应用侧 warn/error 见 `logs/meet-server.stderr.log`，委派框架指标见 `logs/metrics.jsonl`。
+运行日志输出在 `logs/` 下。应用侧 warn/error 见 `logs/meet-server.stderr.log`（launchd 常驻时；直接 `npm start` 时输出到终端），委派框架指标见 `logs/metrics.jsonl`。
 
 ## 项目状态
 

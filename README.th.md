@@ -116,7 +116,7 @@ npm start
 
 เปิด http://localhost:5005 วาง URL ของ Meet / Zoom แล้วคลิกเข้าร่วม
 
-> 💡 หากการจดจำ wake word ไม่เสถียร มีฟีเจอร์ **wake-calibrate** (`/calibrate`) ที่เก็บรูปแบบการจดจำผิดจากการพูดจริงผ่านเบราว์เซอร์ ดู [docs/setup-guide.md](docs/setup-guide.md)
+> 💡 หากการจดจำ wake word ไม่เสถียร มีฟีเจอร์ **wake-calibrate** (`/calibrate` เปิดใช้ด้วย `WAKE_CALIBRATE_ENABLED=1`) ที่เก็บรูปแบบการจดจำผิดจากการพูดจริงผ่านเบราว์เซอร์ ดู [docs/setup-guide.md](docs/setup-guide.md)
 
 ### ไดเรกทอรีข้อมูล (`AI_MEET_HOME`)
 
@@ -200,10 +200,10 @@ ID / ชื่อที่แสดง / wake word / ประโยคคงท
 ## การแก้ไขปัญหา
 
 **Q. หลังพูดจบ คำตอบกลับมาช้า**
-ลด `SONIOX_MAX_ENDPOINT_DELAY_MS` จาก `1500` เป็น `1000` (หรือ `800` หากจำเป็น) แล้วรีสตาร์ทเซิร์ฟเวอร์ หากคำพูดเริ่มถูกตัดกลางประโยค ให้ลด `SONIOX_ENDPOINT_SENSITIVITY` ไปทาง `0.0〜-0.2` รายละเอียด: [การจูน Soniox](docs/operations.md#stt-プロバイダ切替soniox-チューニング)
+ตั้ง `SONIOX_MAX_ENDPOINT_DELAY_MS=1000` ใน `.env` (หากไม่ตั้ง จะใช้ค่าเริ่มต้นฝั่งเซิร์ฟเวอร์ Soniox คือ `2000`; ลอง `800` หากจำเป็น) แล้วรีสตาร์ทเซิร์ฟเวอร์ หากคำพูดเริ่มถูกตัดกลางประโยค ให้ลด `SONIOX_ENDPOINT_SENSITIVITY` ไปทาง `0.0〜-0.2` รายละเอียด: [การจูน Soniox](docs/operations.md#stt-プロバイダ切替soniox-チューニング)
 
 **Q. โพสต์ลงแชทของที่ประชุมไม่สำเร็จ**
-ข้อความที่มีอิโมจิหรืออักขระหายากจะถูกเซิร์ฟเวอร์ Attendee ปฏิเสธด้วย 400 ("Message cannot contain emojis or rare script characters.") คำเตือนการส่งล้มเหลวออกที่ `logs/meet-server.stderr.log` ให้ตรวจสอบที่นั่นก่อน
+ข้อความที่มีอิโมจิหรืออักขระหายากจะถูกเซิร์ฟเวอร์ Attendee ปฏิเสธด้วย 400 ("Message cannot contain emojis or rare script characters.") เมื่อรันผ่าน launchd agent คำเตือนการส่งล้มเหลวออกที่ `logs/meet-server.stderr.log` (หากรัน `npm start` ตรง ๆ จะออกที่ stderr ของเทอร์มินัล) ให้ตรวจสอบที่นั่นก่อน
 
 **Q. เสียง TTS ไม่เสถียรหรือเพี้ยน**
 S2-Pro มักเสียงเพี้ยนเมื่อพูดโดยไม่มีแท็ก การออกแบบจึงถือ "รูปแบบ anchor": ใส่แท็กอารมณ์หนึ่งตัวในทุกการพูด ([โปรไฟล์เสียง](docs/operations.md#音声プロファイルtts)) หากยังไม่เสถียร `FISH_AUDIO_MODEL=s1` จะย้อนกลับไปโมเดลเก่าได้ทันที
@@ -244,7 +244,7 @@ npm run dev   # เริ่มแบบรีโหลดอัตโนมั�
 ใช้ test runner ในตัวของ Node.js (`node:test`) ไม่ต้องพึ่งบริการภายนอก ชุดทดสอบทั้งหมดเสร็จในไม่กี่วินาที
 
 ```bash
-node --test                       # ทดสอบทั้งหมด (35 ไฟล์ / 245 การทดสอบ)
+node --test                       # ทดสอบทั้งหมด (35 ไฟล์ทดสอบ)
 npm run test:meet:repro           # เฉพาะการทดสอบจำลองผู้เข้าร่วมหลายคนของ Meet
 ```
 
@@ -259,7 +259,7 @@ npm run test:meet:repro           # เฉพาะการทดสอบจ�
 
 ### บันทึก
 
-บันทึกการทำงานอยู่ภายใต้ `logs/` คำเตือน/ข้อผิดพลาดฝั่งแอป: `logs/meet-server.stderr.log` ตัวชี้วัดการมอบหมายงาน: `logs/metrics.jsonl`
+บันทึกการทำงานอยู่ภายใต้ `logs/` คำเตือน/ข้อผิดพลาดฝั่งแอป: `logs/meet-server.stderr.log` (เมื่อติดตั้งผ่าน launchd; การรัน `npm start` ตรง ๆ จะพิมพ์ออกเทอร์มินัล) ตัวชี้วัดการมอบหมายงาน: `logs/metrics.jsonl`
 
 ## สถานะโครงการ
 
