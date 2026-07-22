@@ -43,7 +43,7 @@ describe("LCM session isolation (Map<agentId:meetingId, boolean>)", () => {
 
   it("no cross-contamination between agents", () => {
     lcmMap = new Map();
-    const agents = ["caty", "alec", "zoe", "eidra", "claire", "sebas"];
+    const agents = ["caty", "alec", "zoe", "eidra", "mira", "theo"];
     const meetingId = "session-xyz";
 
     // Only caty and eidra ingested
