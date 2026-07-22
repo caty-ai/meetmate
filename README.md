@@ -1,138 +1,166 @@
 # AI Meet Participant
 
+**English** | [日本語](README.ja.md) | [中文](README.zh.md) | [ไทย](README.th.md)
+
 [![Version](https://img.shields.io/badge/version-v7.9.0--rc.1-blue)](https://github.com/caty-ai/meetmate/releases)
 [![Stable](https://img.shields.io/badge/stable-v7.8.0-brightgreen)](https://github.com/caty-ai/meetmate/releases/tag/v7.8.0-stable)
 [![License: Apache--2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
-[![Platform](https://img.shields.io/badge/platform-Google%20Meet%20%7C%20Zoom-4285F4)](#特徴)
+[![Platform](https://img.shields.io/badge/platform-Google%20Meet%20%7C%20Zoom-4285F4)](#features)
 
-AI エージェントを Google Meet / Zoom にリアルタイム参加させ、音声で対話するブリッジサーバー。OpenClaw Gateway 連携により、任意のエージェントを音声会議に接続できます。
+A bridge server that puts an AI agent into Google Meet / Zoom as a real-time, voice-interactive participant. With OpenClaw Gateway integration, any agent can join your meetings and talk.
 
 ```
-STT (Soniox) → ウェイクワード検出 → LLM (OpenClaw Gateway 既定) → TTS (Fish Audio S2-Pro) → Meet / Zoom
+STT (Soniox) → wake-word detection → LLM (OpenClaw Gateway by default) → TTS (Fish Audio S2-Pro) → Meet / Zoom
 ```
 
-## 目次
+## Table of contents
 
-- [特徴](#特徴)
-- [スクリーンショット](#スクリーンショット)
-- [アーキテクチャ](#アーキテクチャ)
-- [クイックスタート](#クイックスタート)
-- [設定](#設定)
-- [トラブルシューティング](#トラブルシューティング)
-- [ドキュメント](#ドキュメント)
-- [開発](#開発)
-- [開発ステータス](#開発ステータス)
-- [コントリビュート](#コントリビュート)
-- [謝辞](#謝辞)
-- [ライセンス](#ライセンス)
+- [Features](#features)
+- [Screenshots](#screenshots)
+- [Architecture](#architecture)
+- [Quick start](#quick-start)
+- [Configuration](#configuration)
+- [Troubleshooting](#troubleshooting)
+- [Documentation](#documentation)
+- [Development](#development)
+- [Project status](#project-status)
+- [Contributing](#contributing)
+- [Acknowledgments](#acknowledgments)
+- [License](#license)
 
-## 特徴
+## Features
 
-- **Google Meet / Zoom 対応** — Attendee Bot API 経由で会議に参加
-- **OpenClaw Gateway 連携** — SOUL / memory / skills / tools を完全サポート
-- **ウェイクワード検出 + バージイン**（発話への割り込み）対応
-- **低遅延 STT** — Soniox `stt-rt-v5`（既定）。`STT_PROVIDER=deepgram` で Deepgram にも切替可
-- **感情表現つき TTS** — Fish Audio S2-Pro（emotion tag anchor 方式で声質を安定化）
-- **固定文言 TTS キャッシュ** — ack / ping / greeting / farewell 等を PCM ディスクキャッシュから即時再生。実収録テイクの事前シードにも対応
-- **委譲強制ハーネス** — 重い処理はバックグラウンドの delegate セッションへ強制委譲し、フロントは対話に専念（[#79](https://github.com/caty-ai/meetmate/issues/79)）
-- **会議チャット投稿** — LLM 応答内の `[[[chat: ...]]]` タグを読み上げずに Meet チャットへ投稿
-- **絵文字ガード** — LLM プロンプト禁止 + TTS 直前の機械 strip の 2 層構成
-- **LCM（Lossless Context Management）自動記録** / **Slack 連動**（ステータス通知・サマリー・全文ログ）
+- **Google Meet / Zoom support** — joins meetings through the Attendee bot API
+- **OpenClaw Gateway integration** — full support for SOUL / memory / skills / tools
+- **Wake-word detection + barge-in** (interrupting the agent mid-speech)
+- **Low-latency STT** — Soniox `stt-rt-v5` by default; switch to Deepgram with `STT_PROVIDER=deepgram`
+- **Expressive TTS** — Fish Audio S2-Pro (emotion-tag anchor scheme keeps the voice stable)
+- **Fixed-line TTS cache** — acks / pings / greetings / farewells play instantly from a PCM disk cache; pre-seeding with real recorded takes is supported
+- **Delegation harness** — heavy work is forcibly delegated to a background session so the front agent stays conversational ([#79](https://github.com/caty-ai/meetmate/issues/79))
+- **Meeting chat posting** — `[[[chat: ...]]]` tags in LLM replies are posted to the meeting chat instead of being spoken
+- **Emoji guard** — two layers: LLM prompt ban + mechanical strip right before TTS
+- **LCM (Lossless Context Management) auto-recording** / **Slack integration** (status notifications, summaries, full transcripts)
 
-## スクリーンショット
+## Screenshots
 
-<!-- TODO: 画像を docs/images/ に配置したらコメントを外す
-![操作 UI](docs/images/ui-join.png)
-![会議参加中](docs/images/in-meeting.png)
+<!-- TODO: uncomment once images are placed in docs/images/
+![Control UI](docs/images/ui-join.png)
+![In a meeting](docs/images/in-meeting.png)
 -->
 
-ブラウザで http://localhost:5005 を開くと操作 UI が表示され、Meet / Zoom の URL を貼り付けるだけでエージェントが会議に参加します。参加中はアバター（`assets/avatar.png`）が会議の参加者タイルとして表示され、ウェイクワードで呼びかけると音声で応答します。
+Open http://localhost:5005 in a browser, paste a Meet / Zoom URL, and the agent joins the meeting. While in the meeting the avatar (`assets/avatar.png`) appears as the agent's participant tile, and the agent answers by voice when called with its wake word.
 
-> 📸 スクリーンショット・デモ GIF は準備中です。
+> 📸 Screenshots and demo GIFs are in preparation.
 
-## アーキテクチャ
+## Architecture
 
-**1 エージェント = 1 サーバーインスタンス。** `config.json` + `.env` + `assets/avatar.png` だけで任意のエージェントが動作します。
+**One agent = one server instance.** Any agent runs with just `config.json` + `.env` + an avatar image.
 
-入力側 STT は 16kHz、出力側 TTS / `bot_output` は 24kHz。Attendee の入力 leg と出力 leg は独立しています。
+Input-side STT runs at 16 kHz; output-side TTS / `bot_output` runs at 24 kHz. The Attendee input leg and output leg are independent.
 
-### 主要モジュール
+### Key modules
 
-| モジュール | 役割 |
+| Module | Role |
 |---|---|
-| [`src/pipeline.js`](src/pipeline.js) | 音声パイプライン制御 |
-| [`src/agent-profile.js`](src/agent-profile.js) | エージェント設定解決 |
-| [`src/llm-provider.js`](src/llm-provider.js) | LLM プロバイダ切替（OpenClaw 既定 / OpenAI 互換） |
-| [`src/stt-provider.js`](src/stt-provider.js) | STT プロバイダ切替（soniox 既定 / deepgram） |
-| [`src/stt-soniox.js`](src/stt-soniox.js) | Soniox STT（stt-rt-v5, WebSocket） |
-| [`src/stt.js`](src/stt.js) | Deepgram STT（フォールバック） |
+| [`src/pipeline.js`](src/pipeline.js) | Audio pipeline control |
+| [`src/agent-profile.js`](src/agent-profile.js) | Agent profile resolution |
+| [`src/paths.js`](src/paths.js) | Home-directory contract (`AI_MEET_HOME`) — see [Data directory](#data-directory-ai_meet_home) |
+| [`src/llm-provider.js`](src/llm-provider.js) | LLM provider switch (OpenClaw default / OpenAI-compatible) |
+| [`src/stt-provider.js`](src/stt-provider.js) | STT provider switch (soniox default / deepgram) |
+| [`src/stt-soniox.js`](src/stt-soniox.js) | Soniox STT (stt-rt-v5, WebSocket) |
+| [`src/stt.js`](src/stt.js) | Deepgram STT (fallback) |
 | [`src/tts-fish.js`](src/tts-fish.js) | Fish Audio TTS |
-| [`src/speech-policy.js`](src/speech-policy.js) | NO_REPLY 抑制・テキスト浄化 |
-| [`src/exit-handler.js`](src/exit-handler.js) | 退出検出・クリーンアップ |
+| [`src/speech-policy.js`](src/speech-policy.js) | NO_REPLY suppression, text sanitization |
+| [`src/exit-handler.js`](src/exit-handler.js) | Exit detection and cleanup |
 
-詳細は [docs/architecture.md](docs/architecture.md) を参照してください。
+See [docs/architecture.md](docs/architecture.md) for details.
 
-## クイックスタート
+## Quick start
 
-### 前提条件
+### Prerequisites
 
-- Node.js 22 以上（`package.json` の `engines` 準拠）
-- LLM プロバイダは `openclaw`（既定）または `openai-compatible`
-  - `openclaw` は OpenClaw Gateway が必要。SOUL / memory / skills / tools を含む完全なエージェント体験を提供
-  - `openai-compatible` は OpenAI 互換 API に接続し、OpenClaw Gateway は不要
-- 各サービスの API キー（Soniox / Fish Audio / Attendee）
-  - [Attendee](https://attendee.dev/) は Google Meet / Zoom に Bot を参加させる SaaS（self-host 版もあり）。Bot の入退室・音声入出力はすべて Attendee API 経由
-  - Fish Audio の Voice ID は [fish.audio](https://fish.audio/) で使いたい声（自作 or 公開ボイス）のページを開き、URL 末尾の ID をコピー
+- Node.js 22 or later (per `engines` in `package.json`)
+- An LLM provider: `openclaw` (default) or `openai-compatible`
+  - `openclaw` requires an OpenClaw Gateway and provides the full agent experience including SOUL / memory / skills / tools
+  - `openai-compatible` connects to any OpenAI-compatible API; no OpenClaw Gateway needed
+- API keys for each service (Soniox / Fish Audio / Attendee)
+  - [Attendee](https://attendee.dev/) is a SaaS (a self-hosted edition also exists) that puts bots into Google Meet / Zoom. All bot join/leave and audio I/O goes through the Attendee API
+  - For the Fish Audio Voice ID, open the page of the voice you want (your own or a public one) on [fish.audio](https://fish.audio/) and copy the ID at the end of the URL
 
-### 1. インストール
+### Option A: npm package (recommended)
+
+> ℹ️ Until the first npm release is published, use [Option B](#option-b-from-source) below.
+
+```bash
+mkdir my-agent && cd my-agent
+npm install ai-meet-participant
+npx ai-meet init    # interactively asks for the 3 API keys, then creates config.json + .env
+npx ai-meet start   # starts the server and prints the settings-UI URL
+```
+
+`init` copies the bundled `config.json.example` / `.env.example` into the **current directory** and fills in the credentials you enter (`SONIOX_API_KEY`, `FISH_AUDIO_API_KEY`, `ATTENDEE_API_KEY`). It refuses to overwrite existing files unless you pass `--force`. Then edit `config.json` to set your agent's name, wake words, and fixed lines.
+
+### Option B: from source
 
 ```bash
 git clone git@github.com:caty-ai/meetmate.git
 cd meetmate
 npm install
-```
-
-### 2. 環境変数（`.env`）
-
-```bash
-cp .env.example .env
-```
-
-| 変数 | 用途 |
-|---|---|
-| `LLM_PROVIDER` | LLM プロバイダ（`openclaw`（既定）/ `openai-compatible`） |
-| `OPENCLAW_GATEWAY_URL` | OpenClaw Gateway URL（`openclaw` で必須。例: `http://localhost:18789`） |
-| `OPENCLAW_GATEWAY_TOKEN` | Gateway 認証トークン（`openclaw` で必須） |
-| `OPENAI_COMPATIBLE_BASE_URL` | OpenAI 互換 API のベース URL（`openai-compatible` で必須） |
-| `OPENAI_COMPATIBLE_API_KEY` | OpenAI 互換 API キー（`openai-compatible` で必須） |
-| `SONIOX_API_KEY` | STT 用（既定プロバイダ Soniox） |
-| `FISH_AUDIO_API_KEY` | TTS 用 |
-| `FISH_AUDIO_VOICE_ID` | TTS 音声 ID（声のクローン） |
-| `ATTENDEE_API_KEY` | Meet / Zoom Bot API |
-
-任意の変数（`PORT`、`AGENT_LANG`、Slack 連携など）とチューニング系 env の全リファレンスは [docs/operations.md](docs/operations.md) を参照。
-
-### 3. エージェント設定（`config.json`）
-
-```bash
+cp .env.example .env        # then fill in the keys
 cp config.json.example config.json
+npm start
 ```
 
-エージェント ID / 表示名 / ウェイクワード / 固定文言（greeting・ackVariants・progressPings など）/ TTS・STT・Slack・Attendee の設定をここに集約しています。`config.json.example` は emotion tag anchor 方式（S2-Pro 用）に揃えてあるので、コピーして変数を埋めれば動きます。
+Open http://localhost:5005, paste a Meet / Zoom URL, and click Join.
 
-### LLM プロバイダ
+> 💡 If wake-word recognition is unreliable, the **wake-calibrate** feature (`/calibrate`, enabled with `WAKE_CALIBRATE_ENABLED=1`) collects misrecognition variants from your real utterances in the browser. See [docs/setup-guide.md](docs/setup-guide.md).
 
-| `llm.provider` / `LLM_PROVIDER` | 動作 |
+### Data directory (`AI_MEET_HOME`)
+
+Everything the server **writes**, plus your user configuration, lives in one *home* directory — by default the **current working directory**, or the directory set in the `AI_MEET_HOME` environment variable:
+
+| Path (under home) | Contents |
 |---|---|
-| `openclaw` | 既定。OpenClaw Gateway 経由で SOUL / memory / skills / tools を利用 |
-| `openai-compatible` | OpenAI 互換 API を直接利用。OpenClaw Gateway は不要 |
+| `config.json` / `.env` | Your agent configuration and credentials |
+| `logs/` | Runtime logs and delegation metrics (`metrics.jsonl`) |
+| `assets/avatar.png` | Optional avatar override (falls back to the bundled default image) |
+| `assets/tts-cache/` | Fixed-line TTS cache |
 
-`openai-compatible` は、プレーンな LLM と組み込みのペルソナテンプレートで音声応答する縮退モードです。Gateway 未設定時の OSS としての最低保証であり、OpenClaw 固有の memory / skills / tools は利用できません。Claude モデルは OpenAI 互換プロキシ（例: LiteLLM）経由で利用します。Anthropic ネイティブアダプタはありません（[#114](https://github.com/caty-ai/meetmate/issues/114)）。
+Read-only bundled assets (the web UI, the default avatar, filler audio) always come from the installed package itself. `TTS_CACHE_DIR` and `METRICS_LOG_DIR` are still honored as explicit overrides. Running `npm start` from a source checkout keeps the repository root as home, so the from-source behavior is unchanged.
 
-`config.json` 側で `openai-compatible` を選ぶ場合は `.env` の `LLM_PROVIDER` も合わせる（環境変数が `config.json` より優先）。`config.json` の `${...}` プレースホルダは**未解決（未設定・空欄）だと起動時にエラー終了する**ため、使わない機能の env（`OPENCLAW_GATEWAY_URL` / `OPENCLAW_GATEWAY_TOKEN` / `SLACK_BOT_TOKEN` 等）も削除・空欄にせずダミー値のまま残す。残したくない場合は `config.json` から該当ブロックごと削除する。
+### Environment variables (`.env`)
 
-`config.json` の `llm` スキーマは次のとおりです。
+| Variable | Purpose |
+|---|---|
+| `LLM_PROVIDER` | LLM provider (`openclaw` (default) / `openai-compatible`) |
+| `OPENCLAW_GATEWAY_URL` | OpenClaw Gateway URL (required for `openclaw`, e.g. `http://localhost:18789`) |
+| `OPENCLAW_GATEWAY_TOKEN` | Gateway auth token (required for `openclaw`) |
+| `OPENAI_COMPATIBLE_BASE_URL` | Base URL of an OpenAI-compatible API (required for `openai-compatible`) |
+| `OPENAI_COMPATIBLE_API_KEY` | API key for the OpenAI-compatible API (required for `openai-compatible`) |
+| `SONIOX_API_KEY` | STT (default provider Soniox) |
+| `FISH_AUDIO_API_KEY` | TTS |
+| `FISH_AUDIO_VOICE_ID` | TTS voice ID (voice clone) |
+| `ATTENDEE_API_KEY` | Meet / Zoom bot API |
+
+Optional variables (`PORT`, `AGENT_LANG`, Slack integration, …) and the full tuning reference are in [docs/operations.md](docs/operations.md).
+
+### Agent configuration (`config.json`)
+
+Agent ID / display name / wake words / fixed lines (greeting, ackVariants, progressPings, …) and the TTS / STT / Slack / Attendee settings are all collected here. `config.json.example` is already aligned with the emotion-tag anchor scheme (for S2-Pro), so copy it and fill in the variables.
+
+### LLM providers
+
+| `llm.provider` / `LLM_PROVIDER` | Behavior |
+|---|---|
+| `openclaw` | Default. Uses SOUL / memory / skills / tools through the OpenClaw Gateway |
+| `openai-compatible` | Talks directly to an OpenAI-compatible API. No OpenClaw Gateway required |
+
+`openai-compatible` is a degraded mode that answers by voice with a plain LLM and a built-in persona template. It is the OSS baseline when no Gateway is configured; OpenClaw-specific memory / skills / tools are unavailable. Claude models are used through an OpenAI-compatible proxy (e.g. LiteLLM); there is no native Anthropic adapter ([#114](https://github.com/caty-ai/meetmate/issues/114)).
+
+If you select `openai-compatible` in `config.json`, set `LLM_PROVIDER` in `.env` to match (the environment variable takes precedence over `config.json`). Unresolved `${...}` placeholders in `config.json` (unset or blank) **make the server exit with an error at startup**, so keep dummy values for envs of features you don't use (`OPENCLAW_GATEWAY_URL` / `OPENCLAW_GATEWAY_TOKEN` / `SLACK_BOT_TOKEN`, …) instead of deleting or blanking them — or delete the whole block from `config.json`.
+
+The `llm` schema in `config.json`:
 
 ```json
 {
@@ -151,115 +179,105 @@ cp config.json.example config.json
 }
 ```
 
-`provider` / `temperature` / `maxTokens` / `openaiCompatible` の解決順は、セッションごとの overrides → agent 設定 → 環境変数 → `configJson.llm` → 既定値です。対応する環境変数は `LLM_PROVIDER`、`AGENT_TEMPERATURE`、`AGENT_MAX_TOKENS`、`OPENAI_COMPATIBLE_BASE_URL`、`OPENAI_COMPATIBLE_API_KEY` です。`model` と `historyMaxTurns` は環境変数を参照せず、overrides → agent 設定 → `configJson.llm` → 既定値の順です。`openai-compatible` の `systemPrompt` は `overrides.prompt` → `configJson.llm.systemPrompt` → 組み込みペルソナの順で解決し、音声用ルールを付加して使います。
+Resolution order for `provider` / `temperature` / `maxTokens` / `openaiCompatible`: per-session overrides → agent settings → environment variables → `configJson.llm` → defaults. The corresponding environment variables are `LLM_PROVIDER`, `AGENT_TEMPERATURE`, `AGENT_MAX_TOKENS`, `OPENAI_COMPATIBLE_BASE_URL`, `OPENAI_COMPATIBLE_API_KEY`. `model` and `historyMaxTurns` do not read environment variables; they resolve overrides → agent settings → `configJson.llm` → defaults. For `openai-compatible`, `systemPrompt` resolves `overrides.prompt` → `configJson.llm.systemPrompt` → built-in persona, with voice-specific rules appended.
 
-OpenAI 互換 API には `{baseUrl}/v1/chat/completions` を送信します。`baseUrl` のパスがすでに `/v1` で終わる場合は `/v1` を重ねません。未対応のプロバイダ名は警告後に `openclaw` へフォールバックします。
+Requests go to `{baseUrl}/v1/chat/completions`; if `baseUrl` already ends with `/v1`, it is not doubled. Unknown provider names warn and fall back to `openclaw`.
 
-### 4. アバターの配置と起動
+## Configuration
+
+Entry points for the most common tweaks. The full reference is [docs/operations.md](docs/operations.md).
+
+| I want to… | Look at |
+|---|---|
+| Make responses come back faster | [Soniox tuning](docs/operations.md#stt-プロバイダ切替soniox-チューニング) |
+| Change the voice, speed, or TTS behavior | [Voice profile](docs/operations.md#音声プロファイルtts) |
+| Roll back to previous settings when something is off | [Emergency rollback envs](docs/operations.md#緊急-rollback-用-env) |
+| Use background delegation for heavy work | [Delegation harness](docs/operations.md#委譲強制ハーネス79) |
+| Seed the TTS cache with real recorded takes | [Seeding recorded takes](docs/operations.md#実収録テイクのシード72--75) |
+
+## Troubleshooting
+
+**Q. Responses come back slowly after I stop speaking**
+Set `SONIOX_MAX_ENDPOINT_DELAY_MS=1000` in `.env` (when unset, the Soniox server-side default of `2000` applies; try `800` if needed) and restart the server. If your utterances start getting cut off mid-sentence, lower `SONIOX_ENDPOINT_SENSITIVITY` toward `0.0〜-0.2`. Details: [Soniox tuning](docs/operations.md#stt-プロバイダ切替soniox-チューニング).
+
+**Q. Posting to the meeting chat fails**
+Messages containing emojis or rare script characters are rejected with a 400 by the Attendee server ("Message cannot contain emojis or rare script characters."). Send-failure warnings go to `logs/meet-server.stderr.log` when running under the launchd agent (with a plain `npm start` they appear on the terminal's stderr); check there first.
+
+**Q. The TTS voice is unstable or goes wild**
+S2-Pro tends to destabilize on tag-less utterances, so the design assumes the "anchor scheme": one emotion tag in every utterance ([voice profile](docs/operations.md#音声プロファイルtts)). If it is still unstable, `FISH_AUDIO_MODEL=s1` rolls back to the previous model immediately.
+
+**Q. STT accuracy suddenly degraded**
+Set `STT_PROVIDER=deepgram` in `.env` and restart to switch to Deepgram immediately. For misrecognized names and jargon, add comma-separated entries to `SONIOX_CONTEXT_TERMS`.
+
+**Q. Fixed lines (acks etc.) sound different from usual**
+The TTS cache is missing and playback fell back to live synthesis. The cache key depends on `voiceId` / `FISH_AUDIO_SPEED` / `FISH_AUDIO_MODEL` / `TTS_SAMPLE_RATE`; re-run `node scripts/seed-tts-cache-from-fillers.js` after changing any of them ([seeding guide](docs/operations.md#実収録テイクのシード72--75)).
+
+**Q. How do I check the delegation harness is working?**
+It logs to `logs/metrics.jsonl` (JSONL). Aggregate with `node scripts/aggregate-metrics.js logs/metrics.jsonl`.
+
+If none of this helps, open an [Issue](https://github.com/caty-ai/meetmate/issues) with logs (under `logs/`) and reproduction steps.
+
+## Documentation
+
+| Document | Contents |
+|---|---|
+| [docs/setup-guide.md](docs/setup-guide.md) | Detailed setup guide |
+| [docs/architecture.md](docs/architecture.md) | Architecture deep dive |
+| [docs/operations.md](docs/operations.md) | Full operations and tuning reference |
+| [docs/deploy-checklist.md](docs/deploy-checklist.md) | Deployment checklist |
+| [docs/deep-interview-79-delegation-harness.md](docs/deep-interview-79-delegation-harness.md) | Design spec of the delegation harness |
+
+> ℹ️ Some documents under `docs/` are currently in Japanese; the reference tables and command snippets are language-neutral.
+
+## Development
+
+### Dev server
 
 ```bash
-# assets/avatar.png は既定画像を同梱済み（自分のエージェント画像に差し替え可）
-npm start
+npm run dev   # auto-reload via node --watch
 ```
 
-ブラウザで http://localhost:5005 を開き、Meet / Zoom の URL を貼り付けて「参加させる」をクリックします。
+### Tests
 
-> 💡 ウェイクワードの反応が悪い場合は、ブラウザから実際の発話で誤認識バリアントを収集する **wake-calibrate** 機能があります（`/calibrate`）。手順は [docs/setup-guide.md](docs/setup-guide.md#ウェイクワードキャリブレーション) を参照。
-
-## 設定
-
-よく使う調整ポイントの入口だけまとめます。全項目は [docs/operations.md](docs/operations.md) にあります。
-
-| やりたいこと | 見る場所 |
-|---|---|
-| 応答の戻りを速くしたい | [Soniox チューニング](docs/operations.md#stt-プロバイダ切替soniox-チューニング) |
-| 声・話速・TTS 挙動を変えたい | [音声プロファイル](docs/operations.md#音声プロファイルtts) |
-| 挙動がおかしいとき旧設定へ戻したい | [緊急 rollback 用 env](docs/operations.md#緊急-rollback-用-env) |
-| 重作業のバックグラウンド委譲を使いたい | [委譲強制ハーネス](docs/operations.md#委譲強制ハーネス79) |
-| 実収録音声を TTS キャッシュに流し込みたい | [実収録テイクのシード](docs/operations.md#実収録テイクのシード72--75) |
-
-## トラブルシューティング
-
-**Q. こちらが話し終えてから応答が返るまで遅い**
-`SONIOX_MAX_ENDPOINT_DELAY_MS` を `1500` → `1000`（必要なら `800`）に下げて meet-server を再起動。途中で発話が区切られるようになったら `SONIOX_ENDPOINT_SENSITIVITY` を `0.0〜-0.2` に下げて調整します。詳細は [Soniox チューニング](docs/operations.md#stt-プロバイダ切替soniox-チューニング)。
-
-**Q. Meet チャットへの投稿が失敗する**
-絵文字・特殊文字が含まれると Attendee サーバー側で 400 拒否されます（"Message cannot contain emojis or rare script characters."）。送信失敗の warn は `logs/meet-server.stderr.log` に出るので、まずそこを確認してください。
-
-**Q. TTS の声質が不安定・暴走する**
-S2-Pro はタグなし発話で声質が暴走しやすいため、全発話に感情タグを 1 個入れる「アンカー方式」を前提にしています（[音声プロファイル](docs/operations.md#音声プロファイルtts)）。それでも不安定なら `FISH_AUDIO_MODEL=s1` で旧モデルへ即時ロールバックできます。
-
-**Q. STT の認識が急に悪くなった**
-`.env` で `STT_PROVIDER=deepgram` にして再起動すると Deepgram へ即時切替できます。人名・専門用語の誤認識は `SONIOX_CONTEXT_TERMS` にカンマ区切りで登録すると改善します。
-
-**Q. 固定文言（相槌など）の声がいつもと違う**
-TTS キャッシュがヒットせず live synthesis に戻っています。cache key は `voiceId` / `FISH_AUDIO_SPEED` / `FISH_AUDIO_MODEL` / `TTS_SAMPLE_RATE` に依存するので、これらを変更したら `node scripts/seed-tts-cache-from-fillers.js` を再実行してください（[シード手順](docs/operations.md#実収録テイクのシード72--75)）。
-
-**Q. 委譲ハーネスが動いているか確認したい**
-`logs/metrics.jsonl` に JSONL で記録されます。`node scripts/aggregate-metrics.js logs/metrics.jsonl` で集計できます。
-
-解決しない場合は [Issues](https://github.com/caty-ai/meetmate/issues) へ、ログ（`logs/` 配下）と再現手順を添えて報告してください。
-
-## ドキュメント
-
-| ドキュメント | 内容 |
-|---|---|
-| [docs/setup-guide.md](docs/setup-guide.md) | セットアップ詳細ガイド |
-| [docs/architecture.md](docs/architecture.md) | アーキテクチャ解説 |
-| [docs/operations.md](docs/operations.md) | 運用・チューニング全リファレンス |
-| [docs/deploy-checklist.md](docs/deploy-checklist.md) | デプロイチェックリスト |
-| [docs/deep-interview-79-delegation-harness.md](docs/deep-interview-79-delegation-harness.md) | 委譲強制ハーネスの設計スペック |
-
-## 開発
-
-### 開発サーバー
+Uses the Node.js built-in test runner (`node:test`). No external services required; the whole suite finishes in seconds.
 
 ```bash
-npm run dev   # node --watch で自動リロード起動
+node --test                       # all tests (35 test files)
+npm run test:meet:repro           # only the Meet multi-participant reproduction test
 ```
 
-### テスト
+### Smoke and operations scripts
 
-Node.js 標準の test runner（`node:test`）を使用しています。外部依存なしで数秒で完走します。
-
-```bash
-node --test test/*.test.js        # 全テスト（16 スイート / 201 テスト）
-npm run test:meet:repro           # Meet 複数参加者の再現テストのみ
-```
-
-### スモーク・運用スクリプト
-
-| スクリプト | 用途 |
+| Script | Purpose |
 |---|---|
-| [`scripts/soniox-smoke.js`](scripts/soniox-smoke.js) | Soniox STT の疎通確認 |
-| [`scripts/seed-tts-cache-from-fillers.js`](scripts/seed-tts-cache-from-fillers.js) | 実収録テイクから TTS キャッシュを事前生成 |
-| [`scripts/aggregate-metrics.js`](scripts/aggregate-metrics.js) | 委譲ハーネス metrics の集計 |
-| [`scripts/install-launchagent.sh`](scripts/install-launchagent.sh) | macOS launchd 常駐化（watchdog 付き） |
+| [`scripts/soniox-smoke.js`](scripts/soniox-smoke.js) | Soniox STT connectivity check |
+| [`scripts/seed-tts-cache-from-fillers.js`](scripts/seed-tts-cache-from-fillers.js) | Pre-generate the TTS cache from recorded takes |
+| [`scripts/aggregate-metrics.js`](scripts/aggregate-metrics.js) | Aggregate delegation-harness metrics |
+| [`scripts/install-launchagent.sh`](scripts/install-launchagent.sh) | macOS launchd daemonization (with watchdog) |
 
-### ログ
+### Logs
 
-実行ログは `logs/` 配下に出力されます。アプリ側の warn/error は `logs/meet-server.stderr.log`、委譲ハーネスの metrics は `logs/metrics.jsonl` を参照してください。
+Runtime logs go under `logs/`. Application warnings/errors: `logs/meet-server.stderr.log` (under the launchd install; a plain `npm start` prints them to the terminal). Delegation metrics: `logs/metrics.jsonl`.
 
-## 開発ステータス
+## Project status
 
-- **最新版**: `v7.9.0-rc.1`（2026-07-07・`GATEWAY_EVENTS_ENABLED=true` で実運用中）
-- **安定版**: [`v7.8.0-stable`](https://github.com/caty-ai/meetmate/releases/tag/v7.8.0-stable)
-- **直近の完了**: [#79 委譲強制ハーネス](https://github.com/caty-ai/meetmate/issues/79) Phase 1（PR #94 / #96 / #97、実機スモーク 2 回で全機能実証済み）
-- **次の開発**: [#87 実戦ゲート](https://github.com/caty-ai/meetmate/issues/87)（社内 MT 実投入・閾値チューニング）、[#98 compact 実圧縮](https://github.com/caty-ai/meetmate/issues/98)（優先度低）
+- **Latest**: `v7.9.0-rc.1` (2026-07-07, in production with `GATEWAY_EVENTS_ENABLED=true`)
+- **Stable**: [`v7.8.0-stable`](https://github.com/caty-ai/meetmate/releases/tag/v7.8.0-stable)
+- **In progress**: npm distribution and public release track ([#136](https://github.com/caty-ai/meetmate/issues/136) / [#107](https://github.com/caty-ai/meetmate/issues/107))
 
-## コントリビュート
+## Contributing
 
-コントリビュートを歓迎します。Issue 起点の開発フロー・ブランチ運用・PR の書き方は [CONTRIBUTING.md](CONTRIBUTING.md) を参照してください。
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the issue-first workflow, branch discipline, and PR conventions.
 
-## 謝辞
+## Acknowledgments
 
-本プロジェクトは以下のサービス・プロジェクトの上に成り立っています。
+This project stands on the following services and projects:
 
-- [Attendee](https://attendee.dev/) — Google Meet / Zoom への Bot 参加 API
-- [Soniox](https://soniox.com/) — リアルタイム音声認識（`stt-rt-v5`）
-- [Fish Audio](https://fish.audio/) — 感情表現つき音声合成（S2-Pro）
-- OpenClaw Gateway — エージェント基盤（SOUL / memory / skills / tools）
+- [Attendee](https://attendee.dev/) — bot participation API for Google Meet / Zoom
+- [Soniox](https://soniox.com/) — real-time speech recognition (`stt-rt-v5`)
+- [Fish Audio](https://fish.audio/) — expressive speech synthesis (S2-Pro)
+- OpenClaw Gateway — agent infrastructure (SOUL / memory / skills / tools)
 
-## ライセンス
+## License
 
-[Apache License 2.0](LICENSE) — 詳細は [NOTICE](NOTICE) も参照
+[Apache License 2.0](LICENSE) — see also [NOTICE](NOTICE)
