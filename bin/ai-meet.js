@@ -116,6 +116,11 @@ async function init(force) {
     throw error;
   }
   console.log("Created config.json and .env.");
+  console.log("");
+  console.log("Next steps:");
+  console.log("Configure an LLM provider in config.json:");
+  console.log("  - OpenClaw Gateway: set OPENCLAW_GATEWAY_URL and OPENCLAW_GATEWAY_TOKEN.");
+  console.log("  - OpenAI-compatible: set llm.provider=\"openai-compatible\", openaiCompatible.baseUrl, openaiCompatible.apiKey, and llm.model.");
 }
 
 function start() {

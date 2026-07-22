@@ -175,7 +175,7 @@
 - [ ] LaunchAgent 登録（常駐化）
   ```bash
   ./scripts/install-launchagent.sh \
-    --label ai.openclaw.meet-<agent-name> \
+    --label ai-meet.<agent-name> \
     --dir "$(pwd)" \
     --port <port>
   ```
@@ -183,7 +183,7 @@
 - [ ] ウェイクワードキャリブレーション実行（`/calibrate` UI）
 - [ ] watchdog 設定（任意）
   ```bash
-  ./scripts/watchdog.sh --service ai.openclaw.meet-<agent-name> --port <port>
+  ./scripts/watchdog.sh --service ai-meet.<agent-name> --port <port>
   ```
 - [ ] Slack 通知チャンネルの動作確認
 

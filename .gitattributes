@@ -1,0 +1,4 @@
+* text=auto
+*.sh text eol=lf
+bin/ai-meet.js text eol=lf
+*.plist text eol=lf

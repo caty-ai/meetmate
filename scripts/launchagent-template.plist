@@ -6,7 +6,7 @@
   a concrete plist with proper values for your agent instance.
 
   Placeholders:
-    {{LABEL}}       — LaunchAgent label (e.g. ai.openclaw.meet-server)
+    {{LABEL}}       — LaunchAgent label (e.g. ai-meet.server)
     {{WORKING_DIR}} — Absolute path to the agent's working directory
     {{NODE_PATH}}   — Absolute path to the node binary
     {{LOG_DIR}}     — Absolute path to the log directory

@@ -5,7 +5,7 @@
 #   ./scripts/install-launchagent.sh --label LABEL --dir WORKING_DIR [--port PORT]
 #
 # Options:
-#   --label LABEL   LaunchAgent label (e.g. ai.openclaw.meet-agent-name)
+#   --label LABEL   LaunchAgent label (e.g. ai-meet.agent-name)
 #   --dir   DIR     Absolute path to the agent's working directory
 #   --port  PORT    Server port (informational — logged, not embedded in plist)
 #
