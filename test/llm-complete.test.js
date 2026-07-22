@@ -243,6 +243,9 @@ test("streaming OpenClaw calls preserve a gateway path prefix", async () => {
     const streamAuth = (openclawUrl, openclawToken) => ({ openclawUrl, openclawToken });
     for await (const _chunk of openclaw.streamChat([], streamAuth("http://gateway.test/gw", "secret"))) { /* consume stream */ }
     assert.equal(requestPath, "/gw/v1/chat/completions");
+
+    for await (const _chunk of openclaw.streamChat([], streamAuth("http://gateway.test", "secret"))) { /* consume stream */ }
+    assert.equal(requestPath, "/v1/chat/completions");
   } finally {
     http.request = originalRequest;
   }

@@ -543,13 +543,13 @@ function appendLateDelegationToPersistedLogs(session, item) {
 }
 
 function appendToMemory(session) {
-  const provider = getPipelineConfig({}, null, _agentProfile, _configJson).llm.provider;
-  const workspaceOverride = String(process.env.OPENCLAW_WORKSPACE || "").trim();
-  if (provider !== "openclaw" && !workspaceOverride) {
-    console.debug("🐛  Memory write skipped (LLM provider is not openclaw)");
-    return;
-  }
   try {
+    const provider = getPipelineConfig({}, null, _agentProfile, _configJson).llm.provider;
+    const workspaceOverride = String(process.env.OPENCLAW_WORKSPACE || "").trim();
+    if (provider !== "openclaw" && !workspaceOverride) {
+      console.debug("🐛  Memory write skipped (LLM provider is not openclaw)");
+      return;
+    }
     const WORKSPACE = workspaceOverride
       || path.join(require("os").homedir(), ".openclaw", "workspace");
     const memoryDir = path.join(WORKSPACE, "memory");
