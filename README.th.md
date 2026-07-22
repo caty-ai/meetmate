@@ -4,8 +4,6 @@
 
 > เอกสารนี้เป็นคำแปลของ [README.md](README.md) (ภาษาอังกฤษ ฉบับหลัก) หากเนื้อหาไม่ตรงกัน ให้ยึดฉบับภาษาอังกฤษเป็นหลัก
 
-[![Version](https://img.shields.io/badge/version-v7.9.0--rc.1-blue)](https://github.com/caty-ai/meetmate/releases)
-[![Stable](https://img.shields.io/badge/stable-v7.8.0-brightgreen)](https://github.com/caty-ai/meetmate/releases/tag/v7.8.0-stable)
 [![License: Apache--2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![Platform](https://img.shields.io/badge/platform-Google%20Meet%20%7C%20Zoom-4285F4)](#คุณสมบัติ)
@@ -280,8 +278,7 @@ npm run test:meet:repro           # เฉพาะการทดสอบจ�
 
 ## สถานะโครงการ
 
-- **ล่าสุด**: `v7.9.0-rc.1` (2026-07-07 ใช้งานจริงด้วย `GATEWAY_EVENTS_ENABLED=true`)
-- **เสถียร**: [`v7.8.0-stable`](https://github.com/caty-ai/meetmate/releases/tag/v7.8.0-stable)
+- **รีลีส**: ดูเวอร์ชันที่เผยแพร่แล้วได้ที่ [GitHub Releases](https://github.com/caty-ai/meetmate/releases)
 - **กำลังดำเนินการ**: การเผยแพร่ npm และการเปิดสาธารณะ ([#136](https://github.com/caty-ai/meetmate/issues/136) / [#107](https://github.com/caty-ai/meetmate/issues/107))
 
 ## การมีส่วนร่วม

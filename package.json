@@ -21,6 +21,7 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
+    "test": "node --test",
     "test:meet:repro": "node --test test/meet-multi-participant-repro.test.js"
   },
   "dependencies": {

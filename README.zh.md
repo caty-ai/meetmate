@@ -4,8 +4,6 @@
 
 > 本文档是 [README.md](README.md)（英文原版）的翻译。如内容有出入，以英文版为准。
 
-[![Version](https://img.shields.io/badge/version-v7.9.0--rc.1-blue)](https://github.com/caty-ai/meetmate/releases)
-[![Stable](https://img.shields.io/badge/stable-v7.8.0-brightgreen)](https://github.com/caty-ai/meetmate/releases/tag/v7.8.0-stable)
 [![License: Apache--2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![Platform](https://img.shields.io/badge/platform-Google%20Meet%20%7C%20Zoom-4285F4)](#功能特性)
@@ -280,8 +278,7 @@ npm run test:meet:repro           # 仅 Meet 多参与者复现测试
 
 ## 项目状态
 
-- **最新版**：`v7.9.0-rc.1`（2026-07-07，以 `GATEWAY_EVENTS_ENABLED=true` 在生产运行中）
-- **稳定版**：[`v7.8.0-stable`](https://github.com/caty-ai/meetmate/releases/tag/v7.8.0-stable)
+- **发布版本**：请参阅 [GitHub Releases](https://github.com/caty-ai/meetmate/releases)。
 - **进行中**：npm 分发与公开发布（[#136](https://github.com/caty-ai/meetmate/issues/136) / [#107](https://github.com/caty-ai/meetmate/issues/107)）
 
 ## 参与贡献

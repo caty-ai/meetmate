@@ -15,9 +15,9 @@ const config = loadConfig();
 const PORT = Number(config?.server?.port || process.env.PORT || 5005);
 const pkg = (() => {
   try {
-    return require(path.join(process.cwd(), "package.json"));
+    return require("../package.json");
   } catch {
-    try { return require("../package.json"); } catch { return { version: "unknown" }; }
+    return { version: "unknown" };
   }
 })();
 

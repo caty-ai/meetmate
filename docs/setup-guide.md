@@ -264,7 +264,7 @@ node src/server.js
 
 ```bash
 ./scripts/install-launchagent.sh \
-  --label ai.openclaw.meet-<agent-name> \
+  --label ai-meet.<agent-name> \
   --dir "$(pwd)" \
   --port 5006
 ```
@@ -274,7 +274,7 @@ node src/server.js
 LaunchAgent で `WAKE_CALIBRATE_ENABLED=1` など追加の環境変数が必要な場合は、生成された plist を直接編集:
 
 ```bash
-vi ~/Library/LaunchAgents/ai.openclaw.meet-<agent-name>.plist
+vi ~/Library/LaunchAgents/ai-meet.<agent-name>.plist
 ```
 
 `<key>EnvironmentVariables</key>` の `<dict>` 内に追加:
@@ -285,8 +285,8 @@ vi ~/Library/LaunchAgents/ai.openclaw.meet-<agent-name>.plist
 
 再読み込み:
 ```bash
-launchctl bootout gui/$(id -u)/ai.openclaw.meet-<agent-name>
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.openclaw.meet-<agent-name>.plist
+launchctl bootout gui/$(id -u)/ai-meet.<agent-name>
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai-meet.<agent-name>.plist
 ```
 
 ---

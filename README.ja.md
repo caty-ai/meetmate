@@ -4,8 +4,6 @@
 
 > この文書は [README.md](README.md)（英語・正本）の翻訳です。内容に乖離がある場合は英語版が優先されます。
 
-[![Version](https://img.shields.io/badge/version-v7.9.0--rc.1-blue)](https://github.com/caty-ai/meetmate/releases)
-[![Stable](https://img.shields.io/badge/stable-v7.8.0-brightgreen)](https://github.com/caty-ai/meetmate/releases/tag/v7.8.0-stable)
 [![License: Apache--2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![Platform](https://img.shields.io/badge/platform-Google%20Meet%20%7C%20Zoom-4285F4)](#特徴)
@@ -278,8 +276,7 @@ npm run test:meet:repro           # Meet 複数参加者の再現テストのみ
 
 ## 開発ステータス
 
-- **最新版**: `v7.9.0-rc.1`（2026-07-07・`GATEWAY_EVENTS_ENABLED=true` で実運用中）
-- **安定版**: [`v7.8.0-stable`](https://github.com/caty-ai/meetmate/releases/tag/v7.8.0-stable)
+- **リリース**: 公開済みバージョンは [GitHub Releases](https://github.com/caty-ai/meetmate/releases) を参照してください。
 - **進行中**: npm 配布・公開トラック（[#136](https://github.com/caty-ai/meetmate/issues/136) / [#107](https://github.com/caty-ai/meetmate/issues/107)）
 
 ## コントリビュート

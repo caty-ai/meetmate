@@ -106,7 +106,7 @@ Claude LLM (OpenRouter, function calling 有効)
   "description": "現在の日時を取得する"
 }
 ```
-- 実装: `new Date()` (Asia/Bangkok)
+- 実装: システムローカル時刻の `new Date()`
 
 ### 6. `take_note` — メモ記録
 ```json

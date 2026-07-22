@@ -1,18 +1,18 @@
 #!/bin/bash
 # Meet Server Watchdog — checks health, restarts if down, notifies on recovery only
 # State-based: only sends Slack notification on state transition (down → up)
-# Intended to be called from cron or OpenClaw heartbeat
+# Intended to be called from cron or a heartbeat job
 #
 # Usage: ./watchdog.sh [--service NAME] [--port PORT] [--log-dir DIR]
 # Environment variables (args take precedence):
-#   WATCHDOG_SERVICE  — LaunchAgent service label (default: ai.openclaw.meet-server)
+#   WATCHDOG_SERVICE  — LaunchAgent service label (default: ai-meet.server)
 #   WATCHDOG_PORT     — Server port to health-check (default: 5005)
 #   WATCHDOG_LOG_DIR  — Log directory (default: ./logs relative to script dir)
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Defaults (env vars override, then args override)
-SERVICE="${WATCHDOG_SERVICE:-ai.openclaw.meet-server}"
+SERVICE="${WATCHDOG_SERVICE:-ai-meet.server}"
 PORT="${WATCHDOG_PORT:-5005}"
 LOG_DIR="${WATCHDOG_LOG_DIR:-$SCRIPT_DIR/../logs}"
 

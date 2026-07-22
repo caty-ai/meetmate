@@ -568,7 +568,7 @@ function appendToMemory(session) {
       .map((e) => e.content)
       .slice(0, 10);
 
-    const now = new Date().toLocaleString("ja-JP", { timeZone: "Asia/Bangkok" });
+    const now = new Date().toLocaleString("ja-JP");
     const agentLabel = FIXED_AGENT_ID || "unknown";
     const summary = [
       "",
