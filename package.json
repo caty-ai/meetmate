@@ -26,8 +26,10 @@
   },
   "dependencies": {
     "@deepgram/sdk": "4.7.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "dotenv": "^17.0.0",
-    "ws": "^8.18.3"
+    "ws": "^8.18.3",
+    "zod": "^4.4.3"
   },
   "engines": {
     "node": ">=22.0.0"

@@ -185,6 +185,23 @@ npm start
 
 OpenAI 互換 API には `{baseUrl}/v1/chat/completions` を送信します。`baseUrl` のパスがすでに `/v1` で終わる場合は `/v1` を重ねません。未対応のプロバイダ名は警告後に `openclaw` へフォールバックします。
 
+### MCP サーバー（コントロールプレーン）
+
+薄い stdio MCP サーバーにより、LLM クライアント（Claude Code や他のエージェント）から会議参加を直接操作できます — 音声パイプライン本体は MCP のスコープ外のままです。登録:
+
+```bash
+claude mcp add ai-meet -- npx ai-meet mcp
+```
+
+環境変数: `AI_MEET_BASE_URL` が操作対象の REST API を指定（既定 `http://localhost:5005`）。`AI_MEET_JOIN_TOKEN` は任意で、`x-join-token` ヘッダと `joinToken` フィールドとして転送されます。
+
+| ツール | 動作 |
+|---|---|
+| `join_meeting(meetingUrl, briefing?, conversationMode?)` | Meet / Zoom 会議に参加（`POST /join-meeting` を代理・WebSocket URL は自動導出） |
+| `leave_meeting(sessionId?)` | アクティブセッション（または指定セッション）から退出 |
+| `get_active_session()` | アクティブセッション一覧を JSON で取得 |
+| `health()` | サービスヘルスチェック |
+
 ## 設定
 
 よく使う調整ポイントの入口だけまとめます。全項目は [docs/operations.md](docs/operations.md) にあります。

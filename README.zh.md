@@ -185,6 +185,23 @@ npm start
 
 请求发送到 `{baseUrl}/v1/chat/completions`；若 `baseUrl` 已以 `/v1` 结尾则不会重复。未知的提供方名称会警告并回退到 `openclaw`。
 
+### MCP 服务器（控制平面）
+
+一个轻量 stdio MCP 服务器，让 LLM 客户端（Claude Code、其他智能体）直接控制会议参与 — 语音管线本身不在 MCP 范围内。注册方式：
+
+```bash
+claude mcp add ai-meet -- npx ai-meet mcp
+```
+
+环境变量：`AI_MEET_BASE_URL` 指定要控制的 REST API（默认 `http://localhost:5005`）；`AI_MEET_JOIN_TOKEN` 可选，会作为 `x-join-token` 头和 `joinToken` 字段转发。
+
+| 工具 | 行为 |
+|---|---|
+| `join_meeting(meetingUrl, briefing?, conversationMode?)` | 加入 Meet / Zoom 会议（代理 `POST /join-meeting`；WebSocket URL 自动推导） |
+| `leave_meeting(sessionId?)` | 离开活动会话（或指定会话） |
+| `get_active_session()` | 以 JSON 列出活动会话 |
+| `health()` | 服务健康检查 |
+
 ## 配置
 
 这里只汇总常用调整入口。完整参考见 [docs/operations.md](docs/operations.md)。

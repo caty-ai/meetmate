@@ -185,6 +185,23 @@ ID / ชื่อที่แสดง / wake word / ประโยคคงท
 
 คำขอถูกส่งไปยัง `{baseUrl}/v1/chat/completions`; หาก `baseUrl` ลงท้ายด้วย `/v1` อยู่แล้วจะไม่ซ้ำ `/v1` ชื่อผู้ให้บริการที่ไม่รู้จักจะเตือนแล้วถอยกลับไปใช้ `openclaw`
 
+### เซิร์ฟเวอร์ MCP (control plane)
+
+เซิร์ฟเวอร์ MCP แบบ stdio ขนาดเบา ช่วยให้ไคลเอนต์ LLM (Claude Code หรือ agent อื่น) ควบคุมการเข้าร่วมประชุมได้โดยตรง — ตัวไปป์ไลน์เสียงเองอยู่นอกขอบเขต MCP ลงทะเบียนด้วย:
+
+```bash
+claude mcp add ai-meet -- npx ai-meet mcp
+```
+
+ตัวแปรสภาพแวดล้อม: `AI_MEET_BASE_URL` กำหนด REST API ที่จะควบคุม (ค่าเริ่มต้น `http://localhost:5005`); `AI_MEET_JOIN_TOKEN` เป็นตัวเลือก จะถูกส่งต่อเป็นเฮดเดอร์ `x-join-token` และฟิลด์ `joinToken`
+
+| เครื่องมือ | การทำงาน |
+|---|---|
+| `join_meeting(meetingUrl, briefing?, conversationMode?)` | เข้าร่วมประชุม Meet / Zoom (proxy ไปยัง `POST /join-meeting`; URL ของ WebSocket ถูกคำนวณอัตโนมัติ) |
+| `leave_meeting(sessionId?)` | ออกจากเซสชันที่ใช้งานอยู่ (หรือเซสชันที่ระบุ) |
+| `get_active_session()` | แสดงเซสชันที่ใช้งานอยู่เป็น JSON |
+| `health()` | ตรวจสอบสุขภาพบริการ |
+
 ## การตั้งค่า
 
 รวมเฉพาะจุดเข้าของการปรับแต่งที่ใช้บ่อย เอกสารอ้างอิงฉบับเต็มคือ [docs/operations.md](docs/operations.md)

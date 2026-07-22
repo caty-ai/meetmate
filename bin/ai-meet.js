@@ -17,6 +17,7 @@ function printUsage() {
   console.log("Commands:");
   console.log("  init [--force]  Create config.json and .env in the current directory.");
   console.log("  start           Start the AI Meet server.");
+  console.log("  mcp             Start the MCP (Model Context Protocol) stdio server.");
 }
 
 function askCredentials() {
@@ -122,6 +123,10 @@ function start() {
   require(path.join(__dirname, "..", "src", "server.js"));
 }
 
+function mcp() {
+  return require(path.join(__dirname, "..", "src", "mcp", "server.js")).start();
+}
+
 const [command, ...options] = process.argv.slice(2);
 
 if (!command || command === "--help" || command === "-h") {
@@ -133,6 +138,11 @@ if (!command || command === "--help" || command === "-h") {
   });
 } else if (command === "start") {
   start();
+} else if (command === "mcp") {
+  mcp().catch((error) => {
+    console.error(error.message);
+    process.exitCode = 1;
+  });
 } else {
   console.error(`Unknown command: ${command}`);
   printUsage();
