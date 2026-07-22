@@ -20,7 +20,6 @@
   },
   "scripts": {
     "start": "node src/server.js",
-    "start:meet": "node src/index.js",
     "dev": "node --watch src/server.js",
     "test:meet:repro": "node --test test/meet-multi-participant-repro.test.js"
   },

@@ -24,7 +24,7 @@ src/
 ├── transport-twilio/
 │   ├── twilio-bridge.js  # Integrate session events + Slack notifications
 │   └── call-manager.js   # Emit structured status events
-├── index.js              # Meet: integrate session events + exit detection
+├── transport-meet/meet-routes.js # Meet: integrate session events + exit detection
 ├── pipeline.js           # Add exit command detection for Meet
 ├── config.js             # Add Slack + summarizer config
 ```
@@ -262,7 +262,7 @@ async function summarizeConversation(conversationLog, options = {})
 
 ## Module 5: Integration — Meet Bridge
 
-### Changes to `index.js`
+### Changes to `transport-meet/meet-routes.js`
 
 1. **On `/join-meeting` success:**
    - Create `SessionLifecycle('meet')`
@@ -298,7 +298,7 @@ if (isExitCommand(userText)) {
 
 Add exit confirmation flow:
 - User says exit command → Caty confirms "退出しますね" → emit `exit_requested`
-- Parent (index.js) listens for `exit_requested` → close Attendee bot → end session
+- Meet route handler listens for `exit_requested` → close Attendee bot → end session
 
 ---
 
@@ -330,7 +330,7 @@ summary: {
 | `src/pipeline.js` | MODIFY | Add exit command detection, emit exit_requested |
 | `src/transport-twilio/twilio-bridge.js` | MODIFY | Wire lifecycle + Slack + summary |
 | `src/transport-twilio/call-manager.js` | MODIFY | Minor: expose status change hook |
-| `src/index.js` | MODIFY | Wire lifecycle + Slack + summary + exit handler |
+| `src/transport-meet/meet-routes.js` | MODIFY | Wire lifecycle + Slack + summary + exit handler |
 
 ---
 

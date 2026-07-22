@@ -65,7 +65,7 @@ async function warmUpGatewaySession(sessionId, config, briefing = null) {
 warm-up で使った ID を `ctx.warmupSessionId` に保持して、それを優先する。
 
 ### 3. Meet bridge への組み込み
-**場所**: `src/index.js` の `/join-meeting` ハンドラ
+**場所**: `src/transport-meet/meet-routes.js` の `/join-meeting` ハンドラ
 
 - Attendee Bot 起動 **直前** に `warmUpGatewaySession()` を呼ぶ
 - session ID は既に `crypto.randomUUID()` で生成済み → そのまま使える

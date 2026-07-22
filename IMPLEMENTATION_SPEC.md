@@ -14,7 +14,7 @@ Attendee (Google Meet audio)
 
 ### Current (Voice Agent - all-in-one)
 ```
-index.js → createAgent() → deepgram.agent() → configure(settings)
+server.js → transport-meet/meet-routes.js → createAgent() → deepgram.agent() → configure(settings)
   - Audio in: agent.send(buffer)
   - Audio out: AgentEvents.Audio → callback
   - Text events: AgentEvents.ConversationText
@@ -22,7 +22,7 @@ index.js → createAgent() → deepgram.agent() → configure(settings)
 
 ### New (Decomposed Pipeline)
 ```
-index.js → createPipeline(session, turnState, onAudio)
+server.js → transport-meet/meet-routes.js → createPipeline(session, turnState, onAudio)
   ├── stt.js: Deepgram Live STT (Nova 3)
   │   - Input: PCM audio buffers from Attendee
   │   - Output: transcript text (on speech_final)
@@ -45,7 +45,7 @@ index.js → createPipeline(session, turnState, onAudio)
 - `src/pipeline.js` — Orchestrates STT → LLM → TTS
 
 ### Files to modify:
-- `src/index.js` — Replace `createAgent()` with `createPipeline()`
+- `src/transport-meet/meet-routes.js` — Replace `createAgent()` with `createPipeline()`
 - `src/config.js` — Update config for new pipeline
 - `.env.example` — Add new env vars
 
@@ -154,7 +154,7 @@ exports.createPipeline = function(session, turnState, onAudio, config) {
 }
 ```
 
-### src/index.js changes
+### src/transport-meet/meet-routes.js changes
 
 Replace `createAgent()` call with `createPipeline()`:
 
@@ -170,7 +170,7 @@ const pipeline = createPipeline(session, turnState, (buffer) => { ... }, pipelin
 pipeline.sendAudio(audio);
 ```
 
-The rest of index.js (HTTP server, session management, Attendee API, etc.) stays the same.
+The server entrypoint and the rest of the Meet route handling (HTTP server, session management, Attendee API, etc.) stay the same.
 
 ### src/config.js changes
 
@@ -233,7 +233,7 @@ TTS_PROVIDER=fish-audio
 ## Turn Management
 1. `turnState.isAgentSpeaking = true` when first TTS audio chunk sent
 2. `turnState.isAgentSpeaking = false` when TTS stream ends
-3. Echo gate in index.js drops audio frames while agent is speaking (same as before)
+3. The Meet route handler's echo gate drops audio frames while agent is speaking (same as before)
 4. If user speaks while agent is speaking → interrupt: stop LLM, stop TTS, reset
 
 ## Key Constraints
@@ -251,7 +251,7 @@ TTS_PROVIDER=fish-audio
 
 ## Testing
 After implementation, test with:
-1. Start server: `node src/index.js`
+1. Start server: `node src/server.js`
 2. Join meeting via UI or `/join-meeting`
 3. Speak Japanese → verify STT transcription in logs
 4. Verify LLM response in logs
