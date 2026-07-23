@@ -23,13 +23,18 @@ test("summarizer sends resolved OpenAI-compatible credentials and model to its p
     const { summarizeConversation } = require("../src/summarizer");
     const oaiCfg = (baseUrl, apiKey) => ({ baseUrl, apiKey });
     const summary = await summarizeConversation([{ role: "user", content: "hello" }], {
-      llm: { provider: "openai-compatible", model: "local-model", openaiCompatible: oaiCfg("https://llm.test/v1", "key") },
+      llm: {
+        provider: "openai-compatible",
+        model: "local-model",
+        openaiCompatible: { ...oaiCfg("https://llm.test/v1", "key"), trustedAgentTools: true },
+      },
     });
     assert.deepEqual(summary, { summary: ["ok"], decisions: [], todos: [] });
     assert.deepEqual(factoryOptions, { provider: "openai-compatible" });
     assert.equal(completeOptions.baseUrl, "https://llm.test/v1");
     assert.equal(completeOptions.apiKey, "key");
     assert.equal(completeOptions.model, "local-model");
+    assert.equal(completeOptions.trustedAgentTools, true);
   } finally {
     delete require.cache[summarizerPath];
     if (originalSummarizer) require.cache[summarizerPath] = originalSummarizer;
@@ -72,4 +77,37 @@ test("summarizer returns an empty result when its selected provider lacks creden
     llm: { provider: "openai-compatible", model: "local-model", openaiCompatible: {} },
   });
   assert.deepEqual(result, { summary: [], decisions: [], todos: [] });
+});
+
+test("summarizer uses a provider-neutral error label", async () => {
+  const originalProvider = require.cache[providerPath];
+  const originalSummarizer = require.cache[summarizerPath];
+  const errors = [];
+  const originalError = console.error;
+  console.error = (...args) => errors.push(args.join(" "));
+  try {
+    require.cache[providerPath] = { exports: {
+      createLlmProvider: () => ({ complete: async () => ({
+        statusCode: 403,
+        text: '{"error":"trusted_meeting_required"}',
+      }) }),
+    } };
+    delete require.cache[summarizerPath];
+    const { summarizeConversation } = require("../src/summarizer");
+    const result = await summarizeConversation([{ role: "user", content: "hello" }], {
+      llm: {
+        provider: "openai-compatible",
+        model: "local-model",
+        openaiCompatible: { baseUrl: "https://llm.test/v1", apiKey: "key" },
+      },
+    });
+    assert.deepEqual(result, { summary: [], decisions: [], todos: [] });
+    assert.equal(errors.some((line) => line.includes("OpenAI-compatible summarizer error (403):")), true);
+  } finally {
+    console.error = originalError;
+    delete require.cache[summarizerPath];
+    if (originalSummarizer) require.cache[summarizerPath] = originalSummarizer;
+    if (originalProvider === undefined) delete require.cache[providerPath];
+    else require.cache[providerPath] = originalProvider;
+  }
 });

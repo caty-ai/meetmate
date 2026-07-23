@@ -9,15 +9,21 @@
 
 ### 必要なアカウント・APIキー
 
-| サービス | 取得先 | 用途 | 必須 |
-|---------|--------|------|------|
-| OpenClaw Gateway | 同一マシンで稼働 | 既定 LLM（SOUL/memory/tools/skills連携）。`LLM_PROVIDER=openclaw` で必須 | 条件付き（既定） |
-| Soniox | https://console.soniox.com/ | STT（音声認識・既定プロバイダ） | ✅ |
-| Deepgram | https://console.deepgram.com/signup | STT（`STT_PROVIDER=deepgram` 切替時のみ） | 任意 |
-| Attendee | https://app.attendee.dev/accounts/signup/ | Google Meet / Zoom Bot | ✅ |
-| Fish Audio | https://fish.audio/ | TTS（音声合成） | ✅ |
-| ngrok | `brew install ngrok` | WebSocket トンネル（外部接続用） | ✅ |
-| Slack Bot | https://api.slack.com/apps | ステータス通知・サマリー投稿 | 任意 |
+| サービス | 取得先 | 用途 | 設定名 | 必須度 | 費用メモ |
+|---------|--------|------|--------|--------|---------|
+| OpenClaw Gateway | 同一マシンで稼働 | 既定 LLM（SOUL/memory/tools/skills連携） | `LLM_PROVIDER=openclaw`, `OPENCLAW_GATEWAY_URL`, `OPENCLAW_GATEWAY_TOKEN` | 条件付き（既定） | 自前運用前提 |
+| OpenAI互換 LLM / Gateway | 利用する endpoint に応じる | `openai-compatible` 時の voice brain | `LLM_PROVIDER=openai-compatible`, `OPENAI_COMPATIBLE_BASE_URL`, `OPENAI_COMPATIBLE_API_KEY`, `llm.model` | 条件付き | 利用先ごとに異なる |
+| Soniox | https://console.soniox.com/ | STT（音声認識・既定プロバイダ） | `STT_PROVIDER=soniox`, `SONIOX_API_KEY` | ✅ | 現在の free / paid は公式で確認 |
+| Deepgram | https://console.deepgram.com/signup | STT（`deepgram` 切替時のみ） | `STT_PROVIDER=deepgram`, `DEEPGRAM_API_KEY` | 任意 | 現在の free / paid は公式で確認 |
+| Attendee | https://app.attendee.dev/accounts/signup/ | Google Meet / Zoom Bot | `ATTENDEE_API_KEY` | ✅ | 現在の free / paid は公式で確認 |
+| Fish Audio | https://fish.audio/ | TTS（音声合成） | `FISH_AUDIO_API_KEY`, `FISH_AUDIO_VOICE_ID`, `TTS_PROVIDER=fish-audio` | ✅ | 現在の free / paid は公式で確認 |
+| ngrok | https://ngrok.com/ | WebSocket トンネル（外部接続用） | `server.ngrokDomain` | 条件付き（一般的な構成） | 無料/有料とも内容は変わりうる |
+| Tailscale | https://tailscale.com/ | ngrok代替の到達経路（self-hosted Attendee 等） | ネットワーク構成側の設定 | 任意 | 無料/有料とも内容は変わりうる |
+| Zoom Marketplace | https://marketplace.zoom.us/ | Zoom Bot 権限・アプリ管理 | Zoom / Attendee 側アプリ設定 | 条件付き | プラン/権限要件は運用形態次第 |
+| Slack Bot | https://api.slack.com/apps | ステータス通知・サマリー投稿 | `SLACK_BOT_TOKEN` | 任意 | Slack 側プラン条件を確認 |
+
+> ⚠️ API key / token / Bearer / bot token はすべて秘密情報。`.env` の外に出さないこと。Git に commit しないこと。画面共有、ログ共有、Issue、スクリーンショットにも貼らないこと。
+> ⚠️ tool 実行まで許可する OpenAI互換 gateway を使う場合も、その endpoint は **信頼できるローカル gateway** に限定すること。外部・不特定・未信頼 meeting では使わないこと。
 
 ### 前提条件
 
@@ -27,6 +33,12 @@
   - Gateway Token: `openclaw.json` の `gateway.token` を確認
 - `LLM_PROVIDER=openai-compatible` を使う場合は OpenClaw Gateway 不要
 - ngrok アカウント（authtoken 設定済み）
+
+### 会議プラットフォームの前提
+
+- **Google Meet**: まずはこれを基本経路にする。Bot 参加時に Meet 側の **「参加をリクエストしています」承認** が必要。
+- **Zoom**: 現時点では **自分が主催・管理できる会議** を前提にする。外部主催 Zoom、OBF、managed OAuth を「対応済み」とは扱わない。
+- **Zoom Marketplace**: Zoom 経路を使うなら、Attendee/運用側で必要な Marketplace 設定と権限付与が済んでいることを確認する。
 
 ---
 
@@ -129,6 +141,8 @@ TTS_PROVIDER=fish-audio
 
 `LLM_PROVIDER=openai-compatible` の場合は `OPENAI_COMPATIBLE_BASE_URL` と `OPENAI_COMPATIBLE_API_KEY` を**追加**する。`config.json` の `${...}` プレースホルダは未解決（未設定・空欄）だと起動時にエラー終了するため、使わない機能の env（`OPENCLAW_GATEWAY_URL` / `OPENCLAW_GATEWAY_TOKEN` / `SLACK_BOT_TOKEN` 等）も**削除・空欄にせずダミー値のまま残す**。残したくない場合は `config.json` から該当ブロックごと削除する。
 
+> ⚠️ `.env` は実運用シークレットの置き場所。Git に commit しないこと。画面共有・ログ貼り付け・スクリーンショットにも token / API key / Bearer を含めないこと。
+
 **OpenAI 互換で動かす最小構成**
 
 ```bash
@@ -142,6 +156,40 @@ OPENAI_COMPATIBLE_API_KEY=your_api_key
 ```
 
 gateway の env 2行はダミーのまま残す（上記参照）。
+
+**状態を持つ OpenAI互換 gateway（例: Claude Code bridge / resident agent gateway）**
+
+同一 turn の自動再送が危険な gateway では、Meetmate 側のローカル履歴と空応答 retry を止める。
+
+```bash
+LLM_PROVIDER=openai-compatible
+OPENAI_COMPATIBLE_BASE_URL=http://localhost:4000
+OPENAI_COMPATIBLE_API_KEY=your_gateway_bearer
+LLM_RESPONSE_TIMEOUT_MS=60000
+```
+
+```json
+{
+  "llm": {
+    "provider": "openai-compatible",
+    "model": "your-gateway-model-id",
+    "historyMaxTurns": 0,
+    "openaiCompatible": {
+      "baseUrl": "http://localhost:4000",
+      "apiKey": "${OPENAI_COMPATIBLE_API_KEY}",
+      "emptyResponseRetry": false,
+      "trustedAgentTools": true
+    }
+  }
+}
+```
+
+- `historyMaxTurns: 0` にすると、Meetmate は過去 turn を再送せず、現在の user turn だけを upstream に送る
+- `emptyResponseRetry: false` にすると、空 SSE 1回 retry を止める。tool 実行済み turn の二重投入を避けたい gateway で使う
+- `trustedAgentTools: true` にすると、Meetmate は `X-Caty-Agent-Trust: trusted` を送る。これは **信頼できるローカル tool-capable gateway** と **信頼できる meeting** の組み合わせでだけ使う
+- `LLM_RESPONSE_TIMEOUT_MS` は upstream gateway の deadline より短くしすぎないこと。Claude/tool turn を使うなら 60 秒前後から始めるのが安全
+- これは **既存の `openai-compatible` provider の設定**。Claude 専用 provider を追加するわけではない
+- 外部主催 meeting、不特定参加者 meeting、未信頼 gateway では `trustedAgentTools` を有効にしないこと
 
 > ⚠️ **`TTS_PROVIDER=fish-audio` は必須。** `openai` にすると Deepgram Voice Agent（レガシーモード）で起動し、パイプラインが全く別のルートに入る。
 

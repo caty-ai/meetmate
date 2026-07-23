@@ -1908,6 +1908,8 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
           ...(!isOpenclawProvider ? {
             baseUrl: config.llm.openaiCompatible?.baseUrl,
             apiKey: config.llm.openaiCompatible?.apiKey,
+            emptyResponseRetry: config.llm.openaiCompatible?.emptyResponseRetry,
+            trustedAgentTools: config.llm.openaiCompatible?.trustedAgentTools,
           } : {}),
           signal: abort.signal,
         }

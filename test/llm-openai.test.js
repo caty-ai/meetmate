@@ -89,6 +89,7 @@ test("streamChat parses OpenAI SSE chunks and sends the configured request", asy
     messages: [{ role: "user", content: "挨拶して" }],
     user: "meet-1",
   });
+  assert.equal(captured.options.headers["X-Caty-Agent-Trust"], undefined);
 });
 
 test("complete returns status and text using a base-path-aware endpoint", async (t) => {
@@ -124,6 +125,26 @@ test("complete returns status and text using a base-path-aware endpoint", async 
   assert.equal(captured.req.timeoutMs, 60_000);
   assert.equal(captured.body.stream, false);
   assert.equal(captured.body.user, "telemetry-user");
+  assert.equal(captured.options.headers["X-Caty-Agent-Trust"], undefined);
+});
+
+test("trustedAgentTools adds the trusted gateway header only when explicitly enabled", async (t) => {
+  const captured = [];
+  installMockServer(t, async (request) => {
+    captured.push(request);
+    return {
+      chunks: ['{"choices":[{"message":{"content":"done"}}]}'],
+    };
+  });
+
+  await openai.complete([], {
+    baseUrl: "http://mock.test",
+    apiKey: "key",
+    model: "model",
+    trustedAgentTools: true,
+  });
+
+  assert.equal(captured[0].options.headers["X-Caty-Agent-Trust"], "trusted");
 });
 
 test("completion paths add exactly one v1 segment", async (t) => {
@@ -219,6 +240,78 @@ test("streamChat retries once when the first SSE response is empty", async (t) =
 
   assert.deepEqual(chunks, ["retry ok"]);
   assert.equal(requests, 2);
+});
+
+test("streamChat can disable empty-response retry for stateful gateways", async (t) => {
+  let requests = 0;
+  installMockServer(t, async () => {
+    requests += 1;
+    return { chunks: ["data: [DONE]\n\n"] };
+  });
+
+  const chunks = await collect(openai.streamChat([], {
+    baseUrl: "http://mock.test",
+    apiKey: "key",
+    model: "model",
+    emptyResponseRetry: false,
+  }));
+
+  assert.deepEqual(chunks, []);
+  assert.equal(requests, 1);
+});
+
+test("streamChat fails loudly on invalid SSE JSON without retrying", async (t) => {
+  let requests = 0;
+  installMockServer(t, async () => {
+    requests += 1;
+    return { chunks: ['data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: {"choices":[oops]}\n\n'] };
+  });
+
+  await assert.rejects(
+    collect(openai.streamChat([], {
+      baseUrl: "http://mock.test",
+      apiKey: "key",
+      model: "model",
+    })),
+    /OpenAI-compatible SSE invalid JSON/
+  );
+  assert.equal(requests, 1);
+});
+
+test("streamChat fails loudly on SSE error events without retrying", async (t) => {
+  let requests = 0;
+  installMockServer(t, async () => {
+    requests += 1;
+    return { chunks: ['event: error\ndata: {"error":{"message":"gateway backend failed"}}\n\n'] };
+  });
+
+  await assert.rejects(
+    collect(openai.streamChat([], {
+      baseUrl: "http://mock.test",
+      apiKey: "key",
+      model: "model",
+    })),
+    /gateway backend failed/
+  );
+  assert.equal(requests, 1);
+});
+
+test("streamChat fails loudly on SSE error payloads without an event header", async (t) => {
+  let requests = 0;
+  installMockServer(t, async () => {
+    requests += 1;
+    return { chunks: ['data: {"error":{"message":"inline backend failed"}}\n\n'] };
+  });
+
+  await assert.rejects(
+    collect(openai.streamChat([], {
+      baseUrl: "http://mock.test",
+      apiKey: "key",
+      model: "model",
+    })),
+    /inline backend failed/
+  );
+  assert.equal(requests, 1);
 });
 
 test("streamChat aborts an in-flight SSE request without retrying", async (t) => {

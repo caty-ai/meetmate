@@ -106,6 +106,10 @@ If wake-word recognition is unreliable, the **wake-calibrate** feature (`/calibr
 
 If you select `openai-compatible` in `config.json`, set `LLM_PROVIDER` in `.env` to match (the environment variable takes precedence over `config.json`). Unresolved `${...}` placeholders in `config.json` (unset or blank) **make the server exit with an error at startup**, so keep dummy values for envs of features you don't use (`OPENCLAW_GATEWAY_URL` / `OPENCLAW_GATEWAY_TOKEN` / `SLACK_BOT_TOKEN`, …) instead of deleting or blanking them — or delete the whole block from `config.json`.
 
+For stateful OpenAI-compatible gateways that already own the session history, set `llm.historyMaxTurns` to `0` so Meetmate sends only the current user turn (plus the standalone system prompt, if configured). In the same cases, set `llm.openaiCompatible.emptyResponseRetry` to `false`: the default one-time empty-stream replay is kept for backward compatibility, but replaying the same turn can be unsafe when the upstream gateway may already have executed tools or mutated its native session.
+
+`llm.openaiCompatible.trustedAgentTools` is a separate opt-in, defaulting to `false`. When enabled, Meetmate adds `X-Caty-Agent-Trust: trusted` on OpenAI-compatible requests. This is intended only for a trusted local tool-capable gateway in a trusted meeting. External or untrusted meetings remain unsupported for that mode.
+
 The `llm` schema in `config.json`:
 
 ```json
@@ -119,15 +123,17 @@ The `llm` schema in `config.json`:
     "systemPrompt": "",
     "openaiCompatible": {
       "baseUrl": "",
-      "apiKey": ""
+      "apiKey": "",
+      "emptyResponseRetry": true,
+      "trustedAgentTools": false
     }
   }
 }
 ```
 
-Resolution order for `provider` / `temperature` / `maxTokens` / `openaiCompatible`: per-session overrides → agent settings → environment variables → `configJson.llm` → defaults. The corresponding environment variables are `LLM_PROVIDER`, `AGENT_TEMPERATURE`, `AGENT_MAX_TOKENS`, `OPENAI_COMPATIBLE_BASE_URL`, `OPENAI_COMPATIBLE_API_KEY`. `model` and `historyMaxTurns` do not read environment variables; they resolve overrides → agent settings → `configJson.llm` → defaults. For `openai-compatible`, `systemPrompt` resolves `overrides.prompt` → `configJson.llm.systemPrompt` → built-in persona, with voice-specific rules appended.
+Resolution order for `provider` / `temperature` / `maxTokens` / `openaiCompatible`: per-session overrides → agent settings → environment variables → `configJson.llm` → defaults. The corresponding environment variables are `LLM_PROVIDER`, `AGENT_TEMPERATURE`, `AGENT_MAX_TOKENS`, `OPENAI_COMPATIBLE_BASE_URL`, `OPENAI_COMPATIBLE_API_KEY`. `model` and `historyMaxTurns` do not read environment variables; they resolve overrides → agent settings → `configJson.llm` → defaults. `openaiCompatible.emptyResponseRetry` resolves overrides → agent settings → `configJson.llm.openaiCompatible` → `true`. `openaiCompatible.trustedAgentTools` resolves overrides → agent settings → `configJson.llm.openaiCompatible` → `false`. For `openai-compatible`, `systemPrompt` resolves `overrides.prompt` → `configJson.llm.systemPrompt` → built-in persona, with voice-specific rules appended.
 
-Requests go to `{baseUrl}/v1/chat/completions`; if `baseUrl` already ends with `/v1`, it is not doubled. Unknown provider names warn and fall back to `openclaw`.
+Requests go to `{baseUrl}/v1/chat/completions`; if `baseUrl` already ends with `/v1`, it is not doubled. Streaming SSE now fails loudly on malformed JSON and `event: error` frames instead of silently treating them as empty output. Unknown provider names warn and fall back to `openclaw`.
 
 ## MCP server (control plane)
 

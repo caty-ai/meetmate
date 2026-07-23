@@ -180,6 +180,88 @@ test("first-token delegation timer remains OpenClaw-only", { concurrency: false 
   }
 });
 
+test("standalone provider receives the exact session user contract and optional retry flag", { concurrency: false }, async () => {
+  const calls = [];
+  const provider = {
+    name: "openai-compatible",
+    streamChat: async function* (messages, options) {
+      calls.push({
+        messages: messages.map((message) => ({ ...message })),
+        options: {
+          sessionUser: options.sessionUser,
+          baseUrl: options.baseUrl,
+          apiKey: options.apiKey,
+          emptyResponseRetry: options.emptyResponseRetry,
+          trustedAgentTools: options.trustedAgentTools,
+        },
+      });
+      yield "ok。";
+    },
+  };
+
+  await withPipeline(provider, {
+    historyMaxTurns: 0,
+    openaiCompatible: {
+      baseUrl: "http://llm.test/v1",
+      apiKey: "key",
+      emptyResponseRetry: false,
+      trustedAgentTools: true,
+    },
+  }, async (pipeline) => {
+    await pipeline._test.processUserInput("alpha-one");
+    pipeline._test.switchAgent("beta");
+    await pipeline._test.processUserInput("beta-one");
+  });
+
+  assert.deepEqual(calls.map((call) => call.options.sessionUser), [
+    "meet-provider-pipeline-alpha",
+    "meet-provider-pipeline-beta",
+  ]);
+  assert.deepEqual(calls.map((call) => call.messages), [
+    [
+      { role: "system", content: "standalone system" },
+      { role: "user", content: "alpha-one" },
+    ],
+    [
+      { role: "system", content: "standalone system" },
+      { role: "user", content: "beta-one" },
+    ],
+  ]);
+  assert.deepEqual(calls.map((call) => call.options.emptyResponseRetry), [false, false]);
+  assert.deepEqual(calls.map((call) => call.options.trustedAgentTools), [true, true]);
+  assert.deepEqual(calls.map((call) => [call.options.baseUrl, call.options.apiKey]), [
+    ["http://llm.test/v1", "key"],
+    ["http://llm.test/v1", "key"],
+  ]);
+});
+
+test("historyMaxTurns=0 sends only system and latest user on later successful turns", { concurrency: false }, async () => {
+  const calls = [];
+  const provider = {
+    name: "openai-compatible",
+    streamChat: async function* (messages) {
+      calls.push(messages.map((message) => ({ ...message })));
+      yield `reply:${messages.at(-1).content}。`;
+    },
+  };
+
+  await withPipeline(provider, { historyMaxTurns: 0 }, async (pipeline) => {
+    await pipeline._test.processUserInput("first");
+    await pipeline._test.processUserInput("second");
+  });
+
+  assert.deepEqual(calls, [
+    [
+      { role: "system", content: "standalone system" },
+      { role: "user", content: "first" },
+    ],
+    [
+      { role: "system", content: "standalone system" },
+      { role: "user", content: "second" },
+    ],
+  ]);
+});
+
 test("barge-in during final-buffer TTS does not add the unheard turn to client history", { concurrency: false }, async () => {
   const calls = [];
   let abortCurrent;

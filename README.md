@@ -26,6 +26,43 @@ Meetmate does exactly one thing: it gives *your* AI agent a seat in your meeting
 
 > 📸 Screenshots and a demo GIF of a live meeting are on the way.
 
+## Current status
+
+| Area | Current | Notes |
+|---|---|---|
+| OpenClaw Gateway | Supported | Primary path today: memory, skills, tools, and delegation all stay on your existing agent. |
+| OpenAI-compatible baseline | Supported | Plain voice-agent mode for any compatible endpoint. |
+| Claude Code via OpenAI-compatible gateway | Integration in progress | Uses the generic `openai-compatible` provider. No Claude-specific provider branch. We will only call this supported after a real Google Meet end-to-end pass lands. |
+| Hermes api_server | Endpoint verified, Meetmate wiring still pending | As of July 12, 2026, issue [#134](https://github.com/caty-ai/meetmate/issues/134) confirmed `POST /v1/chat/completions`, SSE, Bearer auth, and profile/persona injection. The remaining work is token handoff plus Meetmate smoke/E2E. |
+| Codex / Kimi Code | Planned | Not wired yet. |
+| Avatar in the meeting grid | Static image today | Live avatar is planned in [#69](https://github.com/caty-ai/meetmate/issues/69). |
+
+## Platform notes
+
+| Topic | Current reality |
+|---|---|
+| Google Meet | Mainline path. Start here first. |
+| Zoom | Works for meetings you host/control yourself today. Do not assume support for external-hosted Zoom meetings, OBF, or managed OAuth setups yet. |
+| MCP vs voice brain | Meetmate's MCP server is a control plane for `join` / `leave` / `status`. The voice brain is separate: your real agent runs behind OpenClaw or another OpenAI-compatible gateway and speaks in the meeting. |
+
+## What you need
+
+| Item | Purpose | Setting names | When needed | Notes |
+|---|---|---|---|---|
+| Node.js 22+ | Run the server | `node`, `npm` | Always | Required. |
+| [Attendee](https://attendee.dev/) account + API key | Meeting bot join/leave + audio I/O | `ATTENDEE_API_KEY` | Always | Hosted service; check current free/paid availability. |
+| [Soniox](https://console.soniox.com/) account + API key | Default speech-to-text | `STT_PROVIDER=soniox`, `SONIOX_API_KEY` | Usually | Default path. Pricing/trial terms vary. |
+| [Deepgram](https://console.deepgram.com/signup) account + API key | Optional alternate speech-to-text | `STT_PROVIDER=deepgram`, `DEEPGRAM_API_KEY` | Optional | Only if you switch away from Soniox. |
+| [Fish Audio](https://fish.audio/) account + voice | Text-to-speech voice | `FISH_AUDIO_API_KEY`, `FISH_AUDIO_VOICE_ID`, `TTS_PROVIDER=fish-audio` | Always | Voice ID comes from the voice page URL. Pricing/trial terms vary. |
+| OpenClaw Gateway or another OpenAI-compatible LLM gateway | The actual voice brain | `LLM_PROVIDER`, `OPENCLAW_GATEWAY_URL`, `OPENCLAW_GATEWAY_TOKEN`, or `OPENAI_COMPATIBLE_BASE_URL`, `OPENAI_COMPATIBLE_API_KEY` | Always | OpenClaw is the mainline path; stateful OpenAI-compatible gateways are documented in the setup guide. |
+| [ngrok](https://ngrok.com/) or [Tailscale](https://tailscale.com/) | Public/reachable bot WebSocket path | `server.ngrokDomain` for ngrok | Conditional | `ngrok` is the common path. Tailscale is an alternative when your network and Attendee deployment allow it. Pricing/free-plan details vary. |
+| Google Meet permission to admit the bot | Let the bot enter the meeting | Meet UI “Ask to join” approval | Google Meet | You must approve the join request in Meet. |
+| [Zoom Marketplace](https://marketplace.zoom.us/) app/admin setup | Zoom bot permission model | Attendee/Zoom-side app settings | Zoom only | Conditional. External-hosted meetings and managed OAuth are not claimed as supported. |
+
+Keep all keys and tokens in `.env` only. Do not commit real secrets, screenshots of secrets, or shared config files with live credentials.
+
+If you connect a tool-capable OpenAI-compatible gateway, keep that route local and trusted. Meetmate's trust opt-in is intended only for a trusted meeting with a trusted local gateway; external or untrusted meetings remain unsupported for that mode.
+
 ## Try it in 30 seconds
 
 > ℹ️ Until the first npm release is published, use the [from-source setup](#from-source) below.
@@ -40,6 +77,7 @@ npx meetmate start    # starts the server and prints the settings-UI URL
 Open http://localhost:5005, paste a Meet or Zoom URL, and click **Join** — your agent enters the meeting. Call its wake word and start talking.
 
 Prerequisites (Node.js ≥ 22, API keys for [Attendee](https://attendee.dev/) meeting bots, [Soniox](https://soniox.com/) speech-to-text, and [Fish Audio](https://fish.audio/) voice) are walked through step-by-step in the [Setup guide](docs/setup-guide.md).
+That guide also covers Google Meet approval flow, Zoom constraints, ngrok/Tailscale options, and how to point Meetmate at a stateful OpenAI-compatible gateway such as a Claude Code bridge.
 
 ### From source
 
@@ -94,7 +132,8 @@ Entry points for the most common tweaks. The full reference is [docs/operations.
 | Change the voice, speed, or TTS behavior | [Voice profile](docs/operations.md#音声プロファイルtts) |
 | Use background delegation for heavy work | [Delegation harness](docs/operations.md#委譲強制ハーネス79) |
 | Roll back to previous settings when something is off | [Emergency rollback envs](docs/operations.md#緊急-rollback-用-env) |
-| Control meetings from Claude Code (MCP) | [TECHNICAL.md — MCP server](docs/TECHNICAL.md#mcp-server-control-plane) |
+| Control meetings from Claude Code or another client (MCP control plane) | [TECHNICAL.md — MCP server](docs/TECHNICAL.md#mcp-server-control-plane) |
+| Make your real agent be the voice brain | [Setup guide](docs/setup-guide.md) |
 
 Something not working? See [Troubleshooting](docs/TECHNICAL.md#troubleshooting).
 

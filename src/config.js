@@ -85,6 +85,12 @@ function nonNegativeIntEnv(name, fallback) {
   return parsed > 0 ? Math.floor(parsed) : 0;
 }
 
+function boolOption(value, fallback) {
+  if (value === undefined || value === null || value === "") return fallback;
+  if (typeof value === "string") return value.toLowerCase() !== "false";
+  return Boolean(value);
+}
+
 const GATEWAY_EVENTS_ENABLED = boolEnv("GATEWAY_EVENTS_ENABLED", false);
 const FORCED_DELEGATION_ABORT = boolEnv("FORCED_DELEGATION_ABORT", true);
 const HANDOFF_DELEGATE_SESSION = boolEnv("HANDOFF_DELEGATE_SESSION", true);
@@ -291,6 +297,18 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
       || process.env.OPENAI_COMPATIBLE_API_KEY
       || openaiJson.apiKey
       || null,
+    emptyResponseRetry: boolOption(
+      overrides.openaiCompatible?.emptyResponseRetry
+      ?? agent?.openaiCompatible?.emptyResponseRetry
+      ?? openaiJson.emptyResponseRetry,
+      true
+    ),
+    trustedAgentTools: boolOption(
+      overrides.openaiCompatible?.trustedAgentTools
+      ?? agent?.openaiCompatible?.trustedAgentTools
+      ?? openaiJson.trustedAgentTools,
+      false
+    ),
   };
 
   // Resolve greeting: agentProfile > overrides > agent > empty (skip if unconfigured)

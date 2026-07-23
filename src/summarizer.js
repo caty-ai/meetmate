@@ -116,7 +116,12 @@ async function callLlm(prompt, options) {
   const provider = require("./llm-provider").createLlmProvider({ provider: llm.provider });
   const { baseUrl, apiKey } = llm.openaiCompatible || {};
   const providerOptions = llm.provider === "openai-compatible"
-    ? { baseUrl, apiKey, model: llm.model }
+    ? {
+        baseUrl,
+        apiKey,
+        model: llm.model,
+        trustedAgentTools: llm.openaiCompatible?.trustedAgentTools === true,
+      }
     : {
         ...gatewayAuth(llm.gateway?.url, llm.gateway?.token),
         model: llm.model || "openclaw",
@@ -133,7 +138,8 @@ async function callLlm(prompt, options) {
   );
 
   if (statusCode !== 200) {
-    throw new Error(`OpenClaw summarizer error (${statusCode}): ${response.slice(0, 200)}`);
+    const providerLabel = llm.provider === "openai-compatible" ? "OpenAI-compatible" : "OpenClaw";
+    throw new Error(`${providerLabel} summarizer error (${statusCode}): ${response.slice(0, 200)}`);
   }
 
   const parsed = JSON.parse(response);

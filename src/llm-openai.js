@@ -13,6 +13,11 @@ function resolveCompletionPath(baseUrl) {
 
 function requestOptions(baseUrl, apiKey, body) {
   const isHttps = baseUrl.protocol === "https:";
+  const headers = {
+    Authorization: `Bearer ${apiKey}`,
+    "Content-Type": "application/json",
+    "Content-Length": Buffer.byteLength(body),
+  };
   return {
     transport: isHttps ? https : http,
     options: {
@@ -20,12 +25,30 @@ function requestOptions(baseUrl, apiKey, body) {
       port: baseUrl.port || (isHttps ? 443 : 80),
       path: resolveCompletionPath(baseUrl),
       method: "POST",
+      headers,
+    },
+  };
+}
+
+function applyTrustedAgentHeader(request, options = {}) {
+  if (options.trustedAgentTools !== true) return request;
+  return {
+    ...request,
+    options: {
+      ...request.options,
       headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-        "Content-Length": Buffer.byteLength(body),
+        ...request.options.headers,
+        "X-Caty-Agent-Trust": "trusted",
       },
     },
+  };
+}
+
+function buildRequest(baseUrl, apiKey, body, options = {}) {
+  const request = requestOptions(baseUrl, apiKey, body);
+  return {
+    transport: request.transport,
+    options: applyTrustedAgentHeader(request, options).options,
   };
 }
 
@@ -50,6 +73,63 @@ function resolveCredentials(options) {
   };
 }
 
+function formatSsePayloadPreview(data) {
+  return String(data || "").replace(/\s+/g, " ").slice(0, 200);
+}
+
+function formatSseErrorMessage(payload, fallback) {
+  if (typeof payload?.error === "string" && payload.error.trim()) return payload.error.trim();
+  if (typeof payload?.error?.message === "string" && payload.error.message.trim()) return payload.error.message.trim();
+  if (typeof payload?.message === "string" && payload.message.trim()) return payload.message.trim();
+  return fallback;
+}
+
+function parseSseFrame(frame) {
+  let eventName = "message";
+  const dataLines = [];
+
+  for (const rawLine of String(frame || "").split(/\r?\n/)) {
+    if (!rawLine) continue;
+    if (rawLine.startsWith(":")) continue;
+    if (rawLine.startsWith("event:")) {
+      eventName = rawLine.slice("event:".length).trim().toLowerCase() || "message";
+      continue;
+    }
+    if (rawLine.startsWith("data:")) {
+      dataLines.push(rawLine.slice("data:".length).replace(/^ /, ""));
+    }
+  }
+
+  if (eventName === "error" && dataLines.length === 0) {
+    throw new Error("OpenAI-compatible SSE error event without payload");
+  }
+  if (dataLines.length === 0) return { done: false, content: null };
+
+  const data = dataLines.join("\n");
+  if (data === "[DONE]") return { done: true, content: null };
+
+  let payload;
+  try {
+    payload = JSON.parse(data);
+  } catch {
+    throw new Error(`OpenAI-compatible SSE invalid JSON: ${formatSsePayloadPreview(data)}`);
+  }
+
+  if (payload && typeof payload === "object" && Object.prototype.hasOwnProperty.call(payload, "error")) {
+    throw new Error(formatSseErrorMessage(payload, "OpenAI-compatible SSE error payload"));
+  }
+
+  if (eventName === "error") {
+    throw new Error(formatSseErrorMessage(payload, "OpenAI-compatible SSE error event"));
+  }
+
+  const content = payload?.choices?.[0]?.delta?.content;
+  return {
+    done: false,
+    content: typeof content === "string" && content ? content : null,
+  };
+}
+
 function complete(messages, options = {}) {
   if (options.signal?.aborted) throw new Error("LLM request aborted");
   const credentials = resolveCredentials(options);
@@ -58,7 +138,7 @@ function complete(messages, options = {}) {
   }
   const baseUrl = new URL(credentials.baseUrl);
   const body = buildBody(messages, options, false);
-  const request = requestOptions(baseUrl, credentials.apiKey, body);
+  const request = buildRequest(baseUrl, credentials.apiKey, body, options);
 
   return new Promise((resolve, reject) => {
     const req = request.transport.request(request.options, (res) => {
@@ -89,7 +169,7 @@ async function* streamChat(messages, options = {}) {
     yield chunk;
   }
 
-  if (chunkCount > 0 || options.signal?.aborted) return;
+  if (chunkCount > 0 || options.signal?.aborted || options.emptyResponseRetry === false) return;
 
   console.warn(`⚠️  [llm] Empty response on attempt 1 (session=${options.sessionUser}) — retrying...`);
   let retryChunks = 0;
@@ -113,7 +193,7 @@ async function* streamOpenAI(messages, options) {
 
   const baseUrl = new URL(credentials.baseUrl);
   const body = buildBody(messages, options, true);
-  const request = requestOptions(baseUrl, credentials.apiKey, body);
+  const request = buildRequest(baseUrl, credentials.apiKey, body, options);
   const response = await new Promise((resolve, reject) => {
     const req = request.transport.request(request.options, resolve);
     req.on("error", reject);
@@ -143,34 +223,20 @@ async function* parseSSE(response, signal) {
   for await (const chunk of response) {
     if (signal?.aborted) break;
     buffer += chunk.toString();
-    const lines = buffer.split("\n");
-    buffer = lines.pop() || "";
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || !/^data:\s?/.test(trimmed)) continue;
-      const data = trimmed.replace(/^data:\s?/, "");
-      if (data === "[DONE]") return;
-      try {
-        const content = JSON.parse(data).choices?.[0]?.delta?.content;
-        if (content) yield content;
-      } catch {
-        // skip unparseable lines
-      }
+    while (true) {
+      const boundary = buffer.match(/\r?\n\r?\n/);
+      if (!boundary) break;
+      const frame = buffer.slice(0, boundary.index);
+      buffer = buffer.slice(boundary.index + boundary[0].length);
+      const parsed = parseSseFrame(frame);
+      if (parsed.done) return;
+      if (parsed.content) yield parsed.content;
     }
   }
 
   if (buffer.trim()) {
-    const trimmed = buffer.trim();
-    const data = trimmed.replace(/^data:\s?/, "");
-    if (/^data:\s?/.test(trimmed) && data !== "[DONE]") {
-      try {
-        const content = JSON.parse(data).choices?.[0]?.delta?.content;
-        if (content) yield content;
-      } catch {
-        // skip
-      }
-    }
+    const parsed = parseSseFrame(buffer.trim());
+    if (!parsed.done && parsed.content) yield parsed.content;
   }
 }
 

@@ -4,10 +4,12 @@
     "llm.model": "Provider model ID; keep openclaw for the default provider, or set the proxy model ID for openai-compatible.",
     "llm.temperature": "LLM sampling temperature; default 0.5.",
     "llm.maxTokens": "Maximum response tokens; default 300.",
-    "llm.historyMaxTurns": "Local conversation turns retained for standalone providers; default 12.",
+    "llm.historyMaxTurns": "Local conversation turns retained for standalone providers; default 12. Set 0 when the upstream gateway owns session history.",
     "llm.systemPrompt": "Standalone provider persona; leave empty to use the built-in persona template.",
     "llm.openaiCompatible.baseUrl": "OpenAI-compatible proxy base URL; required when llm.provider is openai-compatible.",
     "llm.openaiCompatible.apiKey": "OpenAI-compatible proxy API key; required when llm.provider is openai-compatible.",
+    "llm.openaiCompatible.emptyResponseRetry": "Retry one empty streaming response once (default true). Set false for stateful gateways where replaying the same turn is unsafe.",
+    "llm.openaiCompatible.trustedAgentTools": "Send X-Caty-Agent-Trust: trusted (default false). Enable only for a trusted local tool-capable gateway in a trusted meeting.",
     "prompts.voiceEmotionLine": "Line inserted into the voice system addendum when agent.emotionTags is true.",
     "prompts.voiceSystemAddendumTemplate": "Voice-mode system addendum template; supports {emotionLine}, {openclawSlackRule}, and {openclawRules} placeholders.",
     "prompts.voiceSystemAddendum": "Optional full voice system addendum override; leave empty to use the template.",
@@ -130,7 +132,9 @@
     "systemPrompt": "",
     "openaiCompatible": {
       "baseUrl": "",
-      "apiKey": ""
+      "apiKey": "",
+      "emptyResponseRetry": true,
+      "trustedAgentTools": false
     }
   },
   "gateway": {

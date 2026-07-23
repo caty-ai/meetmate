@@ -44,6 +44,8 @@ test("LLM config precedence is raw agent, environment, config.json, then default
     assert.equal(config.llm.temperature, 0.5);
     assert.equal(config.llm.maxTokens, 300);
     assert.equal(config.llm.historyMaxTurns, 12);
+    assert.equal(config.llm.openaiCompatible.emptyResponseRetry, true);
+    assert.equal(config.llm.openaiCompatible.trustedAgentTools, false);
 
     const configJson = {
       llm: {
@@ -52,7 +54,12 @@ test("LLM config precedence is raw agent, environment, config.json, then default
         temperature: 0.2,
         maxTokens: 222,
         historyMaxTurns: 7,
-        openaiCompatible: { baseUrl: "https://json.test/v1", apiKey: "json-key" },
+        openaiCompatible: {
+          baseUrl: "https://json.test/v1",
+          apiKey: "json-key",
+          emptyResponseRetry: false,
+          trustedAgentTools: true,
+        },
       },
     };
     config = freshConfig().getPipelineConfig({}, null, null, configJson);
@@ -71,7 +78,12 @@ test("LLM config precedence is raw agent, environment, config.json, then default
         temperature: 0.2,
         maxTokens: 222,
         historyMaxTurns: 7,
-        openaiCompatible: { baseUrl: "https://json.test/v1", apiKey: "json-key" },
+        openaiCompatible: {
+          baseUrl: "https://json.test/v1",
+          apiKey: "json-key",
+          emptyResponseRetry: false,
+          trustedAgentTools: true,
+        },
       }
     );
 
@@ -87,6 +99,8 @@ test("LLM config precedence is raw agent, environment, config.json, then default
     assert.deepEqual(config.llm.openaiCompatible, {
       baseUrl: "https://env.test/v1",
       apiKey: "env-key",
+      emptyResponseRetry: false,
+      trustedAgentTools: true,
     });
     assert.equal(config.llm.model, "json-model");
     assert.equal(config.llm.historyMaxTurns, 7);
@@ -97,7 +111,12 @@ test("LLM config precedence is raw agent, environment, config.json, then default
       temperature: 0.4,
       maxTokens: 444,
       historyMaxTurns: 4,
-      openaiCompatible: { baseUrl: "https://agent.test/v1", apiKey: "agent-key" },
+      openaiCompatible: {
+        baseUrl: "https://agent.test/v1",
+        apiKey: "agent-key",
+        emptyResponseRetry: true,
+        trustedAgentTools: false,
+      },
     };
     config = freshConfig().getPipelineConfig({}, rawAgent, null, configJson);
     assert.equal(config.llm.provider, "openclaw");
@@ -108,6 +127,8 @@ test("LLM config precedence is raw agent, environment, config.json, then default
     assert.deepEqual(config.llm.openaiCompatible, {
       baseUrl: "https://agent.test/v1",
       apiKey: "agent-key",
+      emptyResponseRetry: true,
+      trustedAgentTools: false,
     });
   } finally {
     console.error = originalError;
