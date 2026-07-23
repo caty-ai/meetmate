@@ -21,10 +21,10 @@ Meetmate 只做一件事:给*你的* AI 智能体在会议里留一个座位。�
 ## 它能做什么
 
 - **它是参会者,不是会议纪要机器人。** 你的智能体带着自己的头像出现在参会者网格里,听会场讨论,开口说话——支持唤醒词检测和插话打断(你直接盖过它说话,它就会乖乖停下来)。
-- **它是“你的”智能体。** 接入你已经在用的那个智能体——连同它的记忆、性格和技能——通过 OpenClaw Gateway,或者任何 OpenAI 兼容端点。团队熟悉的那个“老搭档”,就这样走进会议室。没有两个 Meetmate 说话是一个味儿的。
+- **它是“你的”智能体。** 通过 OpenClaw Gateway,接入你已经在用的那个智能体——连同它的记忆、性格和技能。团队熟悉的那个“老搭档”,就这样走进会议室,所以没有两个 Meetmate 说话是一个味儿的。(没有 Gateway?任何 OpenAI 兼容端点也能用,作为更简单的基线:普通 LLM + 内置人设——见 [LLM providers](docs/TECHNICAL.md#llm-providers)。)
 - **当场就能派活。** “把刚才讨论的结论总结一下,发到频道里。”重活会自动委派给后台会话,所以智能体一边继续参与对话,任务一边推进。
 - **“平平无奇”正是卖点。** 不用按键发言,没有特殊命令,没有尴尬的沉默。你像跟同事说话一样跟它说话——这种“没什么特别”的感觉,本身就是产品。
-- **在哪开会都行,在哪运行都行。** 会议侧支持 Google Meet 和 Zoom;服务器侧支持 Windows、macOS 和 Linux。一个配置文件、一张头像图、一条命令。
+- **在哪开会都行,在哪运行都行。** 会议侧支持 Google Meet 和 Zoom;服务器侧支持 Windows、macOS 和 Linux。一份配置、几个 API 密钥、一条命令——头像图片想换就换。
 
 > 📸 真实会议中的截图和演示 GIF 正在路上。
 
@@ -39,7 +39,7 @@ npx meetmate init     # 询问 3 个 API 密钥,创建 config.json + .env,并打
 npx meetmate start    # 启动服务器并打印设置界面 URL
 ```
 
-打开 http://localhost:5005,粘贴 Meet 或 Zoom 链接,你的智能体就会加入会议。叫一声唤醒词,开始说话吧。
+打开 http://localhost:5005,粘贴 Meet 或 Zoom 链接,点击 **Join**——你的智能体就会进入会议。叫一声唤醒词,开始说话吧。
 
 前置条件(Node.js ≥ 22,以及 [Attendee](https://attendee.dev/) 会议机器人、[Soniox](https://soniox.com/) 语音转文字、[Fish Audio](https://fish.audio/) 语音合成的 API 密钥)在[安装指南](docs/setup-guide.md)里有一步一步的说明。
 
@@ -95,6 +95,7 @@ flowchart LR
 | 让响应更快返回 | [Soniox 调优](docs/operations.md#stt-プロバイダ切替soniox-チューニング) |
 | 更换声音、语速或 TTS 行为 | [声音配置](docs/operations.md#音声プロファイルtts) |
 | 用后台委派处理重活 | [委派机制](docs/operations.md#委譲強制ハーネス79) |
+| 出问题时回滚到之前的设置 | [紧急回滚 env](docs/operations.md#緊急-rollback-用-env) |
 | 从 Claude Code 控制会议(MCP) | [TECHNICAL.md — MCP server](docs/TECHNICAL.md#mcp-server-control-plane) |
 
 遇到问题了?查看[故障排查](docs/TECHNICAL.md#troubleshooting)。
@@ -122,8 +123,8 @@ flowchart LR
 
 ## 致谢
 
-Meetmate 站在优秀的服务和开源软件之上:[Attendee](https://attendee.dev/)(会议机器人基础设施)、[Soniox](https://soniox.com/)(实时语音转文字)、[Fish Audio](https://fish.audio/)(富有表现力的语音合成),以及 OpenAI 兼容 LLM 生态。
+Meetmate 站在优秀的服务和开源软件之上:[Attendee](https://attendee.dev/)(会议机器人基础设施)、[Soniox](https://soniox.com/)(实时语音转文字)、[Fish Audio](https://fish.audio/)(富有表现力的语音合成)、OpenClaw Gateway(智能体基础设施——SOUL / 记忆 / 技能 / 工具),以及 OpenAI 兼容 LLM 生态。
 
 ## 许可证
 
-[Apache-2.0](LICENSE)
+[Apache-2.0](LICENSE) —— 署名信息见 [NOTICE](NOTICE)。

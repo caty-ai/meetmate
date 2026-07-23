@@ -7,6 +7,7 @@ The front [README](../README.md) covers what Meetmate is and how to try it. This
 - [Feature reference](#feature-reference)
 - [Architecture](#architecture)
 - [Data directory (`AI_MEET_HOME`)](#data-directory-ai_meet_home)
+- [Installation notes (`meetmate init`)](#installation-notes-meetmate-init)
 - [Environment variables (`.env`)](#environment-variables-env)
 - [Agent configuration (`config.json`)](#agent-configuration-configjson)
 - [LLM providers](#llm-providers)
@@ -22,7 +23,7 @@ The front [README](../README.md) covers what Meetmate is and how to try it. This
 - **Low-latency STT** — Soniox `stt-rt-v5` by default; switch to Deepgram with `STT_PROVIDER=deepgram`
 - **Expressive TTS** — Fish Audio S2-Pro (emotion-tag anchor scheme keeps the voice stable)
 - **Fixed-line TTS cache** — acks / pings / greetings / farewells play instantly from a PCM disk cache; pre-seeding with real recorded takes is supported
-- **Delegation harness** — heavy work is forcibly delegated to a background session so the front agent stays conversational ([#79](https://github.com/caty-ai/meetmate/issues/79))
+- **Delegation harness** — heavy work is forcibly delegated to a background session so the front agent stays conversational ([#79](https://github.com/caty-ai/meetmate/issues/79); design spec: [deep-interview-79-delegation-harness.md](deep-interview-79-delegation-harness.md))
 - **Meeting chat posting** — `[[[chat: ...]]]` tags in LLM replies are posted to the meeting chat instead of being spoken
 - **Emoji guard** — two layers: LLM prompt ban + mechanical strip right before TTS
 - **LCM (Lossless Context Management) auto-recording** / **Slack integration** (status notifications, summaries, full transcripts)
@@ -62,6 +63,15 @@ Everything the server **writes**, plus your user configuration, lives in one *ho
 | `assets/tts-cache/` | Fixed-line TTS cache |
 
 Read-only bundled assets (the web UI, the default avatar, filler audio) always come from the installed package itself. `TTS_CACHE_DIR` and `METRICS_LOG_DIR` are still honored as explicit overrides. Running `npm start` from a source checkout keeps the repository root as home, so the from-source behavior is unchanged.
+
+## Installation notes (`meetmate init`)
+
+`meetmate init` copies the bundled `config.json.example` / `.env.example` into the **current directory** and fills in the credentials you enter (`SONIOX_API_KEY`, `FISH_AUDIO_API_KEY`, `ATTENDEE_API_KEY`). It refuses to overwrite existing files unless you pass `--force`. Then edit `config.json` to set your agent's name, wake words, and fixed lines.
+
+Service notes:
+
+- [Attendee](https://attendee.dev/) is a SaaS (a self-hosted edition also exists) that puts bots into Google Meet / Zoom. All bot join/leave and audio I/O goes through the Attendee API.
+- For the Fish Audio Voice ID, open the page of the voice you want (your own or a public one) on [fish.audio](https://fish.audio/) and copy the ID at the end of the URL.
 
 ## Environment variables (`.env`)
 

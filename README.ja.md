@@ -21,10 +21,10 @@ Meetmate がやることはひとつだけ。**あなたの**エージェント�
 ## 何ができるのか
 
 - **議事録ボットではなく、参加者です。** 参加者グリッドに自分のアバターで並び、部屋の会話を聞き、声で話します。ウェイクワード検出とバージイン対応（話しかぶせると、ちゃんと黙ります）。
-- **「あなたの」エージェントが来ます。** ふだん使っているエージェントを、記憶も性格もスキルもそのままに接続（OpenClaw Gateway 経由、または任意の OpenAI 互換エンドポイント）。チームが知っている「いつものあの子」が、そのまま会議室に入ってくる。だから Meetmate は一台ごとに個性が違います。
+- **「あなたの」エージェントが来ます。** ふだん使っているエージェントを、記憶も性格もスキルもそのままに接続（OpenClaw Gateway 経由）。チームが知っている「いつものあの子」が、そのまま会議室に入ってくる。だから Meetmate は一台ごとに個性が違います。（Gateway がなくても、任意の OpenAI 互換エンドポイントで動きます — 素の LLM+組み込みペルソナのシンプル構成。詳細は [LLM providers](docs/TECHNICAL.md#llm-providers)）
 - **その場で頼めます。** 「今の議論まとめてチャンネルに投稿しといて」——重い作業は自動でバックグラウンドのセッションに委譲されるので、エージェントは会話に残ったままタスクが進みます。
 - **「普通にできる」が製品です。** プッシュトゥトーク不要、特別なコマンド不要、気まずい沈黙もなし。同僚に話しかけるのと同じように話す——それが当たり前に感じられることこそ、磨いた部分です。
-- **会議はどこでも、サーバーもどこでも。** 会議側は Google Meet と Zoom、サーバー側は Windows / macOS / Linux。設定ファイル1つ、アバター画像1枚、コマンド1発。
+- **会議はどこでも、サーバーもどこでも。** 会議側は Google Meet と Zoom、サーバー側は Windows / macOS / Linux。設定ファイルと API キーを用意して、コマンド1発（アバター画像はお好みで差し替え可能）。
 
 > 📸 実際の会議に参加しているスクリーンショットとデモ GIF は準備中です。
 
@@ -39,7 +39,7 @@ npx meetmate init     # 3つの API キーを聞かれ、config.json と .env �
 npx meetmate start    # サーバーが起動し、設定 UI の URL が表示されます
 ```
 
-http://localhost:5005 を開いて Meet / Zoom の URL を貼れば、あなたのエージェントが会議に参加します。ウェイクワードで呼んで、話し始めてください。
+http://localhost:5005 を開いて Meet / Zoom の URL を貼り、**Join** を押せば、あなたのエージェントが会議に参加します。ウェイクワードで呼んで、話し始めてください。
 
 前提条件（Node.js ≥ 22、[Attendee](https://attendee.dev/)・[Soniox](https://soniox.com/)・[Fish Audio](https://fish.audio/) の API キー）は[セットアップガイド](docs/setup-guide.md)が一歩ずつ案内します。
 
@@ -95,6 +95,7 @@ flowchart LR
 | 返答をもっと速くする | [Soniox チューニング](docs/operations.md#stt-プロバイダ切替soniox-チューニング) |
 | 声・話速・TTS の挙動を変える | [音声プロファイル](docs/operations.md#音声プロファイルtts) |
 | 重い作業をバックグラウンド委譲する | [委譲ハーネス](docs/operations.md#委譲強制ハーネス79) |
+| 調子が悪いとき前の設定に戻す | [緊急 rollback 用 env](docs/operations.md#緊急-rollback-用-env) |
 | Claude Code から会議を操作する（MCP） | [TECHNICAL.md — MCP server](docs/TECHNICAL.md#mcp-server-control-plane) |
 
 うまく動かないときは[トラブルシューティング](docs/TECHNICAL.md#troubleshooting)へ。
@@ -120,8 +121,8 @@ Issue・PR 歓迎です — [CONTRIBUTING.md](CONTRIBUTING.md) をご覧くだ�
 
 ## 謝辞
 
-Meetmate は優れたサービスと OSS の上に成り立っています: [Attendee](https://attendee.dev/)（会議ボット基盤）・[Soniox](https://soniox.com/)（リアルタイム音声認識）・[Fish Audio](https://fish.audio/)（表現力のある音声合成）、そして OpenAI 互換 LLM エコシステム。
+Meetmate は優れたサービスと OSS の上に成り立っています: [Attendee](https://attendee.dev/)（会議ボット基盤）・[Soniox](https://soniox.com/)（リアルタイム音声認識）・[Fish Audio](https://fish.audio/)（表現力のある音声合成）・OpenClaw Gateway（エージェント基盤 — SOUL / 記憶 / スキル / ツール）、そして OpenAI 互換 LLM エコシステム。
 
 ## ライセンス
 
-[Apache-2.0](LICENSE)
+[Apache-2.0](LICENSE) — 帰属表示は [NOTICE](NOTICE) を参照してください。

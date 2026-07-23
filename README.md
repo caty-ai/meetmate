@@ -19,10 +19,10 @@ Meetmate does exactly one thing: it gives *your* AI agent a seat in your meeting
 ## What it does
 
 - **It's a participant, not a notetaker.** Your agent shows up in the participant grid with its own avatar, listens to the room, and speaks — with wake-word detection and barge-in (talk over it and it stops).
-- **It's *your* agent.** Connect the agent you already use — with its memory, personality, and skills — via OpenClaw Gateway, or plug in any OpenAI-compatible endpoint. The same "them" your team already knows walks into the room. No two Meetmates sound alike.
+- **It's *your* agent.** Connect the agent you already use — with its memory, personality, and skills — via OpenClaw Gateway. The same "them" your team already knows walks into the room, so no two Meetmates sound alike. (No gateway? Any OpenAI-compatible endpoint works too, as a simpler baseline: plain LLM, built-in persona — see [LLM providers](docs/TECHNICAL.md#llm-providers).)
 - **Ask it things, right there.** "Summarize where we landed and post it to the channel." Heavy work is delegated to a background session automatically, so the agent stays in the conversation while the task runs.
 - **Ordinary is the point.** No push-to-talk, no special commands, no awkward silences. You talk to it the way you talk to a colleague — that this feels unremarkable is the product.
-- **Works where you meet, runs where you work.** Google Meet and Zoom on the meeting side; Windows, macOS, and Linux on the server side. One config file, one avatar image, one command.
+- **Works where you meet, runs where you work.** Google Meet and Zoom on the meeting side; Windows, macOS, and Linux on the server side. A config file, your API keys, one command — add a custom avatar if you like.
 
 > 📸 Screenshots and a demo GIF of a live meeting are on the way.
 
@@ -37,7 +37,7 @@ npx meetmate init     # asks for the 3 API keys, creates config.json + .env, pri
 npx meetmate start    # starts the server and prints the settings-UI URL
 ```
 
-Open http://localhost:5005, paste a Meet or Zoom URL, and your agent joins the meeting. Call its wake word and start talking.
+Open http://localhost:5005, paste a Meet or Zoom URL, and click **Join** — your agent enters the meeting. Call its wake word and start talking.
 
 Prerequisites (Node.js ≥ 22, API keys for [Attendee](https://attendee.dev/) meeting bots, [Soniox](https://soniox.com/) speech-to-text, and [Fish Audio](https://fish.audio/) voice) are walked through step-by-step in the [Setup guide](docs/setup-guide.md).
 
@@ -93,6 +93,7 @@ Entry points for the most common tweaks. The full reference is [docs/operations.
 | Make responses come back faster | [Soniox tuning](docs/operations.md#stt-プロバイダ切替soniox-チューニング) |
 | Change the voice, speed, or TTS behavior | [Voice profile](docs/operations.md#音声プロファイルtts) |
 | Use background delegation for heavy work | [Delegation harness](docs/operations.md#委譲強制ハーネス79) |
+| Roll back to previous settings when something is off | [Emergency rollback envs](docs/operations.md#緊急-rollback-用-env) |
 | Control meetings from Claude Code (MCP) | [TECHNICAL.md — MCP server](docs/TECHNICAL.md#mcp-server-control-plane) |
 
 Something not working? See [Troubleshooting](docs/TECHNICAL.md#troubleshooting).
@@ -120,8 +121,8 @@ Issues and PRs welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). We use an iss
 
 ## Acknowledgments
 
-Meetmate stands on excellent services and OSS: [Attendee](https://attendee.dev/) (meeting bot infrastructure), [Soniox](https://soniox.com/) (real-time STT), [Fish Audio](https://fish.audio/) (expressive TTS), and the OpenAI-compatible LLM ecosystem.
+Meetmate stands on excellent services and OSS: [Attendee](https://attendee.dev/) (meeting bot infrastructure), [Soniox](https://soniox.com/) (real-time STT), [Fish Audio](https://fish.audio/) (expressive TTS), OpenClaw Gateway (agent infrastructure — SOUL / memory / skills / tools), and the OpenAI-compatible LLM ecosystem.
 
 ## License
 
-[Apache-2.0](LICENSE)
+[Apache-2.0](LICENSE) — see [NOTICE](NOTICE) for attribution.
