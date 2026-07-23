@@ -2,298 +2,128 @@
 
 [English](README.md) | [日本語](README.ja.md) | **中文** | [ไทย](README.th.md)
 
-> 本文档是 [README.md](README.md)（英文原版）的翻译。如内容有出入，以英文版为准。
+> 本文档是 [README.md](README.md)(英文版,为正本)的翻译。如内容出现不一致,以英文版为准。
 
 [![License: Apache--2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
-[![Platform](https://img.shields.io/badge/platform-Google%20Meet%20%7C%20Zoom-4285F4)](#功能特性)
+[![Meetings](https://img.shields.io/badge/works%20in-Google%20Meet%20%7C%20Zoom-7C3AED)](#它能做什么)
+[![Server](https://img.shields.io/badge/runs%20on-Windows%20%7C%20macOS%20%7C%20Linux-444)](#30-秒快速上手)
 
-一个让 AI 智能体以实时语音参与者身份加入 Google Meet / Zoom 的桥接服务器。通过 OpenClaw Gateway 集成，任何智能体都可以接入语音会议并对话。
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/hero-dark.svg">
+  <img src="docs/images/hero-light.svg" alt="Meetmate —— 你的 AI 智能体作为一名真正的参会者,坐在会议网格中" width="100%">
+</picture>
 
-```
-STT (Soniox) → 唤醒词检测 → LLM (默认 OpenClaw Gateway) → TTS (Fish Audio S2-Pro) → Meet / Zoom
-```
+**把你的 AI 智能体带进 Google Meet 和 Zoom —— 作为一名真正能开口说话的参会者。**
 
-## 目录
+Meetmate 只做一件事:给*你的* AI 智能体在会议里留一个座位。它以有头像、有声音的参会者身份加入——你叫它的名字,它会回应;你交代事情,它会办妥。我们刻意把范围收得这么小,然后把这一件事打磨到极致。
 
-- [功能特性](#功能特性)
-- [截图](#截图)
-- [架构](#架构)
-- [快速开始](#快速开始)
-- [配置](#配置)
-- [故障排查](#故障排查)
-- [文档](#文档)
-- [开发](#开发)
-- [项目状态](#项目状态)
-- [参与贡献](#参与贡献)
-- [致谢](#致谢)
-- [许可证](#许可证)
+## 它能做什么
 
-## 功能特性
+- **它是参会者,不是会议纪要机器人。** 你的智能体带着自己的头像出现在参会者网格里,听会场讨论,开口说话——支持唤醒词检测和插话打断(你直接盖过它说话,它就会乖乖停下来)。
+- **它是“你的”智能体。** 接入你已经在用的那个智能体——连同它的记忆、性格和技能——通过 OpenClaw Gateway,或者任何 OpenAI 兼容端点。团队熟悉的那个“老搭档”,就这样走进会议室。没有两个 Meetmate 说话是一个味儿的。
+- **当场就能派活。** “把刚才讨论的结论总结一下,发到频道里。”重活会自动委派给后台会话,所以智能体一边继续参与对话,任务一边推进。
+- **“平平无奇”正是卖点。** 不用按键发言,没有特殊命令,没有尴尬的沉默。你像跟同事说话一样跟它说话——这种“没什么特别”的感觉,本身就是产品。
+- **在哪开会都行,在哪运行都行。** 会议侧支持 Google Meet 和 Zoom;服务器侧支持 Windows、macOS 和 Linux。一个配置文件、一张头像图、一条命令。
 
-- **支持 Google Meet / Zoom** — 通过 Attendee bot API 加入会议
-- **OpenClaw Gateway 集成** — 完整支持 SOUL / memory / skills / tools
-- **唤醒词检测 + 插话打断**（barge-in，可打断智能体发言）
-- **低延迟 STT** — 默认 Soniox `stt-rt-v5`；设置 `STT_PROVIDER=deepgram` 可切换到 Deepgram
-- **富有表现力的 TTS** — Fish Audio S2-Pro（emotion-tag anchor 方案保持音色稳定）
-- **固定台词 TTS 缓存** — 应答 / 提示音 / 问候 / 告别等从 PCM 磁盘缓存即时播放；支持用真实录音预填充
-- **委派执行框架** — 繁重任务被强制委派到后台会话，前台智能体专注对话（[#79](https://github.com/caty-ai/meetmate/issues/79)）
-- **会议聊天发帖** — LLM 回复中的 `[[[chat: ...]]]` 标签不朗读，而是发到会议聊天区
-- **表情符号防护** — 两层结构：LLM 提示词禁用 + TTS 前机械过滤
-- **LCM（Lossless Context Management）自动记录** / **Slack 联动**（状态通知、摘要、完整记录）
+> 📸 真实会议中的截图和演示 GIF 正在路上。
 
-## 截图
+## 30 秒快速上手
 
-<!-- TODO: 图片放入 docs/images/ 后取消注释
-![控制界面](docs/images/ui-join.png)
-![会议进行中](docs/images/in-meeting.png)
--->
-
-在浏览器中打开 http://localhost:5005，粘贴 Meet / Zoom 的 URL，智能体即可加入会议。会议中头像（`assets/avatar.png`）会显示为参与者磁贴，用唤醒词呼叫即可获得语音回应。
-
-> 📸 截图与演示 GIF 正在准备中。
-
-## 架构
-
-**一个智能体 = 一个服务器实例。** 只需 `config.json` + `.env` + 头像图片即可运行任意智能体。
-
-输入侧 STT 为 16 kHz，输出侧 TTS / `bot_output` 为 24 kHz。Attendee 的输入通道与输出通道相互独立。
-
-### 主要模块
-
-| 模块 | 职责 |
-|---|---|
-| [`src/pipeline.js`](src/pipeline.js) | 音频管线控制 |
-| [`src/agent-profile.js`](src/agent-profile.js) | 智能体配置解析 |
-| [`src/paths.js`](src/paths.js) | 主目录契约（`AI_MEET_HOME`）— 见[数据目录](#数据目录ai_meet_home) |
-| [`src/llm-provider.js`](src/llm-provider.js) | LLM 提供方切换（默认 OpenClaw / OpenAI 兼容） |
-| [`src/stt-provider.js`](src/stt-provider.js) | STT 提供方切换（默认 soniox / deepgram） |
-| [`src/stt-soniox.js`](src/stt-soniox.js) | Soniox STT（stt-rt-v5，WebSocket） |
-| [`src/stt.js`](src/stt.js) | Deepgram STT（备选） |
-| [`src/tts-fish.js`](src/tts-fish.js) | Fish Audio TTS |
-| [`src/speech-policy.js`](src/speech-policy.js) | NO_REPLY 抑制、文本净化 |
-| [`src/exit-handler.js`](src/exit-handler.js) | 退出检测与清理 |
-
-详见 [docs/architecture.md](docs/architecture.md)。
-
-## 快速开始
-
-### 前提条件
-
-- Node.js 22 或更高（依据 `package.json` 的 `engines`）
-- LLM 提供方：`openclaw`（默认）或 `openai-compatible`
-  - `openclaw` 需要 OpenClaw Gateway，提供包括 SOUL / memory / skills / tools 在内的完整智能体体验
-  - `openai-compatible` 连接任意 OpenAI 兼容 API，无需 OpenClaw Gateway
-- 各服务的 API 密钥（Soniox / Fish Audio / Attendee）
-  - [Attendee](https://attendee.dev/) 是将 bot 接入 Google Meet / Zoom 的 SaaS（也有自托管版）。bot 的进出会与音频输入输出均通过 Attendee API
-  - Fish Audio 的 Voice ID：在 [fish.audio](https://fish.audio/) 打开想用的声音（自制或公开声音）页面，复制 URL 末尾的 ID
-
-### 方式 A：npm 包（推荐）
-
-> ℹ️ 在首个 npm 版本发布之前，请使用下方的[方式 B](#方式-b从源码运行)。
+> ℹ️ 首个 npm 版本发布之前,请使用下方的[从源码运行](#从源码运行)。
 
 ```bash
 mkdir my-agent && cd my-agent
 npm install meetmate
-npx meetmate init    # 交互式询问 3 个 API 密钥，然后生成 config.json 和 .env
-npx meetmate start   # 启动服务器并打印设置界面的 URL
+npx meetmate init     # 询问 3 个 API 密钥,创建 config.json + .env,并打印后续步骤
+npx meetmate start    # 启动服务器并打印设置界面 URL
 ```
 
-`init` 会把随包附带的 `config.json.example` / `.env.example` 复制到**当前目录**，并填入你输入的凭据（`SONIOX_API_KEY`、`FISH_AUDIO_API_KEY`、`ATTENDEE_API_KEY`）。若已存在同名文件则拒绝覆盖，除非加 `--force`。之后编辑 `config.json` 设置智能体名称、唤醒词和固定台词。
+打开 http://localhost:5005,粘贴 Meet 或 Zoom 链接,你的智能体就会加入会议。叫一声唤醒词,开始说话吧。
 
-### 方式 B：从源码运行
+前置条件(Node.js ≥ 22,以及 [Attendee](https://attendee.dev/) 会议机器人、[Soniox](https://soniox.com/) 语音转文字、[Fish Audio](https://fish.audio/) 语音合成的 API 密钥)在[安装指南](docs/setup-guide.md)里有一步一步的说明。
+
+### 从源码运行
 
 ```bash
 git clone git@github.com:caty-ai/meetmate.git
 cd meetmate
 npm install
-cp .env.example .env        # 填入密钥
-cp config.json.example config.json
+cp .env.example .env && cp config.json.example config.json   # 然后填入密钥
 npm start
 ```
 
-在浏览器中打开 http://localhost:5005，粘贴 Meet / Zoom 的 URL 并点击加入。
+## 我们为什么做它
 
-> 💡 如果唤醒词识别不稳定，可用 **wake-calibrate** 功能（`/calibrate`，通过 `WAKE_CALIBRATE_ENABLED=1` 启用）在浏览器中从真实发音收集误识别变体。参见 [docs/setup-guide.md](docs/setup-guide.md)。
+会议才是人类真正协作的地方——决定、细微的语气、“诶等等,还有一件事”的瞬间。如果你的 AI 智能体只活在聊天框里,这些它全都错过了。
 
-### 数据目录（`AI_MEET_HOME`）
+我们相信,智能体应该坐在它主人坐的地方。不是作为通话边缘的转写机器人,而是网格里的一位同事:在场、可被点名、派得上用场。而且因为它是*你的*智能体——带着自己的记忆和性格——区别就在于“有个 AI 进了会议”和“***她***进来了”。
 
-服务器**写入**的所有内容以及用户配置都集中在一个 *home* 目录中 —— 默认为**当前工作目录**，可通过环境变量 `AI_MEET_HOME` 更改：
+Meetmate 刻意做一个小工具。它不想主持你的会议,不想给你的通话打分,也不想取代你的日历。它把你的智能体带进会议室。剩下的,是你们俩的事。
 
-| 路径（home 下） | 内容 |
-|---|---|
-| `config.json` / `.env` | 智能体配置与凭据 |
-| `logs/` | 运行日志与委派指标（`metrics.jsonl`） |
-| `assets/avatar.png` | 可选的头像覆盖（未放置时回退到随包默认图片） |
-| `assets/tts-cache/` | 固定台词 TTS 缓存 |
+## 工作原理
 
-只读的随包资源（Web UI、默认头像、填充音频）始终从已安装的包本身读取。`TTS_CACHE_DIR` 与 `METRICS_LOG_DIR` 作为显式覆盖仍然有效。从源码 checkout 运行 `npm start` 时 home 即仓库根目录，因此源码方式的行为不变。
-
-### 环境变量（`.env`）
-
-| 变量 | 用途 |
-|---|---|
-| `LLM_PROVIDER` | LLM 提供方（`openclaw`（默认）/ `openai-compatible`） |
-| `OPENCLAW_GATEWAY_URL` | OpenClaw Gateway URL（`openclaw` 必需，如 `http://localhost:18789`） |
-| `OPENCLAW_GATEWAY_TOKEN` | Gateway 认证令牌（`openclaw` 必需） |
-| `OPENAI_COMPATIBLE_BASE_URL` | OpenAI 兼容 API 的基础 URL（`openai-compatible` 必需） |
-| `OPENAI_COMPATIBLE_API_KEY` | OpenAI 兼容 API 密钥（`openai-compatible` 必需） |
-| `SONIOX_API_KEY` | STT（默认提供方 Soniox） |
-| `FISH_AUDIO_API_KEY` | TTS |
-| `FISH_AUDIO_VOICE_ID` | TTS 声音 ID（声音克隆） |
-| `ATTENDEE_API_KEY` | Meet / Zoom bot API |
-
-可选变量（`PORT`、`AGENT_LANG`、Slack 集成等）与全部调优参考见 [docs/operations.md](docs/operations.md)。
-
-### 智能体配置（`config.json`）
-
-智能体 ID / 显示名 / 唤醒词 / 固定台词（greeting、ackVariants、progressPings 等）以及 TTS / STT / Slack / Attendee 的设置都集中于此。`config.json.example` 已按 emotion-tag anchor 方案（S2-Pro 用）对齐，复制后填入变量即可运行。
-
-### LLM 提供方
-
-| `llm.provider` / `LLM_PROVIDER` | 行为 |
-|---|---|
-| `openclaw` | 默认。通过 OpenClaw Gateway 使用 SOUL / memory / skills / tools |
-| `openai-compatible` | 直接调用 OpenAI 兼容 API。无需 OpenClaw Gateway |
-
-`openai-compatible` 是降级模式：用普通 LLM 加内置人设模板进行语音应答。它是未配置 Gateway 时的 OSS 最低保证；OpenClaw 专属的 memory / skills / tools 不可用。Claude 模型需经 OpenAI 兼容代理（如 LiteLLM）使用；没有 Anthropic 原生适配器（[#114](https://github.com/caty-ai/meetmate/issues/114)）。
-
-如果在 `config.json` 中选择 `openai-compatible`，请同步设置 `.env` 的 `LLM_PROVIDER`（环境变量优先于 `config.json`）。`config.json` 中未解析的 `${...}` 占位符（未设置或留空）**会导致启动时报错退出**，因此不使用的功能的 env（`OPENCLAW_GATEWAY_URL` / `OPENCLAW_GATEWAY_TOKEN` / `SLACK_BOT_TOKEN` 等）也请保留虚拟值，不要删除或留空 —— 或者把相应块从 `config.json` 中整块删除。
-
-`config.json` 的 `llm` 模式如下：
-
-```json
-{
-  "llm": {
-    "provider": "openclaw",
-    "model": "openclaw",
-    "temperature": 0.5,
-    "maxTokens": 300,
-    "historyMaxTurns": 12,
-    "systemPrompt": "",
-    "openaiCompatible": {
-      "baseUrl": "",
-      "apiKey": ""
-    }
-  }
-}
+```mermaid
+%%{init: {'theme':'base', 'themeVariables': {
+  'primaryColor': '#EEEBFB', 'primaryTextColor': '#10131A', 'primaryBorderColor': '#7C3AED',
+  'secondaryColor': '#F1F3F7', 'secondaryTextColor': '#10131A', 'secondaryBorderColor': '#E2E5EC',
+  'mainBkg': '#F1F3F7', 'nodeBorder': '#E2E5EC', 'lineColor': '#7C3AED',
+  'textColor': '#10131A', 'edgeLabelBackground': '#FFFFFF',
+  'fontFamily': '-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, sans-serif'
+}}}%%
+flowchart LR
+    M["Google Meet / Zoom"] -->|会议音频| S["语音转文字"]
+    S --> W{"唤醒词?"}
+    W -->|yes| L["你的智能体<br/>(OpenClaw Gateway 或<br/>OpenAI 兼容 LLM)"]
+    L --> T["文字转语音"]
+    T -->|智能体的声音| M
+    L -.->|重型任务| B["后台委派"]
 ```
 
-`provider` / `temperature` / `maxTokens` / `openaiCompatible` 的解析顺序为：会话级 overrides → agent 设置 → 环境变量 → `configJson.llm` → 默认值。对应的环境变量为 `LLM_PROVIDER`、`AGENT_TEMPERATURE`、`AGENT_MAX_TOKENS`、`OPENAI_COMPATIBLE_BASE_URL`、`OPENAI_COMPATIBLE_API_KEY`。`model` 与 `historyMaxTurns` 不读取环境变量，按 overrides → agent 设置 → `configJson.llm` → 默认值解析。`openai-compatible` 的 `systemPrompt` 按 `overrides.prompt` → `configJson.llm.systemPrompt` → 内置人设的顺序解析，并附加语音专用规则。
+一个智能体 = 一个服务器实例。服务器把会议音频接入语音流水线(语音转文字 → 你的智能体的 LLM → 文字转语音),再把回复流式送回通话——快到感觉就像正常对话。
 
-请求发送到 `{baseUrl}/v1/chat/completions`；若 `baseUrl` 已以 `/v1` 结尾则不会重复。未知的提供方名称会警告并回退到 `openclaw`。
-
-### MCP 服务器（控制平面）
-
-一个轻量 stdio MCP 服务器，让 LLM 客户端（Claude Code、其他智能体）直接控制会议参与 — 语音管线本身不在 MCP 范围内。注册方式：
-
-```bash
-claude mcp add meetmate -- npx meetmate mcp
-```
-
-环境变量：`AI_MEET_BASE_URL` 指定要控制的 REST API（默认 `http://localhost:5005`）；`AI_MEET_JOIN_TOKEN` 可选，会作为 `x-join-token` 头和 `joinToken` 字段转发；`AI_MEET_JOIN_TIMEOUT_MS` 调整 `join_meeting` 的等待时间（默认 60000 ms — 加入在服务器侧最长可能需要约 50 秒；其他工具为 15 秒）。
-
-| 工具 | 行为 |
-|---|---|
-| `join_meeting(meetingUrl, briefing?, conversationMode?)` | 加入 Meet / Zoom 会议（代理 `POST /join-meeting`；WebSocket URL 自动推导） |
-| `leave_meeting(sessionId?)` | 离开活动会话（或指定会话） |
-| `get_active_session()` | 以 JSON 列出活动会话 |
-| `health()` | 服务健康检查 |
+完整的工程细节——架构、模块地图、服务商、音频规格——都在 [docs/TECHNICAL.md](docs/TECHNICAL.md)。
 
 ## 配置
 
-这里只汇总常用调整入口。完整参考见 [docs/operations.md](docs/operations.md)。
+常见调整的入口。完整参考见 [docs/operations.md](docs/operations.md)。
 
-| 我想… | 查看 |
+| 我想…… | 看这里 |
 |---|---|
-| 让回应更快返回 | [Soniox 调优](docs/operations.md#stt-プロバイダ切替soniox-チューニング) |
-| 更改声音、语速或 TTS 行为 | [声音配置](docs/operations.md#音声プロファイルtts) |
-| 出问题时回滚到旧设置 | [紧急回滚 env](docs/operations.md#緊急-rollback-用-env) |
-| 使用后台委派处理繁重任务 | [委派框架](docs/operations.md#委譲強制ハーネス79) |
-| 用真实录音填充 TTS 缓存 | [录音预填充](docs/operations.md#実収録テイクのシード72--75) |
+| 接入我自己的智能体(OpenClaw Gateway) | [安装指南](docs/setup-guide.md) |
+| 使用通用的 OpenAI 兼容端点 | [TECHNICAL.md — LLM providers](docs/TECHNICAL.md#llm-providers) |
+| 让响应更快返回 | [Soniox 调优](docs/operations.md#stt-プロバイダ切替soniox-チューニング) |
+| 更换声音、语速或 TTS 行为 | [声音配置](docs/operations.md#音声プロファイルtts) |
+| 用后台委派处理重活 | [委派机制](docs/operations.md#委譲強制ハーネス79) |
+| 从 Claude Code 控制会议(MCP) | [TECHNICAL.md — MCP server](docs/TECHNICAL.md#mcp-server-control-plane) |
 
-## 故障排查
-
-**Q. 我说完后回应返回很慢**
-在 `.env` 中设置 `SONIOX_MAX_ENDPOINT_DELAY_MS=1000`（未设置时采用 Soniox 服务端默认值 `2000`；必要时 `800`）并重启服务器。若发言开始被中途截断，将 `SONIOX_ENDPOINT_SENSITIVITY` 向 `0.0〜-0.2` 调低。详见 [Soniox 调优](docs/operations.md#stt-プロバイダ切替soniox-チューニング)。
-
-**Q. 向会议聊天发帖失败**
-包含表情符号或罕见文字的消息会被 Attendee 服务器以 400 拒绝（"Message cannot contain emojis or rare script characters."）。在 launchd 常驻运行时，发送失败的警告输出到 `logs/meet-server.stderr.log`（直接 `npm start` 时输出到终端 stderr），请先查看。
-
-**Q. TTS 音色不稳定、失控**
-S2-Pro 在无标签发言时容易音色失控，因此设计上假定"锚点方案"：每次发言带一个情感标签（[声音配置](docs/operations.md#音声プロファイルtts)）。若仍不稳定，`FISH_AUDIO_MODEL=s1` 可立即回滚到旧模型。
-
-**Q. STT 识别突然变差**
-在 `.env` 中设置 `STT_PROVIDER=deepgram` 并重启即可立即切换到 Deepgram。人名、术语的误识别可在 `SONIOX_CONTEXT_TERMS` 中以逗号分隔登记来改善。
-
-**Q. 固定台词（应答等）的声音和平时不一样**
-TTS 缓存未命中，回退到了实时合成。缓存键依赖 `voiceId` / `FISH_AUDIO_SPEED` / `FISH_AUDIO_MODEL` / `TTS_SAMPLE_RATE`，修改这些后请重新运行 `node scripts/seed-tts-cache-from-fillers.js`（[预填充步骤](docs/operations.md#実収録テイクのシード72--75)）。
-
-**Q. 如何确认委派框架在工作？**
-以 JSONL 记录在 `logs/metrics.jsonl`。可用 `node scripts/aggregate-metrics.js logs/metrics.jsonl` 汇总。
-
-若仍未解决，请附上日志（`logs/` 下）和复现步骤到 [Issues](https://github.com/caty-ai/meetmate/issues) 报告。
+遇到问题了?查看[故障排查](docs/TECHNICAL.md#troubleshooting)。
 
 ## 文档
 
 | 文档 | 内容 |
 |---|---|
-| [docs/setup-guide.md](docs/setup-guide.md) | 详细安装指南 |
-| [docs/architecture.md](docs/architecture.md) | 架构解析 |
-| [docs/operations.md](docs/operations.md) | 运维与调优完整参考 |
-| [docs/deploy-checklist.md](docs/deploy-checklist.md) | 部署检查清单 |
-| [docs/deep-interview-79-delegation-harness.md](docs/deep-interview-79-delegation-harness.md) | 委派框架设计规格 |
+| [docs/setup-guide.md](docs/setup-guide.md) | 从零到第一场会议,步步引导 |
+| [docs/TECHNICAL.md](docs/TECHNICAL.md) | 功能详解、架构、服务商、MCP、开发 |
+| [docs/architecture.md](docs/architecture.md) | 架构深入解析 |
+| [docs/operations.md](docs/operations.md) | 完整的运维与调优参考 |
+| [docs/deploy-checklist.md](docs/deploy-checklist.md) | 部署清单 |
 
-> ℹ️ `docs/` 下部分文档目前为日文；参考表格与命令片段与语言无关。
-
-## 开发
-
-### 开发服务器
-
-```bash
-npm run dev   # 通过 node --watch 自动重载启动
-```
-
-### 测试
-
-使用 Node.js 内置 test runner（`node:test`）。无外部依赖，数秒内跑完全部测试。
-
-```bash
-node --test                       # 全部测试（35 个测试文件）
-npm run test:meet:repro           # 仅 Meet 多参与者复现测试
-```
-
-### 冒烟与运维脚本
-
-| 脚本 | 用途 |
-|---|---|
-| [`scripts/soniox-smoke.js`](scripts/soniox-smoke.js) | Soniox STT 连通性检查 |
-| [`scripts/seed-tts-cache-from-fillers.js`](scripts/seed-tts-cache-from-fillers.js) | 从真实录音预生成 TTS 缓存 |
-| [`scripts/aggregate-metrics.js`](scripts/aggregate-metrics.js) | 委派框架指标汇总 |
-| [`scripts/install-launchagent.sh`](scripts/install-launchagent.sh) | macOS launchd 常驻化（带 watchdog） |
-
-### 日志
-
-运行日志输出在 `logs/` 下。应用侧 warn/error 见 `logs/meet-server.stderr.log`（launchd 常驻时；直接 `npm start` 时输出到终端），委派框架指标见 `logs/metrics.jsonl`。
+> ℹ️ `docs/` 下的部分文档目前为日语；其中的参考表格与命令片段不受语言影响，可直接使用。
 
 ## 项目状态
 
-- **发布版本**：请参阅 [GitHub Releases](https://github.com/caty-ai/meetmate/releases)。
-- **进行中**：npm 分发与公开发布（[#136](https://github.com/caty-ai/meetmate/issues/136) / [#107](https://github.com/caty-ai/meetmate/issues/107)）
+- **发布**:已发布版本见 [GitHub Releases](https://github.com/caty-ai/meetmate/releases)。
+- **进行中**:npm 分发与公开发布轨道([#136](https://github.com/caty-ai/meetmate/issues/136) / [#107](https://github.com/caty-ai/meetmate/issues/107))
 
 ## 参与贡献
 
-欢迎贡献。Issue 优先的开发流程、分支规范与 PR 写法见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+欢迎提 Issue 和 PR——见 [CONTRIBUTING.md](CONTRIBUTING.md)。我们采用 issue 优先的流程和 Conventional Commits。
 
 ## 致谢
 
-本项目建立在以下服务与项目之上：
-
-- [Attendee](https://attendee.dev/) — Google Meet / Zoom 的 bot 接入 API
-- [Soniox](https://soniox.com/) — 实时语音识别（`stt-rt-v5`）
-- [Fish Audio](https://fish.audio/) — 富有表现力的语音合成（S2-Pro）
-- OpenClaw Gateway — 智能体基础设施（SOUL / memory / skills / tools）
+Meetmate 站在优秀的服务和开源软件之上:[Attendee](https://attendee.dev/)(会议机器人基础设施)、[Soniox](https://soniox.com/)(实时语音转文字)、[Fish Audio](https://fish.audio/)(富有表现力的语音合成),以及 OpenAI 兼容 LLM 生态。
 
 ## 许可证
 
-[Apache License 2.0](LICENSE) — 另见 [NOTICE](NOTICE)
+[Apache-2.0](LICENSE)

@@ -6,292 +6,122 @@
 
 [![License: Apache--2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
-[![Platform](https://img.shields.io/badge/platform-Google%20Meet%20%7C%20Zoom-4285F4)](#特徴)
+[![Meetings](https://img.shields.io/badge/works%20in-Google%20Meet%20%7C%20Zoom-7C3AED)](#何ができるのか)
+[![Server](https://img.shields.io/badge/runs%20on-Windows%20%7C%20macOS%20%7C%20Linux-444)](#30秒で試す)
 
-AI エージェントを Google Meet / Zoom にリアルタイム参加させ、音声で対話するブリッジサーバー。OpenClaw Gateway 連携により、任意のエージェントを音声会議に接続できます。
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/hero-dark.svg">
+  <img src="docs/images/hero-light.svg" alt="Meetmate — 会議のグリッドに、あなたのAIエージェントが本物の参加者として座っている" width="100%">
+</picture>
 
-```
-STT (Soniox) → ウェイクワード検出 → LLM (OpenClaw Gateway 既定) → TTS (Fish Audio S2-Pro) → Meet / Zoom
-```
+**あなたのAIエージェントを、Google Meet にも Zoom にも。声で話せる、本物の参加者として。**
 
-## 目次
+Meetmate がやることはひとつだけ。**あなたの**エージェントに、会議の席を用意することです。顔と声を持った参加者として入室し、名前を呼べば答え、頼めばやってくれる。あえてそれ以上のことはせず、そのひとつを徹底的に磨きました。
 
-- [特徴](#特徴)
-- [スクリーンショット](#スクリーンショット)
-- [アーキテクチャ](#アーキテクチャ)
-- [クイックスタート](#クイックスタート)
-- [設定](#設定)
-- [トラブルシューティング](#トラブルシューティング)
-- [ドキュメント](#ドキュメント)
-- [開発](#開発)
-- [開発ステータス](#開発ステータス)
-- [コントリビュート](#コントリビュート)
-- [謝辞](#謝辞)
-- [ライセンス](#ライセンス)
+## 何ができるのか
 
-## 特徴
+- **議事録ボットではなく、参加者です。** 参加者グリッドに自分のアバターで並び、部屋の会話を聞き、声で話します。ウェイクワード検出とバージイン対応（話しかぶせると、ちゃんと黙ります）。
+- **「あなたの」エージェントが来ます。** ふだん使っているエージェントを、記憶も性格もスキルもそのままに接続（OpenClaw Gateway 経由、または任意の OpenAI 互換エンドポイント）。チームが知っている「いつものあの子」が、そのまま会議室に入ってくる。だから Meetmate は一台ごとに個性が違います。
+- **その場で頼めます。** 「今の議論まとめてチャンネルに投稿しといて」——重い作業は自動でバックグラウンドのセッションに委譲されるので、エージェントは会話に残ったままタスクが進みます。
+- **「普通にできる」が製品です。** プッシュトゥトーク不要、特別なコマンド不要、気まずい沈黙もなし。同僚に話しかけるのと同じように話す——それが当たり前に感じられることこそ、磨いた部分です。
+- **会議はどこでも、サーバーもどこでも。** 会議側は Google Meet と Zoom、サーバー側は Windows / macOS / Linux。設定ファイル1つ、アバター画像1枚、コマンド1発。
 
-- **Google Meet / Zoom 対応** — Attendee Bot API 経由で会議に参加
-- **OpenClaw Gateway 連携** — SOUL / memory / skills / tools を完全サポート
-- **ウェイクワード検出 + バージイン**（発話への割り込み）対応
-- **低遅延 STT** — Soniox `stt-rt-v5`（既定）。`STT_PROVIDER=deepgram` で Deepgram にも切替可
-- **感情表現つき TTS** — Fish Audio S2-Pro（emotion tag anchor 方式で声質を安定化）
-- **固定文言 TTS キャッシュ** — ack / ping / greeting / farewell 等を PCM ディスクキャッシュから即時再生。実収録テイクの事前シードにも対応
-- **委譲強制ハーネス** — 重い処理はバックグラウンドの delegate セッションへ強制委譲し、フロントは対話に専念（[#79](https://github.com/caty-ai/meetmate/issues/79)）
-- **会議チャット投稿** — LLM 応答内の `[[[chat: ...]]]` タグを読み上げずに Meet チャットへ投稿
-- **絵文字ガード** — LLM プロンプト禁止 + TTS 直前の機械 strip の 2 層構成
-- **LCM（Lossless Context Management）自動記録** / **Slack 連動**（ステータス通知・サマリー・全文ログ）
+> 📸 実際の会議に参加しているスクリーンショットとデモ GIF は準備中です。
 
-## スクリーンショット
+## 30秒で試す
 
-<!-- TODO: 画像を docs/images/ に配置したらコメントを外す
-![操作 UI](docs/images/ui-join.png)
-![会議参加中](docs/images/in-meeting.png)
--->
-
-ブラウザで http://localhost:5005 を開くと操作 UI が表示され、Meet / Zoom の URL を貼り付けるだけでエージェントが会議に参加します。参加中はアバター（`assets/avatar.png`）が会議の参加者タイルとして表示され、ウェイクワードで呼びかけると音声で応答します。
-
-> 📸 スクリーンショット・デモ GIF は準備中です。
-
-## アーキテクチャ
-
-**1 エージェント = 1 サーバーインスタンス。** `config.json` + `.env` + アバター画像だけで任意のエージェントが動作します。
-
-入力側 STT は 16kHz、出力側 TTS / `bot_output` は 24kHz。Attendee の入力 leg と出力 leg は独立しています。
-
-### 主要モジュール
-
-| モジュール | 役割 |
-|---|---|
-| [`src/pipeline.js`](src/pipeline.js) | 音声パイプライン制御 |
-| [`src/agent-profile.js`](src/agent-profile.js) | エージェント設定解決 |
-| [`src/paths.js`](src/paths.js) | ホームディレクトリ契約（`AI_MEET_HOME`）— [データディレクトリ](#データディレクトリai_meet_home)参照 |
-| [`src/llm-provider.js`](src/llm-provider.js) | LLM プロバイダ切替（OpenClaw 既定 / OpenAI 互換） |
-| [`src/stt-provider.js`](src/stt-provider.js) | STT プロバイダ切替（soniox 既定 / deepgram） |
-| [`src/stt-soniox.js`](src/stt-soniox.js) | Soniox STT（stt-rt-v5, WebSocket） |
-| [`src/stt.js`](src/stt.js) | Deepgram STT（フォールバック） |
-| [`src/tts-fish.js`](src/tts-fish.js) | Fish Audio TTS |
-| [`src/speech-policy.js`](src/speech-policy.js) | NO_REPLY 抑制・テキスト浄化 |
-| [`src/exit-handler.js`](src/exit-handler.js) | 退出検出・クリーンアップ |
-
-詳細は [docs/architecture.md](docs/architecture.md) を参照してください。
-
-## クイックスタート
-
-### 前提条件
-
-- Node.js 22 以上（`package.json` の `engines` 準拠）
-- LLM プロバイダは `openclaw`（既定）または `openai-compatible`
-  - `openclaw` は OpenClaw Gateway が必要。SOUL / memory / skills / tools を含む完全なエージェント体験を提供
-  - `openai-compatible` は OpenAI 互換 API に接続し、OpenClaw Gateway は不要
-- 各サービスの API キー（Soniox / Fish Audio / Attendee）
-  - [Attendee](https://attendee.dev/) は Google Meet / Zoom に Bot を参加させる SaaS（self-host 版もあり）。Bot の入退室・音声入出力はすべて Attendee API 経由
-  - Fish Audio の Voice ID は [fish.audio](https://fish.audio/) で使いたい声（自作 or 公開ボイス）のページを開き、URL 末尾の ID をコピー
-
-### 方法 A: npm パッケージ（推奨）
-
-> ℹ️ npm 初回リリース公開までは下の[方法 B](#方法-b-ソースから) を使ってください。
+> ℹ️ npm 初回リリース公開までは、下の[ソースから起動](#ソースから起動)を使ってください。
 
 ```bash
 mkdir my-agent && cd my-agent
 npm install meetmate
-npx meetmate init    # 3つの API キーを対話式で聞き、config.json と .env を生成
-npx meetmate start   # サーバーを起動し、設定 UI の URL を表示
+npx meetmate init     # 3つの API キーを聞かれ、config.json と .env が作られ、次の手順が表示されます
+npx meetmate start    # サーバーが起動し、設定 UI の URL が表示されます
 ```
 
-`init` は同梱の `config.json.example` / `.env.example` を**カレントディレクトリ**へコピーし、入力した認証情報（`SONIOX_API_KEY`, `FISH_AUDIO_API_KEY`, `ATTENDEE_API_KEY`）を埋め込みます。既存ファイルがある場合は `--force` を付けない限り上書きを拒否します。生成後、`config.json` でエージェント名・ウェイクワード・固定文言を設定してください。
+http://localhost:5005 を開いて Meet / Zoom の URL を貼れば、あなたのエージェントが会議に参加します。ウェイクワードで呼んで、話し始めてください。
 
-### 方法 B: ソースから
+前提条件（Node.js ≥ 22、[Attendee](https://attendee.dev/)・[Soniox](https://soniox.com/)・[Fish Audio](https://fish.audio/) の API キー）は[セットアップガイド](docs/setup-guide.md)が一歩ずつ案内します。
+
+### ソースから起動
 
 ```bash
 git clone git@github.com:caty-ai/meetmate.git
 cd meetmate
 npm install
-cp .env.example .env        # キーを記入
-cp config.json.example config.json
+cp .env.example .env && cp config.json.example config.json   # キーを記入
 npm start
 ```
 
-ブラウザで http://localhost:5005 を開き、Meet / Zoom の URL を貼り付けて「参加させる」をクリックします。
+## なぜ作ったのか
 
-> 💡 ウェイクワードの反応が悪い場合は、ブラウザから実際の発話で誤認識バリアントを収集する **wake-calibrate** 機能があります（`/calibrate`・`WAKE_CALIBRATE_ENABLED=1` で有効化）。手順は [docs/setup-guide.md](docs/setup-guide.md) を参照。
+会議は、人間が実際に協働する場所です。決定も、ニュアンスも、声のトーンも、「あ、あとひとつだけ」の瞬間も、全部そこにある。あなたのエージェントがチャット欄の中にしかいないなら、それらを全部見逃していることになります。
 
-### データディレクトリ（`AI_MEET_HOME`）
+私たちは、エージェントは人間と同じ場所に座るべきだと考えています。通話の隅にいる文字起こしボットとしてではなく、グリッドの中の同僚として——そこにいて、呼びかけられて、役に立つ存在として。そして来るのが「あなたの」エージェントである以上、記憶も性格もその子のものです。「AIが会議に入った」と「**あの子**が会議に入った」の違いは、そこから生まれます。
 
-サーバーが**書き込む**もの＋ユーザー設定は、1つの *home* ディレクトリに集約されます。既定は**カレントディレクトリ**、環境変数 `AI_MEET_HOME` で変更できます:
+Meetmate は意図的に小さな道具です。会議の進行を仕切ったりはしないし、商談を採点したりも、カレンダーの代わりになろうともしません。あなたのエージェントを部屋に連れて行く。その先は、あなたとその子の話です。
 
-| パス（home 配下） | 内容 |
-|---|---|
-| `config.json` / `.env` | エージェント設定と認証情報 |
-| `logs/` | 実行ログ・委譲 metrics（`metrics.jsonl`） |
-| `assets/avatar.png` | アバター上書き（未配置なら同梱の既定画像にフォールバック） |
-| `assets/tts-cache/` | 固定文言 TTS キャッシュ |
+## 仕組み
 
-読み取り専用の同梱アセット（Web UI・既定アバター・filler 音声）は常にインストール済みパッケージ側から読まれます。`TTS_CACHE_DIR` / `METRICS_LOG_DIR` は明示上書きとして引き続き有効です。ソース checkout からの `npm start` はリポジトリ直下が home になるため、従来の挙動と変わりません。
-
-### 環境変数（`.env`）
-
-| 変数 | 用途 |
-|---|---|
-| `LLM_PROVIDER` | LLM プロバイダ（`openclaw`（既定）/ `openai-compatible`） |
-| `OPENCLAW_GATEWAY_URL` | OpenClaw Gateway URL（`openclaw` で必須。例: `http://localhost:18789`） |
-| `OPENCLAW_GATEWAY_TOKEN` | Gateway 認証トークン（`openclaw` で必須） |
-| `OPENAI_COMPATIBLE_BASE_URL` | OpenAI 互換 API のベース URL（`openai-compatible` で必須） |
-| `OPENAI_COMPATIBLE_API_KEY` | OpenAI 互換 API キー（`openai-compatible` で必須） |
-| `SONIOX_API_KEY` | STT 用（既定プロバイダ Soniox） |
-| `FISH_AUDIO_API_KEY` | TTS 用 |
-| `FISH_AUDIO_VOICE_ID` | TTS 音声 ID（声のクローン） |
-| `ATTENDEE_API_KEY` | Meet / Zoom Bot API |
-
-任意の変数（`PORT`、`AGENT_LANG`、Slack 連携など）とチューニング系 env の全リファレンスは [docs/operations.md](docs/operations.md) を参照。
-
-### エージェント設定（`config.json`）
-
-エージェント ID / 表示名 / ウェイクワード / 固定文言（greeting・ackVariants・progressPings など）/ TTS・STT・Slack・Attendee の設定をここに集約しています。`config.json.example` は emotion tag anchor 方式（S2-Pro 用）に揃えてあるので、コピーして変数を埋めれば動きます。
-
-### LLM プロバイダ
-
-| `llm.provider` / `LLM_PROVIDER` | 動作 |
-|---|---|
-| `openclaw` | 既定。OpenClaw Gateway 経由で SOUL / memory / skills / tools を利用 |
-| `openai-compatible` | OpenAI 互換 API を直接利用。OpenClaw Gateway は不要 |
-
-`openai-compatible` は、プレーンな LLM と組み込みのペルソナテンプレートで音声応答する縮退モードです。Gateway 未設定時の OSS としての最低保証であり、OpenClaw 固有の memory / skills / tools は利用できません。Claude モデルは OpenAI 互換プロキシ（例: LiteLLM）経由で利用します。Anthropic ネイティブアダプタはありません（[#114](https://github.com/caty-ai/meetmate/issues/114)）。
-
-`config.json` 側で `openai-compatible` を選ぶ場合は `.env` の `LLM_PROVIDER` も合わせる（環境変数が `config.json` より優先）。`config.json` の `${...}` プレースホルダは**未解決（未設定・空欄）だと起動時にエラー終了する**ため、使わない機能の env（`OPENCLAW_GATEWAY_URL` / `OPENCLAW_GATEWAY_TOKEN` / `SLACK_BOT_TOKEN` 等）も削除・空欄にせずダミー値のまま残す。残したくない場合は `config.json` から該当ブロックごと削除する。
-
-`config.json` の `llm` スキーマは次のとおりです。
-
-```json
-{
-  "llm": {
-    "provider": "openclaw",
-    "model": "openclaw",
-    "temperature": 0.5,
-    "maxTokens": 300,
-    "historyMaxTurns": 12,
-    "systemPrompt": "",
-    "openaiCompatible": {
-      "baseUrl": "",
-      "apiKey": ""
-    }
-  }
-}
+```mermaid
+%%{init: {'theme':'base', 'themeVariables': {
+  'primaryColor': '#EEEBFB', 'primaryTextColor': '#10131A', 'primaryBorderColor': '#7C3AED',
+  'secondaryColor': '#F1F3F7', 'secondaryTextColor': '#10131A', 'secondaryBorderColor': '#E2E5EC',
+  'mainBkg': '#F1F3F7', 'nodeBorder': '#E2E5EC', 'lineColor': '#7C3AED',
+  'textColor': '#10131A', 'edgeLabelBackground': '#FFFFFF',
+  'fontFamily': '-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, sans-serif'
+}}}%%
+flowchart LR
+    M["Google Meet / Zoom"] -->|会議の音声| S["音声認識 (STT)"]
+    S --> W{"ウェイクワード?"}
+    W -->|yes| L["あなたのエージェント<br/>(OpenClaw Gateway または<br/>OpenAI 互換 LLM)"]
+    L --> T["音声合成 (TTS)"]
+    T -->|エージェントの声| M
+    L -.->|重いタスク| B["バックグラウンド委譲"]
 ```
 
-`provider` / `temperature` / `maxTokens` / `openaiCompatible` の解決順は、セッションごとの overrides → agent 設定 → 環境変数 → `configJson.llm` → 既定値です。対応する環境変数は `LLM_PROVIDER`、`AGENT_TEMPERATURE`、`AGENT_MAX_TOKENS`、`OPENAI_COMPATIBLE_BASE_URL`、`OPENAI_COMPATIBLE_API_KEY` です。`model` と `historyMaxTurns` は環境変数を参照せず、overrides → agent 設定 → `configJson.llm` → 既定値の順です。`openai-compatible` の `systemPrompt` は `overrides.prompt` → `configJson.llm.systemPrompt` → 組み込みペルソナの順で解決し、音声用ルールを付加して使います。
+1エージェント = 1サーバーインスタンス。サーバーが会議の音声を音声パイプライン（音声認識 → あなたのエージェントの LLM → 音声合成）へ橋渡しし、返答を通話へストリームで返します——会話として成立する速さで。
 
-OpenAI 互換 API には `{baseUrl}/v1/chat/completions` を送信します。`baseUrl` のパスがすでに `/v1` で終わる場合は `/v1` を重ねません。未対応のプロバイダ名は警告後に `openclaw` へフォールバックします。
-
-### MCP サーバー（コントロールプレーン）
-
-薄い stdio MCP サーバーにより、LLM クライアント（Claude Code や他のエージェント）から会議参加を直接操作できます — 音声パイプライン本体は MCP のスコープ外のままです。登録:
-
-```bash
-claude mcp add meetmate -- npx meetmate mcp
-```
-
-環境変数: `AI_MEET_BASE_URL` が操作対象の REST API を指定（既定 `http://localhost:5005`）。`AI_MEET_JOIN_TOKEN` は任意で、`x-join-token` ヘッダと `joinToken` フィールドとして転送されます。`AI_MEET_JOIN_TIMEOUT_MS` は `join_meeting` の待ち時間（既定 60000 ms — join はサーバー側で最大 ~50 秒かかり得ます。他ツールは 15 秒）。
-
-| ツール | 動作 |
-|---|---|
-| `join_meeting(meetingUrl, briefing?, conversationMode?)` | Meet / Zoom 会議に参加（`POST /join-meeting` を代理・WebSocket URL は自動導出） |
-| `leave_meeting(sessionId?)` | アクティブセッション（または指定セッション）から退出 |
-| `get_active_session()` | アクティブセッション一覧を JSON で取得 |
-| `health()` | サービスヘルスチェック |
+アーキテクチャ・モジュール構成・プロバイダ・音声仕様などの技術詳細は [docs/TECHNICAL.md](docs/TECHNICAL.md) にまとまっています。
 
 ## 設定
 
-よく使う調整ポイントの入口だけまとめます。全項目は [docs/operations.md](docs/operations.md) にあります。
+よくある調整の入口です。完全なリファレンスは [docs/operations.md](docs/operations.md) へ。
 
 | やりたいこと | 見る場所 |
 |---|---|
-| 応答の戻りを速くしたい | [Soniox チューニング](docs/operations.md#stt-プロバイダ切替soniox-チューニング) |
-| 声・話速・TTS 挙動を変えたい | [音声プロファイル](docs/operations.md#音声プロファイルtts) |
-| 挙動がおかしいとき旧設定へ戻したい | [緊急 rollback 用 env](docs/operations.md#緊急-rollback-用-env) |
-| 重作業のバックグラウンド委譲を使いたい | [委譲強制ハーネス](docs/operations.md#委譲強制ハーネス79) |
-| 実収録音声を TTS キャッシュに流し込みたい | [実収録テイクのシード](docs/operations.md#実収録テイクのシード72--75) |
+| 自分のエージェントをつなぐ（OpenClaw Gateway） | [セットアップガイド](docs/setup-guide.md) |
+| 汎用の OpenAI 互換エンドポイントを使う | [TECHNICAL.md — LLM providers](docs/TECHNICAL.md#llm-providers) |
+| 返答をもっと速くする | [Soniox チューニング](docs/operations.md#stt-プロバイダ切替soniox-チューニング) |
+| 声・話速・TTS の挙動を変える | [音声プロファイル](docs/operations.md#音声プロファイルtts) |
+| 重い作業をバックグラウンド委譲する | [委譲ハーネス](docs/operations.md#委譲強制ハーネス79) |
+| Claude Code から会議を操作する（MCP） | [TECHNICAL.md — MCP server](docs/TECHNICAL.md#mcp-server-control-plane) |
 
-## トラブルシューティング
-
-**Q. こちらが話し終えてから応答が返るまで遅い**
-`.env` で `SONIOX_MAX_ENDPOINT_DELAY_MS=1000` を設定（未設定時は Soniox サーバー側既定の `2000`。必要なら `800`）してサーバーを再起動。途中で発話が区切られるようになったら `SONIOX_ENDPOINT_SENSITIVITY` を `0.0〜-0.2` に下げて調整します。詳細は [Soniox チューニング](docs/operations.md#stt-プロバイダ切替soniox-チューニング)。
-
-**Q. Meet チャットへの投稿が失敗する**
-絵文字・特殊文字が含まれると Attendee サーバー側で 400 拒否されます（"Message cannot contain emojis or rare script characters."）。送信失敗の warn は launchd 常駐時は `logs/meet-server.stderr.log` に出ます（素の `npm start` ではターミナルの stderr に出力）。まずそこを確認してください。
-
-**Q. TTS の声質が不安定・暴走する**
-S2-Pro はタグなし発話で声質が暴走しやすいため、全発話に感情タグを 1 個入れる「アンカー方式」を前提にしています（[音声プロファイル](docs/operations.md#音声プロファイルtts)）。それでも不安定なら `FISH_AUDIO_MODEL=s1` で旧モデルへ即時ロールバックできます。
-
-**Q. STT の認識が急に悪くなった**
-`.env` で `STT_PROVIDER=deepgram` にして再起動すると Deepgram へ即時切替できます。人名・専門用語の誤認識は `SONIOX_CONTEXT_TERMS` にカンマ区切りで登録すると改善します。
-
-**Q. 固定文言（相槌など）の声がいつもと違う**
-TTS キャッシュがヒットせず live synthesis に戻っています。cache key は `voiceId` / `FISH_AUDIO_SPEED` / `FISH_AUDIO_MODEL` / `TTS_SAMPLE_RATE` に依存するので、これらを変更したら `node scripts/seed-tts-cache-from-fillers.js` を再実行してください（[シード手順](docs/operations.md#実収録テイクのシード72--75)）。
-
-**Q. 委譲ハーネスが動いているか確認したい**
-`logs/metrics.jsonl` に JSONL で記録されます。`node scripts/aggregate-metrics.js logs/metrics.jsonl` で集計できます。
-
-解決しない場合は [Issues](https://github.com/caty-ai/meetmate/issues) へ、ログ（`logs/` 配下）と再現手順を添えて報告してください。
+うまく動かないときは[トラブルシューティング](docs/TECHNICAL.md#troubleshooting)へ。
 
 ## ドキュメント
 
 | ドキュメント | 内容 |
 |---|---|
-| [docs/setup-guide.md](docs/setup-guide.md) | セットアップ詳細ガイド |
-| [docs/architecture.md](docs/architecture.md) | アーキテクチャ解説 |
-| [docs/operations.md](docs/operations.md) | 運用・チューニング全リファレンス |
+| [docs/setup-guide.md](docs/setup-guide.md) | ゼロから初会議までのセットアップ手順 |
+| [docs/TECHNICAL.md](docs/TECHNICAL.md) | 機能詳細・アーキテクチャ・プロバイダ・MCP・開発 |
+| [docs/architecture.md](docs/architecture.md) | アーキテクチャ詳説 |
+| [docs/operations.md](docs/operations.md) | 運用・チューニング完全リファレンス |
 | [docs/deploy-checklist.md](docs/deploy-checklist.md) | デプロイチェックリスト |
-| [docs/deep-interview-79-delegation-harness.md](docs/deep-interview-79-delegation-harness.md) | 委譲強制ハーネスの設計スペック |
-
-## 開発
-
-### 開発サーバー
-
-```bash
-npm run dev   # node --watch で自動リロード起動
-```
-
-### テスト
-
-Node.js 標準の test runner（`node:test`）を使用しています。外部依存なしで数秒で完走します。
-
-```bash
-node --test                       # 全テスト（35 テストファイル）
-npm run test:meet:repro           # Meet 複数参加者の再現テストのみ
-```
-
-### スモーク・運用スクリプト
-
-| スクリプト | 用途 |
-|---|---|
-| [`scripts/soniox-smoke.js`](scripts/soniox-smoke.js) | Soniox STT の疎通確認 |
-| [`scripts/seed-tts-cache-from-fillers.js`](scripts/seed-tts-cache-from-fillers.js) | 実収録テイクから TTS キャッシュを事前生成 |
-| [`scripts/aggregate-metrics.js`](scripts/aggregate-metrics.js) | 委譲ハーネス metrics の集計 |
-| [`scripts/install-launchagent.sh`](scripts/install-launchagent.sh) | macOS launchd 常駐化（watchdog 付き） |
-
-### ログ
-
-実行ログは `logs/` 配下に出力されます。アプリ側の warn/error は `logs/meet-server.stderr.log`（launchd 常駐時。素の `npm start` ではターミナルに出力）、委譲ハーネスの metrics は `logs/metrics.jsonl` を参照してください。
 
 ## 開発ステータス
 
-- **リリース**: 公開済みバージョンは [GitHub Releases](https://github.com/caty-ai/meetmate/releases) を参照してください。
-- **進行中**: npm 配布・公開トラック（[#136](https://github.com/caty-ai/meetmate/issues/136) / [#107](https://github.com/caty-ai/meetmate/issues/107)）
+- **リリース**: 公開バージョンは [GitHub Releases](https://github.com/caty-ai/meetmate/releases) を参照してください。
+- **進行中**: npm 配布・公開リリーストラック（[#136](https://github.com/caty-ai/meetmate/issues/136) / [#107](https://github.com/caty-ai/meetmate/issues/107)）
 
 ## コントリビュート
 
-コントリビュートを歓迎します。Issue 起点の開発フロー・ブランチ運用・PR の書き方は [CONTRIBUTING.md](CONTRIBUTING.md) を参照してください。
+Issue・PR 歓迎です — [CONTRIBUTING.md](CONTRIBUTING.md) をご覧ください。Issue ファーストのフローと Conventional Commits を使っています。
 
 ## 謝辞
 
-本プロジェクトは以下のサービス・プロジェクトの上に成り立っています。
-
-- [Attendee](https://attendee.dev/) — Google Meet / Zoom への Bot 参加 API
-- [Soniox](https://soniox.com/) — リアルタイム音声認識（`stt-rt-v5`）
-- [Fish Audio](https://fish.audio/) — 感情表現つき音声合成（S2-Pro）
-- OpenClaw Gateway — エージェント基盤（SOUL / memory / skills / tools）
+Meetmate は優れたサービスと OSS の上に成り立っています: [Attendee](https://attendee.dev/)（会議ボット基盤）・[Soniox](https://soniox.com/)（リアルタイム音声認識）・[Fish Audio](https://fish.audio/)（表現力のある音声合成）、そして OpenAI 互換 LLM エコシステム。
 
 ## ライセンス
 
-[Apache License 2.0](LICENSE) — 詳細は [NOTICE](NOTICE) も参照
+[Apache-2.0](LICENSE)
