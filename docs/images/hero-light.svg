@@ -1,0 +1,135 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1280 400" width="1280" height="400" role="img" aria-label="Meetmate — bring your own AI agent into Google Meet and Zoom as a real voice participant">
+<!-- Meetmate hero banner — light variant -->
+<title>Meetmate — your AI agent, in the meeting</title>
+<defs>
+  <linearGradient id="bgGrad" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#FFFFFF"/>
+    <stop offset="1" stop-color="#F6F7FB"/>
+  </linearGradient>
+  <linearGradient id="accentGrad" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#14B8A6"/>
+    <stop offset="1" stop-color="#7C3AED"/>
+  </linearGradient>
+  <radialGradient id="heroGlow" cx="32%" cy="38%" r="65%">
+    <stop offset="0" stop-color="#7C3AED" stop-opacity="0.10"/>
+    <stop offset="1" stop-color="#7C3AED" stop-opacity="0"/>
+  </radialGradient>
+  <radialGradient id="agentTint" cx="50%" cy="32%" r="80%">
+    <stop offset="0" stop-color="#7C3AED" stop-opacity="0.14"/>
+    <stop offset="1" stop-color="#7C3AED" stop-opacity="0"/>
+  </radialGradient>
+  <pattern id="dotGrid" width="26" height="26" patternUnits="userSpaceOnUse">
+    <circle cx="2" cy="2" r="1.2" fill="#10131A" opacity="0.045"/>
+  </pattern>
+  <filter id="glowBlur" x="-60%" y="-60%" width="220%" height="220%">
+    <feGaussianBlur stdDeviation="9"/>
+  </filter>
+  <symbol id="avatarSil" viewBox="0 0 100 100">
+    <circle cx="50" cy="36" r="19" fill="currentColor"/>
+    <path d="M12 100 C12 64 30 48 50 48 C70 48 88 64 88 100 Z" fill="currentColor"/>
+  </symbol>
+  <clipPath id="clip0"><rect x="660" y="60" width="176" height="132" rx="14"/></clipPath>
+  <clipPath id="clip1"><rect x="852" y="60" width="176" height="132" rx="14"/></clipPath>
+  <clipPath id="clip2"><rect x="1044" y="60" width="176" height="132" rx="14"/></clipPath>
+  <clipPath id="clip3"><rect x="660" y="208" width="176" height="132" rx="14"/></clipPath>
+  <clipPath id="clip4"><rect x="852" y="208" width="176" height="132" rx="14"/></clipPath>
+  <clipPath id="clip5"><rect x="1044" y="208" width="176" height="132" rx="14"/></clipPath>
+  <style><![CDATA[
+    .glow-pulse{ animation: mmGlow 3s ease-in-out infinite alternate; }
+    @keyframes mmGlow{ from{opacity:.45} to{opacity:.8} }
+    .wave-bar{ transform-box: fill-box; transform-origin: center; animation: mmWave 1.6s ease-in-out infinite alternate; }
+    @keyframes mmWave{ from{transform:scaleY(.62)} to{transform:scaleY(1)} }
+  ]]></style>
+</defs>
+
+<rect width="1280" height="400" fill="url(#bgGrad)"/>
+<rect width="1280" height="400" fill="url(#dotGrid)"/>
+<circle cx="360" cy="150" r="260" fill="url(#heroGlow)"/>
+
+<!-- Left: wordmark, tagline, platform chips -->
+<g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <text x="61" y="84" font-size="13" font-weight="700" letter-spacing="3.2" fill="#7C3AED">OPEN SOURCE · BRING YOUR OWN AGENT</text>
+  <text x="59" y="176" font-size="64" font-weight="800" letter-spacing="1.5" fill="#10131A">MEET<tspan fill="url(#accentGrad)">MATE</tspan></text>
+  <text x="61" y="222" font-size="20" font-weight="400" fill="#5B6472">Your AI agent, in the meeting.</text>
+
+  <!-- platform chips -->
+  <g font-size="13" font-weight="600">
+    <rect x="61" y="262" width="120" height="32" rx="16" fill="#F1F3F7" stroke="#E2E5EC"/>
+    <text x="77" y="283" fill="#4A5568">Google Meet</text>
+
+    <rect x="193" y="262" width="66" height="32" rx="16" fill="#F1F3F7" stroke="#E2E5EC"/>
+    <text x="209" y="283" fill="#4A5568">Zoom</text>
+
+    <rect x="271" y="262" width="216" height="32" rx="16" fill="#F1F3F7" stroke="#E2E5EC"/>
+    <text x="287" y="283" fill="#4A5568">Windows / macOS / Linux</text>
+  </g>
+</g>
+
+<!-- Right: meeting grid -->
+<g>
+  <!-- tile 0: silhouette -->
+  <g clip-path="url(#clip0)">
+    <rect x="660" y="60" width="176" height="132" fill="#F1F3F7"/>
+    <use href="#avatarSil" xlink:href="#avatarSil" x="714" y="92" width="68" height="68" color="#C7CDD6" opacity="0.95"/>
+    <rect x="672" y="170" width="54" height="8" rx="4" fill="#5B6472" opacity="0.20"/>
+  </g>
+  <rect x="660" y="60" width="176" height="132" rx="14" fill="none" stroke="#E2E5EC"/>
+
+  <!-- tile 1: initials (camera off) -->
+  <g clip-path="url(#clip1)">
+    <rect x="852" y="60" width="176" height="132" fill="#ECEEF3"/>
+    <circle cx="940" cy="120" r="26" fill="#E1E4EA"/>
+    <text x="940" y="128" font-size="20" font-weight="700" text-anchor="middle" fill="#6B7280" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">K</text>
+    <rect x="864" y="170" width="54" height="8" rx="4" fill="#5B6472" opacity="0.20"/>
+  </g>
+  <rect x="852" y="60" width="176" height="132" rx="14" fill="none" stroke="#E2E5EC"/>
+
+  <!-- tile 2: silhouette variant -->
+  <g clip-path="url(#clip2)">
+    <rect x="1044" y="60" width="176" height="132" fill="#F1F3F7"/>
+    <use href="#avatarSil" xlink:href="#avatarSil" x="1100.75" y="94.75" width="62.5" height="62.5" color="#C7CDD6" opacity="0.9"/>
+    <rect x="1056" y="170" width="54" height="8" rx="4" fill="#5B6472" opacity="0.20"/>
+  </g>
+  <rect x="1044" y="60" width="176" height="132" rx="14" fill="none" stroke="#E2E5EC"/>
+
+  <!-- tile 3: initials (camera off) -->
+  <g clip-path="url(#clip3)">
+    <rect x="660" y="208" width="176" height="132" fill="#ECEEF3"/>
+    <circle cx="748" cy="268" r="26" fill="#E1E4EA"/>
+    <text x="748" y="276" font-size="20" font-weight="700" text-anchor="middle" fill="#6B7280" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">R</text>
+    <rect x="672" y="318" width="54" height="8" rx="4" fill="#5B6472" opacity="0.20"/>
+  </g>
+  <rect x="660" y="208" width="176" height="132" rx="14" fill="none" stroke="#E2E5EC"/>
+
+  <!-- tile 4: AGENT — the hero of the image -->
+  <rect class="glow-pulse" x="852" y="208" width="176" height="132" rx="14" fill="none" stroke="url(#accentGrad)" stroke-width="6" filter="url(#glowBlur)" opacity="0.55"/>
+  <g clip-path="url(#clip4)">
+    <rect x="852" y="208" width="176" height="132" fill="#EEEBFB"/>
+    <rect x="852" y="208" width="176" height="132" fill="url(#agentTint)"/>
+    <rect class="wave-bar" x="889" y="253" width="6" height="10" rx="3" fill="url(#accentGrad)" style="animation-delay:0s"/>
+    <rect class="wave-bar" x="901" y="249" width="6" height="18" rx="3" fill="url(#accentGrad)" style="animation-delay:.07s"/>
+    <rect class="wave-bar" x="913" y="243" width="6" height="30" rx="3" fill="url(#accentGrad)" style="animation-delay:.14s"/>
+    <rect class="wave-bar" x="925" y="236" width="6" height="44" rx="3" fill="url(#accentGrad)" style="animation-delay:.21s"/>
+    <rect class="wave-bar" x="937" y="231" width="6" height="54" rx="3" fill="url(#accentGrad)" style="animation-delay:.28s"/>
+    <rect class="wave-bar" x="949" y="236" width="6" height="44" rx="3" fill="url(#accentGrad)" style="animation-delay:.21s"/>
+    <rect class="wave-bar" x="961" y="243" width="6" height="30" rx="3" fill="url(#accentGrad)" style="animation-delay:.14s"/>
+    <rect class="wave-bar" x="973" y="249" width="6" height="18" rx="3" fill="url(#accentGrad)" style="animation-delay:.07s"/>
+    <rect class="wave-bar" x="985" y="253" width="6" height="10" rx="3" fill="url(#accentGrad)" style="animation-delay:0s"/>
+    <rect x="888" y="308" width="104" height="24" rx="12" fill="#FFFFFF" opacity="0.85" stroke="#E2E5EC"/>
+    <circle cx="898" cy="320" r="3" fill="#7C3AED"/>
+    <text x="908" y="324" font-size="11.5" font-weight="600" letter-spacing="0.2" fill="#10131A" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">your agent</text>
+  </g>
+  <rect x="852" y="208" width="176" height="132" rx="14" fill="none" stroke="url(#accentGrad)" stroke-width="2"/>
+
+  <!-- tile 5: silhouette variant -->
+  <g clip-path="url(#clip5)">
+    <rect x="1044" y="208" width="176" height="132" fill="#F1F3F7"/>
+    <use href="#avatarSil" xlink:href="#avatarSil" x="1096.3" y="238.3" width="71.4" height="71.4" color="#C7CDD6" opacity="0.95"/>
+    <rect x="1056" y="318" width="54" height="8" rx="4" fill="#5B6472" opacity="0.20"/>
+  </g>
+  <rect x="1044" y="208" width="176" height="132" rx="14" fill="none" stroke="#E2E5EC"/>
+
+  <!-- SCREENSHOT-SLOT: swap this grid area for a real product screenshot later without redesign -->
+  <rect x="652" y="52" width="576" height="296" rx="20" fill="none" stroke="#5B6472" stroke-opacity="0.30" stroke-width="1.5" stroke-dasharray="6 6"/>
+</g>
+</svg>
