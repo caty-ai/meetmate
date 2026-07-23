@@ -99,7 +99,7 @@ test("handlers surface unreachable servers as isError results with the base URL"
   const handlers = createToolHandlers({ base: "http://127.0.0.1:9" });
   const result = await handlers.health();
   assert.equal(result.isError, true);
-  assert.match(result.content[0].text, /Cannot reach AI Meet at http:\/\/127\.0\.0\.1:9/);
+  assert.match(result.content[0].text, /Cannot reach Meetmate at http:\/\/127\.0\.0\.1:9/);
 });
 
 test("leaveMeeting sends the sessionId only when provided", async () => {

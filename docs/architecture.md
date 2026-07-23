@@ -1,4 +1,4 @@
-# AI Meet Participant — アーキテクチャ
+# Meetmate — アーキテクチャ
 
 ## 概要
 

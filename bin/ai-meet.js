@@ -12,11 +12,11 @@ const credentials = [
 ];
 
 function printUsage() {
-  console.log("Usage: ai-meet <command> [options]");
+  console.log("Usage: meetmate <command> [options]");
   console.log("");
   console.log("Commands:");
   console.log("  init [--force]  Create config.json and .env in the current directory.");
-  console.log("  start           Start the AI Meet server.");
+  console.log("  start           Start the Meetmate server.");
   console.log("  mcp             Start the MCP (Model Context Protocol) stdio server.");
 }
 

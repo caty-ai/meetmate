@@ -118,6 +118,7 @@ test("init rejects partial input without writing files", (t) => {
 test("usage lists commands and unknown commands fail", () => {
   const help = runCli(["--help"], process.cwd());
   assert.equal(help.status, 0, help.stderr);
+  assert.match(help.stdout, /Usage: meetmate <command> \[options\]/);
   assert.match(help.stdout, /init/);
   assert.match(help.stdout, /start/);
 

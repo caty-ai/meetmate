@@ -6,7 +6,7 @@ const { spawn } = require("node:child_process");
 // End-to-end smoke over the real stdio transport: proves the bin entrypoint,
 // the dynamic SDK/zod imports, and registerTool schema conversion all work —
 // unit tests alone never load @modelcontextprotocol/sdk.
-test("ai-meet mcp registers the four tools over real stdio", async () => {
+test("meetmate mcp registers the four tools over real stdio", async () => {
   const repoRoot = path.join(__dirname, "..");
   const child = spawn(process.execPath, ["bin/ai-meet.js", "mcp"], {
     cwd: repoRoot,

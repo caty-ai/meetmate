@@ -1,4 +1,4 @@
-# AI Meet Participant
+# Meetmate
 
 **English** | [日本語](README.ja.md) | [中文](README.zh.md) | [ไทย](README.th.md)
 
@@ -92,9 +92,9 @@ See [docs/architecture.md](docs/architecture.md) for details.
 
 ```bash
 mkdir my-agent && cd my-agent
-npm install ai-meet-participant
-npx ai-meet init    # interactively asks for the 3 API keys, then creates config.json + .env
-npx ai-meet start   # starts the server and prints the settings-UI URL
+npm install meetmate
+npx meetmate init    # interactively asks for the 3 API keys, then creates config.json + .env
+npx meetmate start   # starts the server and prints the settings-UI URL
 ```
 
 `init` copies the bundled `config.json.example` / `.env.example` into the **current directory** and fills in the credentials you enter (`SONIOX_API_KEY`, `FISH_AUDIO_API_KEY`, `ATTENDEE_API_KEY`). It refuses to overwrite existing files unless you pass `--force`. Then edit `config.json` to set your agent's name, wake words, and fixed lines.
@@ -186,10 +186,10 @@ Requests go to `{baseUrl}/v1/chat/completions`; if `baseUrl` already ends with `
 A thin stdio MCP server lets LLM clients (Claude Code, other agents) control meeting participation directly — the voice pipeline itself stays out of MCP scope. Register it with:
 
 ```bash
-claude mcp add ai-meet -- npx ai-meet mcp
+claude mcp add meetmate -- npx meetmate mcp
 ```
 
-Environment: `AI_MEET_BASE_URL` selects the AI Meet REST API to control (default `http://localhost:5005`); `AI_MEET_JOIN_TOKEN` is optional and forwarded as the `x-join-token` header and `joinToken` field; `AI_MEET_JOIN_TIMEOUT_MS` adjusts the `join_meeting` call budget (default 60000 ms — joins can take up to ~50 s server-side; the other tools time out at 15 s).
+Environment: `AI_MEET_BASE_URL` selects the Meetmate REST API to control (default `http://localhost:5005`); `AI_MEET_JOIN_TOKEN` is optional and forwarded as the `x-join-token` header and `joinToken` field; `AI_MEET_JOIN_TIMEOUT_MS` adjusts the `join_meeting` call budget (default 60000 ms — joins can take up to ~50 s server-side; the other tools time out at 15 s).
 
 | Tool | Action |
 |---|---|

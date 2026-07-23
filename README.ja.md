@@ -1,4 +1,4 @@
-# AI Meet Participant
+# Meetmate
 
 [English](README.md) | **日本語** | [中文](README.zh.md) | [ไทย](README.th.md)
 
@@ -94,9 +94,9 @@ STT (Soniox) → ウェイクワード検出 → LLM (OpenClaw Gateway 既定) �
 
 ```bash
 mkdir my-agent && cd my-agent
-npm install ai-meet-participant
-npx ai-meet init    # 3つの API キーを対話式で聞き、config.json と .env を生成
-npx ai-meet start   # サーバーを起動し、設定 UI の URL を表示
+npm install meetmate
+npx meetmate init    # 3つの API キーを対話式で聞き、config.json と .env を生成
+npx meetmate start   # サーバーを起動し、設定 UI の URL を表示
 ```
 
 `init` は同梱の `config.json.example` / `.env.example` を**カレントディレクトリ**へコピーし、入力した認証情報（`SONIOX_API_KEY`, `FISH_AUDIO_API_KEY`, `ATTENDEE_API_KEY`）を埋め込みます。既存ファイルがある場合は `--force` を付けない限り上書きを拒否します。生成後、`config.json` でエージェント名・ウェイクワード・固定文言を設定してください。
@@ -188,7 +188,7 @@ OpenAI 互換 API には `{baseUrl}/v1/chat/completions` を送信します。`b
 薄い stdio MCP サーバーにより、LLM クライアント（Claude Code や他のエージェント）から会議参加を直接操作できます — 音声パイプライン本体は MCP のスコープ外のままです。登録:
 
 ```bash
-claude mcp add ai-meet -- npx ai-meet mcp
+claude mcp add meetmate -- npx meetmate mcp
 ```
 
 環境変数: `AI_MEET_BASE_URL` が操作対象の REST API を指定（既定 `http://localhost:5005`）。`AI_MEET_JOIN_TOKEN` は任意で、`x-join-token` ヘッダと `joinToken` フィールドとして転送されます。`AI_MEET_JOIN_TIMEOUT_MS` は `join_meeting` の待ち時間（既定 60000 ms — join はサーバー側で最大 ~50 秒かかり得ます。他ツールは 15 秒）。

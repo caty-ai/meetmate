@@ -1,4 +1,4 @@
-# AI Meet Participant
+# Meetmate
 
 [English](README.md) | [日本語](README.ja.md) | [中文](README.zh.md) | **ไทย**
 
@@ -94,9 +94,9 @@ STT ฝั่งขาเข้าทำงานที่ 16 kHz; TTS / `bot_ou
 
 ```bash
 mkdir my-agent && cd my-agent
-npm install ai-meet-participant
-npx ai-meet init    # ถามคีย์ API 3 ตัวแบบโต้ตอบ แล้วสร้าง config.json + .env
-npx ai-meet start   # เริ่มเซิร์ฟเวอร์และแสดง URL ของหน้าตั้งค่า
+npm install meetmate
+npx meetmate init    # ถามคีย์ API 3 ตัวแบบโต้ตอบ แล้วสร้าง config.json + .env
+npx meetmate start   # เริ่มเซิร์ฟเวอร์และแสดง URL ของหน้าตั้งค่า
 ```
 
 `init` จะคัดลอก `config.json.example` / `.env.example` ที่มากับแพ็กเกจไปยัง**ไดเรกทอรีปัจจุบัน** และกรอกข้อมูลรับรองที่คุณป้อน (`SONIOX_API_KEY`, `FISH_AUDIO_API_KEY`, `ATTENDEE_API_KEY`) หากมีไฟล์อยู่แล้วจะปฏิเสธการเขียนทับ เว้นแต่ใส่ `--force` จากนั้นแก้ไข `config.json` เพื่อตั้งชื่อ agent, wake word และประโยคคงที่
@@ -188,7 +188,7 @@ ID / ชื่อที่แสดง / wake word / ประโยคคงท
 เซิร์ฟเวอร์ MCP แบบ stdio ขนาดเบา ช่วยให้ไคลเอนต์ LLM (Claude Code หรือ agent อื่น) ควบคุมการเข้าร่วมประชุมได้โดยตรง — ตัวไปป์ไลน์เสียงเองอยู่นอกขอบเขต MCP ลงทะเบียนด้วย:
 
 ```bash
-claude mcp add ai-meet -- npx ai-meet mcp
+claude mcp add meetmate -- npx meetmate mcp
 ```
 
 ตัวแปรสภาพแวดล้อม: `AI_MEET_BASE_URL` กำหนด REST API ที่จะควบคุม (ค่าเริ่มต้น `http://localhost:5005`); `AI_MEET_JOIN_TOKEN` เป็นตัวเลือก จะถูกส่งต่อเป็นเฮดเดอร์ `x-join-token` และฟิลด์ `joinToken`; `AI_MEET_JOIN_TIMEOUT_MS` ปรับเวลารอของ `join_meeting` (ค่าเริ่มต้น 60000 ms — การเข้าร่วมอาจใช้เวลาฝั่งเซิร์ฟเวอร์สูงสุด ~50 วินาที; เครื่องมืออื่นหมดเวลาที่ 15 วินาที)
