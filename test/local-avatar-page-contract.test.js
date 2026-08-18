@@ -71,6 +71,7 @@ test("local avatar exact routes use strict CSP and no-store, including auth fail
     }
 
     const connectPath = `/local-avatar/state?connect=1&v=${encodeURIComponent(issued.session.visualId)}`;
+    assertLocalHeaders(await requestRoute("GET", connectPath, authHeaders(issued.capability)), 404);
     assertLocalHeaders(await requestRoute("POST", connectPath, {
       origin: "https://meetmate.example",
     }), 404);

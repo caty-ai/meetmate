@@ -1295,7 +1295,8 @@ async function handleHttp(req, res) {
         return;
       }
 
-      console.error("❌  Bot起動失敗:", attendeeResult.statusCode, attendeeResult.body);
+      const { redactLogValue } = require("./local-avatar-session");
+      console.error("❌  Bot起動失敗:", attendeeResult.statusCode, redactLogValue(attendeeResult.body));
       closeLocalAvatarSession(session, "bot_launch_failed");
       const failedLifecycle = meetLifecycles.get(sessionId);
       if (failedLifecycle && !failedLifecycle.isTerminal) {

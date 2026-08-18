@@ -45,7 +45,8 @@ class LocalAvatarSession {
     this._now = typeof now === "function" ? now : Date.now;
     this._logger = logger || null;
     this._capabilityHash = hashCapability(capability);
-    this._expiresAt = this._now() + clampInteger(ttlMs, DEFAULT_TTL_MS, 1, MAX_TTL_MS);
+    this._ttlMs = clampInteger(ttlMs, DEFAULT_TTL_MS, 1, MAX_TTL_MS);
+    this._expiresAt = this._now() + this._ttlMs;
     this._queueLimit = clampInteger(queueLimit, DEFAULT_QUEUE_LIMIT, 1, MAX_QUEUE_LIMIT);
     this._retryLimit = clampInteger(retryLimit, DEFAULT_RETRY_LIMIT, 0, MAX_RETRY_LIMIT);
     this._queue = [];
@@ -64,10 +65,12 @@ class LocalAvatarSession {
   verifyCapability(candidate) {
     const candidateHash = hashCapability(typeof candidate === "string" ? candidate : "");
     const equal = crypto.timingSafeEqual(this._capabilityHash, candidateHash);
-    if (!equal || this._closed || this._now() >= this._expiresAt) {
-      if (!this._closed && this._now() >= this._expiresAt) this.close("expired");
+    const now = this._now();
+    if (!equal || this._closed || now >= this._expiresAt) {
+      if (!this._closed && now >= this._expiresAt) this.close("expired");
       return false;
     }
+    this._expiresAt = now + this._ttlMs;
     return true;
   }
 

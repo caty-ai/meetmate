@@ -2348,6 +2348,9 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     appendConversationEntry("assistant", fullGreeting, currentAgentId || null);
 
     // Use AbortController so barge-in can interrupt greeting/purpose
+    if (currentAbort && !currentAbort.signal?.aborted) {
+      abortPlayback(currentAbort, "greeting_preempt");
+    }
     const greetAbort = new AbortController();
     currentAbort = greetAbort;
     isProcessing = true;

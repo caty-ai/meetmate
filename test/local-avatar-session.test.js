@@ -8,6 +8,7 @@ const {
   createLocalAvatarSession,
   getLocalAvatarSession,
   redactLogValue,
+  _test: localAvatarTest,
 } = require("../src/transport-meet/local-avatar-session");
 
 const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "local-avatar-timeline.json"), "utf8"));
@@ -46,6 +47,35 @@ test("local avatar capability is 256-bit, audience-bound, short-lived, and revok
   assert.equal(issued.session.verifyCapability(issued.capability), false);
   assert.equal(getLocalAvatarSession(issued.session.visualId), null);
   assert.equal(issued.session.close("cancelled"), false);
+});
+
+test("successful state polling renews the idle TTL beyond twice the maximum lifetime", () => {
+  let now = 1_000;
+  const issued = createLocalAvatarSession({
+    publicOrigin: "https://meetmate.example",
+    now: () => now,
+    ttlMs: localAvatarTest.MAX_TTL_MS + 1,
+  });
+  const auth = { capability: issued.capability, origin: "https://meetmate.example" };
+  const connected = issued.session.connect(auth);
+  const readArgs = {
+    ...auth,
+    generation: connected.generation,
+    afterSequence: connected.sequence,
+  };
+
+  assert.equal(issued.session.snapshot().expiresAt, now + localAvatarTest.MAX_TTL_MS);
+  for (let poll = 0; poll < 3; poll += 1) {
+    now += localAvatarTest.MAX_TTL_MS - 1;
+    assert.equal(issued.session.readState(readArgs), undefined);
+    assert.equal(issued.session.snapshot().expiresAt, now + localAvatarTest.MAX_TTL_MS);
+  }
+  assert.ok(now > 1_000 + (2 * localAvatarTest.MAX_TTL_MS));
+  assert.equal(getLocalAvatarSession(issued.session.visualId), issued.session);
+
+  now = issued.session.snapshot().expiresAt;
+  assert.equal(issued.session.readState(readArgs), null);
+  assert.equal(getLocalAvatarSession(issued.session.visualId), null);
 });
 
 test("local avatar queue, delivery retries, source generations, and reconnect history are bounded", () => {
@@ -285,6 +315,81 @@ test("a foreign controller cannot abort playback or advance outputEpoch", { conc
   assert.equal(observed.length, 1);
 });
 
+test("greeting preempts a pending turn before its late timeout can invalidate greeting playback", { concurrency: false }, async () => {
+  const timeoutMs = 60_000;
+  const captured = [];
+  const originalSetTimeout = global.setTimeout;
+  const originalClearTimeout = global.clearTimeout;
+  global.setTimeout = (callback, delay, ...args) => {
+    if (delay !== timeoutMs) return originalSetTimeout(callback, delay, ...args);
+    const handle = { unref() {} };
+    captured.push({ callback, args, handle, cleared: false });
+    return handle;
+  };
+  global.clearTimeout = (handle) => {
+    const timer = captured.find((item) => item.handle === handle);
+    if (timer) {
+      timer.cleared = true;
+      return;
+    }
+    originalClearTimeout(handle);
+  };
+
+  try {
+    const observed = [];
+    let greetingOnAudio;
+    let greetingSignal;
+    let finishGreeting;
+    await withPipeline({
+      config: {
+        greeting: "こんにちは。",
+        llm: { responseTimeoutMs: timeoutMs, firstTokenDelegateMs: 0 },
+      },
+      llm: { streamChat: waitForAbortStream },
+      synthesize: async (_text, { signal, onAudio }) => {
+        greetingSignal = signal;
+        greetingOnAudio = onAudio;
+        onAudio(Buffer.from([1, 0]));
+        await new Promise((resolve) => {
+          finishGreeting = resolve;
+          signal.addEventListener("abort", resolve, { once: true });
+        });
+      },
+      onAudio: (buffer, metadata) => observed.push({ hex: buffer.toString("hex"), metadata: { ...metadata } }),
+    }, async ({ pipeline }) => {
+      const events = collectCancellationEvents(pipeline);
+      const processing = pipeline._test.processUserInput("応答待ちのターン");
+      await waitUntil(() => captured.length === 1);
+      const oldController = pipeline._test.getCurrentAbortController();
+      let oldAbortCount = 0;
+      oldController.signal.addEventListener("abort", () => { oldAbortCount += 1; });
+
+      const greeting = pipeline._test.sendGreeting();
+      await waitUntil(() => observed.length === 1);
+      assert.equal(oldController.signal.aborted, true);
+      assert.equal(oldAbortCount, 1);
+      assertCancellation(events, "greeting_preempt", 0);
+      assert.equal(captured[0].cleared, true);
+
+      captured[0].callback(...captured[0].args);
+      assert.equal(pipeline._test.abortPlayback(oldController, "llm_response_timeout"), false);
+      assert.equal(events.length, 1);
+      assert.equal(greetingSignal.aborted, false);
+
+      greetingOnAudio(Buffer.from([2, 0]));
+      assert.deepEqual(observed, [
+        { hex: "0100", metadata: { outputEpoch: 1, firstSampleIndex: 0, sampleRate: fixture.pcm.sampleRate } },
+        { hex: "0200", metadata: { outputEpoch: 1, firstSampleIndex: 1, sampleRate: fixture.pcm.sampleRate } },
+      ]);
+      finishGreeting();
+      await Promise.all([processing, greeting]);
+    });
+  } finally {
+    global.setTimeout = originalSetTimeout;
+    global.clearTimeout = originalClearTimeout;
+  }
+});
+
 test("lead, gap, and purpose silence preserve contiguous metadata", { concurrency: false }, async () => {
   const observed = [];
   let value = 1;
@@ -483,6 +588,7 @@ test("every playback-authoritative abort call site uses the reasoned wrapper", (
     "barge_in",
     "external_abort",
     "first_token_delegation",
+    "greeting_preempt",
     "llm_response_timeout",
     "pipeline_close",
     "turn_interrupted",
