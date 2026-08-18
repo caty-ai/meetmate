@@ -486,7 +486,7 @@ function isTtsCacheEnabled() {
  *
  * @param {object} session - Meeting session object
  * @param {object} turnState - Shared turn state { isAgentSpeaking, inputCooldownUntil, droppedEchoFrames }
- * @param {function} onAudio - Callback: (buffer: Buffer) => void (sends audio to Attendee)
+ * @param {function} onAudio - Callback: (buffer: Buffer, metadata?: object) => void (sends audio to Attendee)
  * @param {object} config - Pipeline config from getPipelineConfig()
  * @param {object} options - Multi-agent options
  * @returns {{ sendAudio(buf: Buffer): void, close(): void }}
@@ -495,6 +495,51 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   const { EventEmitter } = require("events");
   const { createSTT } = require("./stt-provider");
   const emitter = new EventEmitter();
+
+  // Additive output observability for the existing PCM callback. Epoch 0 is
+  // the initial output stream; an authoritative playback abort invalidates it
+  // synchronously and advances the coordinate for subsequent PCM. The
+  // transport callback still receives the same Buffer as its first argument.
+  let outputEpoch = 0;
+  let firstSampleIndex = 0;
+  const cancelledAbortControllers = new WeakSet();
+
+  function deliverAudio(buffer) {
+    const metadata = {
+      outputEpoch,
+      firstSampleIndex,
+      sampleRate: config.tts.sampleRate,
+    };
+    onAudio(buffer, metadata);
+    firstSampleIndex += Math.floor(buffer.length / 2);
+  }
+
+  function emitObserverEvent(type, event) {
+    for (const listener of emitter.rawListeners(type)) {
+      try {
+        listener.call(emitter, event);
+      } catch {
+        // Output observers are diagnostic-only and must never affect audio,
+        // turn handling, or cancellation.
+      }
+    }
+  }
+
+  function abortPlayback(controller, reason) {
+    if (!controller || controller.signal?.aborted || cancelledAbortControllers.has(controller)) return false;
+
+    const cancelledEpoch = outputEpoch;
+    controller.abort();
+    cancelledAbortControllers.add(controller);
+    outputEpoch += 1;
+    firstSampleIndex = 0;
+    emitObserverEvent("playback_cancelled", {
+      outputEpoch: cancelledEpoch,
+      reason,
+      monotonicTime: Number(process.hrtime.bigint()) / 1e6,
+    });
+    return true;
+  }
 
   // TTS serialization: every speakSentence call chains onto this lock so
   // ack / progress-ping / LLM stream chunks / fallback never overlap into
@@ -629,7 +674,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   async function handleWakeCancelAbort(cleanedText) {
     console.log(`🚫  Wake+cancel abort: "${cleanedText.slice(0, 50)}"`);
     if (currentAbort && !currentAbort.signal?.aborted) {
-      currentAbort.abort();
+      abortPlayback(currentAbort, "wake_cancel");
       currentAbort = null;
     }
     isProcessing = false;
@@ -1314,7 +1359,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       }
 
       console.log(`🛑  Barge-in detected: "${interim.slice(0, 50)}" — aborting TTS/LLM`);
-      currentAbort.abort();
+      abortPlayback(currentAbort, "barge_in");
       currentAbort = null;
       turnState.isAgentSpeaking = false;
       turnState.inputCooldownUntil = 0;
@@ -1456,7 +1501,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     // If agent is currently speaking/processing, interrupt
     if (isProcessing && currentAbort) {
       console.log("⚡  User interrupted — aborting current response");
-      currentAbort.abort();
+      abortPlayback(currentAbort, "turn_interrupted");
       currentAbort = null;
       isProcessing = false;
       turnState.isAgentSpeaking = false;
@@ -1717,7 +1762,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         llmFirstResponseTimedOut = true;
         console.warn(`⏱️  LLM first-response timeout (${timeoutMs}ms) — aborting`);
         stopFirstResponseTimers();
-        abort.abort();
+        abortPlayback(abort, "llm_response_timeout");
       }, timeoutMs);
       llmTimeoutTimer.unref?.();
     };
@@ -1771,7 +1816,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
           });
         }
         stopFirstResponseTimers();
-        abort.abort();
+        abortPlayback(abort, "first_token_delegation");
       }, thresholdMs);
       firstTokenDelegateTimer.unref?.();
     };
@@ -1821,7 +1866,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
           // Insert silence after ack (same as greeting→purpose transition)
           // so the first LLM sentence doesn't collide with the ack playback.
           const ackSilence = generateSilence(SENTENCE_PAUSE_MS, config.tts.sampleRate);
-          onAudio(ackSilence);
+          deliverAudio(ackSilence);
           // Count ack as a spoken segment so the first LLM split-point sentence
           // also gets a pause via the spokenSentenceCount > 0 check.
           spokenSentenceCount = 1;
@@ -1969,7 +2014,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
             // Insert pause between segments (sentence=long, clause=short)
             if (spokenSentenceCount > 0 && split.pauseMs > 0) {
               const silence = generateSilence(split.pauseMs, config.tts.sampleRate);
-              onAudio(silence);
+              deliverAudio(silence);
             }
 
             const splitLabel = split.type === "clause" ? "clause" : "sentence";
@@ -2185,11 +2230,11 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       if (!ttsHasSpoken) {
         if (TTS_LEAD_MS > 0) {
           const lead = generateSilence(TTS_LEAD_MS, config.tts.sampleRate);
-          onAudio(lead);
+          deliverAudio(lead);
         }
       } else if (TTS_GAP_MS > 0) {
         const gap = generateSilence(TTS_GAP_MS, config.tts.sampleRate);
-        onAudio(gap);
+        deliverAudio(gap);
       }
       ttsHasSpoken = true;
       await _speakSentenceRaw(text, signal, opts);
@@ -2224,7 +2269,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
               opts.onPlaybackStart?.();
             } catch { /* metrics callbacks must not affect audio */ }
           }
-          onAudio(chunk);
+          deliverAudio(chunk);
         },
       });
     } catch (err) {
@@ -2311,7 +2356,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       if (purposeStatement && !greetAbort.signal.aborted) {
         // Small pause between greeting and purpose
         const silence = generateSilence(SENTENCE_PAUSE_MS || 500, config.tts.sampleRate);
-        onAudio(silence);
+        deliverAudio(silence);
         // purposeStatement is free text per meeting — caching it would grow
         // assets/tts-cache/ unboundedly for a phrase spoken once (#67 scope).
         await speakSentence(purposeStatement, greetAbort.signal);
@@ -2346,7 +2391,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     close() {
       stopped = true;
       if (currentAbort) {
-        currentAbort.abort();
+        abortPlayback(currentAbort, "pipeline_close");
         currentAbort = null;
       }
       reportQueue.length = 0;
@@ -2381,7 +2426,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         delegate: `${agentState.sessionUser}-delegate`,
       };
     },
-    /** EventEmitter for exit_requested and other pipeline events. */
+    /** EventEmitter for exit_requested, playback_cancelled, and other pipeline events. */
     on: emitter.on.bind(emitter),
     once: emitter.once.bind(emitter),
     removeListener: emitter.removeListener.bind(emitter),
@@ -2390,8 +2435,10 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     api._test = {
       handleUtteranceEnd,
       processUserInput,
+      sendGreeting,
       switchAgent,
-      abortCurrent: () => currentAbort?.abort(),
+      abortCurrent: () => abortPlayback(currentAbort, "external_abort"),
+      getCurrentAbortController: () => currentAbort,
       handleGatewaySubagentSpawn,
       handleGatewaySubagentCompletion,
       handleGatewaySessionReply,

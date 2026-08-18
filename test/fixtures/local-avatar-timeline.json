@@ -1,0 +1,35 @@
+{
+  "staticAttendee": {
+    "normalized": {
+      "meeting_url": "https://meet.google.com/abc-defg-hij",
+      "bot_name": "Caty (AI)",
+      "websocket_settings": {
+        "audio": {
+          "url": "wss://meetmate.example/realtime?mode=static&sid=00000000-0000-4000-8000-000000000173",
+          "sample_rate": 16000
+        }
+      }
+    },
+    "serialized": "{\"meeting_url\":\"https://meet.google.com/abc-defg-hij\",\"bot_name\":\"Caty (AI)\",\"websocket_settings\":{\"audio\":{\"url\":\"wss://meetmate.example/realtime?mode=static&sid=00000000-0000-4000-8000-000000000173\",\"sample_rate\":16000}}}",
+    "utf8ByteLength": 223,
+    "serializedHex": "7b226d656574696e675f75726c223a2268747470733a2f2f6d6565742e676f6f676c652e636f6d2f6162632d646566672d68696a222c22626f745f6e616d65223a22436174792028414929222c22776562736f636b65745f73657474696e6773223a7b22617564696f223a7b2275726c223a227773733a2f2f6d6565746d6174652e6578616d706c652f7265616c74696d653f6d6f64653d737461746963267369643d30303030303030302d303030302d343030302d383030302d303030303030303030313733222c2273616d706c655f72617465223a31363030307d7d7d"
+  },
+  "pcm": {
+    "sampleRate": 24000,
+    "encoding": "S16LE",
+    "samples": [0, 1000, -1000, 32767, -32768, 42, -42, 7],
+    "base64": "AADoAxj8/38AgCoA1v8HAA==",
+    "hex": "0000e80318fcff7f00802a00d6ff0700",
+    "byteCount": 16,
+    "chunkings": [
+      [3, 2, 3],
+      [1, 4, 3]
+    ],
+    "botOutputSerialized": [
+      "{\"trigger\":\"realtime_audio.bot_output\",\"data\":{\"chunk\":\"AADoAxj8\",\"sample_rate\":24000}}",
+      "{\"trigger\":\"realtime_audio.bot_output\",\"data\":{\"chunk\":\"/38AgA==\",\"sample_rate\":24000}}",
+      "{\"trigger\":\"realtime_audio.bot_output\",\"data\":{\"chunk\":\"KgDW/wcA\",\"sample_rate\":24000}}"
+    ],
+    "botOutputSendCount": 3
+  }
+}
