@@ -5,7 +5,7 @@
 > เอกสารนี้เป็นคำแปลของ [README.md](README.md) (ภาษาอังกฤษ ซึ่งเป็นฉบับหลัก) หากเนื้อหาต่างกัน ให้ยึดตามเวอร์ชันภาษาอังกฤษ
 
 [![License: Apache--2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
-[![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-%3E%3D26-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![Meetings](https://img.shields.io/badge/works%20in-Google%20Meet%20%7C%20Zoom-7C3AED)](#ทำอะไรได้บ้าง)
 [![Server](https://img.shields.io/badge/runs%20on-Windows%20%7C%20macOS%20%7C%20Linux-444)](#ลองใน-30-วินาที)
 
@@ -41,7 +41,7 @@ npx meetmate start    # เริ่มเซิร์ฟเวอร์แล�
 
 เปิด http://localhost:5005 วาง URL ของ Meet หรือ Zoom แล้วกด **Join** — เอเจนต์ของคุณจะเข้าห้องประชุม เรียก wake word แล้วเริ่มพูดได้เลย
 
-ข้อกำหนดเบื้องต้น (Node.js ≥ 22, API key ของ [Attendee](https://attendee.dev/) สำหรับบอทประชุม, [Soniox](https://soniox.com/) สำหรับ speech-to-text และ [Fish Audio](https://fish.audio/) สำหรับเสียงพูด) มีคำแนะนำทีละขั้นตอนใน[คู่มือติดตั้ง](docs/setup-guide.md)
+ข้อกำหนดเบื้องต้น (Node.js ≥ 26, API key ของ [Attendee](https://attendee.dev/) สำหรับบอทประชุม, [Soniox](https://soniox.com/) สำหรับ speech-to-text และ [Fish Audio](https://fish.audio/) สำหรับเสียงพูด) มีคำแนะนำทีละขั้นตอนใน[คู่มือติดตั้ง](docs/setup-guide.md)
 
 ### รันจากซอร์ส
 

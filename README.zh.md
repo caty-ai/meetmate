@@ -5,7 +5,7 @@
 > 本文档是 [README.md](README.md)(英文版,为正本)的翻译。如内容出现不一致,以英文版为准。
 
 [![License: Apache--2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
-[![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-%3E%3D26-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![Meetings](https://img.shields.io/badge/works%20in-Google%20Meet%20%7C%20Zoom-7C3AED)](#它能做什么)
 [![Server](https://img.shields.io/badge/runs%20on-Windows%20%7C%20macOS%20%7C%20Linux-444)](#30-秒快速上手)
 
@@ -41,7 +41,7 @@ npx meetmate start    # 启动服务器并打印设置界面 URL
 
 打开 http://localhost:5005,粘贴 Meet 或 Zoom 链接,点击 **Join**——你的智能体就会进入会议。叫一声唤醒词,开始说话吧。
 
-前置条件(Node.js ≥ 22,以及 [Attendee](https://attendee.dev/) 会议机器人、[Soniox](https://soniox.com/) 语音转文字、[Fish Audio](https://fish.audio/) 语音合成的 API 密钥)在[安装指南](docs/setup-guide.md)里有一步一步的说明。
+前置条件(Node.js ≥ 26,以及 [Attendee](https://attendee.dev/) 会议机器人、[Soniox](https://soniox.com/) 语音转文字、[Fish Audio](https://fish.audio/) 语音合成的 API 密钥)在[安装指南](docs/setup-guide.md)里有一步一步的说明。
 
 ### 从源码运行
 

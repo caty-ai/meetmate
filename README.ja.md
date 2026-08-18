@@ -5,7 +5,7 @@
 > この文書は [README.md](README.md)（英語・正本）の翻訳です。内容に乖離がある場合は英語版が優先されます。
 
 [![License: Apache--2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
-[![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-%3E%3D26-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![Meetings](https://img.shields.io/badge/works%20in-Google%20Meet%20%7C%20Zoom-7C3AED)](#何ができるのか)
 [![Server](https://img.shields.io/badge/runs%20on-Windows%20%7C%20macOS%20%7C%20Linux-444)](#30秒で試す)
 
@@ -41,7 +41,7 @@ npx meetmate start    # サーバーが起動し、設定 UI の URL が表示�
 
 http://localhost:5005 を開いて Meet / Zoom の URL を貼り、**Join** を押せば、あなたのエージェントが会議に参加します。ウェイクワードで呼んで、話し始めてください。
 
-前提条件（Node.js ≥ 22、[Attendee](https://attendee.dev/)・[Soniox](https://soniox.com/)・[Fish Audio](https://fish.audio/) の API キー）は[セットアップガイド](docs/setup-guide.md)が一歩ずつ案内します。
+前提条件（Node.js ≥ 26、[Attendee](https://attendee.dev/)・[Soniox](https://soniox.com/)・[Fish Audio](https://fish.audio/) の API キー）は[セットアップガイド](docs/setup-guide.md)が一歩ずつ案内します。
 
 ### ソースから起動
 
