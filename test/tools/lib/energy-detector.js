@@ -32,6 +32,7 @@ function createDetector(options = {}) {
   const minThreshold = options.minThreshold ?? 300;
   const maskTailMs = options.maskTailMs ?? 300;
   const hysteresisFactor = options.hysteresisFactor ?? 2;
+  const restrictAfterCalibration = Boolean(options.restrictAfterCalibration);
 
   let pending = Buffer.alloc(0);
   let streamStartMs = null;
@@ -42,6 +43,8 @@ function createDetector(options = {}) {
   let offsetThreshold = null;
   let loudFrames = 0;
   let quietFrames = 0;
+  let loudRunStartMs = null;
+  let quietRunStartMs = null;
   let speaking = false;
   let maskedWhileSpeakingAt = null;
   let restrictToWindows = Boolean(options.restrictedToWindows);
@@ -67,6 +70,7 @@ function createDetector(options = {}) {
     onsetThreshold = Math.max(floorRms * thresholdFactor, minThreshold);
     offsetThreshold = onsetThreshold / hysteresisFactor;
     calibrated = true;
+    if (restrictAfterCalibration) restrictToWindows = true;
   }
 
   function feed(pcmBuffer, tMs) {
@@ -100,20 +104,33 @@ function createDetector(options = {}) {
       }
 
       if (!speaking) {
-        loudFrames = rms >= onsetThreshold ? loudFrames + 1 : 0;
+        if (rms >= onsetThreshold) {
+          if (loudFrames === 0) loudRunStartMs = frameTMs;
+          loudFrames += 1;
+        } else {
+          loudFrames = 0;
+          loudRunStartMs = null;
+        }
         if (loudFrames >= onsetFrames) {
           speaking = true;
           quietFrames = 0;
           loudFrames = 0;
-          events.push({ type: "onset", tMs: frameTMs, rms });
+          events.push({ type: "onset", tMs: loudRunStartMs, rms });
+          loudRunStartMs = null;
         }
         continue;
       }
 
       if (rms >= offsetThreshold) maskedWhileSpeakingAt = null;
-      quietFrames = rms < offsetThreshold ? quietFrames + 1 : 0;
+      if (rms < offsetThreshold) {
+        if (quietFrames === 0) quietRunStartMs = frameTMs;
+        quietFrames += 1;
+      } else {
+        quietFrames = 0;
+        quietRunStartMs = null;
+      }
       if (quietFrames >= offsetFrames) {
-        const event = { type: "offset", tMs: frameTMs, rms };
+        const event = { type: "offset", tMs: quietRunStartMs, rms };
         if (maskedWhileSpeakingAt != null) {
           event.tMs = maskedWhileSpeakingAt;
           event.censored = true;
@@ -121,6 +138,7 @@ function createDetector(options = {}) {
         events.push(event);
         speaking = false;
         quietFrames = 0;
+        quietRunStartMs = null;
         maskedWhileSpeakingAt = null;
       }
     }
@@ -169,6 +187,8 @@ function createDetector(options = {}) {
       hysteresisFactor,
       maskTailMs,
       speaking,
+      edgeConvention: "run-start",
+      restrictedToWindows: restrictToWindows,
     };
   }
 

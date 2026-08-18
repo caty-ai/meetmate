@@ -42,9 +42,17 @@ test("detects sustained sine onset and offset at stream-derived frame times", ()
   const pcm = Buffer.concat([constantFrames(4, 20), sineFrames(4), constantFrames(3, 0)]);
   const events = detector().feed(pcm, 1000);
   assert.deepEqual(events.map(({ type, tMs }) => ({ type, tMs })), [
-    { type: "onset", tMs: 1120 },
-    { type: "offset", tMs: 1180 },
+    { type: "onset", tMs: 1080 },
+    { type: "offset", tMs: 1160 },
   ]);
+});
+
+test("onset timestamp is the first loud frame rather than the sustain-completion frame", () => {
+  const instance = detector();
+  instance.feed(constantFrames(4, 20), 400);
+  const events = instance.feed(sineFrames(3), 480);
+  assert.deepEqual(events[0], { type: "onset", tMs: 480, rms: events[0].rms });
+  assert.equal(instance.getStatus().edgeConvention, "run-start");
 });
 
 test("a half-open playback mask excludes a burst from speech logic", () => {
@@ -110,4 +118,11 @@ test("restricted echo pass only detects bursts inside included windows", () => {
   const inside = instance.feed(Buffer.concat([sineFrames(4), constantFrames(3, 0)]), 200);
   assert.deepEqual(outside, []);
   assert.deepEqual(inside.map((event) => event.type), ["onset", "offset"]);
+});
+
+test("echo restriction engages inside the feed call that completes calibration", () => {
+  const instance = detector({ restrictAfterCalibration: true });
+  const sameBatch = Buffer.concat([constantFrames(4, 20), sineFrames(4), constantFrames(3, 0)]);
+  assert.deepEqual(instance.feed(sameBatch, 0), []);
+  assert.equal(instance.getStatus().restrictedToWindows, true);
 });

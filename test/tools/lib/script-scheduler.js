@@ -16,6 +16,7 @@ class ScriptScheduler {
     this.onBlockEnd = dependencies.onBlockEnd || (() => {});
     this.signalPollMs = Math.min(1000, dependencies.signalPollMs || 500);
     this.midBargeDelayMs = dependencies.midBargeDelayMs || 2500;
+    this.lateBargeDelayMs = dependencies.lateBargeDelayMs || 6000;
     this.exitSilenceMs = dependencies.exitSilenceMs || 5000;
     this.currentBlockId = null;
     this.currentStepIndex = null;
@@ -25,6 +26,8 @@ class ScriptScheduler {
     this.subjectSpeaking = false;
     this.lastSubjectOnsetMs = null;
     this.lastSubjectOffsetMs = null;
+    this.lastSubjectOffsetObservedMs = null;
+    this.abortController = new AbortController();
   }
 
   _emit(type, fields = {}) {
@@ -39,6 +42,7 @@ class ScriptScheduler {
   abort(reason = "aborted") {
     if (this.aborted) return;
     this.aborted = new Error(String(reason));
+    this.abortController.abort(this.aborted);
     for (const waiter of this.abortWaiters) waiter(this.aborted);
     this.abortWaiters.clear();
     for (const waiter of this.waiters) waiter.reject(this.aborted);
@@ -85,8 +89,10 @@ class ScriptScheduler {
       this.subjectSpeaking = true;
       this.lastSubjectOnsetMs = event.tMs;
     } else if (event.type === "offset") {
+      if (event.censored) return;
       this.subjectSpeaking = false;
       this.lastSubjectOffsetMs = event.tMs;
+      this.lastSubjectOffsetObservedMs = this.now();
     } else {
       return;
     }
@@ -120,6 +126,27 @@ class ScriptScheduler {
     return result;
   }
 
+  async _waitForSubjectSpeech(timeoutMs) {
+    if (this.subjectSpeaking) {
+      const event = { type: "onset", tMs: this.lastSubjectOnsetMs, already_speaking: true };
+      this._emit("wait_speech_observed", { already_speaking: true, subjectOnsetMs: event.tMs });
+      return event;
+    }
+    const event = await this._waitForSpeechEvent("onset", timeoutMs);
+    if (event) this._emit("wait_speech_observed", { already_speaking: false, subjectOnsetMs: event.tMs });
+    return event;
+  }
+
+  async _waitForSubjectOffset(timeoutMs) {
+    if (!this.subjectSpeaking) {
+      this._emit("wait_offset_observed", { already_quiet: true });
+      return { type: "offset", tMs: this.now(), already_quiet: true };
+    }
+    const event = await this._waitForSpeechEvent("offset", timeoutMs, "wait_offset_timeout");
+    if (event) this._emit("wait_offset_observed", { already_quiet: false, subjectOffsetMs: event.tMs });
+    return event;
+  }
+
   async _delayUntil(targetMs) {
     const remaining = targetMs - this.now();
     if (remaining > 0) await this._sleep(remaining);
@@ -138,11 +165,20 @@ class ScriptScheduler {
       targetMs = onset.tMs + (step.offsetMs ?? this.midBargeDelayMs);
       await this._delayUntil(targetMs);
     } else if (step.position === "late") {
-      const elapsed = Math.max(0, this.now() - onset.tMs);
-      const remaining = Math.max(1, timeoutMs - elapsed);
-      const offset = await this._waitForSpeechEvent("offset", remaining);
-      if (!offset) return;
-      targetMs = Math.max(onset.tMs, offset.tMs - (step.beforeOffsetMs ?? 500));
+      const lateAfterMs = step.lateAfterMs ?? this.lateBargeDelayMs;
+      if (!Number.isFinite(lateAfterMs) || lateAfterMs < 0) throw new Error("late bargeIn requires a finite non-negative lateAfterMs");
+      targetMs = onset.tMs + lateAfterMs;
+      await this._delayUntil(targetMs);
+      if (!this.subjectSpeaking) {
+        this._emit("barge_in_skipped", {
+          position: step.position,
+          assetId: step.assetId,
+          subjectOnsetMs: onset.tMs,
+          targetPlayMs: targetMs,
+          reason: "subject_finished_before_late_fire",
+        });
+        return;
+      }
     } else {
       throw new Error(`unsupported bargeIn position: ${step.position}`);
     }
@@ -160,7 +196,7 @@ class ScriptScheduler {
       blockId: this.currentBlockId,
       stepIndex: this.currentStepIndex,
       interjection: true,
-    });
+    }, this.abortController.signal);
   }
 
   async _waitForSignal(step) {
@@ -188,7 +224,9 @@ class ScriptScheduler {
       if (this.subjectSpeaking) {
         quietSince = null;
       } else if (quietSince == null) {
-        quietSince = this.lastSubjectOffsetMs ?? this.now();
+        quietSince = this.lastSubjectOffsetObservedMs != null && this.lastSubjectOffsetObservedMs >= started
+          ? this.lastSubjectOffsetObservedMs
+          : this.now();
       }
       if (quietSince != null && this.now() - quietSince >= silenceMs) {
         this._emit("voice_exit_observed", { silenceMs });
@@ -205,14 +243,17 @@ class ScriptScheduler {
         await this.playAsset(step.assetId, {
           blockId: this.currentBlockId,
           stepIndex: this.currentStepIndex,
-        });
+        }, this.abortController.signal);
         break;
       case "waitMs":
         if (!Number.isFinite(step.ms) || step.ms < 0) throw new Error("waitMs requires a finite non-negative ms");
         await this._sleep(step.ms);
         break;
       case "waitForSubjectSpeech":
-        await this._waitForSpeechEvent("onset", step.timeoutMs);
+        await this._waitForSubjectSpeech(step.timeoutMs);
+        break;
+      case "waitForSubjectOffset":
+        await this._waitForSubjectOffset(step.timeoutMs);
         break;
       case "bargeIn":
         await this._runBargeIn(step);
@@ -220,13 +261,18 @@ class ScriptScheduler {
       case "anchorTone":
         this._emit("anchor", { frequencyHz: 1000, durationMs: 500, repetitions: 3, gapMs: 500 });
         for (let i = 0; i < 3; i += 1) {
-          await this.playTone(1000, 500, { repetition: i + 1, blockId: this.currentBlockId });
+          await this.playTone(1000, 500, { repetition: i + 1, blockId: this.currentBlockId }, this.abortController.signal);
           if (i < 2) await this._sleep(500);
         }
         break;
       case "chatMarker":
-        this._emit("chat_marker", { text: step.text });
-        await this.sendChat(step.text);
+        try {
+          const sent = await this.sendChat(step.text);
+          if (sent === false) this._emit("chat_marker_error", { text: step.text, reason: "sender_returned_false" });
+          else this._emit("chat_marker", { text: step.text });
+        } catch (error) {
+          this._emit("chat_marker_error", { text: step.text, message: error.message });
+        }
         break;
       case "waitForSignal":
         await this._waitForSignal(step);

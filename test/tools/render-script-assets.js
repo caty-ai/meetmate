@@ -32,6 +32,9 @@ function parseArgs(argv) {
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i];
     if (flag === "--help" || flag === "-h") return { ...args, help: true };
+    if (!["--script", "--out", "--wake-word", "--reference-id", "--speed"].includes(flag)) {
+      throw new Error(`unknown option: ${flag}`);
+    }
     const value = argv[++i];
     if (value == null) throw new Error(`${flag} requires a value`);
     if (flag === "--script") args.script = path.resolve(value);
@@ -39,7 +42,6 @@ function parseArgs(argv) {
     else if (flag === "--wake-word") args.wakeWord = value;
     else if (flag === "--reference-id") args.referenceId = value;
     else if (flag === "--speed") args.speed = Number(value);
-    else throw new Error(`unknown option: ${flag}`);
   }
   if (!Number.isFinite(args.speed) || args.speed < 0.5 || args.speed > 2) {
     throw new Error("--speed must be between 0.5 and 2.0");

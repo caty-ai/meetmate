@@ -8,16 +8,21 @@ const https = require("node:https");
 const os = require("node:os");
 const path = require("node:path");
 const { Duplex } = require("node:stream");
-const { WebSocket, WebSocketServer } = require("ws");
 
 const { createDetector } = require("./lib/energy-detector");
+const { sendPacedPcm } = require("./lib/pace");
 const { ScriptScheduler } = require("./lib/script-scheduler");
 const { WavWriter } = require("./lib/wav");
 
 const INPUT_SAMPLE_RATE = 16_000;
 const OUTPUT_SAMPLE_RATE = 24_000;
-const OUTPUT_CHUNK_MS = 100;
-const DEFAULT_LEAD_MS = 150;
+
+let wsModule = null;
+
+function getWsModule() {
+  if (!wsModule) wsModule = require("ws");
+  return wsModule;
+}
 
 function monotonicMs() {
   return Number(process.hrtime.bigint()) / 1e6;
@@ -67,12 +72,20 @@ Options:
   --port <number>           Local WebSocket server port (default: 8765)
   --attendee-base <host>    Attendee API host (default: ATTENDEE_API_BASE_URL or app.attendee.dev)
   --mask-tail-ms <number>   Self-playback mask tail (default: 300)
+  --calibration-max-floor <number>
+                            Maximum plausible calibration floor RMS (default: 200)
+  --strict-calibration      Abort when calibration exceeds the maximum floor
   --anchor-dbfs <number>    Anchor sine peak level (default: -12)
   --self-test               Run network-free loopback checks
   --help                    Show this help
 
 Mask intervals are half-open [playStart, playEnd + maskTailMs).
-Barge-in timing: start=onset+300ms, mid=onset+2500ms, late=offset-500ms.
+Speech edge timestamps use the first frame of the sustained run (run-start).
+Barge-in timing: start=onset+300ms, mid=onset+2500ms, late=onset+lateAfterMs
+(default 6000ms) and only fires if the subject is still speaking.
+audio_monotonic_ms is stream-derived; monotonic_ms is emission time, so they
+differ by WebSocket delivery delay. Anchor tones and play_start_to_echo_ms stats
+provide the reconciliation path between those clocks.
 `;
 }
 
@@ -87,6 +100,8 @@ function parseArgs(argv) {
     port: 8765,
     attendeeBase: process.env.ATTENDEE_API_BASE_URL || "app.attendee.dev",
     maskTailMs: 300,
+    calibrationMaxFloor: 200,
+    strictCalibration: false,
     anchorDbfs: -12,
     selfTest: false,
     help: false,
@@ -101,12 +116,14 @@ function parseArgs(argv) {
     ["--port", "port"],
     ["--attendee-base", "attendeeBase"],
     ["--mask-tail-ms", "maskTailMs"],
+    ["--calibration-max-floor", "calibrationMaxFloor"],
     ["--anchor-dbfs", "anchorDbfs"],
   ]);
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i];
     if (flag === "--help" || flag === "-h") args.help = true;
     else if (flag === "--self-test") args.selfTest = true;
+    else if (flag === "--strict-calibration") args.strictCalibration = true;
     else if (valueFlags.has(flag)) {
       const value = argv[++i];
       if (value == null) throw new Error(`${flag} requires a value`);
@@ -117,10 +134,14 @@ function parseArgs(argv) {
   }
   args.port = Number(args.port);
   args.maskTailMs = Number(args.maskTailMs);
+  args.calibrationMaxFloor = Number(args.calibrationMaxFloor);
   args.anchorDbfs = Number(args.anchorDbfs);
   for (const key of ["script", "assetsDir", "outDir"]) args[key] = path.resolve(args[key]);
   if (!Number.isInteger(args.port) || args.port < 0 || args.port > 65535) throw new Error("--port must be 0-65535");
   if (!Number.isFinite(args.maskTailMs) || args.maskTailMs < 0) throw new Error("--mask-tail-ms must be non-negative");
+  if (!Number.isFinite(args.calibrationMaxFloor) || args.calibrationMaxFloor < 0) {
+    throw new Error("--calibration-max-floor must be non-negative");
+  }
   if (!Number.isFinite(args.anchorDbfs) || args.anchorDbfs > 0) throw new Error("--anchor-dbfs must be at most 0");
   if (!args.help && !args.selfTest) {
     if (!args.meetingUrl) throw new Error("--meeting-url is required");
@@ -152,38 +173,6 @@ class EventLog {
   }
 }
 
-async function sendPacedPcm({ pcm, sampleRate = OUTPUT_SAMPLE_RATE, send, leadMs = DEFAULT_LEAD_MS, nowNs, sleep }) {
-  const clock = nowNs || (() => process.hrtime.bigint());
-  const wait = sleep || delay;
-  const data = Buffer.from(pcm);
-  const chunkBytes = Math.max(2, Math.floor(sampleRate * 2 * OUTPUT_CHUNK_MS / 1000)) & ~1;
-  const startedNs = clock();
-  let sentBytes = 0;
-  let sendCount = 0;
-  let maxAheadMs = 0;
-
-  while (sentBytes < data.length) {
-    const end = Math.min(data.length, sentBytes + chunkBytes);
-    const afterDurationMs = end * 1000 / (sampleRate * 2);
-    while (true) {
-      const elapsedMs = Number(clock() - startedNs) / 1e6;
-      const waitMs = afterDurationMs - leadMs - elapsedMs;
-      if (waitMs <= 0) break;
-      await wait(waitMs);
-    }
-    await send(data.subarray(sentBytes, end));
-    sentBytes = end;
-    sendCount += 1;
-    const elapsedMs = Number(clock() - startedNs) / 1e6;
-    maxAheadMs = Math.max(maxAheadMs, sentBytes * 1000 / (sampleRate * 2) - elapsedMs);
-  }
-
-  const durationMs = data.length * 1000 / (sampleRate * 2);
-  const elapsedMs = Number(clock() - startedNs) / 1e6;
-  if (elapsedMs < durationMs) await wait(durationMs - elapsedMs);
-  return { sendCount, durationMs, maxAheadMs };
-}
-
 function sinePcm(freqHz, durationMs, sampleRate, amplitude) {
   const samples = Math.round(sampleRate * durationMs / 1000);
   const pcm = Buffer.alloc(samples * 2);
@@ -212,6 +201,13 @@ function loadInputs(args) {
     for (const step of block.steps || []) {
       if ((step.type === "play" || step.type === "bargeIn") && !assets.has(step.assetId)) {
         throw new Error(`asset missing from manifest: ${step.assetId}`);
+      }
+      if (step.type === "bargeIn") {
+        const asset = assets.get(step.assetId);
+        const durationSeconds = asset.pcm.length / (manifest.sampleRate * 2);
+        if (durationSeconds > 2) {
+          throw new Error(`bargeIn asset ${step.assetId} exceeds 2.0 seconds (${durationSeconds.toFixed(3)}s)`);
+        }
       }
     }
   }
@@ -279,6 +275,7 @@ async function leaveBot(args, apiKey, botId) {
 
 function startWsServer(port, onConnection) {
   return new Promise((resolve, reject) => {
+    const { WebSocketServer } = getWsModule();
     const server = new WebSocketServer({ port });
     const onError = (error) => reject(error);
     server.once("error", onError);
@@ -297,6 +294,7 @@ function closeWsServer(server) {
 }
 
 async function createMemoryWebSocketTransport(onConnection) {
+  const { WebSocket, WebSocketServer } = getWsModule();
   class MemorySocket extends Duplex {
     _read() {}
     _write(chunk, encoding, callback) {
@@ -338,7 +336,46 @@ async function waitForCalibration(detectors, timeoutMs = 15_000) {
   throw new Error(`audio calibration timeout (${timeoutMs}ms)`);
 }
 
+function reportCalibrationPlausibility(namedStatuses, options) {
+  const contaminated = namedStatuses
+    .filter(({ status }) => status.floorRms > options.maxFloorRms)
+    .map(({ name, status }) => ({ name, floor_rms: status.floorRms }));
+  if (contaminated.length === 0) return null;
+  const details = {
+    max_floor_rms: options.maxFloorRms,
+    strict: Boolean(options.strict),
+    detectors: contaminated,
+  };
+  options.emit("calibration_contaminated", details);
+  options.warn(`Warning: calibration_contaminated: floor RMS exceeds ${options.maxFloorRms} (${contaminated.map((entry) => `${entry.name}=${entry.floor_rms}`).join(", ")})\n`);
+  if (options.strict) {
+    const error = new Error(`calibration contaminated: floor RMS exceeds ${options.maxFloorRms}`);
+    error.details = details;
+    throw error;
+  }
+  return details;
+}
+
+function maskTailWarningFor(echoDelays, maskTailMs) {
+  const p95 = percentile(echoDelays, 0.95);
+  if (p95 == null || p95 <= maskTailMs) return null;
+  return { play_start_to_echo_ms_p95: p95, mask_tail_ms: maskTailMs };
+}
+
+function installTerminationHandlers(onSignal, signalSource = process) {
+  const handlers = new Map();
+  for (const signal of ["SIGINT", "SIGTERM"]) {
+    const handler = () => onSignal(signal);
+    handlers.set(signal, handler);
+    signalSource.once(signal, handler);
+  }
+  return () => {
+    for (const [signal, handler] of handlers) signalSource.removeListener(signal, handler);
+  };
+}
+
 async function runLive(args) {
+  const { WebSocket } = getWsModule();
   const apiKey = process.env.ATTENDEE_API_KEY;
   if (!apiKey) throw new Error("ATTENDEE_API_KEY is required");
   fs.mkdirSync(args.outDir, { recursive: true });
@@ -362,6 +399,8 @@ async function runLive(args) {
   let completed = false;
   let shuttingDown = false;
   let abortReason = null;
+  let calibrationContamination = null;
+  let maskTailWarning = null;
   let interruptReject;
   let lostReject;
   const interrupted = new Promise((resolve, reject) => { interruptReject = reject; });
@@ -371,8 +410,7 @@ async function runLive(args) {
 
   const detectorOptions = { sampleRate: INPUT_SAMPLE_RATE, maskTailMs: args.maskTailMs };
   const subjectDetector = createDetector(detectorOptions);
-  const echoDetector = createDetector(detectorOptions);
-  let echoRestricted = false;
+  const echoDetector = createDetector({ ...detectorOptions, restrictAfterCalibration: true });
 
   function emit(type, fields = {}) {
     const event = log.write(type, fields);
@@ -380,13 +418,19 @@ async function runLive(args) {
     return event;
   }
 
+  function checkMaskTail() {
+    if (maskTailWarning) return maskTailWarning;
+    maskTailWarning = maskTailWarningFor(echoDelays, args.maskTailMs);
+    if (maskTailWarning) {
+      emit("mask_tail_warning", maskTailWarning);
+      process.stderr.write(`Warning: mask_tail_warning: echo p95 ${maskTailWarning.play_start_to_echo_ms_p95}ms exceeds mask tail ${args.maskTailMs}ms\n`);
+    }
+    return maskTailWarning;
+  }
+
   function detectorEvents(pcm, arrivalMs) {
     const subjectEvents = subjectDetector.feed(pcm, arrivalMs);
     const echoEvents = echoDetector.feed(pcm, arrivalMs);
-    if (!echoRestricted && subjectDetector.getStatus().calibrated && echoDetector.getStatus().calibrated) {
-      echoDetector.restrictToWindows(true);
-      echoRestricted = true;
-    }
     for (const event of subjectEvents) {
       emit(event.type === "onset" ? "energy_onset" : "energy_offset", {
         audio_monotonic_ms: event.tMs,
@@ -407,6 +451,7 @@ async function runLive(args) {
         play.echoObserved = true;
         const delayMs = event.tMs - play.startMs;
         echoDelays.push(delayMs);
+        checkMaskTail();
         fields.play_start_to_echo_ms = delayMs;
         const barge = pendingBarges.get(play.assetId);
         if (barge) {
@@ -460,11 +505,11 @@ async function runLive(args) {
     });
   }
 
-  function onSigint() {
-    scheduler?.abort("SIGINT");
-    interruptReject(new Error("SIGINT"));
+  function onTermination(signal) {
+    scheduler?.abort(signal);
+    interruptReject(new Error(signal));
   }
-  process.once("SIGINT", onSigint);
+  const removeTerminationHandlers = installTerminationHandlers(onTermination);
   emit("run_start", { meeting_url: args.meetingUrl, public_ws_url: args.publicWsUrl });
 
   let inputs;
@@ -495,8 +540,22 @@ async function runLive(args) {
     emit("bot_created", { bot_id: botId });
     await Promise.race([connection, interrupted]);
     await Promise.race([waitForCalibration([subjectDetector, echoDetector]), interrupted, connectionLost]);
+    try {
+      calibrationContamination = reportCalibrationPlausibility([
+        { name: "subject", status: subjectDetector.getStatus() },
+        { name: "echo", status: echoDetector.getStatus() },
+      ], {
+        maxFloorRms: args.calibrationMaxFloor,
+        strict: args.strictCalibration,
+        emit,
+        warn: (message) => process.stderr.write(message),
+      });
+    } catch (error) {
+      calibrationContamination = error.details;
+      throw error;
+    }
 
-    async function playPcm(assetId, pcm, metadata = {}) {
+    async function playPcm(assetId, pcm, metadata = {}, signal) {
       if (!client || client.readyState !== WebSocket.OPEN) throw new Error("Attendee WebSocket is not open");
       const startMs = monotonicMs();
       const durationMs = pcm.length * 1000 / (OUTPUT_SAMPLE_RATE * 2);
@@ -509,6 +568,7 @@ async function runLive(args) {
       emit("play_start", { assetId, pcm_sha256: digest, bytes: pcm.length, ...metadata });
       const paced = await sendPacedPcm({
         pcm,
+        signal,
         send: async (chunk) => {
           client.send(JSON.stringify({
             trigger: "realtime_audio.bot_output",
@@ -543,22 +603,21 @@ async function runLive(args) {
           }
         }
       },
-      playAsset: async (assetId, metadata) => {
+      playAsset: async (assetId, metadata, signal) => {
         const asset = inputs.assets.get(assetId);
-        await playPcm(assetId, asset.pcm, metadata);
+        await playPcm(assetId, asset.pcm, metadata, signal);
       },
-      playTone: async (freqHz, durationMs, metadata) => {
+      playTone: async (freqHz, durationMs, metadata, signal) => {
         const pcm = sinePcm(freqHz, durationMs, OUTPUT_SAMPLE_RATE, anchorAmplitude);
-        await playPcm(`anchor-${freqHz}hz-${metadata.repetition}`, pcm, metadata);
+        await playPcm(`anchor-${freqHz}hz-${metadata.repetition}`, pcm, metadata, signal);
       },
       sendChat: async (text) => {
-        try {
-          process.env.ATTENDEE_API_BASE_URL = attendeeHost(args.attendeeBase);
-          const { sendAttendeeChatMessage } = require("../../src/attendee-chat.js");
-          await sendAttendeeChatMessage(botId, text, apiKey);
-        } catch (error) {
-          emit("chat_marker_error", { message: error.message });
-        }
+        // attendee-chat reads the base URL at module load and the API key at
+        // call time. Keep this assignment beside the lazy require; revisit if
+        // src/attendee-chat.js changes either coupling.
+        process.env.ATTENDEE_API_BASE_URL = attendeeHost(args.attendeeBase);
+        const { sendAttendeeChatMessage } = require("../../src/attendee-chat.js");
+        return sendAttendeeChatMessage(botId, text, apiKey);
       },
     });
     await Promise.race([scheduler.run(inputs.script), interrupted, connectionLost]);
@@ -571,12 +630,13 @@ async function runLive(args) {
   } finally {
     shuttingDown = true;
     cleanupConnectionWait();
-    process.removeListener("SIGINT", onSigint);
+    removeTerminationHandlers();
     if (heartbeat) clearInterval(heartbeat);
     try { await leaveBot(args, apiKey, botId); } catch (error) { emit("bot_leave_error", { message: error.message }); }
     if (client && client.readyState !== WebSocket.CLOSED) client.terminate();
     await closeWsServer(server);
     wav.close();
+    checkMaskTail();
     const ended = { wall_ms: Date.now(), monotonic_ms: monotonicMs() };
     const header = {
       version: 2,
@@ -589,15 +649,25 @@ async function runLive(args) {
         botName: args.botName,
         port: args.port,
         attendeeBase: args.attendeeBase,
+        calibrationMaxFloor: args.calibrationMaxFloor,
+        strictCalibration: args.strictCalibration,
       },
       script_sha256: inputs?.scriptSha256 ?? null,
       asset_manifest_sha256: inputs?.manifestSha256 ?? null,
       asset_sample_rate: inputs?.manifest?.sampleRate ?? null,
       detector: subjectDetector.getStatus(),
+      edge_convention: "run-start",
+      time_base: {
+        audio_monotonic_ms: "stream-derived audio time",
+        monotonic_ms: "event emission time; includes WebSocket delivery delay",
+        reconciliation: "anchor tones and play_start_to_echo_ms statistics",
+      },
+      calibration_contaminated: calibrationContamination || false,
       floor_resamples: floorSamples,
       mask_intervals: "half-open [startMs, endMs + maskTailMs)",
       anchor_tone: { frequency_hz: 1000, amplitude: anchorAmplitude, dbfs: args.anchorDbfs },
       echo_return_delay_ms: stats(echoDelays),
+      mask_tail_warning: maskTailWarning || false,
       chunk_arrival_gap_ms: stats(gaps),
       started: runStarted,
       ended,
@@ -612,6 +682,7 @@ async function runLive(args) {
 }
 
 async function runSelfTest() {
+  const { WebSocket } = getWsModule();
   const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "meet-script-driver-self-test-"));
   const log = new EventLog(path.join(outDir, "events.jsonl"));
   const wav = new WavWriter(path.join(outDir, "mixed.wav"), { sampleRate: INPUT_SAMPLE_RATE });
@@ -770,10 +841,15 @@ if (require.main === module) {
 
 module.exports = {
   EventLog,
+  installTerminationHandlers,
+  loadInputs,
   main,
+  maskTailWarningFor,
   parseArgs,
+  reportCalibrationPlausibility,
   runSelfTest,
   sendPacedPcm,
   sinePcm,
   stats,
+  usage,
 };
