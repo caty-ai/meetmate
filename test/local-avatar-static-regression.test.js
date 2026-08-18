@@ -46,6 +46,128 @@ test("static join payload and Fish bot_output bytes match the frozen fixture", {
   });
 });
 
+test("initialized static payload pins bot_image and omits voice_agent_settings", { concurrency: false }, async () => {
+  await withMeetRoutes(async (harness) => {
+    await harness.init();
+    const join = await harness.join();
+    assert.equal(join.statusCode, 200);
+
+    const createRequest = harness.httpsRequests.find((request) => request.options.path === "/api/v1/bots");
+    assert.deepEqual(JSON.parse(createRequest.body), fixture.staticAttendeeWithImage.normalized);
+    assert.equal(createRequest.body, fixture.staticAttendeeWithImage.serialized);
+    assert.equal(Buffer.byteLength(createRequest.body), fixture.staticAttendeeWithImage.utf8ByteLength);
+    assert.equal("voice_agent_settings" in JSON.parse(createRequest.body), false);
+    assertStaticIsolation(harness.isolation);
+  });
+});
+
+test("hybrid-local-l0 adds only voice_agent_settings to the initialized payload", { concurrency: false }, async () => {
+  let staticBody;
+  await withMeetRoutes(async (harness) => {
+    await harness.init();
+    assert.equal((await harness.join()).statusCode, 200);
+    staticBody = harness.httpsRequests.find((request) => request.options.path === "/api/v1/bots").body;
+  });
+
+  await withMeetRoutes(async (harness) => {
+    await harness.init();
+    const join = await harness.join(
+      { avatarExperiment: "hybrid-local-l0" },
+      { host: "meetmate.example", "x-forwarded-proto": "https" }
+    );
+    assert.equal(join.statusCode, 200);
+    const createRequest = harness.httpsRequests.find((request) => request.options.path === "/api/v1/bots");
+    const livePayload = JSON.parse(createRequest.body);
+    const url = new URL(livePayload.voice_agent_settings.url);
+    const capability = new URLSearchParams(url.hash.slice(1)).get("cap");
+
+    assert.equal(url.origin, "https://meetmate.example");
+    assert.equal(url.pathname, "/local-avatar/index.html");
+    assert.match(url.searchParams.get("v"), /^[A-Za-z0-9_-]{16,64}$/);
+    assert.equal(Buffer.from(capability, "base64url").length, 32);
+
+    delete livePayload.voice_agent_settings;
+    assert.equal(JSON.stringify(livePayload), staticBody);
+    assert.deepEqual(livePayload.websocket_settings, fixture.staticAttendeeWithImage.normalized.websocket_settings);
+  });
+});
+
+test("unknown avatar experiment fails before creating an Attendee bot", { concurrency: false }, async () => {
+  await withMeetRoutes(async (harness) => {
+    const join = await harness.join({ avatarExperiment: "unknown" });
+    assert.equal(join.statusCode, 400);
+    assert.equal(harness.httpsRequests.some((request) => request.options.path === "/api/v1/bots"), false);
+  });
+});
+
+test("live page state failures cannot interrupt or duplicate realtime audio", { concurrency: false }, async () => {
+  await withMeetRoutes(async (harness) => {
+    const join = await harness.join(
+      { avatarExperiment: "hybrid-local-l0" },
+      { host: "meetmate.example", "x-forwarded-proto": "https" }
+    );
+    assert.equal(join.statusCode, 200);
+    const createRequest = harness.httpsRequests.find((request) => request.options.path === "/api/v1/bots");
+    const launch = new URL(JSON.parse(createRequest.body).voice_agent_settings.url);
+    const capability = new URLSearchParams(launch.hash.slice(1)).get("cap");
+    const client = harness.connect();
+    const visual = harness.pipelines[0].session.localAvatarSession;
+    const connected = visual.connect({ capability, origin: launch.origin });
+
+    harness.pipelines[0].onAudio(Buffer.from([1, 0]), {
+      outputEpoch: 0,
+      firstSampleIndex: 0,
+      sampleRate: fixture.pcm.sampleRate,
+    });
+    assert.equal(client.sent.length, 1);
+    assert.equal(JSON.parse(client.sent[0]).trigger, "realtime_audio.bot_output");
+    const marker = visual.readState({
+      capability,
+      origin: launch.origin,
+      generation: connected.generation,
+      afterSequence: connected.sequence,
+    });
+    assert.equal(marker.kind, "marker");
+    assert.equal(marker.sampleIndex, 0);
+
+    const publishMarker = visual.publishMarker;
+    visual.publishMarker = () => { throw new Error("visual-only failure"); };
+    harness.pipelines[0].onAudio(Buffer.from([2, 0]), {
+      outputEpoch: 0,
+      firstSampleIndex: 1,
+      sampleRate: fixture.pcm.sampleRate,
+    });
+    visual.publishMarker = publishMarker;
+    assert.equal(client.sent.length, 2);
+    assert.deepEqual(client.sent.map((item) => JSON.parse(item).data.chunk), ["AQA=", "AgA="]);
+
+    const sequenceBeforeFailedAudio = visual.snapshot().sequence;
+    client.send = () => { throw new Error("audio send failure"); };
+    harness.pipelines[0].onAudio(Buffer.from([3, 0]), {
+      outputEpoch: 0,
+      firstSampleIndex: 2,
+      sampleRate: fixture.pcm.sampleRate,
+    });
+    assert.equal(visual.snapshot().sequence, sequenceBeforeFailedAudio);
+
+    harness.pipelines[0].emit("playback_cancelled", {
+      outputEpoch: 0,
+      reason: "external_abort",
+      monotonicTime: 1,
+    });
+    const cancelled = visual.readState({
+      capability,
+      origin: launch.origin,
+      generation: connected.generation,
+      afterSequence: marker.sequence,
+    });
+    assert.equal(cancelled.kind, "cancel");
+
+    assert.equal((await harness.leave()).statusCode, 200);
+    assert.equal(visual.verifyCapability(capability), false);
+  });
+});
+
 test("static-isolation detector rejects an in-memory live socket violation", () => {
   const simulated = emptyIsolationEvidence();
   simulated.socketCreations.push("simulated local-avatar socket");
@@ -176,7 +298,8 @@ async function withMeetRoutes(fn) {
     "ui-routes.js",
     "paths.js",
   ].map((file) => path.join(src, file));
-  const cachePaths = [routesPath, ...mockPaths];
+  const localAvatarPath = path.join(src, "transport-meet", "local-avatar-session.js");
+  const cachePaths = [routesPath, localAvatarPath, ...mockPaths];
   const previousCache = new Map(cachePaths.map((file) => [require.resolve(file), require.cache[require.resolve(file)]]));
   for (const file of cachePaths) delete require.cache[require.resolve(file)];
 
@@ -199,8 +322,11 @@ async function withMeetRoutes(fn) {
   const originalHttpsGet = https.get;
   const originalFetch = global.fetch;
   const originalRandomUUID = crypto.randomUUID;
+  const originalRandomBytes = crypto.randomBytes;
   const originalLoad = Module._load;
   const originalReadFile = fs.readFile;
+  const originalReadFileSync = fs.readFileSync;
+  const originalExistsSync = fs.existsSync;
   const originalSetTimeout = global.setTimeout;
   const originalSetInterval = global.setInterval;
   const originalConsole = { log: console.log, warn: console.warn, error: console.error };
@@ -216,7 +342,11 @@ async function withMeetRoutes(fn) {
     SAMPLE_RATE: 16_000,
     TTS_SAMPLE_RATE: fixture.pcm.sampleRate,
     TTS_PROVIDER: "fish-audio",
-    loadConfig: () => ({ attendee: { apiKey: "test-key" }, slack: { notifications: {} } }),
+    loadConfig: () => ({
+      attendee: { apiKey: "test-key" },
+      server: { ngrokDomain: "meetmate.example" },
+      slack: { notifications: {} },
+    }),
     validateSttProviderApiKey: () => true,
     resolveMessages: () => ({ delegation: {}, slack: {}, prompts: { summary: "summary" } }),
     getPipelineConfig: (overrides = {}) => {
@@ -278,6 +408,10 @@ async function withMeetRoutes(fn) {
     }),
   });
   installMock(path.join(src, "ui-routes.js"), {
+    serveLocalAvatar: (_req, _res, url) => {
+      if (/local-avatar/i.test(url.pathname)) isolation.pageReads.push(url.pathname);
+      return false;
+    },
     servePublicAsset: (_req, _res, url) => {
       if (/local-avatar/i.test(url.pathname)) isolation.pageReads.push(url.pathname);
       return false;
@@ -305,6 +439,14 @@ async function withMeetRoutes(fn) {
   fs.readFile = function guardedReadFile(filename, ...args) {
     if (/local-avatar/i.test(String(filename))) isolation.pageReads.push(String(filename));
     return originalReadFile.call(this, filename, ...args);
+  };
+  fs.existsSync = function guardedExistsSync(filename) {
+    if (String(filename) === "/tmp/avatar.png") return true;
+    return originalExistsSync.call(this, filename);
+  };
+  fs.readFileSync = function guardedReadFileSync(filename, ...args) {
+    if (String(filename) === "/tmp/avatar.png") return Buffer.from([1, 2, 3, 4]);
+    return originalReadFileSync.call(this, filename, ...args);
   };
   global.setTimeout = function guardedTimeout(callback, ms, ...args) {
     const stack = new Error().stack || "";
@@ -358,6 +500,7 @@ async function withMeetRoutes(fn) {
     throw new Error("unexpected static-path fetch");
   };
   crypto.randomUUID = () => FIXED_SESSION_ID;
+  crypto.randomBytes = (size) => Buffer.alloc(size, 0x5a);
   console.log = () => {};
   console.warn = () => {};
   console.error = () => {};
@@ -371,13 +514,16 @@ async function withMeetRoutes(fn) {
       httpsRequests,
       pipelines,
       pipelineConfigCalls,
-      async join(overrides = {}) {
+      init() {
+        return routes.init({ detectNgrok: false, loadAvatar: true });
+      },
+      async join(overrides = {}, headers = {}) {
         return requestHttp(routes, "POST", "/join-meeting", {
           meetingUrl: fixture.staticAttendee.normalized.meeting_url,
           wsUrl: "wss://meetmate.example/realtime?mode=static",
           conversationMode: "one_to_one",
           ...overrides,
-        });
+        }, headers);
       },
       connect() {
         const client = new FakeClient();
@@ -408,8 +554,11 @@ async function withMeetRoutes(fn) {
     https.get = originalHttpsGet;
     global.fetch = originalFetch;
     crypto.randomUUID = originalRandomUUID;
+    crypto.randomBytes = originalRandomBytes;
     Module._load = originalLoad;
     fs.readFile = originalReadFile;
+    fs.readFileSync = originalReadFileSync;
+    fs.existsSync = originalExistsSync;
     global.setTimeout = originalSetTimeout;
     global.setInterval = originalSetInterval;
     Object.assign(console, originalConsole);
@@ -463,11 +612,11 @@ class FakeClient extends EventEmitter {
   ping() {}
 }
 
-async function requestHttp(routes, method, url, formData = null) {
+async function requestHttp(routes, method, url, formData = null, headers = {}) {
   const req = new EventEmitter();
   req.method = method;
   req.url = url;
-  req.headers = {};
+  req.headers = headers;
   req.destroy = () => {};
   const result = { statusCode: null, headers: null, text: "", body: null };
   const res = {

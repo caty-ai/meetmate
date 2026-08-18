@@ -526,6 +526,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   }
 
   function abortPlayback(controller, reason) {
+    if (controller !== currentAbort) return false;
     if (!controller || controller.signal?.aborted || cancelledAbortControllers.has(controller)) return false;
 
     const cancelledEpoch = outputEpoch;
@@ -2347,6 +2348,9 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     appendConversationEntry("assistant", fullGreeting, currentAgentId || null);
 
     // Use AbortController so barge-in can interrupt greeting/purpose
+    if (currentAbort && !currentAbort.signal?.aborted) {
+      abortPlayback(currentAbort, "greeting_preempt");
+    }
     const greetAbort = new AbortController();
     currentAbort = greetAbort;
     isProcessing = true;
@@ -2438,6 +2442,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       sendGreeting,
       switchAgent,
       abortCurrent: () => abortPlayback(currentAbort, "external_abort"),
+      abortPlayback,
       getCurrentAbortController: () => currentAbort,
       handleGatewaySubagentSpawn,
       handleGatewaySubagentCompletion,

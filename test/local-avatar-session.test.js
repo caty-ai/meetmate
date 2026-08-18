@@ -2,7 +2,14 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const crypto = require("node:crypto");
 const { EventEmitter } = require("node:events");
+const {
+  createLocalAvatarSession,
+  getLocalAvatarSession,
+  redactLogValue,
+  _test: localAvatarTest,
+} = require("../src/transport-meet/local-avatar-session");
 
 const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "local-avatar-timeline.json"), "utf8"));
 
@@ -18,6 +25,162 @@ const QUIET_ENV = {
   TTS_CACHE_PREWARM: "false",
   METRICS_DISABLED: "1",
 };
+
+test("local avatar capability is 256-bit, audience-bound, short-lived, and revoked on close", () => {
+  let now = 1_000;
+  const issued = createLocalAvatarSession({
+    publicOrigin: "https://meetmate.example",
+    now: () => now,
+    ttlMs: 50,
+  });
+  const capabilityBytes = Buffer.from(issued.capability, "base64url");
+
+  assert.equal(capabilityBytes.length, 32);
+  assert.equal(issued.launchUrl.startsWith("https://meetmate.example/local-avatar/index.html?v="), true);
+  assert.equal(issued.launchUrl.includes(`#cap=${issued.capability}`), true);
+  assert.equal(getLocalAvatarSession(issued.session.visualId), issued.session);
+  assert.equal(issued.session.verifyCapability(issued.capability), true);
+  assert.equal(issued.session.verifyCapability(tamperCapability(issued.capability)), false);
+  assert.equal(issued.session.connect({ capability: issued.capability, origin: "https://wrong.example" }), null);
+
+  now += 51;
+  assert.equal(issued.session.verifyCapability(issued.capability), false);
+  assert.equal(getLocalAvatarSession(issued.session.visualId), null);
+  assert.equal(issued.session.close("cancelled"), false);
+});
+
+test("successful state polling renews the idle TTL beyond twice the maximum lifetime", () => {
+  let now = 1_000;
+  const issued = createLocalAvatarSession({
+    publicOrigin: "https://meetmate.example",
+    now: () => now,
+    ttlMs: localAvatarTest.MAX_TTL_MS + 1,
+  });
+  const auth = { capability: issued.capability, origin: "https://meetmate.example" };
+  const connected = issued.session.connect(auth);
+  const readArgs = {
+    ...auth,
+    generation: connected.generation,
+    afterSequence: connected.sequence,
+  };
+
+  assert.equal(issued.session.snapshot().expiresAt, now + localAvatarTest.MAX_TTL_MS);
+  for (let poll = 0; poll < 3; poll += 1) {
+    now += localAvatarTest.MAX_TTL_MS - 1;
+    assert.equal(issued.session.readState(readArgs), undefined);
+    assert.equal(issued.session.snapshot().expiresAt, now + localAvatarTest.MAX_TTL_MS);
+  }
+  assert.ok(now > 1_000 + (2 * localAvatarTest.MAX_TTL_MS));
+  assert.equal(getLocalAvatarSession(issued.session.visualId), issued.session);
+
+  now = issued.session.snapshot().expiresAt;
+  assert.equal(issued.session.readState(readArgs), null);
+  assert.equal(getLocalAvatarSession(issued.session.visualId), null);
+});
+
+test("local avatar queue, delivery retries, source generations, and reconnect history are bounded", () => {
+  const issued = createLocalAvatarSession({
+    publicOrigin: "https://meetmate.example",
+    queueLimit: 2,
+    retryLimit: 2,
+  });
+  const auth = { capability: issued.capability, origin: "https://meetmate.example" };
+  try {
+    const connected = issued.session.connect(auth);
+    const firstSource = issued.session.beginSource();
+    assert.equal(firstSource, 1);
+    assert.equal(issued.session.publishMarker(marker(0), firstSource), true);
+    assert.equal(issued.session.publishMarker(marker(1), firstSource), true);
+    assert.equal(issued.session.publishMarker(marker(2), firstSource), false);
+    assert.deepEqual(pick(issued.session.snapshot(), ["queueSize", "queueLimit", "dropped"]), {
+      queueSize: 2,
+      queueLimit: 2,
+      dropped: 1,
+    });
+
+    const readArgs = { ...auth, generation: connected.generation, afterSequence: connected.sequence };
+    const latest = issued.session.readState(readArgs);
+    assert.equal(latest.kind, "marker");
+    assert.equal(latest.sampleIndex, 1);
+    assert.deepEqual(issued.session.readState(readArgs), latest);
+    assert.deepEqual(issued.session.readState(readArgs), latest);
+    assert.equal(issued.session.readState(readArgs), undefined);
+
+    const staleSequence = latest.sequence;
+    const reconnected = issued.session.connect(auth);
+    assert.ok(reconnected.generation > connected.generation);
+    assert.equal(reconnected.kind, "idle");
+    assert.equal(issued.session.readState({ ...auth, generation: reconnected.generation, afterSequence: -1 }), undefined);
+    assert.equal(issued.session.readState({ ...auth, generation: connected.generation, afterSequence: staleSequence }), null);
+
+    const secondSource = issued.session.beginSource();
+    assert.equal(issued.session.publishMarker(marker(3), firstSource), false);
+    assert.equal(issued.session.publishMarker(marker(0), secondSource), true);
+  } finally {
+    issued.session.close();
+  }
+});
+
+test("playback cancel is exactly-once and rejects stale epoch state", () => {
+  const issued = createLocalAvatarSession({ publicOrigin: "https://meetmate.example" });
+  const auth = { capability: issued.capability, origin: "https://meetmate.example" };
+  try {
+    const connected = issued.session.connect(auth);
+    const source = issued.session.beginSource();
+    assert.equal(issued.session.publishMarker(marker(0), source), true);
+    assert.equal(issued.session.cancelPlayback({ outputEpoch: 0 }, source), true);
+    const afterCancel = issued.session.snapshot();
+    assert.equal(issued.session.cancelPlayback({ outputEpoch: 0 }, source), false);
+    assert.equal(issued.session.publishMarker(marker(10), source), false);
+    assert.deepEqual(issued.session.snapshot(), afterCancel);
+
+    const state = issued.session.readState({
+      ...auth,
+      generation: connected.generation,
+      afterSequence: connected.sequence,
+    });
+    assert.equal(state.kind, "cancel");
+    assert.equal(state.cancelEpoch, afterCancel.cancelEpoch);
+    assert.equal(state.outputEpoch, 0);
+  } finally {
+    issued.session.close();
+  }
+});
+
+test("local avatar logs redact capability-shaped values", () => {
+  const value = redactLogValue({
+    authorization: "Bearer secret",
+    url: "https://meetmate.example/local-avatar/index.html#cap=secret",
+    nested: { capability: "secret" },
+  });
+  assert.equal(JSON.stringify(value).includes("secret"), false);
+
+  const logs = [];
+  const issued = createLocalAvatarSession({
+    publicOrigin: "https://meetmate.example",
+    logger: { info: (...args) => logs.push(args) },
+  });
+  issued.session.verifyCapability(tamperCapability(issued.capability));
+  issued.session.close();
+  assert.equal(JSON.stringify(logs).includes(issued.capability), false);
+});
+
+test("capability mismatch uses the constant-time comparison path", { concurrency: false }, () => {
+  const issued = createLocalAvatarSession({ publicOrigin: "https://meetmate.example" });
+  const original = crypto.timingSafeEqual;
+  let comparisons = 0;
+  crypto.timingSafeEqual = (...args) => {
+    comparisons += 1;
+    return original(...args);
+  };
+  try {
+    assert.equal(issued.session.verifyCapability(tamperCapability(issued.capability)), false);
+    assert.equal(comparisons, 1);
+  } finally {
+    crypto.timingSafeEqual = original;
+    issued.session.close();
+  }
+});
 
 test("24 kHz S16LE metadata is continuous and chunk-boundary independent", { concurrency: false }, async () => {
   const pcm = Buffer.from(fixture.pcm.base64, "base64");
@@ -127,6 +290,186 @@ test("a cancellation advances the epoch and resets its sample coordinate", { con
   assert.deepEqual(observed, [
     { hex: "01000100", metadata: { outputEpoch: 0, firstSampleIndex: 0, sampleRate: fixture.pcm.sampleRate } },
     { hex: "02000200", metadata: { outputEpoch: 1, firstSampleIndex: 0, sampleRate: fixture.pcm.sampleRate } },
+  ]);
+});
+
+test("a foreign controller cannot abort playback or advance outputEpoch", { concurrency: false }, async () => {
+  const observed = [];
+  await withPipeline({ llm: { streamChat: waitForAbortStream } }, async ({ pipeline }) => {
+    const events = collectCancellationEvents(pipeline);
+    const processing = pipeline._test.processUserInput("controller identity");
+    await waitUntil(() => pipeline._test.getCurrentAbortController());
+    const active = pipeline._test.getCurrentAbortController();
+    const foreign = new AbortController();
+
+    assert.equal(pipeline._test.abortPlayback(foreign, "external_abort"), false);
+    assert.equal(foreign.signal.aborted, false);
+    assert.equal(active.signal.aborted, false);
+    assert.deepEqual(events, []);
+
+    assert.equal(pipeline._test.abortCurrent(), true);
+    assertCancellation(events, "external_abort", 0);
+    observed.push(...events);
+    await processing;
+  });
+  assert.equal(observed.length, 1);
+});
+
+test("greeting preempts a pending turn before its late timeout can invalidate greeting playback", { concurrency: false }, async () => {
+  const timeoutMs = 60_000;
+  const captured = [];
+  const originalSetTimeout = global.setTimeout;
+  const originalClearTimeout = global.clearTimeout;
+  global.setTimeout = (callback, delay, ...args) => {
+    if (delay !== timeoutMs) return originalSetTimeout(callback, delay, ...args);
+    const handle = { unref() {} };
+    captured.push({ callback, args, handle, cleared: false });
+    return handle;
+  };
+  global.clearTimeout = (handle) => {
+    const timer = captured.find((item) => item.handle === handle);
+    if (timer) {
+      timer.cleared = true;
+      return;
+    }
+    originalClearTimeout(handle);
+  };
+
+  try {
+    const observed = [];
+    let greetingOnAudio;
+    let greetingSignal;
+    let finishGreeting;
+    await withPipeline({
+      config: {
+        greeting: "こんにちは。",
+        llm: { responseTimeoutMs: timeoutMs, firstTokenDelegateMs: 0 },
+      },
+      llm: { streamChat: waitForAbortStream },
+      synthesize: async (_text, { signal, onAudio }) => {
+        greetingSignal = signal;
+        greetingOnAudio = onAudio;
+        onAudio(Buffer.from([1, 0]));
+        await new Promise((resolve) => {
+          finishGreeting = resolve;
+          signal.addEventListener("abort", resolve, { once: true });
+        });
+      },
+      onAudio: (buffer, metadata) => observed.push({ hex: buffer.toString("hex"), metadata: { ...metadata } }),
+    }, async ({ pipeline }) => {
+      const events = collectCancellationEvents(pipeline);
+      const processing = pipeline._test.processUserInput("応答待ちのターン");
+      await waitUntil(() => captured.length === 1);
+      const oldController = pipeline._test.getCurrentAbortController();
+      let oldAbortCount = 0;
+      oldController.signal.addEventListener("abort", () => { oldAbortCount += 1; });
+
+      const greeting = pipeline._test.sendGreeting();
+      await waitUntil(() => observed.length === 1);
+      assert.equal(oldController.signal.aborted, true);
+      assert.equal(oldAbortCount, 1);
+      assertCancellation(events, "greeting_preempt", 0);
+      assert.equal(captured[0].cleared, true);
+
+      captured[0].callback(...captured[0].args);
+      assert.equal(pipeline._test.abortPlayback(oldController, "llm_response_timeout"), false);
+      assert.equal(events.length, 1);
+      assert.equal(greetingSignal.aborted, false);
+
+      greetingOnAudio(Buffer.from([2, 0]));
+      assert.deepEqual(observed, [
+        { hex: "0100", metadata: { outputEpoch: 1, firstSampleIndex: 0, sampleRate: fixture.pcm.sampleRate } },
+        { hex: "0200", metadata: { outputEpoch: 1, firstSampleIndex: 1, sampleRate: fixture.pcm.sampleRate } },
+      ]);
+      finishGreeting();
+      await Promise.all([processing, greeting]);
+    });
+  } finally {
+    global.setTimeout = originalSetTimeout;
+    global.clearTimeout = originalClearTimeout;
+  }
+});
+
+test("lead, gap, and purpose silence preserve contiguous metadata", { concurrency: false }, async () => {
+  const observed = [];
+  let value = 1;
+  await withPipeline({
+    env: { TTS_LEAD_MS: "1", TTS_GAP_MS: "1", SENTENCE_PAUSE_MS: "2" },
+    config: { greeting: "挨拶。", purposeStatement: "目的。" },
+    synthesize: async (_text, { onAudio }) => {
+      onAudio(Buffer.from([value, 0, value, 0]));
+      value += 1;
+    },
+    onAudio: (buffer, metadata) => observed.push({ bytes: buffer.length, metadata: { ...metadata } }),
+  }, async ({ pipeline }) => {
+    await pipeline._test.sendGreeting();
+  });
+
+  assert.deepEqual(observed, [
+    audioObservation(48, 0),
+    audioObservation(4, 24),
+    audioObservation(96, 26),
+    audioObservation(48, 74),
+    audioObservation(4, 98),
+  ]);
+});
+
+test("sentence-boundary silence preserves contiguous metadata", { concurrency: false }, async () => {
+  const observed = [];
+  await withPipeline({
+    env: { SENTENCE_PAUSE_MS: "2" },
+    llm: {
+      streamChat: async function* () {
+        yield "これは十分に長い第一文です。";
+        yield "これは十分に長い第二文です。";
+      },
+    },
+    synthesize: async (_text, { onAudio }) => onAudio(Buffer.from([1, 0])),
+    onAudio: (buffer, metadata) => observed.push({ bytes: buffer.length, metadata: { ...metadata } }),
+  }, async ({ pipeline }) => {
+    await pipeline._test.processUserInput("二つの文を話して");
+  });
+
+  assert.deepEqual(observed, [
+    audioObservation(2, 0),
+    audioObservation(96, 1),
+    audioObservation(2, 49),
+  ]);
+});
+
+test("TTS-cache playback and ack silence preserve contiguous metadata", { concurrency: false }, async () => {
+  const observed = [];
+  let cachedCalls = 0;
+  let rawCalls = 0;
+  await withPipeline({
+    exposeInternals: false,
+    env: { ENABLE_IMMEDIATE_ACK: "true", SENTENCE_PAUSE_MS: "2" },
+    config: { ackVariants: ["はい。"] },
+    llm: { streamChat: async function* () {} },
+    synthesize: async () => { rawCalls += 1; },
+    ttsCache: {
+      createTtsCache: () => ({
+        synthesize: async (_text, { onAudio }) => {
+          cachedCalls += 1;
+          onAudio(Buffer.from([1, 0]));
+          onAudio(Buffer.from([2, 0, 3, 0]));
+        },
+        prewarm: async () => {},
+      }),
+    },
+    onAudio: (buffer, metadata) => observed.push({ bytes: buffer.length, metadata: { ...metadata } }),
+  }, async ({ pipeline, stt }) => {
+    stt.emit("utterance_end", "ケイティ、確認して");
+    await waitUntil(() => observed.length >= 3);
+    pipeline.close();
+  });
+
+  assert.equal(cachedCalls, 1);
+  assert.equal(rawCalls, 0);
+  assert.deepEqual(observed.slice(0, 3), [
+    audioObservation(2, 0),
+    audioObservation(4, 1),
+    audioObservation(96, 3),
   ]);
 });
 
@@ -245,6 +588,7 @@ test("every playback-authoritative abort call site uses the reasoned wrapper", (
     "barge_in",
     "external_abort",
     "first_token_delegation",
+    "greeting_preempt",
     "llm_response_timeout",
     "pipeline_close",
     "turn_interrupted",
@@ -318,6 +662,30 @@ function assertCancellation(events, reason, outputEpoch, length = 1) {
   assert.deepEqual(Object.keys(event).sort(), ["monotonicTime", "outputEpoch", "reason"]);
 }
 
+function audioObservation(bytes, firstSampleIndex) {
+  return {
+    bytes,
+    metadata: {
+      outputEpoch: 0,
+      firstSampleIndex,
+      sampleRate: fixture.pcm.sampleRate,
+    },
+  };
+}
+
+function marker(firstSampleIndex, outputEpoch = 0) {
+  return { outputEpoch, firstSampleIndex, sampleRate: fixture.pcm.sampleRate };
+}
+
+function tamperCapability(value) {
+  const first = value[0] === "A" ? "B" : "A";
+  return `${first}${value.slice(1)}`;
+}
+
+function pick(value, keys) {
+  return Object.fromEntries(keys.map((key) => [key, value[key]]));
+}
+
 function splitPcmBySamples(buffer, sampleCounts) {
   const chunks = [];
   let byteOffset = 0;
@@ -353,13 +721,13 @@ async function waitUntil(predicate, timeoutMs = 1000) {
 }
 
 async function withPipeline(overrides, fn) {
-  const restoreEnv = setEnv(QUIET_ENV);
+  const restoreEnv = setEnv({ ...QUIET_ENV, ...(overrides.env || {}) });
   const originalConsole = { log: console.log, warn: console.warn, error: console.error };
   console.log = () => {};
   console.warn = () => {};
   console.error = () => {};
   const src = path.join(__dirname, "..", "src");
-  const modulePaths = ["stt-provider.js", "stt.js", "llm-provider.js", "tts-fish.js", "pipeline.js"]
+  const modulePaths = ["stt-provider.js", "stt.js", "llm-provider.js", "tts-fish.js", "tts-cache.js", "pipeline.js"]
     .map((file) => path.join(src, file));
   const previousCache = new Map(modulePaths.map((file) => [require.resolve(file), require.cache[require.resolve(file)]]));
   for (const file of modulePaths) delete require.cache[require.resolve(file)];
@@ -382,6 +750,7 @@ async function withPipeline(overrides, fn) {
   installMock(path.join(src, "tts-fish.js"), {
     synthesize: overrides.synthesize || (async (_text, { onAudio }) => onAudio(Buffer.alloc(4))),
   });
+  if (overrides.ttsCache) installMock(path.join(src, "tts-cache.js"), overrides.ttsCache);
 
   let pipeline;
   try {
@@ -412,7 +781,7 @@ async function withPipeline(overrides, fn) {
       agents: { caty: { wakeWords: ["ケイティ"] } },
       selectedAgentIds: ["caty"],
       defaultAgentId: "caty",
-      _testExposeInternals: true,
+      _testExposeInternals: overrides.exposeInternals !== false,
     });
     await fn({ pipeline, session, stt, turnState });
   } finally {

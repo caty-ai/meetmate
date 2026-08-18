@@ -5,6 +5,23 @@ const { bundledPublicDir, metricsLogDir } = require("./paths");
 const PUBLIC_DIR = bundledPublicDir();
 const METRICS_TAIL_BYTES = 5 * 1024 * 1024;
 const MAX_WINDOW_HOURS = 168;
+const LOCAL_AVATAR_CSP = [
+  "default-src 'none'",
+  "script-src 'self'",
+  "connect-src 'self'",
+  "img-src 'none'",
+  "style-src 'none'",
+  "font-src 'none'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'none'",
+  "frame-ancestors 'none'",
+].join("; ");
+
+const LOCAL_AVATAR_ASSETS = new Map([
+  ["/local-avatar/index.html", { filename: "local-avatar/index.html", contentType: "text/html; charset=utf-8" }],
+  ["/local-avatar/local-avatar.js", { filename: "local-avatar/local-avatar.js", contentType: "application/javascript; charset=utf-8" }],
+]);
 
 const PUBLIC_ASSETS = new Map([
   ["/style.css", { filename: "style.css", contentType: "text/css; charset=utf-8" }],
@@ -48,6 +65,125 @@ function servePublicAsset(req, res, url = new URL(req.url || "/", "http://localh
     res.end(data);
   });
   return true;
+}
+
+function serveLocalAvatar(req, res, url = new URL(req.url || "/", "http://localhost")) {
+  const isLocalAvatarPath = url.pathname === "/local-avatar" || url.pathname.startsWith("/local-avatar/");
+  if (!isLocalAvatarPath) return false;
+  if (hasTraversal(req)) {
+    writeLocalAvatarPlain(res, 404, "Not Found");
+    return true;
+  }
+
+  const asset = LOCAL_AVATAR_ASSETS.get(url.pathname);
+  if (asset) {
+    if (req.method !== "GET") {
+      writeLocalAvatarPlain(res, 404, "Not Found");
+      return true;
+    }
+    const { getLocalAvatarSession, hasLocalAvatarSessions } = require("./transport-meet/local-avatar-session");
+    const allowedQuery = url.pathname === "/local-avatar/index.html"
+      ? hasExactQueryKeys(url, ["v"]) && Boolean(getLocalAvatarSession(url.searchParams.get("v")))
+      : !url.search && hasLocalAvatarSessions();
+    if (!allowedQuery) {
+      writeLocalAvatarPlain(res, 404, "Not Found");
+      return true;
+    }
+    fs.readFile(path.join(PUBLIC_DIR, asset.filename), (err, data) => {
+      if (err) {
+        writeLocalAvatarPlain(res, 404, "Not Found");
+        return;
+      }
+      res.writeHead(200, localAvatarHeaders({
+        "Content-Type": asset.contentType,
+        "Content-Length": data.length,
+      }));
+      res.end(data);
+    });
+    return true;
+  }
+
+  if (url.pathname !== "/local-avatar/state" || req.method !== "POST") {
+    writeLocalAvatarPlain(res, 404, "Not Found");
+    return true;
+  }
+
+  const visualId = url.searchParams.get("v") || "";
+  const capability = readBearerCapability(req.headers?.authorization);
+  const origin = String(req.headers?.origin || "");
+  const { getLocalAvatarSession } = require("./transport-meet/local-avatar-session");
+  const session = getLocalAvatarSession(visualId);
+  if (!session || !capability) {
+    writeLocalAvatarPlain(res, 404, "Not Found");
+    return true;
+  }
+
+  if (url.searchParams.get("connect") === "1" && hasExactQueryKeys(url, ["connect", "v"])) {
+    const state = session.connect({ capability, origin });
+    if (!state) {
+      writeLocalAvatarPlain(res, 404, "Not Found");
+      return true;
+    }
+    writeLocalAvatarJson(res, 200, state);
+    return true;
+  }
+
+  if (!hasExactQueryKeys(url, ["after", "generation", "v"])) {
+    writeLocalAvatarPlain(res, 404, "Not Found");
+    return true;
+  }
+  const state = session.readState({
+    capability,
+    origin,
+    generation: url.searchParams.get("generation"),
+    afterSequence: url.searchParams.get("after"),
+  });
+  if (state === null) {
+    writeLocalAvatarPlain(res, 404, "Not Found");
+  } else if (state === undefined) {
+    res.writeHead(204, localAvatarHeaders());
+    res.end();
+  } else {
+    writeLocalAvatarJson(res, 200, state);
+  }
+  return true;
+}
+
+function hasExactQueryKeys(url, expected) {
+  const keys = [...url.searchParams.keys()].sort();
+  return keys.length === expected.length && keys.every((key, index) => key === expected[index]);
+}
+
+function readBearerCapability(value) {
+  const match = /^Bearer ([A-Za-z0-9_-]+)$/.exec(String(value || ""));
+  return match ? match[1] : "";
+}
+
+function localAvatarHeaders(extra = {}) {
+  return {
+    "Content-Security-Policy": LOCAL_AVATAR_CSP,
+    "Cache-Control": "no-store",
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+    ...extra,
+  };
+}
+
+function writeLocalAvatarJson(res, status, body) {
+  const json = JSON.stringify(body);
+  res.writeHead(status, localAvatarHeaders({
+    "Content-Type": "application/json; charset=utf-8",
+    "Content-Length": Buffer.byteLength(json),
+  }));
+  res.end(json);
+}
+
+function writeLocalAvatarPlain(res, status, body) {
+  res.writeHead(status, localAvatarHeaders({
+    "Content-Type": "text/plain; charset=utf-8",
+    "Content-Length": Buffer.byteLength(body),
+  }));
+  res.end(body);
 }
 
 async function sendMetricsSummary(req, res, url = new URL(req.url || "/", "http://localhost")) {
@@ -218,9 +354,11 @@ function writePlain(res, status, text) {
 
 module.exports = {
   servePublicAsset,
+  serveLocalAvatar,
   sendMetricsSummary,
   readMetricsSummary,
   _test: {
+    LOCAL_AVATAR_CSP,
     clampHours,
     readTail,
     getMetricsLogFile,
