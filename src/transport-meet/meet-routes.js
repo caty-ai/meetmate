@@ -27,7 +27,7 @@ const gatewayEvents = require("../gateway-events");
 const { recordEvent } = require("../metrics");
 const { buildDelegationResultsSection } = require("../delegation-results");
 const { createGatewaySessionTracker } = require("../gateway-session-tracker");
-const { servePublicAsset, sendMetricsSummary } = require("../ui-routes");
+const { servePublicAsset, serveLocalAvatar, sendMetricsSummary } = require("../ui-routes");
 const { logsDir, avatarCachePath, bundledAssetPath, bundledPublicDir } = require("../paths");
 
 const ATTENDEE_API_BASE_URL = process.env.ATTENDEE_API_BASE_URL || "app.attendee.dev";
@@ -40,6 +40,7 @@ const ECHO_LOOP_COOLDOWN_MS = Number(process.env.ECHO_LOOP_COOLDOWN_MS || 300);
 const ECHO_GATE_CLOSED_BYPASS = String(process.env.ECHO_GATE_CLOSED_BYPASS || "false").toLowerCase() === "true";
 const JOIN_SHARED_TOKEN = process.env.JOIN_SHARED_TOKEN || "";
 const WS_SHARED_TOKEN = process.env.WS_SHARED_TOKEN || "";
+const LOCAL_AVATAR_EXPERIMENT = "hybrid-local-l0";
 
 const MEETING_URL_RE = /^https:\/\/(meet\.google\.com\/[a-z0-9-]+|[\w.-]*zoom\.us\/(j|my)\/[a-zA-Z0-9?=&._%-]+)(?:\?.*)?$/i;
 const CONVERSATION_MODES = new Set(["one_to_one", "group"]);
@@ -657,11 +658,36 @@ function finalizeSessionIfInactive(sessionId) {
   if (!session) return;
 
   saveConversationLog(session);
+  closeLocalAvatarSession(session, "session_end");
   sessionBotIds.delete(sessionId);
   const retained = untrackGatewaySession(sessionId, { retainIfDelegations: true });
   if (!retained) meetingSessions.delete(sessionId);
   leavingSessionIds.delete(sessionId);
   console.log(`🧹  Session closed: ${sessionId}`);
+}
+
+function closeLocalAvatarSession(session, reason) {
+  const localAvatarSession = session?.localAvatarSession;
+  if (!localAvatarSession) return;
+  session.localAvatarSession = null;
+  try {
+    localAvatarSession.close(reason);
+  } catch {
+    // The optional visual path must not affect meeting cleanup.
+  }
+}
+
+function resolveLocalAvatarPublicOrigin() {
+  const configuredDomain = String(_configJson?.server?.ngrokDomain || "").trim();
+  if (configuredDomain && /^[A-Za-z0-9.-]+(?::\d+)?$/.test(configuredDomain)) {
+    return `https://${configuredDomain}`;
+  }
+
+  if (detectedNgrokUrl.startsWith("wss://")) {
+    return `https://${detectedNgrokUrl.slice("wss://".length)}`;
+  }
+
+  return null;
 }
 
 function scheduleFinalizeSession(sessionId) {
@@ -920,6 +946,8 @@ async function init(options = {}) {
 async function handleHttp(req, res) {
   const url = new URL(req.url || "/", "http://localhost");
 
+  if (serveLocalAvatar(req, res, url)) return;
+
   if (servePublicAsset(req, res, url)) return;
 
   if (await sendMetricsSummary(req, res, url)) return;
@@ -1064,6 +1092,7 @@ async function handleHttp(req, res) {
       const session = meetingSessions.get(sid);
       if (session) {
         if (session.closeTimer) clearTimeout(session.closeTimer);
+        closeLocalAvatarSession(session, "leave_requested");
         saveConversationLog(session);
         sessionBotIds.delete(sid);
         const retained = untrackGatewaySession(sid, { retainIfDelegations: true });
@@ -1081,6 +1110,7 @@ async function handleHttp(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/join-meeting") {
+    let localAvatarSession = null;
     try {
       const formData = await parseRequestBody(req);
       const hasExternalToken = req.headers["x-join-token"];
@@ -1093,7 +1123,17 @@ async function handleHttp(req, res) {
       const wsUrl = toSafeString(formData.wsUrl);
       const conversationMode = toSafeString(formData.conversationMode) || "one_to_one";
       const briefing = toSafeString(formData.briefing) || null;
+      const avatarExperiment = toSafeString(formData.avatarExperiment);
       const profile = _agentProfile;
+
+      if (avatarExperiment && avatarExperiment !== LOCAL_AVATAR_EXPERIMENT) {
+        writePlainResponse(res, 400, "avatarExperiment が不正です。");
+        return;
+      }
+      if (avatarExperiment === LOCAL_AVATAR_EXPERIMENT && TTS_PROVIDER !== "fish-audio") {
+        writePlainResponse(res, 400, "hybrid-local-l0 は Fish Audio 構成でのみ利用できます。");
+        return;
+      }
 
       // Single-agent mode: always use config.json agent
       const selectedAgentIds = [profile.agentId];
@@ -1159,6 +1199,20 @@ async function handleHttp(req, res) {
         agents: selectedAgentNames,
       };
 
+      let localAvatarLaunchUrl = null;
+      if (avatarExperiment === LOCAL_AVATAR_EXPERIMENT) {
+        const publicOrigin = resolveLocalAvatarPublicOrigin();
+        if (!publicOrigin) {
+          writePlainResponse(res, 400, "hybrid-local-l0 には公開 HTTPS origin が必要です。");
+          return;
+        }
+        const { createLocalAvatarSession } = require("./local-avatar-session");
+        const issued = createLocalAvatarSession({ publicOrigin });
+        localAvatarSession = issued.session;
+        localAvatarLaunchUrl = issued.launchUrl;
+        session.localAvatarSession = localAvatarSession;
+      }
+
       meetingSessions.set(sessionId, session);
 
       const lifecycle = new SessionLifecycle(sessionId, "meet", {
@@ -1218,6 +1272,10 @@ async function handleHttp(req, res) {
         botPayload.bot_image = botImageData;
       }
 
+      if (localAvatarLaunchUrl) {
+        botPayload.voice_agent_settings = { url: localAvatarLaunchUrl };
+      }
+
       // Use the agent's Attendee API key if available
       const agentAttendeeKey = profile.attendeeApiKey || null;
 
@@ -1238,6 +1296,7 @@ async function handleHttp(req, res) {
       }
 
       console.error("❌  Bot起動失敗:", attendeeResult.statusCode, attendeeResult.body);
+      closeLocalAvatarSession(session, "bot_launch_failed");
       const failedLifecycle = meetLifecycles.get(sessionId);
       if (failedLifecycle && !failedLifecycle.isTerminal) {
         failedLifecycle.transition("failed", { reason: "bot_launch_failed", statusCode: attendeeResult.statusCode });
@@ -1246,6 +1305,7 @@ async function handleHttp(req, res) {
       writePlainResponse(res, 502, `Bot起動エラー: ${attendeeResult.statusCode} - ${attendeeResult.body}`);
       return;
     } catch (err) {
+      try { localAvatarSession?.close("join_failed"); } catch { /* visual cleanup is best-effort */ }
       console.error("❌  /join-meeting error:", err);
       writePlainResponse(res, 500, `join-meeting エラー: ${err.message}`);
       return;
@@ -1316,7 +1376,14 @@ function handleWsConnection(client, req) {
     droppedEchoFrames: 0,
   };
 
-  const handler = createHandler(session, turnState, (buffer) => {
+  let localAvatarSourceGeneration = null;
+  try {
+    localAvatarSourceGeneration = session.localAvatarSession?.beginSource() ?? null;
+  } catch {
+    localAvatarSourceGeneration = null;
+  }
+
+  const handler = createHandler(session, turnState, (buffer, metadata) => {
     if (client.readyState !== WebSocket.OPEN) return;
 
     const payload = {
@@ -1324,12 +1391,31 @@ function handleWsConnection(client, req) {
       data: { chunk: buffer.toString("base64"), sample_rate: TTS_SAMPLE_RATE },
     };
 
+    let audioSent = false;
     try {
       client.send(JSON.stringify(payload));
+      audioSent = true;
     } catch (err) {
       console.error(`❌  Failed sending bot_output (sid=${sid}):`, err.message);
     }
+
+    if (!audioSent) return;
+    try {
+      session.localAvatarSession?.publishMarker(metadata, localAvatarSourceGeneration);
+    } catch {
+      // Visual state is diagnostic-only and cannot affect realtime audio.
+    }
   });
+
+  if (session.localAvatarSession && handler.on) {
+    handler.on("playback_cancelled", (event) => {
+      try {
+        session.localAvatarSession?.cancelPlayback(event, localAvatarSourceGeneration);
+      } catch {
+        // Visual cancellation cannot affect the authoritative audio cancellation.
+      }
+    });
+  }
 
   activeConnections.set(sid, { client, handler });
 
@@ -1339,6 +1425,7 @@ function handleWsConnection(client, req) {
 
       // Mark as leaving to prevent reconnection greeting
       leavingSessionIds.add(sid);
+      closeLocalAvatarSession(session, "exit_requested");
 
       // Remove bot from meeting via Attendee API (POST /leave)
       const botInfo = sessionBotIds.get(sid);
