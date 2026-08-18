@@ -1,0 +1,124 @@
+{
+  "version": 2,
+  "description": "Measurement protocol v2 script-driver B0-B7 playbook",
+  "assets": {
+    "b0_start": { "text": "テスト開始します" },
+    "b1_q1": { "text": "{{WAKE}}、今日の天気について一言で教えてください" },
+    "b1_q2": { "text": "{{WAKE}}、朝の時間を気持ちよく過ごすための簡単な習慣はありますか" },
+    "b1_q3": { "text": "{{WAKE}}、赤と青を混ぜると何色になりますか" },
+    "b1_q4": { "text": "{{WAKE}}、初めて訪れる街で半日過ごすなら、食事、散歩、休憩をどんな順番で組み立てると楽しみやすいか、理由も含めて説明してください" },
+    "b1_q5": { "text": "{{WAKE}}、最近よく使われる生成AIを仕事で安全に活用するために、入力情報、結果の確認、チーム内の共有という三つの観点から注意点を整理してください" },
+    "b2_prompt1": { "text": "{{WAKE}}、春におすすめの旅行先を詳しく紹介してください" },
+    "b2_interrupt1": { "text": "いまの途中だけど、国内だけで" },
+    "b2_prompt2": { "text": "{{WAKE}}、家庭でできる省エネの工夫をいくつか説明してください" },
+    "b2_interrupt2": { "text": "いまの途中だけど、電気代だけで" },
+    "b2_prompt3": { "text": "{{WAKE}}、健康的な昼食の組み立て方を順番に教えてください" },
+    "b2_interrupt3": { "text": "いまの途中だけど、コンビニ例で" },
+    "b2_prompt4": { "text": "{{WAKE}}、新しいチームで信頼関係を作る方法を具体例つきで話してください" },
+    "b2_interrupt4": { "text": "いまの途中だけど、最初の週だけで" },
+    "b2_prompt5": { "text": "{{WAKE}}、読書を長く続けるための工夫を詳しく教えてください" },
+    "b2_interrupt5": { "text": "いまの途中だけど、要点は一つで" },
+    "b3_q1": { "text": "{{WAKE}}、来週の学習計画を作る考え方を説明してください" },
+    "b3_cancel1": { "text": "{{WAKE}}、キャンセル" },
+    "b3_q2": { "text": "{{WAKE}}、長期休暇の持ち物を分類して教えてください" },
+    "b3_cancel2": { "text": "{{WAKE}}、その回答をキャンセルしてください" },
+    "b3_q3": { "text": "{{WAKE}}、集中しやすい作業環境の整え方を詳しく話してください" },
+    "b3_cancel3": { "text": "{{WAKE}}、いまの説明をキャンセル" },
+    "b5_q1": { "text": "{{WAKE}}、一足す一は" },
+    "b5_q2": { "text": "{{WAKE}}、日本の首都は" },
+    "b5_q3": { "text": "{{WAKE}}、三角形の辺はいくつ" },
+    "b5_q4": { "text": "{{WAKE}}、水の化学式は" },
+    "b5_q5": { "text": "{{WAKE}}、春の次の季節は" },
+    "b5_q6": { "text": "{{WAKE}}、一週間は何日" },
+    "b5_q7": { "text": "{{WAKE}}、白の反対としてよく挙げる色は" },
+    "b5_q8": { "text": "{{WAKE}}、十から三を引くと" },
+    "b6_exit": { "text": "{{WAKE}}、この会議から退出してください" },
+    "b6_return": { "text": "{{WAKE}}、戻ったあとに聞こえているか短く答えてください" },
+    "b7_end": { "text": "テスト終了" }
+  },
+  "blocks": [
+    {
+      "id": "B0",
+      "title": "0-2 min: synchronization anchors",
+      "steps": [
+        { "type": "anchorTone" },
+        { "type": "chatMarker", "text": "T0" },
+        { "type": "play", "assetId": "b0_start" }
+      ]
+    },
+    {
+      "id": "B1",
+      "title": "2-8 min: normal exchanges",
+      "steps": [
+        { "type": "play", "assetId": "b1_q1" }, { "type": "waitForSubjectSpeech", "timeoutMs": 15000 }, { "type": "waitMs", "ms": 5000 },
+        { "type": "play", "assetId": "b1_q2" }, { "type": "waitForSubjectSpeech", "timeoutMs": 15000 }, { "type": "waitMs", "ms": 8000 },
+        { "type": "play", "assetId": "b1_q3" }, { "type": "waitForSubjectSpeech", "timeoutMs": 15000 }, { "type": "waitMs", "ms": 5000 },
+        { "type": "play", "assetId": "b1_q4" }, { "type": "waitForSubjectSpeech", "timeoutMs": 15000 }, { "type": "waitMs", "ms": 18000 },
+        { "type": "play", "assetId": "b1_q5" }, { "type": "waitForSubjectSpeech", "timeoutMs": 15000 }, { "type": "waitMs", "ms": 20000 }
+      ]
+    },
+    {
+      "id": "B2",
+      "title": "8-13 min: start, mid, and late barge-in",
+      "steps": [
+        { "type": "play", "assetId": "b2_prompt1" }, { "type": "bargeIn", "position": "start", "assetId": "b2_interrupt1", "timeoutMs": 20000 },
+        { "type": "play", "assetId": "b2_prompt2" }, { "type": "bargeIn", "position": "start", "assetId": "b2_interrupt2", "timeoutMs": 20000 },
+        { "type": "play", "assetId": "b2_prompt3" }, { "type": "bargeIn", "position": "mid", "assetId": "b2_interrupt3", "timeoutMs": 20000 },
+        { "type": "play", "assetId": "b2_prompt4" }, { "type": "bargeIn", "position": "mid", "assetId": "b2_interrupt4", "timeoutMs": 20000 },
+        { "type": "play", "assetId": "b2_prompt5" }, { "type": "bargeIn", "position": "late", "assetId": "b2_interrupt5", "timeoutMs": 25000 }
+      ]
+    },
+    {
+      "id": "B3",
+      "title": "13-17 min: wake-word cancellation",
+      "steps": [
+        { "type": "play", "assetId": "b3_q1" }, { "type": "waitForSubjectSpeech", "timeoutMs": 15000 }, { "type": "play", "assetId": "b3_cancel1" }, { "type": "waitMs", "ms": 3000 },
+        { "type": "play", "assetId": "b3_q2" }, { "type": "waitForSubjectSpeech", "timeoutMs": 15000 }, { "type": "play", "assetId": "b3_cancel2" }, { "type": "waitMs", "ms": 3000 },
+        { "type": "play", "assetId": "b3_q3" }, { "type": "waitForSubjectSpeech", "timeoutMs": 15000 }, { "type": "play", "assetId": "b3_cancel3" }
+      ]
+    },
+    {
+      "id": "B4",
+      "title": "17-22 min: pure silence",
+      "steps": [
+        { "type": "waitMs", "ms": 90000 },
+        { "type": "waitMs", "ms": 90000 }
+      ]
+    },
+    {
+      "id": "B5",
+      "title": "22-26 min: rapid questions without response waits",
+      "steps": [
+        { "type": "play", "assetId": "b5_q1" }, { "type": "waitMs", "ms": 350 },
+        { "type": "play", "assetId": "b5_q2" }, { "type": "waitMs", "ms": 350 },
+        { "type": "play", "assetId": "b5_q3" }, { "type": "waitMs", "ms": 350 },
+        { "type": "play", "assetId": "b5_q4" }, { "type": "waitMs", "ms": 350 },
+        { "type": "play", "assetId": "b5_q5" }, { "type": "waitMs", "ms": 350 },
+        { "type": "play", "assetId": "b5_q6" }, { "type": "waitMs", "ms": 350 },
+        { "type": "play", "assetId": "b5_q7" }, { "type": "waitMs", "ms": 350 },
+        { "type": "play", "assetId": "b5_q8" }
+      ]
+    },
+    {
+      "id": "B6",
+      "title": "26-29 min: exit and re-invite",
+      "steps": [
+        { "type": "play", "assetId": "b6_exit" },
+        { "type": "expectSubjectExit", "timeoutMs": 30000, "silenceMs": 5000 },
+        { "type": "waitForSignal", "name": "reinvited", "timeoutMs": 90000 },
+        { "type": "play", "assetId": "b6_return" },
+        { "type": "waitForSubjectSpeech", "timeoutMs": 15000 },
+        { "type": "waitMs", "ms": 5000 }
+      ]
+    },
+    {
+      "id": "B7",
+      "title": "29-30 min: closing anchors",
+      "steps": [
+        { "type": "play", "assetId": "b7_end" },
+        { "type": "chatMarker", "text": "T1" },
+        { "type": "anchorTone" }
+      ]
+    }
+  ]
+}

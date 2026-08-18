@@ -22,3 +22,5 @@ config.json
 # Internal dev notes and review artifacts (never publish)
 _handoffs/
 artifacts/
+test/tools/script-assets/
+test/tools/runs/
