@@ -9,7 +9,7 @@ Use this template to create reproducible packets for multi-participant Meet issu
   "packetId": "repro-meet-multi-<id>",
   "createdAt": "2026-03-05T00:00:00.000Z",
   "environment": {
-    "node": "v22.x",
+    "node": "v26.x",
     "platform": "darwin|linux",
     "appCommit": "<git-sha>"
   },
