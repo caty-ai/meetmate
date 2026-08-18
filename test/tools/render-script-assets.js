@@ -143,7 +143,7 @@ async function main(argv = process.argv.slice(2)) {
   }
 }
 
-if (require.main === module) {
+if (require.main === module && process.env.NODE_TEST_CONTEXT === undefined) {
   main().then((code) => { process.exitCode = code; });
 }
 
