@@ -27,7 +27,7 @@
 
 ### 前提条件
 
-- Node.js v22+（`package.json` の `engines` 準拠）
+- Node.js v26+（`package.json` の `engines` 準拠）
 - 既定の `openclaw` プロバイダでは OpenClaw Gateway が同一マシンで稼働中
   - Gateway URL: `http://localhost:<port>`（エージェントのポートに合わせる）
   - Gateway Token: `openclaw.json` の `gateway.token` を確認

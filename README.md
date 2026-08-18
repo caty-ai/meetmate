@@ -3,7 +3,7 @@
 **English** | [日本語](README.ja.md) | [中文](README.zh.md) | [ไทย](README.th.md)
 
 [![License: Apache--2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
-[![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-%3E%3D26-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![Meetings](https://img.shields.io/badge/works%20in-Google%20Meet%20%7C%20Zoom-7C3AED)](#what-it-does)
 [![Server](https://img.shields.io/badge/runs%20on-Windows%20%7C%20macOS%20%7C%20Linux-444)](#try-it-in-30-seconds)
 
@@ -49,7 +49,7 @@ Meetmate does exactly one thing: it gives *your* AI agent a seat in your meeting
 
 | Item | Purpose | Setting names | When needed | Notes |
 |---|---|---|---|---|
-| Node.js 22+ | Run the server | `node`, `npm` | Always | Required. |
+| Node.js 26+ | Run the server | `node`, `npm` | Always | Required. |
 | [Attendee](https://attendee.dev/) account + API key | Meeting bot join/leave + audio I/O | `ATTENDEE_API_KEY` | Always | Hosted service; check current free/paid availability. |
 | [Soniox](https://console.soniox.com/) account + API key | Default speech-to-text | `STT_PROVIDER=soniox`, `SONIOX_API_KEY` | Usually | Default path. Pricing/trial terms vary. |
 | [Deepgram](https://console.deepgram.com/signup) account + API key | Optional alternate speech-to-text | `STT_PROVIDER=deepgram`, `DEEPGRAM_API_KEY` | Optional | Only if you switch away from Soniox. |
@@ -76,7 +76,7 @@ npx meetmate start    # starts the server and prints the settings-UI URL
 
 Open http://localhost:5005, paste a Meet or Zoom URL, and click **Join** — your agent enters the meeting. Call its wake word and start talking.
 
-Prerequisites (Node.js ≥ 22, API keys for [Attendee](https://attendee.dev/) meeting bots, [Soniox](https://soniox.com/) speech-to-text, and [Fish Audio](https://fish.audio/) voice) are walked through step-by-step in the [Setup guide](docs/setup-guide.md).
+Prerequisites (Node.js ≥ 26, API keys for [Attendee](https://attendee.dev/) meeting bots, [Soniox](https://soniox.com/) speech-to-text, and [Fish Audio](https://fish.audio/) voice) are walked through step-by-step in the [Setup guide](docs/setup-guide.md).
 That guide also covers Google Meet approval flow, Zoom constraints, ngrok/Tailscale options, and how to point Meetmate at a stateful OpenAI-compatible gateway such as a Claude Code bridge.
 
 ### From source
