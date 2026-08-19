@@ -14,7 +14,9 @@ const {
   maskTailWarningFor,
   parseArgs,
   reportCalibrationPlausibility,
+  stats,
   usage,
+  writeRunHeader,
 } = require("./tools/meet-script-driver");
 const { parseArgs: parseRendererArgs, render } = require("./tools/render-script-assets");
 
@@ -102,6 +104,35 @@ test("mask-tail warning is raised only when echo p95 exceeds the configured tail
     play_start_to_echo_ms_p95: 400,
     mask_tail_ms: 300,
   });
+});
+
+test("stats handles 300k samples without argument-spread overflow", () => {
+  const values = Array.from({ length: 300_000 }, (_, index) => 299_999 - index);
+  assert.deepEqual(stats(values), {
+    count: 300_000,
+    min: 0,
+    p50: 149_999,
+    p95: 284_999,
+    max: 299_999,
+  });
+});
+
+test("run header is still written when stats computation fails", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "script-driver-header-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const headerPath = path.join(root, "run-header.json");
+
+  writeRunHeader(headerPath, { version: 2, completed: true }, {
+    echoDelays: [10],
+    gaps: [20],
+  }, () => {
+    throw new Error("synthetic stats failure");
+  });
+
+  const header = JSON.parse(fs.readFileSync(headerPath, "utf8"));
+  assert.equal(header.version, 2);
+  assert.equal(header.completed, true);
+  assert.equal(header.stats_error, "synthetic stats failure");
 });
 
 test("SIGINT and SIGTERM use the same registered graceful handler", () => {

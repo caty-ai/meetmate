@@ -44,13 +44,33 @@ function percentile(values, p) {
 
 function stats(values) {
   if (values.length === 0) return { count: 0, min: null, p50: null, p95: null, max: null };
+  let min = values[0];
+  let max = values[0];
+  for (let i = 1; i < values.length; i += 1) {
+    if (values[i] < min) min = values[i];
+    if (values[i] > max) max = values[i];
+  }
+  const sorted = [...values].sort((a, b) => a - b);
   return {
     count: values.length,
-    min: Math.min(...values),
-    p50: percentile(values, 0.5),
-    p95: percentile(values, 0.95),
-    max: Math.max(...values),
+    min,
+    p50: sorted[Math.floor((sorted.length - 1) * 0.5)],
+    p95: sorted[Math.floor((sorted.length - 1) * 0.95)],
+    max,
   };
+}
+
+function writeRunHeader(filePath, baseHeader, samples, statsFn = stats) {
+  const header = { ...baseHeader };
+  try {
+    header.echo_return_delay_ms = statsFn(samples.echoDelays);
+    header.chunk_arrival_gap_ms = statsFn(samples.gaps);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    header.stats_error = header.stats_error ? `${header.stats_error}; ${message}` : message;
+  }
+  fs.writeFileSync(filePath, `${JSON.stringify(header, null, 2)}\n`);
+  return header;
 }
 
 function isoPathTimestamp() {
@@ -636,7 +656,13 @@ async function runLive(args) {
     if (client && client.readyState !== WebSocket.CLOSED) client.terminate();
     await closeWsServer(server);
     wav.close();
-    checkMaskTail();
+    let statsError = null;
+    try {
+      checkMaskTail();
+    } catch (error) {
+      statsError = error instanceof Error ? error.message : String(error);
+      emit("stats_error", { message: statsError });
+    }
     const ended = { wall_ms: Date.now(), monotonic_ms: monotonicMs() };
     const header = {
       version: 2,
@@ -666,16 +692,15 @@ async function runLive(args) {
       floor_resamples: floorSamples,
       mask_intervals: "half-open [startMs, endMs + maskTailMs)",
       anchor_tone: { frequency_hz: 1000, amplitude: anchorAmplitude, dbfs: args.anchorDbfs },
-      echo_return_delay_ms: stats(echoDelays),
       mask_tail_warning: maskTailWarning || false,
-      chunk_arrival_gap_ms: stats(gaps),
       started: runStarted,
       ended,
       abort_reason: abortReason,
       completed,
       operator: { subject_env_snapshot: "", tunnel_type: "", tunnel_endpoint: args.publicWsUrl || "" },
+      ...(statsError ? { stats_error: statsError } : {}),
     };
-    fs.writeFileSync(path.join(args.outDir, "run-header.json"), `${JSON.stringify(header, null, 2)}\n`);
+    writeRunHeader(path.join(args.outDir, "run-header.json"), header, { echoDelays, gaps });
     log.close();
   }
   return completed ? 0 : 1;
@@ -852,4 +877,5 @@ module.exports = {
   sinePcm,
   stats,
   usage,
+  writeRunHeader,
 };
