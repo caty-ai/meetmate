@@ -85,7 +85,14 @@ async function render(args) {
   for (const [assetId, definition] of Object.entries(script.assets)) {
     if (!definition || typeof definition.text !== "string") throw new Error(`asset ${assetId} requires text`);
     const text = definition.text.replaceAll("{{WAKE}}", args.wakeWord);
-    const contentKey = sha256(JSON.stringify({ text, params }));
+    if (definition.speed !== undefined && !Number.isFinite(definition.speed)) {
+      throw new Error(`asset ${assetId} speed must be a finite number`);
+    }
+    const speed = definition.speed === undefined
+      ? args.speed
+      : Math.min(2.0, Math.max(0.5, definition.speed));
+    const assetParams = { ...params, speed };
+    const contentKey = sha256(JSON.stringify({ text, params: assetParams }));
     const fileName = `${contentKey.slice(0, 20)}.pcm`;
     const file = path.join(args.out, fileName);
     const previous = existing.assets?.[assetId];
@@ -102,7 +109,7 @@ async function render(args) {
         apiKey,
         referenceId: args.referenceId,
         sampleRate,
-        speed: args.speed,
+        speed,
         onAudio(chunk) { chunks.push(Buffer.from(chunk)); },
       });
       pcm = Buffer.concat(chunks);
@@ -120,7 +127,7 @@ async function render(args) {
       sha256: sha256(pcm),
       bytes: pcm.length,
       sampleRate,
-      params,
+      params: assetParams,
     };
   }
 

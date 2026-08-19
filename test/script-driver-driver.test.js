@@ -16,7 +16,7 @@ const {
   reportCalibrationPlausibility,
   usage,
 } = require("./tools/meet-script-driver");
-const { parseArgs: parseRendererArgs } = require("./tools/render-script-assets");
+const { parseArgs: parseRendererArgs, render } = require("./tools/render-script-assets");
 
 function sha256(value) {
   return crypto.createHash("sha256").update(value).digest("hex");
@@ -126,4 +126,76 @@ test("usage documents edge, late-barge, and dual-clock conventions", () => {
 
 test("renderer reports an unknown option before attempting to consume a value", () => {
   assert.throws(() => parseRendererArgs(["--bogus"]), /unknown option: --bogus/);
+});
+
+test("renderer applies per-asset speed to synthesis and cache hash", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "script-asset-renderer-"));
+  const scriptFile = path.join(root, "script.json");
+  const out = path.join(root, "assets");
+  const ttsModule = require.resolve("../src/tts-fish.js");
+  const originalTts = require.cache[ttsModule];
+  const originalApiKey = process.env.FISH_AUDIO_API_KEY;
+  const syntheses = [];
+  process.env.FISH_AUDIO_API_KEY = "test-api-key";
+  require.cache[ttsModule] = {
+    id: ttsModule,
+    filename: ttsModule,
+    loaded: true,
+    exports: {
+      async synthesize(text, options) {
+        syntheses.push({ text, speed: options.speed });
+        options.onAudio(Buffer.from([1, 2]));
+      },
+    },
+  };
+  t.after(() => {
+    if (originalTts) require.cache[ttsModule] = originalTts;
+    else delete require.cache[ttsModule];
+    if (originalApiKey === undefined) delete process.env.FISH_AUDIO_API_KEY;
+    else process.env.FISH_AUDIO_API_KEY = originalApiKey;
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  const writeScript = (speed) => fs.writeFileSync(scriptFile, JSON.stringify({
+    assets: {
+      interrupt: { text: "いまの途中だけど。", speed },
+      ordinary: { text: "通常です。" },
+    },
+  }));
+  const args = {
+    script: scriptFile,
+    out,
+    wakeWord: "ミートメイト",
+    referenceId: null,
+    speed: 1,
+  };
+
+  writeScript(1.25);
+  await render(args);
+  const firstManifest = JSON.parse(fs.readFileSync(path.join(out, "manifest.json"), "utf8"));
+  assert.deepEqual(syntheses, [
+    { text: "いまの途中だけど。", speed: 1.25 },
+    { text: "通常です。", speed: 1 },
+  ]);
+  assert.equal(firstManifest.assets.interrupt.params.speed, 1.25);
+  assert.equal(
+    firstManifest.assets.interrupt.contentKey,
+    sha256(JSON.stringify({
+      text: "いまの途中だけど。",
+      params: firstManifest.assets.interrupt.params,
+    })),
+  );
+  assert.notEqual(
+    firstManifest.assets.interrupt.contentKey,
+    sha256(JSON.stringify({ text: "いまの途中だけど。", params: firstManifest.assets.ordinary.params })),
+  );
+
+  syntheses.length = 0;
+  writeScript(3);
+  await render(args);
+  const secondManifest = JSON.parse(fs.readFileSync(path.join(out, "manifest.json"), "utf8"));
+  assert.deepEqual(syntheses, [{ text: "いまの途中だけど。", speed: 2 }]);
+  assert.equal(secondManifest.assets.interrupt.params.speed, 2);
+  assert.notEqual(secondManifest.assets.interrupt.contentKey, firstManifest.assets.interrupt.contentKey);
+  assert.equal(secondManifest.assets.ordinary.contentKey, firstManifest.assets.ordinary.contentKey);
 });
