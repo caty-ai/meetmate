@@ -50,7 +50,13 @@ if ! command -v node >/dev/null 2>&1 || [ "$(node_major)" -lt "$MIN_MAJOR" ]; th
   export PATH="$cache_dir/${tarball%.tar.gz}/bin:$PATH"
 fi
 
-if [ "$(node_major)" -lt "$MIN_MAJOR" ]; then
+node_major_val="$(node_major)"
+case "$node_major_val" in
+  ''|*[!0-9]*)
+    echo "ensure-node: could not determine a numeric node major version (got '${node_major_val}') — failing closed." >&2
+    exit 1 ;;
+esac
+if [ "$node_major_val" -lt "$MIN_MAJOR" ]; then
   echo "ensure-node: node on PATH is still $(node --version 2>/dev/null || echo 'missing'), need >= ${MIN_MAJOR} — failing closed." >&2
   exit 1
 fi
