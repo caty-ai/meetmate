@@ -3,7 +3,7 @@
 Role: Local Renderer / Caty Asset Architect  
 Date: 2026-07-23  
 Evidence boundary: `00-evidence-pack.md`, `02-council-decision.md`, `04-comparison-poc-spec.md`, `08-local-renderer-evidence.md`, and the cited Caty source/assets only. No other `council-local/round1` proposal was read.  
-Caty source inspected: `/path/to/workspace/project` at `4d56cb926763edc56ef8b9c387f198ad0b94a844` (relevant tracked files clean; unrelated worktrees/scratch files exist).
+Caty source inspected: `<local Caty repo checkout>` at `4d56cb926763edc56ef8b9c387f198ad0b94a844` (relevant tracked files clean; unrelated worktrees/scratch files exist).
 
 ## Position
 
