@@ -27,7 +27,10 @@ jobs:
         tools/check_publication_gate.py
         .publication-denylist
         package.json
+        package-lock.json
+        .gitignore
       risk_paths_auth: |
         src/transport-meet/meet-routes.js
         src/server.js
         src/config.js
+        src/wake-calibrate/calibrate-routes.js
