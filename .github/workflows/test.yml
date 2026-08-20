@@ -1,9 +1,12 @@
 name: test
 
+# Post-merge canary + README badge source (badge.svg?branch=main). PR-time
+# testing moved to the family test-lint gate (test-lint.yml → reusable
+# @ci-v1, runs `make test` with armed T-6 suite reconciliation); running the
+# suite twice per PR would only add wall-clock.
 on:
   push:
     branches: [main]
-  pull_request:
 
 permissions:
   contents: read
