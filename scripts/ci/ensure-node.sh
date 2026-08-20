@@ -10,10 +10,11 @@
 # against the SHASUMS256.txt published in the same dist directory (integrity
 # anchored to nodejs.org TLS; no独立 pin so the patch line can advance).
 #
-# Usage: `. scripts/ci/ensure-node.sh` from a script running with
-# `set -euo pipefail` at the repo root. Exports PATH; any failure aborts the
-# caller (fail-closed — an unprovable toolchain must not pass the gate).
+# Usage: `. scripts/ci/ensure-node.sh` at the repo root. This script enables
+# `set -euo pipefail` itself and exports PATH; any failure aborts the caller
+# (fail-closed — an unprovable toolchain must not pass the gate).
 
+set -euo pipefail
 MIN_MAJOR=26
 NODE_DIST_LINE="latest-v26.x"
 
@@ -49,4 +50,8 @@ if ! command -v node >/dev/null 2>&1 || [ "$(node_major)" -lt "$MIN_MAJOR" ]; th
   export PATH="$cache_dir/${tarball%.tar.gz}/bin:$PATH"
 fi
 
+if [ "$(node_major)" -lt "$MIN_MAJOR" ]; then
+  echo "ensure-node: node on PATH is still $(node --version 2>/dev/null || echo 'missing'), need >= ${MIN_MAJOR} — failing closed." >&2
+  exit 1
+fi
 echo "ensure-node: using node $(node --version)"
