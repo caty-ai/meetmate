@@ -107,7 +107,7 @@ changes the proven audio path.
 
 ## Caty Phone frame renderer evidence
 
-Source repo: `/path/to/workspace/project`
+Source repo: `<local Caty repo checkout>`
 
 `CatyController.swift:2429-2513`:
 

@@ -1,0 +1,11 @@
+# .publication-denylist — meetmate 公開禁止パターン
+# 形式: NAME<TAB>REGEX (正本: family-dev-handbook templates/publication-gate/README.md)
+# D8 方針 = (a) 公開安全な記法: パターン文字列自体が第三者の秘密・実名を含まない形のみを置く。
+# （オーナー自身の公開 GitHub handle は例外 — commit author / roster として既に公開情報であり、
+#   ここに現れるのは「個人環境の痕跡を検出するため」の検出子であって秘密の暴露ではない。）
+# 実名など機微パターンを足す場合は (b) secret 注入方式へ切り替える（オーナー決裁事項）。
+personal-home-path	/Users/shojikumaru
+handoffs-file	_handoffs/[A-Za-z0-9._-]
+tailscale-cgnat	\b100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]{1,3}\.[0-9]{1,3}\b
+family-vault-path	SharedHub/family-vault
+old-repo-name	wip-ai-meet-participant
