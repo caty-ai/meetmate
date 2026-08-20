@@ -9,7 +9,11 @@ jobs:
     uses: caty-ai/family-dev-handbook/.github/workflows/reusable-review-labels.yml@ci-v1
     permissions: {contents: read, issues: read, pull-requests: write}
     with:
-      risk_paths_billing: 'none'
+      risk_paths_billing: |
+        src/llm-openai.js
+        src/stt-soniox.js
+        src/stt.js
+        src/tts-fish.js
       risk_paths_outbound: |
         src/slack-notifier.js
         src/attendee-chat.js
@@ -19,6 +23,11 @@ jobs:
         src/llm-openclaw.js
         src/tts-fish.js
         src/stt-soniox.js
+        src/stt.js
+        src/pipeline.js
+        src/stt-provider.js
+        src/llm-provider.js
+        src/mcp/server.js
       risk_paths_gates: |
         .github/workflows/**
         .github/risk-reviewers.txt
@@ -34,3 +43,4 @@ jobs:
         src/server.js
         src/config.js
         src/wake-calibrate/calibrate-routes.js
+        src/mcp/server.js
