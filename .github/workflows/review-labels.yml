@@ -44,3 +44,5 @@ jobs:
         src/config.js
         src/wake-calibrate/calibrate-routes.js
         src/mcp/server.js
+        src/transport-meet/local-avatar-session.js
+        src/ui-routes.js
