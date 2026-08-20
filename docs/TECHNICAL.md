@@ -62,7 +62,7 @@ Everything the server **writes**, plus your user configuration, lives in one *ho
 | `assets/avatar.png` | Optional avatar override (falls back to the bundled default image) |
 | `assets/tts-cache/` | Fixed-line TTS cache |
 
-Read-only bundled assets (the web UI, the default avatar, filler audio) always come from the installed package itself. `TTS_CACHE_DIR` and `METRICS_LOG_DIR` are still honored as explicit overrides. Running `npm start` from a source checkout keeps the repository root as home, so the from-source behavior is unchanged.
+Read-only bundled assets (the web UI, the default avatar) always come from the installed package itself. Filler audio is not bundled — see NOTICE — so supply your own takes under `assets/fillers/` to use the cache seeder. `TTS_CACHE_DIR` and `METRICS_LOG_DIR` are still honored as explicit overrides. Running `npm start` from a source checkout keeps the repository root as home, so the from-source behavior is unchanged.
 
 ## Installation notes (`meetmate init`)
 

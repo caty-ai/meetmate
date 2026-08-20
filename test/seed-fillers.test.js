@@ -34,7 +34,7 @@ test("filler manifest parses and contains preset entries", () => {
     assert.equal(typeof entry.text, "string");
     assert.ok(entry.file.length > 0);
     assert.ok(entry.text.length > 0);
-    assert.ok(fs.existsSync(path.join(path.dirname(manifestPath), entry.file)));
+    assert.match(entry.file, /^[\w.-]+\.mp3$/);
   }
 });
 
@@ -81,4 +81,33 @@ test("script key computation uses the exported TTS cache key logic", () => {
       }),
     );
   });
+});
+
+const EXPECTED_SLOTS = [
+  "filler0.mp3", "filler1.mp3", "filler2.mp3", "filler3.mp3", "filler4.mp3",
+  "filler5.mp3", "filler6.mp3", "filler7.mp3", "filler8.mp3",
+  "ping0.mp3", "ping1.mp3", "ping2.mp3",
+  "farewell0.mp3", "greeting0.mp3", "timeout0.mp3",
+];
+
+test("filler manifest declares exactly the slots the seeder expects", () => {
+  const files = readManifest().entries.map((e) => e.file);
+  assert.deepEqual([...files].sort(), [...EXPECTED_SLOTS].sort());
+  assert.equal(new Set(files).size, files.length, "manifest filenames must be unique");
+});
+
+test("audio takes are unbundled; any supplied recording must match the manifest", () => {
+  // The repository ships manifest.json only (see NOTICE): the takes were
+  // synthesised for one voice and are not redistributable. A publisher adds
+  // their own, and then every declared slot has to be present.
+  const dir = path.dirname(manifestPath);
+  const present = fs.readdirSync(dir).filter((f) => f.endsWith(".mp3"));
+  if (present.length === 0) {
+    assert.deepEqual(present, [], "no audio bundled, as documented in NOTICE");
+    return;
+  }
+  for (const entry of readManifest().entries) {
+    assert.ok(fs.existsSync(path.join(dir, entry.file)),
+      `manifest lists ${entry.file} but it is missing`);
+  }
 });

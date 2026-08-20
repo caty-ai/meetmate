@@ -97,7 +97,9 @@ metrics は `logs/metrics.jsonl` に JSONL 追記、集計は `node scripts/aggr
 
 接続要件: `sessions.compact` は **operator.admin** スコープ必須（abort は operator.write。#97 で CONNECT_SCOPES に追加済み）。
 
-## 実収録テイクのシード（#72 / #75）
+## 収録テイクのシード（#72 / #75）
+
+> **注**: 収録済み mp3 はリポジトリに同梱していません（NOTICE 参照）。`assets/fillers/manifest.json` が各スロットの文言を宣言しているので、その文言で自分の音声を用意して `assets/fillers/` に置いてから以下を実行してください。
 
 運用マシン上で `node scripts/seed-tts-cache-from-fillers.js` を実行すると、`assets/fillers/manifest.json` の実収録 mp3（相槌 ack 7種＋progress ping 3種＋退出 farewell＋greeting＋timeout の計13ユニーク文言）から `assets/tts-cache/*.pcm` を事前生成します。`.env` は `src/server.js` と同じ方法で自動ロードされます。`config.json` がない環境では、誤った cache key を作らないため `--voice-id <id>` を明示してください。
 
