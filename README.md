@@ -34,9 +34,9 @@ Meetmate does exactly one thing: it gives *your* AI agent a seat in your meeting
 | OpenClaw Gateway | Supported | Primary path today: memory, skills, tools, and delegation all stay on your existing agent. |
 | OpenAI-compatible baseline | Supported | Plain voice-agent mode for any compatible endpoint. |
 | Claude Code via OpenAI-compatible gateway | Integration in progress | Uses the generic `openai-compatible` provider. No Claude-specific provider branch. We will only call this supported after a real Google Meet end-to-end pass lands. |
-| Hermes api_server | Endpoint verified, Meetmate wiring still pending | As of July 12, 2026, issue [#134](https://github.com/caty-ai/meetmate/issues/134) confirmed `POST /v1/chat/completions`, SSE, Bearer auth, and profile/persona injection. The remaining work is token handoff plus Meetmate smoke/E2E. |
+| Hermes api_server | Endpoint verified, Meetmate wiring still pending | As of July 12, 2026, issue [#1](https://github.com/caty-ai/meetmate/issues/1) confirmed `POST /v1/chat/completions`, SSE, Bearer auth, and profile/persona injection. The remaining work is token handoff plus Meetmate smoke/E2E. |
 | Codex / Kimi Code | Planned | Not wired yet. |
-| Avatar in the meeting grid | Static image today | Live avatar is planned in [#69](https://github.com/caty-ai/meetmate/issues/69). |
+| Avatar in the meeting grid | Static image today | Live avatar is planned in [#2](https://github.com/caty-ai/meetmate/issues/2). |
 
 ## Platform notes
 
@@ -153,7 +153,7 @@ Something not working? See [Troubleshooting](docs/TECHNICAL.md#troubleshooting).
 ## Project status
 
 - **Releases**: See [GitHub Releases](https://github.com/caty-ai/meetmate/releases) for published versions.
-- **In progress**: npm distribution and public release track ([#136](https://github.com/caty-ai/meetmate/issues/136) / [#107](https://github.com/caty-ai/meetmate/issues/107))
+- **In progress**: npm distribution and public release track ([#3](https://github.com/caty-ai/meetmate/issues/3) / [#4](https://github.com/caty-ai/meetmate/issues/4))
 
 ## Contributing
 

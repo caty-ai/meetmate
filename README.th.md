@@ -116,7 +116,7 @@ flowchart LR
 ## สถานะโปรเจกต์
 
 - **รีลีส**: ดูเวอร์ชันที่เผยแพร่แล้วได้ที่ [GitHub Releases](https://github.com/caty-ai/meetmate/releases)
-- **กำลังดำเนินการ**: การแจกจ่ายผ่าน npm และเส้นทาง public release ([#136](https://github.com/caty-ai/meetmate/issues/136) / [#107](https://github.com/caty-ai/meetmate/issues/107))
+- **กำลังดำเนินการ**: การแจกจ่ายผ่าน npm และเส้นทาง public release ([#3](https://github.com/caty-ai/meetmate/issues/3) / [#4](https://github.com/caty-ai/meetmate/issues/4))
 
 ## การมีส่วนร่วม
 

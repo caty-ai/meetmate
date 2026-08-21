@@ -116,7 +116,7 @@ flowchart LR
 ## 项目状态
 
 - **发布**:已发布版本见 [GitHub Releases](https://github.com/caty-ai/meetmate/releases)。
-- **进行中**:npm 分发与公开发布轨道([#136](https://github.com/caty-ai/meetmate/issues/136) / [#107](https://github.com/caty-ai/meetmate/issues/107))
+- **进行中**:npm 分发与公开发布轨道([#3](https://github.com/caty-ai/meetmate/issues/3) / [#4](https://github.com/caty-ai/meetmate/issues/4))
 
 ## 参与贡献
 

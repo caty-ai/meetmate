@@ -114,7 +114,7 @@ flowchart LR
 ## 開発ステータス
 
 - **リリース**: 公開バージョンは [GitHub Releases](https://github.com/caty-ai/meetmate/releases) を参照してください。
-- **進行中**: npm 配布・公開リリーストラック（[#136](https://github.com/caty-ai/meetmate/issues/136) / [#107](https://github.com/caty-ai/meetmate/issues/107)）
+- **進行中**: npm 配布・公開リリーストラック（[#3](https://github.com/caty-ai/meetmate/issues/3) / [#4](https://github.com/caty-ai/meetmate/issues/4)）
 
 ## コントリビュート
 
