@@ -1,0 +1,68 @@
+# .github/release-sync-ignore — T-5 release fulfilment scope for this repository.
+#
+# Read by release-sync and by templates/ci/check-release-drift.sh, always from the DEFAULT
+# BRANCH, so a tagged commit cannot exempt itself. Exact tag names, one per line. No globs.
+# The audit prints this list on every run: exempting is a recorded scope decision, not a
+# silenced check.
+#
+# Scope decision (meetmate#8): this repository was recreated as a public repo on 2026-08-21
+# and inherited 28 tags from its private history. The PUBLIC release history starts at
+# v8.0.0, its first public release. Every v* tag older than v8.0.0 is listed below.
+#
+# The tags are NOT deleted and NOT re-pointed — the history remains walkable. They are
+# declared out of scope for Release fulfilment because backfilling them would:
+#   - publish tag messages whose "#N" references belong to the PRIVATE predecessor repo
+#     (meetmate-dev), where GitHub would autolink them to unrelated issues here;
+#   - hand the public Latest badge to a release candidate (16 of the 24 listed here
+#     are SemVer prereleases; 13 of the 18 the audit calls RED are)
+#     — see caty-ai/family-dev-handbook#120;
+#   - publish v7.4.1-stable's mangled message as release notes: it contains literal
+#     \n escape sequences rather than newlines, so the body renders as one run-on
+#     line. (The TITLE is safe either way — the workflow falls back to the tag name
+#     above 120 chars, and a bare `gh release create` titles from the tag name.)
+#
+# It also prevents a red run on the public Actions tab: v1-phase1-stable,
+# v4-stable-deepgram and v4.1-lcm-optimized match the v* push trigger but fail the
+# workflow's SemVer check. The exemption check runs BEFORE the SemVer check.
+#
+# Exemption is total, not RED-only: the ignore test short-circuits ahead of every
+# other classification, so these 24 tags also stop producing the audit's WARNING
+# lines (lightweight and non-SemVer shapes), which is why the count goes to zero
+# rather than to 'GREEN with 7 warnings'.
+#
+# NOT listed, deliberately:
+#   v8.0.0                 — the first public release; keeps its Release and Latest badge.
+#   pre-ui-redesign-104    ) non-v* tags. Outside the tool's scope by definition;
+#   pre-epic107-impl       ) listing them here would imply they were ever in scope.
+#   pre-epic107-a7-impl    )
+#
+# Once the release-sync caller (meetmate#5 / PR #6) lands, anything tagged from v8.1.0
+# onward is fulfilled automatically. That PR is NOT merged as of this file's creation,
+# so until it does land, no tag in this repository produces a Release on its own.
+# Do not add new tags to this file to skip a release; the correct way to ship without
+# a Release is to not push a v* tag.
+
+v1-phase1-stable
+v4-stable-deepgram
+v4.1-lcm-optimized
+v6.0.0
+v7.0.0
+v7.1.0
+v7.2.0
+v7.3.0
+v7.4.0-stable
+v7.4.1-stable
+v7.5.0-stable
+v7.6.0-stable
+v7.7.0-rc.1
+v7.7.0-rc.2
+v7.7.0-rc.3
+v7.7.0-rc.4
+v7.8.0-rc.1
+v7.8.0-rc.2
+v7.8.0-rc.3
+v7.8.0-stable
+v7.9.0-rc.1
+v7.9.0-rc.2
+v7.9.0-rc.3
+v7.9.0-rc.4
