@@ -23,8 +23,6 @@ Meetmate 只做一件事:给*你的* AI 智能体在会议里留一个座位。�
 
 **你需要准备:** Node.js ≥ 26 · [Attendee](https://attendee.dev/) 账号 · 用于语音转文字的 [Soniox](https://soniox.com/)(或 [Deepgram](https://deepgram.com/)) · 用于语音合成的 [Fish Audio](https://fish.audio/)(包含语音 ID) · 一个 LLM 端点(OpenClaw Gateway 或任意 OpenAI 兼容端点) · 通常还需要 [ngrok](https://ngrok.com/) 或 [Tailscale](https://tailscale.com/) · 另外 Google Meet 会要求你批准机器人加入。第三方服务可能需要付费。
 
-> ℹ️ 首个 npm 版本发布之前,请使用下方的[从源码运行](#from-source)。
-
 在一个空文件夹中:
 
 ```bash

@@ -23,8 +23,6 @@ Meetmate がやることはひとつだけ。**あなたの**エージェント�
 
 **必要なもの:** Node.js ≥ 26 ・ [Attendee](https://attendee.dev/) アカウント ・ 音声認識用の [Soniox](https://soniox.com/)（または [Deepgram](https://deepgram.com/)） ・ 声を作る [Fish Audio](https://fish.audio/)（ボイスIDを含む） ・ LLM エンドポイント（OpenClaw Gateway または任意の OpenAI 互換） ・ 通常は [ngrok](https://ngrok.com/) か [Tailscale](https://tailscale.com/) ・ そして Google Meet はボットの入室許可を求めてきます。サードパーティサービスは有料の場合があります。
 
-> ℹ️ npm 初回リリース公開までは、下の[ソースから起動](#from-source)を使ってください。
-
 空のフォルダーで:
 
 ```bash

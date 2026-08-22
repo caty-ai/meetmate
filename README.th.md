@@ -23,8 +23,6 @@ Meetmate ทำแค่สิ่งเดียว: จองที่นั่
 
 **สิ่งที่คุณต้องมี:** Node.js ≥ 26 · บัญชี [Attendee](https://attendee.dev/) · [Soniox](https://soniox.com/) (หรือ [Deepgram](https://deepgram.com/)) สำหรับ speech-to-text · [Fish Audio](https://fish.audio/) สำหรับเสียงพูด (รวมถึง voice ID) · เอนด์พอยต์ LLM (OpenClaw Gateway หรือ OpenAI-compatible ใดก็ได้) · โดยปกติต้องมี [ngrok](https://ngrok.com/) หรือ [Tailscale](https://tailscale.com/) · และ Google Meet จะขอให้คุณอนุมัติให้บอทเข้าร่วม บริการจากบุคคลที่สามอาจมีค่าใช้จ่าย
 
-> ℹ️ กว่าจะมี npm release แรก ให้ใช้[การติดตั้งจากซอร์ส](#from-source)ด้านล่าง
-
 ในโฟลเดอร์ว่าง:
 
 ```bash

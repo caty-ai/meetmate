@@ -21,8 +21,6 @@ Meetmate does exactly one thing: it gives *your* AI agent a seat in your meeting
 
 **What you need:** Node.js ≥ 26 · an [Attendee](https://attendee.dev/) account · [Soniox](https://soniox.com/) (or [Deepgram](https://deepgram.com/)) for speech-to-text · [Fish Audio](https://fish.audio/) for the voice (including a voice ID) · an LLM endpoint (OpenClaw Gateway or any OpenAI-compatible) · usually [ngrok](https://ngrok.com/) or [Tailscale](https://tailscale.com/) · and Google Meet will ask you to admit the bot. The third-party services may cost money.
 
-> ℹ️ Until the first npm release is published, use the [from-source setup](#from-source) below.
-
 In an empty folder:
 
 ```bash
