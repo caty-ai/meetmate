@@ -1,26 +1,44 @@
 # Meetmate
 
-**English** | [日本語](README.ja.md) | [中文](README.zh.md) | [ไทย](README.th.md)
+**English** | [日本語](https://github.com/caty-ai/meetmate/blob/main/README.ja.md) | [中文](https://github.com/caty-ai/meetmate/blob/main/README.zh.md) | [ไทย](https://github.com/caty-ai/meetmate/blob/main/README.th.md)
 
 [![CI](https://github.com/caty-ai/meetmate/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/caty-ai/meetmate/actions/workflows/test.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/caty-ai/meetmate/blob/main/LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D26-blue?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![Meetings](https://img.shields.io/badge/works%20in-Google%20Meet%20%7C%20Zoom-blue)](#what-it-does)
-[![Server](https://img.shields.io/badge/runs%20on-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](#try-it-in-30-seconds)
+[![Server](https://img.shields.io/badge/runs%20on-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](#quick-start)
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/hero-dark.svg">
-  <img src="docs/images/hero-light.svg" alt="Meetmate — your AI agent, sitting in a meeting grid as a real participant" width="100%">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/hero-dark.svg">
+  <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/hero-light.svg" alt="Meetmate — your AI agent, sitting in a meeting grid as a real participant" width="100%">
 </picture>
 
 **Bring your own AI agent into Google Meet & Zoom — as a real voice participant.**
 
 Meetmate does exactly one thing: it gives *your* AI agent a seat in your meeting. It joins as a participant with a face and a voice — you call its name, it answers; you ask for something, it gets it done. We kept the scope that small on purpose, and polished that one thing relentlessly.
 
+<a id="quick-start"></a>
+
+## Quick start
+
+**What you need:** Node.js ≥ 26 · an [Attendee](https://attendee.dev/) account · [Soniox](https://soniox.com/) (or [Deepgram](https://deepgram.com/)) for speech-to-text · [Fish Audio](https://fish.audio/) for the voice (including a voice ID) · an LLM endpoint (OpenClaw Gateway or any OpenAI-compatible) · usually [ngrok](https://ngrok.com/) or [Tailscale](https://tailscale.com/) · and Google Meet will ask you to admit the bot. The third-party services may cost money.
+
+> ℹ️ Until the first npm release is published, use the [from-source setup](#from-source) below.
+
+In an empty folder:
+
+```bash
+npm install meetmate
+npx meetmate init     # the wizard collects your API keys, voice ID, and LLM endpoint — and tells you where to get each
+npx meetmate start    # starts the server and prints the settings-UI URL
+```
+
+Open the printed URL, paste a Meet or Zoom URL, and click **Join**. Approve the bot's "Ask to join" request in Meet — then call its wake word and start talking. ngrok/Tailscale and the Meet admission step stay manual; the wizard's closing message and the [Setup guide](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md) walk you through them.
+
 ## What it does
 
 - **It's a participant, not a notetaker.** Your agent shows up in the participant grid with its own avatar, listens to the room, and speaks — with wake-word detection and barge-in (talk over it and it stops).
-- **It's *your* agent.** Connect the agent you already use — with its memory, personality, and skills — via OpenClaw Gateway. The same "them" your team already knows walks into the room, so no two Meetmates sound alike. (No gateway? Any OpenAI-compatible endpoint works too, as a simpler baseline: plain LLM, built-in persona — see [LLM providers](docs/TECHNICAL.md#llm-providers).)
+- **It's *your* agent.** Connect the agent you already use — with its memory, personality, and skills — via OpenClaw Gateway. The same "them" your team already knows walks into the room, so no two Meetmates sound alike. (No gateway? Any OpenAI-compatible endpoint works too, as a simpler baseline: plain LLM, built-in persona — see [LLM providers](https://github.com/caty-ai/meetmate/blob/main/docs/TECHNICAL.md#llm-providers).)
 - **Ask it things, right there.** "Summarize where we landed and post it to the channel." Heavy work is delegated to a background session automatically, so the agent stays in the conversation while the task runs.
 - **Ordinary is the point.** No push-to-talk, no special commands, no awkward silences. You talk to it the way you talk to a colleague — that this feels unremarkable is the product.
 - **Works where you meet, runs where you work.** Google Meet and Zoom on the meeting side; Windows, macOS, and Linux on the server side. A config file, your API keys, one command — add a custom avatar if you like.
@@ -48,6 +66,8 @@ Meetmate does exactly one thing: it gives *your* AI agent a seat in your meeting
 
 ## What you need
 
+The `init` wizard collects the API keys, the voice ID, and the LLM endpoint for you; ngrok/Tailscale and the Meet admission step remain manual. This table is the reference for what each item is and when it applies.
+
 | Item | Purpose | Setting names | When needed | Notes |
 |---|---|---|---|---|
 | Node.js 26+ | Run the server | `node`, `npm` | Always | Required. |
@@ -64,23 +84,9 @@ Keep all keys and tokens in `.env` only. Do not commit real secrets, screenshots
 
 If you connect a tool-capable OpenAI-compatible gateway, keep that route local and trusted. Meetmate's trust opt-in is intended only for a trusted meeting with a trusted local gateway; external or untrusted meetings remain unsupported for that mode.
 
-## Try it in 30 seconds
+<a id="from-source"></a>
 
-> ℹ️ Until the first npm release is published, use the [from-source setup](#from-source) below.
-
-```bash
-mkdir my-agent && cd my-agent
-npm install meetmate
-npx meetmate init     # asks for the 3 API keys, creates config.json + .env, prints next steps
-npx meetmate start    # starts the server and prints the settings-UI URL
-```
-
-Open http://localhost:5005, paste a Meet or Zoom URL, and click **Join** — your agent enters the meeting. Call its wake word and start talking.
-
-Prerequisites (Node.js ≥ 26, API keys for [Attendee](https://attendee.dev/) meeting bots, [Soniox](https://soniox.com/) speech-to-text, and [Fish Audio](https://fish.audio/) voice) are walked through step-by-step in the [Setup guide](docs/setup-guide.md).
-That guide also covers Google Meet approval flow, Zoom constraints, ngrok/Tailscale options, and how to point Meetmate at a stateful OpenAI-compatible gateway such as a Claude Code bridge.
-
-### From source
+## From source (for contributors)
 
 ```bash
 git clone git@github.com:caty-ai/meetmate.git
@@ -119,34 +125,34 @@ flowchart LR
 
 One agent = one server instance. The server bridges meeting audio into a speech pipeline (speech-to-text → your agent's LLM → text-to-speech) and streams the reply back into the call — fast enough to feel like conversation.
 
-Full engineering detail — architecture, module map, providers, audio specs — lives in [docs/TECHNICAL.md](docs/TECHNICAL.md).
+Full engineering detail — architecture, module map, providers, audio specs — lives in [docs/TECHNICAL.md](https://github.com/caty-ai/meetmate/blob/main/docs/TECHNICAL.md).
 
 ## Configuration
 
-Entry points for the most common tweaks. The full reference is [docs/operations.md](docs/operations.md).
+Entry points for the most common tweaks. The full reference is [docs/operations.md](https://github.com/caty-ai/meetmate/blob/main/docs/operations.md).
 
 | I want to… | Look at |
 |---|---|
-| Connect my own agent (OpenClaw Gateway) | [Setup guide](docs/setup-guide.md) |
-| Use a generic OpenAI-compatible endpoint | [TECHNICAL.md — LLM providers](docs/TECHNICAL.md#llm-providers) |
-| Make responses come back faster | [Soniox tuning](docs/operations.md#stt-プロバイダ切替soniox-チューニング) |
-| Change the voice, speed, or TTS behavior | [Voice profile](docs/operations.md#音声プロファイルtts) |
-| Use background delegation for heavy work | [Delegation harness](docs/operations.md#委譲強制ハーネス79) |
-| Roll back to previous settings when something is off | [Emergency rollback envs](docs/operations.md#緊急-rollback-用-env) |
-| Control meetings from Claude Code or another client (MCP control plane) | [TECHNICAL.md — MCP server](docs/TECHNICAL.md#mcp-server-control-plane) |
-| Make your real agent be the voice brain | [Setup guide](docs/setup-guide.md) |
+| Connect my own agent (OpenClaw Gateway) | [Setup guide](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md) |
+| Use a generic OpenAI-compatible endpoint | [TECHNICAL.md — LLM providers](https://github.com/caty-ai/meetmate/blob/main/docs/TECHNICAL.md#llm-providers) |
+| Make responses come back faster | [Soniox tuning](https://github.com/caty-ai/meetmate/blob/main/docs/operations.md#stt-プロバイダ切替soniox-チューニング) |
+| Change the voice, speed, or TTS behavior | [Voice profile](https://github.com/caty-ai/meetmate/blob/main/docs/operations.md#音声プロファイルtts) |
+| Use background delegation for heavy work | [Delegation harness](https://github.com/caty-ai/meetmate/blob/main/docs/operations.md#委譲強制ハーネス79) |
+| Roll back to previous settings when something is off | [Emergency rollback envs](https://github.com/caty-ai/meetmate/blob/main/docs/operations.md#緊急-rollback-用-env) |
+| Control meetings from Claude Code or another client (MCP control plane) | [TECHNICAL.md — MCP server](https://github.com/caty-ai/meetmate/blob/main/docs/TECHNICAL.md#mcp-server-control-plane) |
+| Make your real agent be the voice brain | [Setup guide](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md) |
 
-Something not working? See [Troubleshooting](docs/TECHNICAL.md#troubleshooting).
+Something not working? See [Troubleshooting](https://github.com/caty-ai/meetmate/blob/main/docs/TECHNICAL.md#troubleshooting).
 
 ## Documentation
 
 | Document | Contents |
 |---|---|
-| [docs/setup-guide.md](docs/setup-guide.md) | Zero-to-first-meeting, step by step |
-| [docs/TECHNICAL.md](docs/TECHNICAL.md) | Features in detail, architecture, providers, MCP, development |
-| [docs/architecture.md](docs/architecture.md) | Architecture deep dive |
-| [docs/operations.md](docs/operations.md) | Full operations and tuning reference |
-| [docs/deploy-checklist.md](docs/deploy-checklist.md) | Deployment checklist |
+| [docs/setup-guide.md](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md) | Zero-to-first-meeting, step by step |
+| [docs/TECHNICAL.md](https://github.com/caty-ai/meetmate/blob/main/docs/TECHNICAL.md) | Features in detail, architecture, providers, MCP, development |
+| [docs/architecture.md](https://github.com/caty-ai/meetmate/blob/main/docs/architecture.md) | Architecture deep dive |
+| [docs/operations.md](https://github.com/caty-ai/meetmate/blob/main/docs/operations.md) | Full operations and tuning reference |
+| [docs/deploy-checklist.md](https://github.com/caty-ai/meetmate/blob/main/docs/deploy-checklist.md) | Deployment checklist |
 
 > ℹ️ Some documents under `docs/` are currently in Japanese; the reference tables and command snippets are language-neutral.
 
@@ -157,7 +163,7 @@ Something not working? See [Troubleshooting](docs/TECHNICAL.md#troubleshooting).
 
 ## Contributing
 
-Issues and PRs welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). We use an issue-first flow and Conventional Commits.
+Issues and PRs welcome — see [CONTRIBUTING.md](https://github.com/caty-ai/meetmate/blob/main/CONTRIBUTING.md). We use an issue-first flow and Conventional Commits.
 
 ## Acknowledgments
 
@@ -165,4 +171,4 @@ Meetmate stands on excellent services and OSS: [Attendee](https://attendee.dev/)
 
 ## License
 
-[MIT](LICENSE) — see [NOTICE](NOTICE) for attribution.
+[MIT](https://github.com/caty-ai/meetmate/blob/main/LICENSE) — see [NOTICE](https://github.com/caty-ai/meetmate/blob/main/NOTICE) for attribution.
