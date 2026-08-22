@@ -50,7 +50,7 @@ npx meetmate start    # เริ่มเซิร์ฟเวอร์แล�
 | พื้นที่ | สถานะปัจจุบัน | หมายเหตุ |
 |---|---|---|
 | OpenClaw Gateway | รองรับแล้ว | เส้นทางหลักในปัจจุบัน: ความจำ ทักษะ เครื่องมือ และการมอบหมายงานยังคงอยู่ที่เอเจนต์เดิมของคุณ |
-| OpenAI-compatible baseline | รองรับแล้ว | โหมดเอเจนต์เสียงล้วนสำหรับเอนด์พอยต์ที่เข้ากันได้ใดก็ตาม |
+| เบสไลน์ที่เข้ากันได้กับ OpenAI | รองรับแล้ว | โหมดเอเจนต์เสียงล้วนสำหรับเอนด์พอยต์ที่เข้ากันได้ใดก็ตาม |
 | Claude Code ผ่านเกตเวย์ OpenAI-compatible | กำลังผสานรวม | ใช้ provider แบบทั่วไป `openai-compatible` ยังไม่มี provider เฉพาะสำหรับ Claude เราจะเรียกว่ารองรับก็ต่อเมื่อผ่านการทดสอบแบบ end-to-end จริงบน Google Meet แล้วเท่านั้น |
 | Hermes api_server | ยืนยันเอนด์พอยต์แล้ว แต่การเชื่อมต่อฝั่ง Meetmate ยังค้างอยู่ | ณ วันที่ 12 กรกฎาคม 2026 issue [#1](https://github.com/caty-ai/meetmate/issues/1) ยืนยัน `POST /v1/chat/completions`, SSE, Bearer auth และการฉีด profile/persona แล้ว งานที่เหลือคือการส่งต่อ token และ smoke/E2E ของ Meetmate |
 | Codex / Kimi Code | อยู่ในแผน | ยังไม่ได้เชื่อมต่อ |
@@ -80,7 +80,7 @@ npx meetmate start    # เริ่มเซิร์ฟเวอร์แล�
 | สิทธิ์ของ Google Meet ในการอนุมัติให้บอทเข้าร่วม | ให้บอทเข้าห้องประชุมได้ | การอนุมัติ "Ask to join" ใน Meet UI | Google Meet | คุณต้องอนุมัติคำขอเข้าร่วมใน Meet เอง |
 | การตั้งค่าแอป/แอดมินใน [Zoom Marketplace](https://marketplace.zoom.us/) | โมเดลสิทธิ์ของบอทใน Zoom | การตั้งค่าแอปฝั่ง Attendee/Zoom | เฉพาะ Zoom | ตามเงื่อนไข ไม่รับประกันว่ารองรับการประชุมที่โฮสต์จากภายนอกหรือ OAuth แบบมีการจัดการ |
 
-เก็บคีย์และโทเคนทั้งหมดไว้ใน `.env` เท่านั้น อย่า commit ความลับจริง ภาพหน้าจอของความลับ หรือไฟล์คอนฟิกที่แชร์กันซึ่งมีข้อมูลรับรองที่ใช้งานได้จริง
+เก็บคีย์และโทเคนทั้งหมดไว้ใน `.env` (ส่วน apiKey ของ openai-compatible จะอยู่ใน `config.json` — ตัวช่วยติดตั้งจะเขียนลงตำแหน่งที่ถูกต้องให้เอง) อย่า commit ทั้งสองไฟล์นี้ รวมถึงภาพหน้าจอของความลับ หรือไฟล์คอนฟิกที่แชร์กันซึ่งมีข้อมูลรับรองที่ใช้งานได้จริง
 
 หากคุณเชื่อมต่อเกตเวย์ OpenAI-compatible ที่เรียกใช้เครื่องมือได้ ให้จำกัดเส้นทางนั้นไว้ในเครื่องและเชื่อถือได้เท่านั้น ตัวเลือก trust opt-in ของ Meetmate ออกแบบมาเฉพาะสำหรับการประชุมที่เชื่อถือได้ร่วมกับเกตเวย์โลคัลที่เชื่อถือได้เท่านั้น การประชุมภายนอกหรือที่ไม่น่าเชื่อถือยังไม่รองรับโหมดนี้
 
@@ -140,6 +140,7 @@ flowchart LR
 | ใช้การมอบหมายงานเบื้องหลังสำหรับงานหนัก | [Delegation harness](https://github.com/caty-ai/meetmate/blob/main/docs/operations.md#委譲強制ハーネス79) |
 | ย้อนกลับไปการตั้งค่าก่อนหน้าเมื่อมีปัญหา | [Env สำหรับ rollback ฉุกเฉิน](https://github.com/caty-ai/meetmate/blob/main/docs/operations.md#緊急-rollback-用-env) |
 | ควบคุมการประชุมจาก Claude Code (MCP) | [TECHNICAL.md — MCP server](https://github.com/caty-ai/meetmate/blob/main/docs/TECHNICAL.md#mcp-server-control-plane) |
+| ให้เอเจนต์ตัวจริงของคุณเป็นสมองเสียง | [คู่มือติดตั้ง](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md) |
 
 มีอะไรไม่ทำงาน? ดู[การแก้ไขปัญหา](https://github.com/caty-ai/meetmate/blob/main/docs/TECHNICAL.md#troubleshooting)
 

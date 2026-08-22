@@ -80,7 +80,7 @@ npx meetmate start    # サーバーを起動し、設定 UI の URL を表示�
 | ボットの入室を許可する Google Meet の権限 | ボットを会議に入れる | Meet UI の「参加をリクエスト」承認 | Google Meet | Meet 側で参加リクエストを承認する必要があります。 |
 | [Zoom Marketplace](https://marketplace.zoom.us/) アプリ/管理者設定 | Zoom ボットの権限モデル | Attendee/Zoom 側のアプリ設定 | Zoom のみ | 条件付き。外部主催の会議や管理された OAuth への対応はうたっていません。 |
 
-キーとトークンはすべて `.env` にのみ保管してください。実際のシークレット、シークレットのスクリーンショット、有効な認証情報が入った共有設定ファイルはコミットしないでください。
+キーとトークンはすべて `.env` に保管してください（openai-compatible の apiKey だけは `config.json` 側 — ウィザードが正しい場所に書き分けます）。どちらのファイルもコミットしないでください。シークレットのスクリーンショットや、有効な認証情報が入った共有設定ファイルも同様です。
 
 ツール呼び出しが可能な OpenAI 互換ゲートウェイを接続する場合は、その経路をローカルかつ信頼できる範囲にとどめてください。Meetmate の信頼オプトインは、信頼できるローカルゲートウェイによる信頼できる会議でのみ利用を想定しています。外部の、あるいは信頼できない会議では、このモードは対応外のままです。
 
@@ -140,6 +140,7 @@ flowchart LR
 | 重い作業をバックグラウンド委譲する | [委譲ハーネス](https://github.com/caty-ai/meetmate/blob/main/docs/operations.md#委譲強制ハーネス79) |
 | 調子が悪いとき前の設定に戻す | [緊急 rollback 用 env](https://github.com/caty-ai/meetmate/blob/main/docs/operations.md#緊急-rollback-用-env) |
 | Claude Code から会議を操作する（MCP） | [TECHNICAL.md — MCP server](https://github.com/caty-ai/meetmate/blob/main/docs/TECHNICAL.md#mcp-server-control-plane) |
+| 本物の自分のエージェントを音声ブレインにする | [セットアップガイド](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md) |
 
 うまく動かないときは[トラブルシューティング](https://github.com/caty-ai/meetmate/blob/main/docs/TECHNICAL.md#troubleshooting)へ。
 

@@ -80,7 +80,7 @@ npx meetmate start    # 启动服务器并打印设置界面 URL
 | 允许机器人加入的 Google Meet 权限 | 让机器人进入会议 | Meet UI 的"Ask to join"批准 | Google Meet | 你必须在 Meet 中批准加入请求。 |
 | [Zoom Marketplace](https://marketplace.zoom.us/) 应用/管理员设置 | Zoom 机器人权限模型 | Attendee/Zoom 侧应用设置 | 仅 Zoom | 视情况而定。不声称支持外部主办的会议和托管式 OAuth。 |
 
-所有密钥和令牌只保存在 `.env` 中。不要提交真实密钥、密钥截图,或含有有效凭据的共享配置文件。
+所有密钥和令牌保存在 `.env` 中（openai-compatible 的 apiKey 则在 `config.json` 中——向导会自动写入正确位置）。这两个文件都不要提交,也不要提交密钥截图或含有有效凭据的共享配置文件。
 
 如果你接入了具备工具调用能力的 OpenAI 兼容网关,请把这条路径限制在本地且可信的范围内。Meetmate 的信任选项仅适用于可信本地网关下的可信会议;外部或不可信的会议在该模式下仍不受支持。
 
@@ -140,6 +140,7 @@ flowchart LR
 | 用后台委派处理重活 | [委派机制](https://github.com/caty-ai/meetmate/blob/main/docs/operations.md#委譲強制ハーネス79) |
 | 出问题时回滚到之前的设置 | [紧急回滚 env](https://github.com/caty-ai/meetmate/blob/main/docs/operations.md#緊急-rollback-用-env) |
 | 从 Claude Code 控制会议(MCP) | [TECHNICAL.md — MCP server](https://github.com/caty-ai/meetmate/blob/main/docs/TECHNICAL.md#mcp-server-control-plane) |
+| 让你真正的智能体成为语音大脑 | [设置指南](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md) |
 
 遇到问题了?查看[故障排查](https://github.com/caty-ai/meetmate/blob/main/docs/TECHNICAL.md#troubleshooting)。
 

@@ -48,7 +48,7 @@
 
 ```bash
 npm install meetmate
-npx meetmate init     # ウィザードが API キー・voice ID・LLM endpoint を対話で収集し、config.json / .env / AGENTS.md を生成
+npx meetmate init     # ウィザードが API キー・ボイスID・LLM エンドポイントを対話で収集し、config.json / .env / AGENTS.md を生成
 npx meetmate start    # サーバー起動。設定 UI の URL が表示される
 ```
 

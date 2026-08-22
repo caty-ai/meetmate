@@ -17,8 +17,6 @@
 
 Meetmate does exactly one thing: it gives *your* AI agent a seat in your meeting. It joins as a participant with a face and a voice — you call its name, it answers; you ask for something, it gets it done. We kept the scope that small on purpose, and polished that one thing relentlessly.
 
-<a id="quick-start"></a>
-
 ## Quick start
 
 **What you need:** Node.js ≥ 26 · an [Attendee](https://attendee.dev/) account · [Soniox](https://soniox.com/) (or [Deepgram](https://deepgram.com/)) for speech-to-text · [Fish Audio](https://fish.audio/) for the voice (including a voice ID) · an LLM endpoint (OpenClaw Gateway or any OpenAI-compatible) · usually [ngrok](https://ngrok.com/) or [Tailscale](https://tailscale.com/) · and Google Meet will ask you to admit the bot. The third-party services may cost money.
@@ -80,7 +78,7 @@ The `init` wizard collects the API keys, the voice ID, and the LLM endpoint for 
 | Google Meet permission to admit the bot | Let the bot enter the meeting | Meet UI “Ask to join” approval | Google Meet | You must approve the join request in Meet. |
 | [Zoom Marketplace](https://marketplace.zoom.us/) app/admin setup | Zoom bot permission model | Attendee/Zoom-side app settings | Zoom only | Conditional. External-hosted meetings and managed OAuth are not claimed as supported. |
 
-Keep all keys and tokens in `.env` only. Do not commit real secrets, screenshots of secrets, or shared config files with live credentials.
+Keep all keys and tokens in `.env` (plus `config.json` for the openai-compatible apiKey — the wizard puts each in the right place). Do not commit either file, screenshots of secrets, or shared config files with live credentials.
 
 If you connect a tool-capable OpenAI-compatible gateway, keep that route local and trusted. Meetmate's trust opt-in is intended only for a trusted meeting with a trusted local gateway; external or untrusted meetings remain unsupported for that mode.
 
