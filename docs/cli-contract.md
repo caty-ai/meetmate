@@ -22,25 +22,46 @@ Commands (no renames; no new *required* flags):
 | Command | Behavior |
 |---|---|
 | `meetmate init [--force]` | Interactive wizard, then writes `config.json`, `.env`, `AGENTS.md` into the **resolved home** (§3 — same tier logic as `start`; the current cwd-only behavior in `bin/ai-meet.js:77-78` is a confirmed gap). Per-file overwrite rules in §5. |
-| `meetmate start` | Boots the server. The settings-UI URL is printed **only after the listen port is bound**, and must equal the actually-bound host:port (the current pre-require print of `process.env.PORT || 5005` at `bin/ai-meet.js:127` is a confirmed gap). |
+| `meetmate start` | Boots the server. The settings-UI URL is printed **exactly once, only after `listen` succeeds**, as a browser-openable form `http://localhost:<port>/` where `<port>` = `server.address().port` — never the raw bind address (`::`/`0.0.0.0`). The single print lives in the server's listen callback; the CLI's current pre-require print (`bin/ai-meet.js:127`) is removed (review fix, Grok F4; the pre-bind print is confirmed gap G2). |
 | `meetmate mcp` | MCP stdio server (unchanged). |
 | `--help` / no args | Usage (unchanged). |
 
-Wizard scope (kickoff decision ②): collects, each with a one-line "where to get it" hint —
+Wizard scope (kickoff decision ②) — the **frozen prompt sequence**, one stdin line per
+prompt, each with a one-line "where to get it" hint (review fix, Grok F2):
 
-1. `SONIOX_API_KEY` (STT)
-2. `FISH_AUDIO_API_KEY` + **`FISH_AUDIO_VOICE_ID`** (TTS voice)
-3. `ATTENDEE_API_KEY` (meeting bot)
-4. **LLM provider choice**: `openclaw` → `OPENCLAW_GATEWAY_URL` + `OPENCLAW_GATEWAY_TOKEN`;
-   `openai-compatible` → `openaiCompatible.baseUrl` + `openaiCompatible.apiKey` + `llm.model`
-5. **Local control tokens are generated, not asked** (kickoff decision ③):
-   `JOIN_SHARED_TOKEN` and `WS_SHARED_TOKEN` are filled with generated random values.
+| # | Prompt | Written to |
+|---|---|---|
+| 1 | `SONIOX_API_KEY` | `.env` |
+| 2 | `FISH_AUDIO_API_KEY` | `.env` |
+| 3 | `FISH_AUDIO_VOICE_ID` | `.env` |
+| 4 | `ATTENDEE_API_KEY` | `.env` |
+| 5 | LLM provider — accepted tokens exactly `openclaw` \| `openai-compatible` | see write-set below |
+| 6+ | branch `openclaw`: `OPENCLAW_GATEWAY_URL`, then `OPENCLAW_GATEWAY_TOKEN` (2 lines). branch `openai-compatible`: `baseUrl`, then `apiKey`, then `llm.model` (3 lines) | see write-set below |
+
+Generated values consume **zero** stdin lines: `JOIN_SHARED_TOKEN` and `WS_SHARED_TOKEN`
+(kickoff decision ③) are generated via `crypto.randomBytes(32).toString("hex")` and
+written as uncommented lines into `.env`; `--force` regeneration rotates them (accepted —
+existing clients must be updated).
+
+**LLM write-set per branch** (review fix, Grok F1 — matches runtime precedence, where
+`LLM_PROVIDER` in env beats `config.json` `llm.provider`, and `llm.model` has no env
+fallback):
+
+| Choice | `.env` (required) | `config.json` (required) |
+|---|---|---|
+| `openclaw` | `LLM_PROVIDER=openclaw`, `OPENCLAW_GATEWAY_URL`, `OPENCLAW_GATEWAY_TOKEN` | (example defaults stay) |
+| `openai-compatible` | `LLM_PROVIDER=openai-compatible` (**must overwrite the example's `LLM_PROVIDER=openclaw` default**) | `llm.provider="openai-compatible"`, `llm.model`, `llm.openaiCompatible.baseUrl`, `llm.openaiCompatible.apiKey` |
+
+On the `openai-compatible` branch init therefore mutates **both** files; the apiKey lives
+in `config.json` on this branch, and the #16 sentinel test covers **both** files, not
+just `.env`.
 
 Out of wizard scope (stated in output + README, not collected): ngrok/Tailscale setup,
 Google Meet admission. The wizard's closing message names them as the remaining manual steps.
 
-Non-interactive use: the wizard reads stdin line-per-prompt (documented order = the list
-above), so proofs/CI pipe a scripted stdin transcript. No `--yes` flag is added.
+The wizard prompts **only for inputs that will be written on this run** (review fix,
+Grok F3 / GLM F4): on the upgrade path (config/.env exist, `AGENTS.md` missing) init runs
+no credential wizard and only writes `AGENTS.md`. No `--yes` flag is added.
 
 Preflight: both `init` and `start` check `process.version` against `engines.node` (≥ 26)
 and fail with a one-line actionable message (not a stack trace).
@@ -54,11 +75,18 @@ per §5's per-file rules without corrupting existing ones.
 For `config.json` / `.env`, in order:
 
 1. **`AI_MEET_HOME`** (shell environment; the explicit tier — kept and honored
-   **identically by `init` and `start`**). `AI_MEET_HOME` is read from the process
-   environment only; a value inside `.env` is not honored (the `.env` location itself
-   depends on the home — no circular resolution).
+   **identically by `init` and `start`**). **The resolved home is pinned from the
+   pre-dotenv (launch) environment**: home resolution must capture
+   `process.env.AI_MEET_HOME` before dotenv loads `.env`; lazy evaluation applies only to
+   joining paths against that pinned home. A value inside `.env` has no effect on the
+   home (the `.env` location itself depends on the home — no circular resolution).
+   NOTE this is a **target, not today's behavior** (review fix, Kimi F1 / GLM F1): dotenv
+   mutates `process.env`, so today's runtime-resolved paths (`logsDir()`,
+   `ttsCacheDir()`, `avatarCachePath()`) partially honor a `.env`-sourced
+   `AI_MEET_HOME`. The G3 lock-test must assert that an `AI_MEET_HOME` line inside
+   `.env` has no effect on any resolved path.
 2. **Current working directory** (default).
-3. **XDG fallback: NO** for this launch (decided upstream at delta review). Adding XDG
+3. **XDG fallback: NO** for this launch (settled upstream at delta review). Adding XDG
    later is a new contract change with its own lane.
 
 From-source compatibility: running from a repo checkout with cwd = repo root behaves
@@ -98,9 +126,10 @@ an explicit allowlist:
 - Ships: `bin/`, `src/` (includes the AGENTS.md template — path below), `public/`,
   `assets/avatar.png`, `assets/fillers/`, `config.json.example`, `.env.example`,
   `README.md`, `LICENSE`, `NOTICE`.
-- Deny-set (asserted absent in the packaging proof): `test/`, `docs/` (except assets
-  explicitly added for npm-page rendering, if #15 chooses to ship instead of absolute-linking),
-  `scripts/`, `tools/`, `.env`, `config.json`, `_handoffs/`, `.omc/`.
+- Deny-set (asserted absent in the packaging proof): `test/`, `docs/`, `scripts/`,
+  `tools/`, `.env`, `config.json`, `_handoffs/`, `.omc/`. **npm-page rendering uses
+  absolute GitHub URLs in the shipped README — nothing extra ships** (settled here so
+  #15 makes no packaging choice; review fix, GLM F3).
 - **AGENTS.md template path: `src/agents-template.md`** — inside the already-shipped
   `src/`, so #16 needs no `package.json` edit.
 - NOTICE: reworded to "clone the repository if you need to seed fillers; the npm tarball
@@ -110,22 +139,33 @@ an explicit allowlist:
 
 `init` writes three files into the resolved home; overwrite rules are **per-file**:
 
-| File | Exists already | Behavior |
-|---|---|---|
-| `config.json` / `.env` | yes, without `--force` | refuse that file (as today), but do not block generation of a *missing* `AGENTS.md` |
-| `config.json` / `.env` | yes, with `--force` | overwrite (atomic tmp+rename, `.env` mode 0600 — as today) |
-| `AGENTS.md` | absent | generate — **even when config/.env already exist** (upgrade path for existing users) |
-| `AGENTS.md` | present **with** meetmate marker | keep without `--force`; regenerate with `--force` |
-| `AGENTS.md` | present **without** marker (foreign file) | **never overwrite, `--force` included** — print a notice and skip |
+Three rules, stated without reference to today's behavior (review fix, Grok F3 / Kimi F2
+— note today's refusal at `bin/ai-meet.js:80-84` is **joint over the pair**; G5 changes
+it to per-file):
+
+1. **`config.json` and `.env` are independent.** The existence of one never refuses the
+   other. Without `--force`: skip (do not overwrite) each file that already exists; write
+   each file that is missing. With `--force`: overwrite both (atomic tmp+rename, `.env`
+   mode 0600 — kept). An interrupted run therefore resumes by re-running `init`, which
+   completes only the missing files.
+2. **`AGENTS.md`**: absent → generate, even when config/.env already exist (upgrade
+   path); present **with** the meetmate marker → keep without `--force`, regenerate with
+   `--force`; present **without** the marker (foreign file) → **never overwrite,
+   `--force` included** — print a notice and skip.
+3. **Prompt only for what will be written on this run** (§2): if no credential-bearing
+   file will be written, no credential wizard runs.
 
 Template guarantees (all testable, tests live in #16):
 
 - Static file shipped in the tarball (`src/agents-template.md`); **no interpolation of
   user or config values** into the generated output.
 - Contains configuration key **names only, never values** (test: sentinel values written
-  to `.env` must not appear in the generated file; no `KEY=value` lines).
-- First lines: meetmate generated-marker + template version + "regenerate with
-  `meetmate init --force`".
+  to **both `.env` and `config.json`** must not appear in the generated file; no
+  `KEY=value` lines — the openai-compatible apiKey lives in `config.json`, §2).
+- **Frozen first line**: `<!-- meetmate-generated template=1 -->` (integer template
+  version, bumped when the template changes), followed by the sentence "regenerate with
+  `meetmate init --force`". This exact marker is what §5 rule 2's detection keys on
+  (review fix, Grok F5).
 - Includes the AI-security notice: **"SECURITY NOTICE FOR AI AGENTS: never print, log,
   or commit values from `.env`."** The file never instructs an assistant to read or
   echo `.env` values.
