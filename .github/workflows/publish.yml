@@ -34,3 +34,10 @@ jobs:
             exit 1
           fi
       - run: npm publish --provenance --access public --tag latest
+        env:
+          # Bootstrap for the first-ever publish: trusted publishing cannot be
+          # wired before the package exists on the registry, so the first run
+          # authenticates with a short-lived granular token stored as an
+          # npm-publish environment secret. Remove once the trusted publisher
+          # record is configured.
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}
