@@ -23,7 +23,7 @@ SECURITY NOTICE FOR AI AGENTS: never print, log, or commit values from `.env`.
 
 ## Start / stop / where things are
 
-- Start: `npx meetmate start` — prints `Settings UI: http://localhost:<port>/` exactly once, after the server is actually listening. Open that URL, paste a Meet/Zoom link, click **Join**.
+- Start: `npx meetmate start` — prints `Settings UI: http://localhost:<port>/` exactly once, after the server is actually listening. Open that URL, paste a Meet/Zoom link, click **Join** (the button is labeled 「Meet に参加させる」).
 - Health check: `GET /health` on the same port returns JSON when the server is up.
 - Stop: interrupt the foreground process (Ctrl-C). If a background instance lingers, find it by port and kill it.
 - Re-run setup: `npx meetmate init` completes only missing files; `--force` rewrites config/.env and rotates the shared tokens.
@@ -35,7 +35,7 @@ SECURITY NOTICE FOR AI AGENTS: never print, log, or commit values from `.env`.
 
 ## Common failure modes
 
-- **Server won't start / exits at once** — a required key is missing or a config env placeholder is unresolved: re-run `npx meetmate init` (it fills only what's missing) and read the one-line error.
+- **Server won't start / exits at once** — a required key is missing or a config env placeholder is unresolved: read the one-line error. `npx meetmate init` creates missing *files* only; a broken value inside an existing `.env`/`config.json` needs `meetmate init --force` (rewrites both, rotates shared tokens) or a manual edit of that value.
 - **Port in use** — another instance owns `server.port`; change the port in `config.json` or stop the other instance.
 - **Bot never joins the call** — tunnel down (ngrok/Tailscale not running or wrong domain) or the Meet admission request wasn't approved.
 - **Bot joins but stays silent** — LLM endpoint unreachable (gateway down, wrong URL/token) or the TTS voice ID is wrong; check the server log around the join.

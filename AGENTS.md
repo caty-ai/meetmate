@@ -6,7 +6,7 @@ Ground truth for AI tools (and humans) working on this repository. The generated
 
 - `make test` — **canonical test entry** (family CI gate runs exactly this; bootstraps Node ≥ 26 and deps, then runs the suite serially).
 - `make lint` — canonical lint entry.
-- `npm test` — the **flaky parallel runner**: it invokes `node --test` with parallel file execution, which intermittently fails on runner IPC under some local Node builds. Do not treat an `npm test` failure as ground truth until reproduced via `make test`; CI uses `make test`.
+- `npm test` — the **flaky parallel runner**: it invokes `node --test` with parallel file execution, which intermittently fails on runner IPC under some local Node builds. Do not treat an `npm test` failure as ground truth until reproduced via `make test`. The PR/family CI gate runs `make test`; note that `.github/workflows/publish.yml` runs `npm test` itself, so a red there IS the release gate, and the post-merge canary runs `node --test --test-concurrency=1` directly.
 - `npm start` — boot the server (runtime entry; same as `node src/server.js`).
 - Node **≥ 26** is required (`engines.node`); `bin/ai-meet.js` preflights this for `init`/`start`.
 
@@ -19,7 +19,7 @@ Ground truth for AI tools (and humans) working on this repository. The generated
 | `src/paths.js` | Home resolution — `AI_MEET_HOME` pinned pre-dotenv, cwd default; bundled-vs-user asset split |
 | `src/config.js` | `config.json` loading (lazy path resolution) |
 | `src/llm*.js`, `src/stt*.js`, `src/tts-*.js` | LLM / speech-to-text / text-to-speech providers |
-| `src/transport-meet/`, `src/mcp/` | Meeting transport; MCP control plane (`join`/`leave`/`status`) |
+| `src/transport-meet/`, `src/mcp/` | Meeting transport; MCP control plane (tools: `join_meeting`, `leave_meeting`, `get_active_session`, `health`) |
 | `src/agents-template.md` | Static template for the user-side generated `AGENTS.md` (ships in the tarball) |
 | `test/` | `node --test` suite (not shipped) |
 | `docs/` | Engineering docs (not shipped); **`docs/cli-contract.md` is the FROZEN CLI & config-resolution contract** |
