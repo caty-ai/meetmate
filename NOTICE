@@ -13,5 +13,5 @@ Bundled assets
 - assets/fillers/ ships manifest.json only. The audio takes are NOT included:
   they were synthesised for one specific voice and are not redistributable.
   manifest.json lists the phrase for each filler slot so you can record or
-  synthesise your own set and seed the cache with
-  scripts/seed-tts-cache-from-fillers.js.
+  synthesise your own set; clone the repository if you need to seed fillers;
+  the npm tarball does not include the seeder.
