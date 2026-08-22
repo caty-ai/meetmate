@@ -8,6 +8,8 @@ const test = require("node:test");
 const cliPath = path.join(__dirname, "..", "bin", "ai-meet.js");
 const configTemplatePath = path.join(__dirname, "..", "config.json.example");
 const agentsTemplatePath = path.join(__dirname, "..", "src", "agents-template.md");
+const publishWorkflowPath = path.join(__dirname, "..", ".github", "workflows", "publish.yml");
+const noticePath = path.join(__dirname, "..", "NOTICE");
 
 function isolatedEnv(overrides = {}) {
   const env = { ...process.env };
@@ -93,6 +95,16 @@ function openaiInput(prefix = "test") {
   ].join("\n") + "\n";
 }
 
+function openaiEnvOnlyInput(prefix = "test") {
+  return [
+    `${prefix}-soniox`,
+    `${prefix}-fish`,
+    `${prefix}-voice`,
+    `${prefix}-attendee`,
+    "openai-compatible",
+  ].join("\n") + "\n";
+}
+
 function envValue(contents, key) {
   return contents.match(new RegExp(`^${key}=(.*)$`, "m"))?.[1];
 }
@@ -148,7 +160,9 @@ test("init writes the exact openai-compatible branch and keeps its apiKey out of
   assert.equal(result.status, 0, result.stderr);
 
   const envContents = fs.readFileSync(path.join(directory, ".env"), "utf8");
-  const config = JSON.parse(fs.readFileSync(path.join(directory, "config.json"), "utf8"));
+  const configPath = path.join(directory, "config.json");
+  const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  if (process.platform !== "win32") assert.equal(fs.statSync(configPath).mode & 0o777, 0o600);
   assert.equal(envValue(envContents, "LLM_PROVIDER"), "openai-compatible");
   assert.equal(config.llm.provider, "openai-compatible");
   assert.equal(config.llm.model, "branch-model");
@@ -163,6 +177,58 @@ test("init writes the exact openai-compatible branch and keeps its apiKey out of
     assert.equal(agents.includes(sentinel), false);
   }
   assert.doesNotMatch(agents, /^[A-Z][A-Z0-9_]*=/m);
+});
+
+test("openai-compatible resume writes only .env when existing config is complete", (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-cli-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+
+  const configPath = path.join(directory, "config.json");
+  const config = JSON.parse(fs.readFileSync(configTemplatePath, "utf8"));
+  config.llm.provider = "openai-compatible";
+  config.llm.model = "existing-model";
+  config.llm.openaiCompatible.baseUrl = "http://localhost:4555/v1";
+  config.llm.openaiCompatible.apiKey = "existing-key";
+  const originalConfig = `${JSON.stringify(config, null, 2)}\n`;
+  fs.writeFileSync(configPath, originalConfig);
+  fs.copyFileSync(agentsTemplatePath, path.join(directory, "AGENTS.md"));
+
+  const result = runCli(["init"], directory, openaiEnvOnlyInput("resume"));
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Created: \.env\./);
+  assert.doesNotMatch(result.stdout, /baseUrl:|apiKey:|llm\.model:/);
+  assert.equal(fs.readFileSync(configPath, "utf8"), originalConfig);
+  assert.equal(envValue(fs.readFileSync(path.join(directory, ".env"), "utf8"), "LLM_PROVIDER"), "openai-compatible");
+});
+
+test("openai-compatible resume fails before writing .env when existing config is incomplete", (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-cli-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+
+  const configPath = path.join(directory, "config.json");
+  const invalidConfig = `${JSON.stringify({
+    llm: {
+      provider: "openai-compatible",
+      model: "",
+      openaiCompatible: { baseUrl: "", apiKey: "" },
+    },
+  }, null, 2)}\n`;
+  fs.writeFileSync(configPath, invalidConfig);
+  fs.copyFileSync(agentsTemplatePath, path.join(directory, "AGENTS.md"));
+
+  const result = runCli(["init"], directory, openaiEnvOnlyInput("invalid-resume"));
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout.trim().split(/\r?\n/).filter(Boolean).at(-1), "LLM provider (openclaw|openai-compatible):");
+  const errorLines = result.stderr.trim().split(/\r?\n/);
+  assert.equal(errorLines.length, 1, result.stderr);
+  assert.match(errorLines[0], /llm\.model/);
+  assert.match(errorLines[0], /llm\.openaiCompatible\.baseUrl/);
+  assert.match(errorLines[0], /llm\.openaiCompatible\.apiKey/);
+  assert.match(errorLines[0], /--force/);
+  assert.match(errorLines[0], /manually/);
+  assert.doesNotMatch(errorLines[0], / at |Error:/);
+  assert.equal(fs.readFileSync(configPath, "utf8"), invalidConfig);
+  assert.equal(fs.existsSync(path.join(directory, ".env")), false);
 });
 
 test("init treats config.json and .env independently and prompts only for the missing write-set", (t) => {
@@ -231,7 +297,7 @@ test("AGENTS.md follows absent, generated-marker, foreign-file, and --force rule
   assert.equal(runCli(["init"], directory, openclawInput("agents")).status, 0);
   assert.deepEqual(fs.readFileSync(agentsPath), fs.readFileSync(agentsTemplatePath));
 
-  const generatedCustom = "<!-- meetmate-generated template=1 -->\ncustom generated content\n";
+  const generatedCustom = "<!-- meetmate-generated template=2 -->\ncustom generated content\n";
   fs.writeFileSync(agentsPath, generatedCustom);
   const keepsGenerated = runCli(["init"], directory);
   assert.equal(keepsGenerated.status, 0, keepsGenerated.stderr);
@@ -380,6 +446,35 @@ test("init and start reject old Node with one actionable line and no stack", (t)
   }
 });
 
+test("init and start warn and continue when the Node engine range cannot be checked", (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-cli-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  assert.equal(runCli(["init"], directory, openclawInput("engine")).status, 0);
+
+  const preload = path.join(directory, "unparseable-engine.js");
+  const packagePath = path.join(__dirname, "..", "package.json");
+  const serverPath = path.join(__dirname, "..", "src", "server.js");
+  fs.writeFileSync(preload, `
+    const packageJson = require(${JSON.stringify(packagePath)});
+    packageJson.engines.node = "^26";
+    const Module = require("node:module");
+    const originalLoad = Module._load;
+    Module._load = function(request, parent, isMain) {
+      if (request === ${JSON.stringify(serverPath)}) return {};
+      return originalLoad.call(this, request, parent, isMain);
+    };
+  `);
+
+  for (const command of ["init", "start"]) {
+    const result = runCli([command], directory, "", { nodeArgs: ["--require", preload] });
+    assert.equal(result.status, 0, result.stderr);
+    const lines = result.stderr.trim().split(/\r?\n/);
+    assert.equal(lines.length, 1, result.stderr);
+    assert.match(lines[0], /cannot verify Node requirement \^26; continuing/);
+    assert.doesNotMatch(lines[0], /requires Node| at |Error:/);
+  }
+});
+
 test("AI_MEET_HOME is shared by init and start, and the bound settings URL is printed once after listen", (t) => {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-cwd-"));
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-home-"));
@@ -431,6 +526,67 @@ test("AI_MEET_HOME is shared by init and start, and the bound settings URL is pr
   assert.ok(urlIndex > listenIndex, started.stdout);
   assert.equal(started.stdout.split("http://localhost:43123/").length - 1, 1, started.stdout);
   assert.equal(started.stdout.includes("http://localhost:0/"), false);
+});
+
+test("start treats an empty PORT environment value as unset", (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-cli-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  assert.equal(runCli(["init"], directory, openclawInput("empty-port")).status, 0);
+
+  const configPath = path.join(directory, "config.json");
+  const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  delete config.server.port;
+  fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+
+  const preload = path.join(directory, "capture-listen-port.js");
+  fs.writeFileSync(preload, `
+    const Module = require("node:module");
+    const EventEmitter = require("node:events");
+    const realHttp = require("node:http");
+    const fakeHttp = { ...realHttp };
+    fakeHttp.createServer = () => {
+      const server = new EventEmitter();
+      let listenedPort;
+      server.address = () => ({ address: "0.0.0.0", family: "IPv4", port: listenedPort });
+      server.listen = (port, callback) => {
+        listenedPort = port;
+        console.log(\`TEST_LISTEN_PORT=\${port}\`);
+        setImmediate(callback);
+      };
+      return server;
+    };
+    const originalLoad = Module._load;
+    Module._load = function(request, parent, isMain) {
+      if (request === "node:http" || request === "http") return fakeHttp;
+      return originalLoad.call(this, request, parent, isMain);
+    };
+  `);
+
+  const result = runCli(["start"], directory, "", {
+    env: { AI_MEET_HOME: directory, PORT: "" },
+    nodeArgs: ["--require", preload],
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /TEST_LISTEN_PORT=5005/);
+  assert.match(result.stdout, /Settings UI: http:\/\/localhost:5005\//);
+});
+
+test("publish workflow requires an exact version and pins official action v4 commits", () => {
+  const workflow = fs.readFileSync(publishWorkflowPath, "utf8");
+  assert.match(workflow, /workflow_dispatch:\s*\n\s+inputs:\s*\n\s+version:/);
+  assert.match(workflow, /description: Exact version to publish; must equal package\.json version/);
+  assert.match(workflow, /required: true/);
+  assert.match(workflow, /actions\/checkout@11d5960a326750d5838078e36cf38b85af677262\s+# v4/);
+  assert.match(workflow, /actions\/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020\s+# v4/);
+  assert.match(workflow, /REQUESTED_VERSION: \$\{\{ github\.event\.inputs\.version \}\}/);
+  assert.match(workflow, /npm pkg get version \| tr -d '\"'/);
+  assert.match(workflow, /\[\[ "\$REQUESTED_VERSION" != "\$package_version" \]\]/);
+});
+
+test("NOTICE links shipped avatar guidance to its absolute GitHub URL", () => {
+  const notice = fs.readFileSync(noticePath, "utf8");
+  assert.match(notice, /https:\/\/github\.com\/caty-ai\/meetmate\/blob\/main\/docs\/setup-guide\.md/);
+  assert.doesNotMatch(notice, /\(see docs\/setup-guide\.md\)/);
 });
 
 test("usage documents scripted stdin, lists commands, and rejects unknown options and commands", () => {

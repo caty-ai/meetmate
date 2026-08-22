@@ -7,7 +7,6 @@ const readline = require("node:readline");
 const packageJson = require("../package.json");
 const { bundledPath, resolveHome } = require("../src/paths");
 
-const AGENTS_MARKER = "<!-- meetmate-generated template=1 -->";
 const ENV_CREDENTIAL_KEYS = [
   "SONIOX_API_KEY",
   "FISH_AUDIO_API_KEY",
@@ -86,7 +85,8 @@ function parseVersion(version) {
 function meetsEngine(version, range) {
   const current = parseVersion(version);
   const minimumMatch = String(range).match(/^>=\s*(\d+)\.(\d+)\.(\d+)$/);
-  if (!current || !minimumMatch) return false;
+  if (!current) return false;
+  if (!minimumMatch) return null;
   const minimum = minimumMatch.slice(1).map(Number);
   for (let index = 0; index < minimum.length; index += 1) {
     if (current[index] !== minimum[index]) return current[index] > minimum[index];
@@ -96,7 +96,12 @@ function meetsEngine(version, range) {
 
 function preflightNode() {
   const required = packageJson.engines?.node;
-  if (required && !meetsEngine(process.version, required)) {
+  const engineCheck = required ? meetsEngine(process.version, required) : true;
+  if (engineCheck === null) {
+    console.error(`Warning: cannot verify Node requirement ${required}; continuing with current version ${process.version}.`);
+    return true;
+  }
+  if (!engineCheck) {
     console.error(`Meetmate requires Node ${required}; current version is ${process.version}. Upgrade Node and retry.`);
     process.exitCode = 1;
     return false;
@@ -251,7 +256,40 @@ function atomicWrite(destination, contents, options = {}) {
 
 function hasMeetmateMarker(destination) {
   const firstLine = fs.readFileSync(destination, "utf8").split(/\r?\n/, 1)[0];
-  return firstLine === AGENTS_MARKER;
+  const match = firstLine.match(/^<!-- meetmate-generated template=(-?\d+) -->$/);
+  if (!match) return false;
+  try {
+    BigInt(match[1]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function assertExistingOpenAICompatibleConfig(destination) {
+  const requiredFields = [
+    "llm.provider",
+    "llm.model",
+    "llm.openaiCompatible.baseUrl",
+    "llm.openaiCompatible.apiKey",
+  ];
+  let config;
+  try {
+    config = JSON.parse(fs.readFileSync(destination, "utf8"));
+  } catch {
+    throw new Error(`Existing config.json is invalid JSON; required openai-compatible fields are ${requiredFields.join(", ")}. Re-run with --force or fill them manually.`);
+  }
+
+  const isNonEmptyString = (value) => typeof value === "string" && value.trim() !== "";
+  const missingFields = [];
+  if (config?.llm?.provider !== "openai-compatible") missingFields.push(requiredFields[0]);
+  if (!isNonEmptyString(config?.llm?.model)) missingFields.push(requiredFields[1]);
+  if (!isNonEmptyString(config?.llm?.openaiCompatible?.baseUrl)) missingFields.push(requiredFields[2]);
+  if (!isNonEmptyString(config?.llm?.openaiCompatible?.apiKey)) missingFields.push(requiredFields[3]);
+
+  if (missingFields.length > 0) {
+    throw new Error(`Existing config.json is missing required openai-compatible fields: ${missingFields.join(", ")}. Re-run with --force or fill them manually.`);
+  }
 }
 
 function assertFileDestinations(destinations) {
@@ -287,10 +325,14 @@ async function init(force) {
     answers = await askWizard({ writeConfig, writeEnv, existingProvider });
   }
 
+  if (writeEnv && !writeConfig && answers.provider === "openai-compatible") {
+    assertExistingOpenAICompatibleConfig(configDestination);
+  }
+
   const created = [];
   if (writeConfig) {
     const template = fs.readFileSync(bundledPath("config.json.example"), "utf8");
-    atomicWrite(configDestination, buildConfigContents(template, answers));
+    atomicWrite(configDestination, buildConfigContents(template, answers), { mode: 0o600 });
     created.push("config.json");
   }
 
