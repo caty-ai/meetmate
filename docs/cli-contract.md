@@ -130,6 +130,12 @@ an explicit allowlist:
   `tools/`, `.env`, `config.json`, `_handoffs/`, `.omc/`. **npm-page rendering uses
   absolute GitHub URLs in the shipped README — nothing extra ships** (settled here so
   #15 makes no packaging choice; review fix, GLM F3).
+- Amendment (owner cp3 decision, 2026-08-23, recorded on #3): npm force-includes
+  README-class files regardless of `files`, so the localized `README.ja.md` /
+  `README.th.md` / `README.zh.md` also ship. Accepted — they are documentation-only,
+  secret-scanned, and carry absolute GitHub URLs (#15), so "nothing extra ships"
+  reads as "nothing outside the allowlist plus npm's forced README/LICENSE/NOTICE
+  class ships". The deny-set above is unchanged and remains the enforced assertion.
 - **AGENTS.md template path: `src/agents-template.md`** — inside the already-shipped
   `src/`, so #16 needs no `package.json` edit.
 - NOTICE: reworded to "clone the repository if you need to seed fillers; the npm tarball
