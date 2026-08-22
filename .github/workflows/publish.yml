@@ -1,0 +1,43 @@
+name: Publish to npm
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact version to publish; must equal package.json version
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm-publish
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 26
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: npm test
+      - name: Verify package version
+        env:
+          REQUESTED_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          package_version="$(npm pkg get version | tr -d '"')"
+          if [[ "$REQUESTED_VERSION" != "$package_version" ]]; then
+            echo "Requested version '$REQUESTED_VERSION' does not match package.json version '$package_version'." >&2
+            exit 1
+          fi
+      - run: npm publish --provenance --access public --tag latest
+        env:
+          # Bootstrap for the first-ever publish: trusted publishing cannot be
+          # wired before the package exists on the registry, so the first run
+          # authenticates with a short-lived granular token stored as an
+          # npm-publish environment secret. Remove once the trusted publisher
+          # record is configured.
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}
