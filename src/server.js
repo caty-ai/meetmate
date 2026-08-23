@@ -12,7 +12,8 @@ const { loadConfig } = require("./config");
 const { resolveAgentProfile } = require("./agent-profile");
 
 const config = loadConfig();
-const PORT = Number(config?.server?.port || process.env.PORT || 5005);
+const envPort = process.env.PORT === "" ? undefined : process.env.PORT;
+const PORT = Number(config?.server?.port ?? envPort ?? 5005);
 const pkg = (() => {
   try {
     return require("../package.json");
@@ -105,7 +106,8 @@ async function bootstrap() {
   });
 
   server.listen(PORT, () => {
-    console.log(`🚀  Meet Server started: http://localhost:${PORT}`);
+    const address = server.address();
+    console.log(`Settings UI: http://localhost:${address.port}/`);
   });
 }
 

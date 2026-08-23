@@ -1,8 +1,25 @@
 {
   "name": "meetmate",
-  "version": "0.1.0",
+  "version": "8.1.1",
   "description": "Bring your own AI agent into Google Meet & Zoom, as a real voice participant.",
-  "private": true,
+  "keywords": [
+    "ai-agent",
+    "google-meet",
+    "zoom",
+    "voice-assistant",
+    "mcp"
+  ],
+  "homepage": "https://github.com/caty-ai/meetmate#readme",
+  "bugs": {
+    "url": "https://github.com/caty-ai/meetmate/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/caty-ai/meetmate.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "files": [
     "bin/",
     "src/",
@@ -13,7 +30,8 @@
     ".env.example",
     "README.md",
     "LICENSE",
-    "NOTICE"
+    "NOTICE",
+    "docs/i18n/"
   ],
   "bin": {
     "meetmate": "bin/ai-meet.js"

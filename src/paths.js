@@ -1,7 +1,12 @@
 const path = require("node:path");
 
+// Pin the writable home before dotenv can mutate process.env. Every user-data
+// path joins against this launch-time value, while explicit cache/log overrides
+// remain lazy so dotenv can continue to supply them.
+const launchHome = path.resolve(process.env.AI_MEET_HOME || process.cwd());
+
 function resolveHome() {
-  return path.resolve(process.env.AI_MEET_HOME || process.cwd());
+  return launchHome;
 }
 
 function configPath() {

@@ -3,8 +3,6 @@ const { buildVoiceAddendum } = require("./llm");
 const { buildVoiceAddendumFromMessages, resolveMessages } = require("./messages");
 const { configPath } = require("./paths");
 
-const CONFIG_PATH = configPath();
-
 const SAMPLE_RATE = 16_000;
 // TTS output rate. The code default is the single source of truth; env is kept
 // as an escape hatch only. Invalid env values (NaN/zero/negative) fall back to
@@ -175,11 +173,12 @@ function resolveConfigEnv(raw, env = process.env) {
  * Returns parsed config or null if config.json not found.
  */
 function loadConfig() {
-  if (!fs.existsSync(CONFIG_PATH)) return null;
+  const resolvedConfigPath = configPath();
+  if (!fs.existsSync(resolvedConfigPath)) return null;
 
   let raw;
   try {
-    raw = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8"));
+    raw = JSON.parse(fs.readFileSync(resolvedConfigPath, "utf-8"));
   } catch (err) {
     console.error(`❌  Failed to parse config.json: ${err.message}`);
     process.exit(1);

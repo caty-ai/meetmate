@@ -1,4 +1,4 @@
-# セットアップガイド — Meetmate v7
+# セットアップガイド — Meetmate
 
 > **1エージェント = 1サーバーインスタンス。**
 > `config.json` + `.env` + `assets/avatar.png` の3点で任意のエージェントが動作する。
@@ -42,9 +42,30 @@
 
 ---
 
-## セットアップ手順
+## セットアップ手順（npm・推奨）
 
-### 1. リポジトリのクローン
+空のフォルダで3コマンド:
+
+```bash
+npm install meetmate
+npx meetmate init     # ウィザードが API キー・ボイスID・LLM エンドポイントを対話で収集し、config.json / .env / AGENTS.md を生成
+npx meetmate start    # サーバー起動。設定 UI の URL が表示される
+```
+
+- `init` は各キーの**取得先のヒントを1行ずつ表示**する。LLM は `openclaw` / `openai-compatible` のどちらかを選ぶと、必要な項目だけ聞かれる
+- `JOIN_SHARED_TOKEN` / `WS_SHARED_TOKEN` は**自動生成**される（入力不要）
+- 既にあるファイルは上書きされない（`--force` で作り直し。途中で中断しても再実行すれば足りないファイルだけ作られる）
+- **手動のまま残る手順**: ngrok / Tailscale のトンネル（→ [5. ngrok トンネル](#5-ngrok-トンネル固定ドメイン取得--起動)）と、Meet 側の参加承認（→ [会議プラットフォームの前提](#会議プラットフォームの前提)）
+
+2台目以降のエージェントは**別の空フォルダ**で同じ3コマンドを実行する（1エージェント = 1フォルダ = 1ポート）。
+
+設定を細かく調整したい場合は、以下のリファレンス（config.json / .env の全項目）へ。
+
+---
+
+## 手動セットアップ・設定リファレンス（コントリビュータ向け）
+
+### 1. リポジトリのクローン（from source — コントリビュータ向け）
 
 ```bash
 git clone https://github.com/caty-ai/meetmate.git

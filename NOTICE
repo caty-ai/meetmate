@@ -9,9 +9,9 @@ Bundled assets
 
 - assets/avatar.png is original agent artwork by the copyright holder and is
   covered by the MIT license above. It is instance-specific: replace it with
-  your own agent's image per deployment (see docs/setup-guide.md).
+  your own agent's image per deployment (see https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md).
 - assets/fillers/ ships manifest.json only. The audio takes are NOT included:
   they were synthesised for one specific voice and are not redistributable.
   manifest.json lists the phrase for each filler slot so you can record or
-  synthesise your own set and seed the cache with
-  scripts/seed-tts-cache-from-fillers.js.
+  synthesise your own set; clone the repository if you need to seed fillers;
+  the npm tarball does not include the seeder.
