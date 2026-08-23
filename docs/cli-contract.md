@@ -136,6 +136,14 @@ an explicit allowlist:
   secret-scanned, and carry absolute GitHub URLs (#15), so "nothing extra ships"
   reads as "nothing outside the allowlist plus npm's forced README/LICENSE/NOTICE
   class ships". The deny-set above is unchanged and remains the enforced assertion.
+- Amendment (owner cp2 decision, 2026-08-23, recorded on #13): npm's readme picker
+  selected `README.zh.md` as the registry `readmeFilename` at 8.1.0, rendering the
+  Chinese README on the npm page. Fix shipped in 8.1.1: the localized READMEs moved
+  from the package root to `docs/i18n/` (added to `files` as an explicit allowlist
+  entry, so they **still ship** — the cp3 acceptance above is preserved), leaving
+  `README.md` as the only root README so the picker is deterministic. The `docs/`
+  deny-set entry now reads as "all of `docs/` except the explicitly allowlisted
+  `docs/i18n/`"; everything else in `docs/` remains denied and asserted absent.
 - **AGENTS.md template path: `src/agents-template.md`** — inside the already-shipped
   `src/`, so #16 needs no `package.json` edit.
 - NOTICE: reworded to "clone the repository if you need to seed fillers; the npm tarball

@@ -1,6 +1,6 @@
 # Meetmate
 
-[English](https://github.com/caty-ai/meetmate/blob/main/README.md) | [日本語](https://github.com/caty-ai/meetmate/blob/main/README.ja.md) | [中文](https://github.com/caty-ai/meetmate/blob/main/README.zh.md) | **ไทย**
+[English](https://github.com/caty-ai/meetmate/blob/main/README.md) | [日本語](https://github.com/caty-ai/meetmate/blob/main/docs/i18n/README.ja.md) | [中文](https://github.com/caty-ai/meetmate/blob/main/docs/i18n/README.zh.md) | **ไทย**
 
 > เอกสารนี้เป็นคำแปลของ [README.md](https://github.com/caty-ai/meetmate/blob/main/README.md) (ภาษาอังกฤษ ซึ่งเป็นฉบับหลัก) หากเนื้อหาต่างกัน ให้ยึดตามเวอร์ชันภาษาอังกฤษ
 

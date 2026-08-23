@@ -1,6 +1,6 @@
 # Meetmate
 
-**English** | [日本語](https://github.com/caty-ai/meetmate/blob/main/README.ja.md) | [中文](https://github.com/caty-ai/meetmate/blob/main/README.zh.md) | [ไทย](https://github.com/caty-ai/meetmate/blob/main/README.th.md)
+**English** | [日本語](https://github.com/caty-ai/meetmate/blob/main/docs/i18n/README.ja.md) | [中文](https://github.com/caty-ai/meetmate/blob/main/docs/i18n/README.zh.md) | [ไทย](https://github.com/caty-ai/meetmate/blob/main/docs/i18n/README.th.md)
 
 [![CI](https://github.com/caty-ai/meetmate/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/caty-ai/meetmate/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/caty-ai/meetmate/blob/main/LICENSE)
