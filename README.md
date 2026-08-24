@@ -54,9 +54,9 @@ One screen, one job: get your agent into the room. This is the settings UI that 
 
    <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-ui-invite-pasted.png" alt="A full calendar invite pasted — the Meet URL is auto-detected and Join is enabled" width="100%">
 
-3. **Join and wait at the door.** A session card appears: 🟡 while the bot waits for admission, then a running timer once it's in the room.
+3. **Join and wait at the door.** A session card appears the moment you click — the elapsed timer starts right away, next to the WS status and your agent's name. The bot spins up (🔄 起動中…), asks Meet for admission, and the WS status flips to connected once it's in the room.
 
-   <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-ui-joining.png" alt="Active session card — waiting for admission, then joined with a running timer" width="100%">
+   <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-ui-joining.png" alt="Active session card — timer running from join, WS status flipping to connected once the bot is admitted" width="100%">
 
 4. **Admit it in Meet.** The one manual step, on your side of the call — approve the bot's "Ask to join" request like any other guest. Then call its wake word and start talking.
 

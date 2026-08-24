@@ -49,13 +49,13 @@ npx meetmate start    # 启动服务器并打印设置界面 URL
 <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-ui-idle.png" alt="启动后的 Meetmate 设置界面 — 粘贴框、未激活的加入按钮和会话指标" width="100%">
 
 1. **启动。** 打开打印出的 URL 就到了这里。大输入框用来放会议信息；在此之前**加入按钮**保持禁用。
-2. **粘贴邀请。** 单独的 Meet / Zoom URL 可以，**整段日历邀请原样粘贴**也可以——Meetmate 会自动提取会议 URL（绿色的"检测到"提示），并激活加入按钮。
+2. **粘贴邀请。** 单独的 Meet / Zoom URL 可以，**整段日历邀请原样粘贴**也可以——Meetmate 会自动提取会议 URL（绿色的「検出済み」提示，即"已检测到"），并激活加入按钮。
 
    <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-ui-invite-pasted.png" alt="粘贴整段日历邀请 — Meet URL 被自动检测，加入按钮已激活" width="100%">
 
-3. **加入并等待放行。** 会出现一张会话卡片：等待准入时显示 🟡，进入房间后计时器开始走动。
+3. **加入并等待放行。** 点击的瞬间就会出现会话卡片——计时器从此刻开始走动，旁边是 WS 连接状态和智能体名字。机器人先启动（🔄 起動中…），向 Meet 请求入会；进入房间后 WS 状态变为已连接。
 
-   <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-ui-joining.png" alt="会话卡片 — 从等待准入到入会后的计时状态" width="100%">
+   <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-ui-joining.png" alt="会话卡片 — 加入后计时器即开始走动，机器人获准入会后 WS 状态变为已连接" width="100%">
 
 4. **在 Meet 里批准。** 唯一的手动步骤，在你这一侧完成——像批准普通访客一样批准机器人的"请求加入"。然后喊它的唤醒词，开始对话。
 

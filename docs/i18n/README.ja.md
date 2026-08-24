@@ -32,7 +32,7 @@ npx meetmate init     # ウィザードが API キー・ボイスID・LLM エン
 npx meetmate start    # サーバーを起動し、設定 UI の URL を表示します
 ```
 
-表示された URL を開き、Meet または Zoom の URL を貼り付けて **Join** をクリックします（[実際の画面はこちら](#画面はこんな感じ)）。Meet 側でボットの「参加をリクエスト」を承認してから、ウェイクワードで呼びかけて話し始めてください。ngrok/Tailscale と Meet の入室承認は手動のままです。詳しい手順はウィザードの締めのメッセージと[セットアップガイド](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md)で確認できます。
+表示された URL を開き、Meet または Zoom の URL を貼り付けて **「Meet に参加させる」** をクリックします（[実際の画面はこちら](#画面はこんな感じ)）。Meet 側でボットの「参加をリクエスト」を承認してから、ウェイクワードで呼びかけて話し始めてください。ngrok/Tailscale と Meet の入室承認は手動のままです。詳しい手順はウィザードの締めのメッセージと[セットアップガイド](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md)で確認できます。
 
 ## 何ができるのか
 
@@ -53,9 +53,9 @@ npx meetmate start    # サーバーを起動し、設定 UI の URL を表示�
 
    <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-ui-invite-pasted.png" alt="カレンダー招待文をそのまま貼り付け — Meet URL が自動検出され参加ボタンが有効化" width="100%">
 
-3. **参加させて、入室待ち。** 通話中カードが現れます。入室待ちの間は 🟡、入室後はタイマーが回り始めます。
+3. **参加させて、入室待ち。** クリックした瞬間に通話中カードが現れます。タイマーはこの時点から回り始め、WS 接続状態とエージェント名が並びます。bot は起動（🔄 起動中…）→ Meet へ入室リクエスト → 入室が許可されると WS 表示が「接続 OK」に変わります。
 
-   <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-ui-joining.png" alt="通話中カード — 入室待ちから入室後のタイマー表示へ" width="100%">
+   <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-ui-joining.png" alt="通話中カード — 参加直後からタイマーが回り、入室後に WS 接続 OK へ変わる" width="100%">
 
 4. **Meet 側で承認する。** 唯一の手動ステップ。ほかのゲストと同じように bot の「参加をリクエスト」を承認したら、あとはウェイクワードで呼びかけるだけです。
 
