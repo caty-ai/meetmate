@@ -53,7 +53,7 @@ npx meetmate start    # サーバーを起動し、設定 UI の URL を表示�
 
    <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-ui-invite-pasted.png" alt="カレンダー招待文をそのまま貼り付け — Meet URL が自動検出され参加ボタンが有効化" width="100%">
 
-3. **参加させて、入室待ち。** クリックした瞬間に通話中カードが現れます。タイマーはこの時点から回り始め、WS 接続状態とエージェント名が並びます。bot は起動（🔄 起動中…）→ Meet へ入室リクエスト → 入室が許可されると WS 表示が「接続 OK」に変わります。
+3. **参加させて、入室待ち。** クリックした瞬間に通話中カードが現れます。タイマーはこの時点から回り始め、WS 接続状態とエージェント名が並びます。bot は起動（🔄 起動中...）→ Meet へ入室リクエスト → 入室が許可されると WS 表示が「接続 OK」に変わります。
 
    <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-ui-joining.png" alt="通話中カード — 参加直後からタイマーが回り、入室後に WS 接続 OK へ変わる" width="100%">
 

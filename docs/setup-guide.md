@@ -328,7 +328,7 @@ node src/server.js
 
    <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-ui-invite-pasted.png" alt="招待文をまるごと貼り付けた状態。検出済みの緑表示と有効化された参加ボタン" width="100%">
 
-3. 「Meet に参加させる」をクリックした瞬間に通話中カードが現れる。タイマーはクリック時点から回り始め、WS 接続状態とエージェント名もこの時点から表示される。状態表示は **🔄 起動中…** から始まり、Bot が Meet の入室許可を待っている間は **WS 未接続** のまま。入室が許可されると **WS 接続 OK** に変わる:
+3. 「Meet に参加させる」をクリックした瞬間に通話中カードが現れる。タイマーはクリック時点から回り始め、WS 接続状態とエージェント名もこの時点から表示される。状態表示は **🔄 起動中...** から始まり、Bot が Meet の入室許可を待っている間は **WS 未接続** のまま。入室が許可されると **WS 接続 OK** に変わる:
 
    <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-ui-joining.png" alt="通話中カード。参加直後からタイマー・WS 状態・エージェント名が表示され、入室後に WS 接続 OK へ変わる" width="100%">
 

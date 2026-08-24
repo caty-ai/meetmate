@@ -53,7 +53,7 @@ npx meetmate start    # 启动服务器并打印设置界面 URL
 
    <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-ui-invite-pasted.png" alt="粘贴整段日历邀请 — Meet URL 被自动检测，加入按钮已激活" width="100%">
 
-3. **加入并等待放行。** 点击的瞬间就会出现会话卡片——计时器从此刻开始走动，旁边是 WS 连接状态和智能体名字。机器人先启动（🔄 起動中…），向 Meet 请求入会；进入房间后 WS 状态变为已连接。
+3. **加入并等待放行。** 点击的瞬间就会出现会话卡片——计时器从此刻开始走动，旁边是 WS 连接状态和智能体名字。机器人先启动（🔄 起動中...），向 Meet 请求入会；进入房间后 WS 状态变为已连接。
 
    <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-ui-joining.png" alt="会话卡片 — 加入后计时器即开始走动，机器人获准入会后 WS 状态变为已连接" width="100%">
 
