@@ -1,3 +1,8 @@
+/*
+ * Settings-boundary contract: docs/settings-contract.md.
+ * Keep persistence, precedence, credential classes, allowlists, and migrations aligned with that contract.
+ */
+
 const fs = require("fs");
 const { buildVoiceAddendum } = require("./llm");
 const { buildVoiceAddendumFromMessages, resolveMessages } = require("./messages");
