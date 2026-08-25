@@ -6,7 +6,7 @@ const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 const { Readable } = require("node:stream");
-const { spawnSync } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 
 const ROOT = path.join(__dirname, "..");
 const bootstrap = require("../src/settings/bootstrap");
@@ -399,11 +399,34 @@ test("T12-07 setup issues are registry-derived, semantic, provider-aware, and ab
   assert.equal(buildEnvelope().setupMode, true);
 
   resetRuntimeForTest();
+  initializeRuntime({ state: state({ audio: { clips: [{}] } }), startup: startup() });
+  assert.deepEqual(buildEnvelope().issues.find((issue) => issue.fieldId === "audio_clips"), { fieldId: "audio_clips", code: "VALUE_INVALID" });
+  assert.deepEqual(buildEnvelope().fields.audio_clips, []);
+  assert.equal(buildEnvelope().setupMode, true);
+
+  resetRuntimeForTest();
   initializeRuntime({ state: state({ gateway: { token: "legacy" } }), startup: startup() });
   assert.equal(buildEnvelope().issues.some((issue) => issue.code === "LEGACY_CONNECTION_CONFIG_PRESENT"), false);
   resetRuntimeForTest();
   initializeRuntime({ state: state({ gateway: { token: "legacy" } }), startup: startup({ connection: { openclawUrl: "", openclawToken: "" } }) });
   assert.equal(buildEnvelope().issues.some((issue) => issue.code === "LEGACY_CONNECTION_CONFIG_PRESENT"), true);
+});
+
+test("restart-required unset-to-set changes stay on the boot snapshot until restart", () => {
+  const agentProfilePath = require.resolve("../src/agent-profile");
+  delete require.cache[agentProfilePath];
+
+  resetRuntimeForTest();
+  initializeRuntime({ state: state({ agent: { id: "alpha" } }), startup: startup() });
+  const profileModule = require(agentProfilePath);
+  profileModule.clearProfileCache();
+  assert.equal(profileModule.resolveAgentProfile().name, "alpha");
+
+  require("../src/settings/resolver").publishState(state({ agent: { id: "alpha", name: "Next Alpha" } }, "b".repeat(64)));
+  profileModule.clearProfileCache();
+
+  assert.equal(buildEnvelope().restartRequired.includes("agent_name"), true);
+  assert.equal(profileModule.resolveAgentProfile().name, "alpha");
 });
 
 test("save publishes and invalidates caches while the shared lock is still owned", (t) => {
@@ -474,6 +497,45 @@ test("T12-04 PUT cannot bypass the boot operational snapshot", async (t) => {
   ]);
 });
 
+test("gateway warm-up timeout preserves stored zero and falls back to 8000 only when unset", async () => {
+  const providerPath = require.resolve("../src/llm-provider");
+  const warmupPath = require.resolve("../src/gateway-warmup");
+  const originalProviderModule = require.cache[providerPath];
+  const observed = [];
+
+  require.cache[providerPath] = {
+    exports: {
+      createLlmProvider: () => ({
+        complete: (_messages, options) => {
+          observed.push(options.timeoutMs);
+          return Promise.resolve({ statusCode: 500, text: "" });
+        },
+      }),
+    },
+  };
+  delete require.cache[warmupPath];
+
+  try {
+    resetRuntimeForTest();
+    initializeRuntime({ state: state({ gateway: { warmupTimeoutMs: 0 } }), startup: startup() });
+    await require(warmupPath).warmUpGatewaySession("session-zero", {
+      llm: { provider: "openclaw" }, openclawUrl: "http://gateway.test", openclawToken: "token",
+    });
+
+    resetRuntimeForTest();
+    initializeRuntime({ state: state({}), startup: startup() });
+    await require(warmupPath).warmUpGatewaySession("session-default", {
+      llm: { provider: "openclaw" }, openclawUrl: "http://gateway.test", openclawToken: "token",
+    });
+  } finally {
+    if (originalProviderModule === undefined) delete require.cache[providerPath];
+    else require.cache[providerPath] = originalProviderModule;
+    delete require.cache[warmupPath];
+  }
+
+  assert.deepEqual(observed, [0, 8000]);
+});
+
 test("dynamic Slack token uses meaningful launch/seed priority and setup requires explicit enablement", () => {
   resetRuntimeForTest();
   initializeRuntime({
@@ -487,6 +549,80 @@ test("dynamic Slack token uses meaningful launch/seed priority and setup require
   initializeRuntime({ state: state({ agent: { id: "bad id" } }), startup: startup({ preDotenvEnv: { BAD_ID_SLACK_BOT_TOKEN: "must-not-use" } }) });
   assert.equal(resolveDynamicSlackToken(), "");
   assert.equal(buildEnvelope().issues.some((issue) => issue.fieldId === "slack_bot_token"), false);
+});
+
+test("meet-routes runtime diagnostics use the same launch/seed/default parsing as the envelope", () => {
+  const routesPath = require.resolve("../src/transport-meet/meet-routes");
+
+  resetRuntimeForTest();
+  initializeRuntime({
+    state: state({}),
+    startup: startup({
+      preDotenvEnv: {
+        ATTENDEE_RETRY_ATTEMPTS: "99",
+        BODY_LIMIT_BYTES: "500",
+        ATTENDEE_TIMEOUT_MS: "bad",
+      },
+      dotenvSeeds: {
+        ATTENDEE_RETRY_ATTEMPTS: "4",
+        BODY_LIMIT_BYTES: "2048",
+        ATTENDEE_TIMEOUT_MS: "1200",
+      },
+    }),
+  });
+  let envelope = buildEnvelope();
+  let seededDiagnostics = require(routesPath)._test.runtimeDiagnostics();
+  assert.deepEqual({
+    attendeeRetryAttempts: seededDiagnostics.attendeeRetryAttempts,
+    bodyLimitBytes: seededDiagnostics.bodyLimitBytes,
+    attendeeTimeoutMs: seededDiagnostics.attendeeTimeoutMs,
+  }, {
+    attendeeRetryAttempts: envelope.diagnostics.attendee_retry_attempts.value,
+    bodyLimitBytes: envelope.diagnostics.body_limit_bytes.value,
+    attendeeTimeoutMs: envelope.diagnostics.attendee_timeout_ms.value,
+  });
+
+  resetRuntimeForTest();
+  initializeRuntime({
+    state: state({}),
+    startup: startup({
+      preDotenvEnv: {
+        ATTENDEE_RETRY_ATTEMPTS: "6",
+        BODY_LIMIT_BYTES: "4096",
+        ATTENDEE_TIMEOUT_MS: "2500",
+      },
+      dotenvSeeds: {
+        ATTENDEE_RETRY_ATTEMPTS: "4",
+        BODY_LIMIT_BYTES: "2048",
+        ATTENDEE_TIMEOUT_MS: "1200",
+      },
+    }),
+  });
+  envelope = buildEnvelope();
+  const launchDiagnostics = require(routesPath)._test.runtimeDiagnostics();
+  assert.deepEqual({
+    attendeeRetryAttempts: launchDiagnostics.attendeeRetryAttempts,
+    bodyLimitBytes: launchDiagnostics.bodyLimitBytes,
+    attendeeTimeoutMs: launchDiagnostics.attendeeTimeoutMs,
+  }, {
+    attendeeRetryAttempts: envelope.diagnostics.attendee_retry_attempts.value,
+    bodyLimitBytes: envelope.diagnostics.body_limit_bytes.value,
+    attendeeTimeoutMs: envelope.diagnostics.attendee_timeout_ms.value,
+  });
+
+  resetRuntimeForTest();
+  initializeRuntime({ state: state({}), startup: startup() });
+  envelope = buildEnvelope();
+  const defaultDiagnostics = require(routesPath)._test.runtimeDiagnostics();
+  assert.deepEqual({
+    attendeeRetryAttempts: defaultDiagnostics.attendeeRetryAttempts,
+    bodyLimitBytes: defaultDiagnostics.bodyLimitBytes,
+    attendeeTimeoutMs: defaultDiagnostics.attendeeTimeoutMs,
+  }, {
+    attendeeRetryAttempts: envelope.diagnostics.attendee_retry_attempts.value,
+    bodyLimitBytes: envelope.diagnostics.body_limit_bytes.value,
+    attendeeTimeoutMs: envelope.diagnostics.attendee_timeout_ms.value,
+  });
 });
 
 test("diagnostic coercion falls from invalid launch to valid seed", () => {
@@ -644,6 +780,45 @@ test("T12-12 class-1 migration is strict, seed-only, transactional, and value-fr
   assert.equal(recovered.status, 200, recovered.body);
   assert.match(JSON.parse(recovered.body).revision, /^[a-f0-9]{64}$/);
   assert.equal(readConfigState(bootstrapPath).parsed.tts.apiKey, "bootstrap-fish");
+});
+
+test("actual child-process lock ownership rejects a second writer", async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-live-lock-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const configPath = path.join(directory, "config.json");
+  fs.writeFileSync(configPath, '{"agent":{"language":"ja"}}\n', { mode: 0o600 });
+  const before = readConfigState(configPath);
+
+  const child = spawn(process.execPath, ["-e", `
+    const store = require(process.argv[1]);
+    const release = store._test.acquireLock(process.argv[2]);
+    process.stdout.write("ready\\n");
+    const done = () => {
+      try { release(); } catch {}
+      process.exit(0);
+    };
+    process.on("SIGTERM", done);
+    process.on("SIGINT", done);
+    setInterval(() => {}, 1000);
+  `, require.resolve("../src/settings/store"), configPath], { stdio: ["ignore", "pipe", "inherit"] });
+  t.after(async () => {
+    if (child.exitCode !== null) return;
+    child.kill("SIGTERM");
+    await new Promise((resolve) => child.once("exit", resolve));
+  });
+
+  await new Promise((resolve, reject) => {
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      if (chunk.includes("ready")) resolve();
+    });
+    child.once("exit", (code) => reject(new Error(`lock holder exited early: ${code}`)));
+  });
+
+  assert.throws(
+    () => saveFields({ configPath, revision: before.revision, fields: { agent_language: "en" } }),
+    (error) => error.code === "SETTINGS_MULTI_PROCESS_UNSUPPORTED" && error.status === 503,
+  );
 });
 
 test("T12-06/T12-07 settings HTTP negative matrix conceals forwarding and returns generic closed errors", async () => {
@@ -856,6 +1031,46 @@ test("T12-13 bootstrap, MCP direct main, warmup, profiles, and templates remain 
   assert.equal(JSON.stringify(profile).includes("attendee-secret"), false);
   assert.equal(profile.toString().includes("attendee-secret"), false);
   assert.equal(profile.attendeeApiKey, "attendee-secret");
+});
+
+test("init avoids runtime bootstrap and paths imports on the frozen file-I/O path", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-init-bootstrap-"));
+  try {
+    fs.writeFileSync(path.join(directory, ".env"), "AI_MEET_BASE_URL=https://poison.example\n");
+    const preload = path.join(directory, "track-loads.js");
+    fs.writeFileSync(preload, `
+      const Module = require("node:module");
+      const counts = { bootstrap: 0, paths: 0 };
+      const originalLoad = Module._load;
+      Module._load = function(request, parent, isMain) {
+        const loaded = originalLoad.call(this, request, parent, isMain);
+        if (String(request).includes("settings/bootstrap")) counts.bootstrap += 1;
+        if (String(request).endsWith("/src/paths") || String(request).endsWith("/src/paths.js") || request === "../src/paths") counts.paths += 1;
+        return loaded;
+      };
+      process.on("exit", () => process.stderr.write("LOAD_COUNTS=" + JSON.stringify(counts) + "\\n"));
+    `);
+    const result = spawnSync(process.execPath, ["--require", preload, path.join(ROOT, "bin/ai-meet.js"), "init"], {
+      cwd: directory,
+      env: { ...process.env, AI_MEET_HOME: directory },
+      input: [
+        "seed-soniox",
+        "seed-fish",
+        "seed-voice",
+        "seed-attendee",
+        "openclaw",
+        "http://localhost:18789",
+        "seed-token",
+      ].join("\n") + "\n",
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const match = result.stderr.match(/LOAD_COUNTS=(\{.*\})/);
+    assert.ok(match, result.stderr);
+    assert.deepEqual(JSON.parse(match[1]), { bootstrap: 0, paths: 0 });
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("invalid startup connection URLs become value-free setup issues", (t) => {

@@ -33,7 +33,7 @@ function resolveAgentProfile(agentId) {
       throw new AgentNotFoundError("(no agent id in config.json)");
     }
     if (_cached && _cached.agentId === effectiveId) return _cached;
-    return _buildProfileFromConfig(config);
+    return _buildProfileFromConfig(config, effectiveId);
   }
 
   throw new AgentNotFoundError(
@@ -44,9 +44,11 @@ function resolveAgentProfile(agentId) {
 /**
  * Build profile from config.json.
  */
-function _buildProfileFromConfig(config) {
+function _buildProfileFromConfig(config, effectiveAgentId) {
   const agent = config.agent;
-  const agentId = getEffectiveValue("agent_id") || agent.id;
+  const agentId = effectiveAgentId;
+  const agentName = getEffectiveValue("agent_name");
+  const agentDisplayName = getEffectiveValue("agent_display_name");
 
   // Check avatar: single generic name since 1 server = 1 agent
   const cachedAvatarPath = avatarCachePath();
@@ -58,8 +60,8 @@ function _buildProfileFromConfig(config) {
 
   const profile = {
     agentId,
-    name: getEffectiveValue("agent_name") || agent.name || agentId,
-    displayName: getEffectiveValue("agent_display_name") || agent.displayName || agent.name || agentId,
+    name: agentName || agentId,
+    displayName: agentDisplayName || agentName || agentId,
     systemPrompt: "", // Gateway manages prompts via SOUL.md
     greeting: getEffectiveValue("agent_greeting") || "",
     model: getEffectiveValue("llm_model") || null,

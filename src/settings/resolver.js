@@ -24,6 +24,7 @@ const BOOLEAN_IDS = new Set([
 const ARRAY_IDS = new Set(["agent_wake_words", "agent_keyterms", "agent_stt_wake_variants", "agent_ack_variants", "agent_progress_pings"]);
 const BASE10_NUMBER = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
 const CACHE_INVALIDATORS = new Set();
+const DIAGNOSTICS_BY_ID = new Map(ENV_DIAGNOSTICS.map((entry) => [entry.id, entry]));
 let currentRuntime = null;
 
 function deepFreeze(value) {
@@ -219,6 +220,12 @@ function resolveDiagnostic(diagnostic, startup) {
   return { value: diagnosticDefault(diagnostic, startup), source: "default" };
 }
 
+function getDiagnosticValue(id, runtime = ensureRuntime()) {
+  const diagnostic = DIAGNOSTICS_BY_ID.get(id);
+  if (!diagnostic) return undefined;
+  return resolveDiagnostic(diagnostic, runtime.startup).value;
+}
+
 function buildIssues(runtime) {
   const values = {};
   for (const entry of SETTINGS_REGISTRY) {
@@ -231,7 +238,7 @@ function buildIssues(runtime) {
     if (!issues.some((issue) => issue.fieldId === fieldId && issue.code === code)) issues.push({ fieldId, code });
   };
   if (runtime.documentExists && !runtime.documentValid) add("agent_id", "CONFIG_DOCUMENT_INVALID");
-  for (const entry of SETTINGS_REGISTRY.filter((item) => item.writeSurface === "settings" || item.id === "server_port")) {
+  for (const entry of SETTINGS_REGISTRY.filter((item) => item.path)) {
     const stored = readPath(runtime.published.raw, entry.path);
     if (meaningful(stored) && entry.schema.safeParse(stored).success === false) add(entry.id, "VALUE_INVALID");
   }
@@ -372,16 +379,17 @@ function buildEnvelope() {
         : clone(stored !== undefined ? stored : entry.defaultValue);
     }
     if (entry.writeSurface !== "settings") continue;
-    const runningValue = entry.apply === "live" ? runtime.published.resolved.values[entry.id] : runtime.boot.values[entry.id];
+    const nextBootEffective = runtime.published.resolved.values[entry.id];
+    const runningValue = entry.apply === "live" ? nextBootEffective : runtime.boot.values[entry.id];
     const runningSource = entry.apply === "live" ? runtime.published.resolved.sources[entry.id] : runtime.boot.sources[entry.id];
+    if (entry.apply === "restart-required" && !typedEqual(nextBootEffective, runningValue)) {
+      restartRequired.push(entry.id);
+    }
     if (runningValue === undefined && entry.credential !== "class-1") continue;
     effective[entry.id] = entry.credential === "class-1"
       ? credentialView(entry, runningValue, runningSource)
       : clone(runningValue);
     sources[entry.id] = runningSource;
-    if (entry.apply === "restart-required" && !typedEqual(runtime.published.resolved.values[entry.id], runningValue)) {
-      restartRequired.push(entry.id);
-    }
   }
   const issues = buildIssues(runtime);
   const diagnostics = {
@@ -416,6 +424,7 @@ function resetRuntimeForTest() {
 module.exports = {
   buildEnvelope,
   getBootstrapSeedFields,
+  getDiagnosticValue,
   getEffectiveValue,
   getEffectiveSource,
   getRawConfig,

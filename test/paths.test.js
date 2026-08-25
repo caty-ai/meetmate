@@ -507,10 +507,30 @@ test("T12-06 child settings route shells return value-free 501 responses", async
 
 test("T12-19 Appendix A cardinality is 15 Epic rows and 23 child rows", () => {
   const contract = fs.readFileSync(path.join(__dirname, "..", "docs", "settings-contract.md"), "utf8");
-  const epic = [...contract.matchAll(/^\| `E29-(\d{2})` \|/gm)];
-  const child = [...contract.matchAll(/^\| `D30-(\d{2})` \|/gm)];
+  const declaredTests = new Set([...contract.matchAll(/^- \*\*(T12-\d{2})/gm)].map((match) => match[1]));
+  const rows = [...contract.matchAll(/^\| `(E29|D30)-(\d{2})` \| ([^|]+) \| ([^|]+) \| ([^|]+) \|$/gm)];
+  const epic = rows.filter((match) => match[1] === "E29");
+  const child = rows.filter((match) => match[1] === "D30");
   assert.equal(epic.length, 15);
   assert.equal(child.length, 23);
-  assert.equal(new Set(epic.map((match) => match[1])).size, 15);
-  assert.equal(new Set(child.map((match) => match[1])).size, 23);
+  assert.equal(new Set(epic.map((match) => match[2])).size, 15);
+  assert.equal(new Set(child.map((match) => match[2])).size, 23);
+  assert.equal(new Set(rows.map((match) => `${match[1]}-${match[2]}`)).size, rows.length);
+  const declaredSections = new Set([...contract.matchAll(/^## (\d+)\./gm)].map((match) => match[1]));
+  const hasStatus = /^Status:/m.test(contract);
+  for (const [, prefix, suffix, doneWhen, sections, tests] of rows) {
+    assert.notEqual(doneWhen.trim(), "", `${prefix}-${suffix} done-when`);
+    assert.notEqual(sections.trim(), "", `${prefix}-${suffix} sections`);
+    assert.notEqual(tests.trim(), "", `${prefix}-${suffix} tests`);
+    const sectionRefs = [...sections.matchAll(/\d+/g)].map((match) => match[0]);
+    assert.ok(sectionRefs.length > 0 || sections.includes("Status"), `${prefix}-${suffix} section refs`);
+    for (const section of sectionRefs) {
+      assert.equal(declaredSections.has(section), true, `${prefix}-${suffix} §${section} missing`);
+    }
+    if (sections.includes("Status")) assert.equal(hasStatus, true, `${prefix}-${suffix} Status missing`);
+    for (const testId of tests.split(",").map((value) => value.trim())) {
+      assert.match(testId, /^T12-\d{2}$/, `${prefix}-${suffix} test id`);
+      assert.equal(declaredTests.has(testId), true, `${prefix}-${suffix} ${testId} missing from §12`);
+    }
+  }
 });

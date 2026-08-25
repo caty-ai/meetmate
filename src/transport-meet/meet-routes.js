@@ -29,6 +29,7 @@ const { createGatewaySessionTracker } = require("../gateway-session-tracker");
 const { servePublicAsset, serveLocalAvatar, sendMetricsSummary } = require("../ui-routes");
 const { logsDir, avatarCachePath, bundledAssetPath, bundledPublicDir } = require("../paths");
 const {
+  getDiagnosticValue,
   getEffectiveSource,
   getEffectiveValue,
   getRawConfig,
@@ -39,10 +40,6 @@ const {
 } = require("../settings/resolver");
 
 const ATTENDEE_API_BASE_URL = getEffectiveValue("attendee_base_url");
-const ATTENDEE_TIMEOUT_MS = Number(process.env.ATTENDEE_TIMEOUT_MS || 15_000);
-const ATTENDEE_RETRY_ATTEMPTS = Number(process.env.ATTENDEE_RETRY_ATTEMPTS || 3);
-const ATTENDEE_RETRY_BASE_MS = Number(process.env.ATTENDEE_RETRY_BASE_MS || 800);
-const BODY_LIMIT_BYTES = Number(process.env.BODY_LIMIT_BYTES || 1_000_000);
 const SESSION_GRACE_CLOSE_MS = Number(process.env.SESSION_GRACE_CLOSE_MS || 15_000);
 const ECHO_LOOP_COOLDOWN_MS = Number(process.env.ECHO_LOOP_COOLDOWN_MS || 300);
 const ECHO_GATE_CLOSED_BYPASS = String(process.env.ECHO_GATE_CLOSED_BYPASS || "false").toLowerCase() === "true";
@@ -52,6 +49,15 @@ const LOCAL_AVATAR_EXPERIMENT = "hybrid-local-l0";
 
 const MEETING_URL_RE = /^https:\/\/(meet\.google\.com\/[a-z0-9-]+|[\w.-]*zoom\.us\/(j|my)\/[a-zA-Z0-9?=&._%-]+)(?:\?.*)?$/i;
 const CONVERSATION_MODES = new Set(["one_to_one", "group"]);
+
+function runtimeDiagnostics() {
+  return {
+    attendeeTimeoutMs: getDiagnosticValue("attendee_timeout_ms"),
+    attendeeRetryAttempts: getDiagnosticValue("attendee_retry_attempts"),
+    attendeeRetryBaseMs: getDiagnosticValue("attendee_retry_base_ms"),
+    bodyLimitBytes: getDiagnosticValue("body_limit_bytes"),
+  };
+}
 
 let _configJson = loadConfig();
 const _resolvedMessages = resolveMessages(_configJson);
@@ -398,14 +404,15 @@ function checkJoinAuthorization(req, formData) {
 }
 
 function parseRequestBody(req) {
+  const { bodyLimitBytes } = runtimeDiagnostics();
   return new Promise((resolve, reject) => {
     let body = "";
     let received = 0;
 
     req.on("data", (chunk) => {
       received += chunk.length;
-      if (received > BODY_LIMIT_BYTES) {
-        reject(new Error(`Request body too large (>${BODY_LIMIT_BYTES} bytes)`));
+      if (received > bodyLimitBytes) {
+        reject(new Error(`Request body too large (>${bodyLimitBytes} bytes)`));
         req.destroy();
         return;
       }
@@ -419,6 +426,7 @@ function parseRequestBody(req) {
 
 function createAttendeeBot(attendeePayload, agentAttendeeKey) {
   const apiKey = agentAttendeeKey || ATTENDEE_API_KEY;
+  const { attendeeTimeoutMs } = runtimeDiagnostics();
   return new Promise((resolve, reject) => {
     const options = {
       hostname: ATTENDEE_API_BASE_URL,
@@ -442,8 +450,8 @@ function createAttendeeBot(attendeePayload, agentAttendeeKey) {
       });
     });
 
-    attendeeReq.setTimeout(ATTENDEE_TIMEOUT_MS, () => {
-      attendeeReq.destroy(new Error(`Attendee request timeout (${ATTENDEE_TIMEOUT_MS}ms)`));
+    attendeeReq.setTimeout(attendeeTimeoutMs, () => {
+      attendeeReq.destroy(new Error(`Attendee request timeout (${attendeeTimeoutMs}ms)`));
     });
 
     attendeeReq.on("error", reject);
@@ -453,10 +461,11 @@ function createAttendeeBot(attendeePayload, agentAttendeeKey) {
 }
 
 async function createAttendeeBotWithRetry(attendeePayload, agentAttendeeKey) {
+  const { attendeeRetryAttempts, attendeeRetryBaseMs } = runtimeDiagnostics();
   let lastResult = null;
   let lastError = null;
 
-  for (let attempt = 1; attempt <= ATTENDEE_RETRY_ATTEMPTS; attempt++) {
+  for (let attempt = 1; attempt <= attendeeRetryAttempts; attempt++) {
     try {
       const result = await createAttendeeBot(attendeePayload, agentAttendeeKey);
       lastResult = result;
@@ -465,18 +474,18 @@ async function createAttendeeBotWithRetry(attendeePayload, agentAttendeeKey) {
         return result;
       }
 
-      if (!shouldRetryStatus(result.statusCode) || attempt === ATTENDEE_RETRY_ATTEMPTS) {
+      if (!shouldRetryStatus(result.statusCode) || attempt === attendeeRetryAttempts) {
         return result;
       }
 
-      const delay = ATTENDEE_RETRY_BASE_MS * Math.pow(2, attempt - 1);
-      console.warn(`⚠️  Attendee API retry ${attempt}/${ATTENDEE_RETRY_ATTEMPTS} in ${delay}ms (status=${result.statusCode})`);
+      const delay = attendeeRetryBaseMs * Math.pow(2, attempt - 1);
+      console.warn(`⚠️  Attendee API retry ${attempt}/${attendeeRetryAttempts} in ${delay}ms (status=${result.statusCode})`);
       await sleep(delay);
     } catch (err) {
       lastError = err;
-      if (attempt === ATTENDEE_RETRY_ATTEMPTS) break;
-      const delay = ATTENDEE_RETRY_BASE_MS * Math.pow(2, attempt - 1);
-      console.warn(`⚠️  Attendee API network retry ${attempt}/${ATTENDEE_RETRY_ATTEMPTS} in ${delay}ms: ${err.message}`);
+      if (attempt === attendeeRetryAttempts) break;
+      const delay = attendeeRetryBaseMs * Math.pow(2, attempt - 1);
+      console.warn(`⚠️  Attendee API network retry ${attempt}/${attendeeRetryAttempts} in ${delay}ms: ${err.message}`);
       await sleep(delay);
     }
   }
@@ -1516,5 +1525,5 @@ module.exports = {
   init,
   handleHttp,
   handleWsConnection,
-  _test: { appendToMemory },
+  _test: { appendToMemory, runtimeDiagnostics },
 };

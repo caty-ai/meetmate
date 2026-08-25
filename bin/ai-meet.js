@@ -5,7 +5,17 @@ const fs = require("node:fs");
 const path = require("node:path");
 const readline = require("node:readline");
 const packageJson = require("../package.json");
-const { bundledPath, resolveHome } = require("../src/paths");
+
+function bundledPath(...parts) {
+  return path.join(__dirname, "..", ...parts);
+}
+
+function resolveInitHome() {
+  const launchHome = typeof process.env.AI_MEET_HOME === "string" && process.env.AI_MEET_HOME.trim()
+    ? process.env.AI_MEET_HOME.trim()
+    : process.cwd();
+  return path.resolve(launchHome);
+}
 
 const CLASS1_CONFIG_KEYS = [
   "SONIOX_API_KEY",
@@ -318,7 +328,7 @@ function assertFileDestinations(destinations) {
 }
 
 async function init(force) {
-  const home = resolveHome();
+  const home = resolveInitHome();
   fs.mkdirSync(home, { recursive: true });
 
   const configDestination = path.join(home, "config.json");

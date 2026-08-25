@@ -12,7 +12,10 @@ const DEFAULT_WARMUP_TIMEOUT_MS = 8_000;
  * @returns {Promise<{status: string, purposeStatement: string|null}>}
  */
 function warmUpGatewaySession(sessionId, config, briefing = null) {
-  const WARMUP_REQUEST_TIMEOUT_MS = Number(getEffectiveValue("gateway_warmup_timeout_ms")) || DEFAULT_WARMUP_TIMEOUT_MS;
+  const configuredTimeout = getEffectiveValue("gateway_warmup_timeout_ms");
+  const WARMUP_REQUEST_TIMEOUT_MS = configuredTimeout === undefined
+    ? DEFAULT_WARMUP_TIMEOUT_MS
+    : Number(configuredTimeout);
   return new Promise((resolve) => {
     let settled = false;
     const done = (status, purposeStatement = null) => {

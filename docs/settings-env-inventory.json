@@ -59,11 +59,14 @@
     },
     {
       "name": "AI_MEET_HOME",
-      "references": [],
+      "references": [
+        "bin/ai-meet.js:14",
+        "bin/ai-meet.js:15"
+      ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
       "handling": "env-only-readonly-diagnostic",
-      "remainingDirectReads": 0
+      "remainingDirectReads": 2
     },
     {
       "name": "AI_MEET_JOIN_TIMEOUT_MS",
@@ -99,33 +102,27 @@
     },
     {
       "name": "ATTENDEE_RETRY_ATTEMPTS",
-      "references": [
-        "src/transport-meet/meet-routes.js:43"
-      ],
+      "references": [],
       "ux": "deployment-readonly",
       "credentialClass": "none",
       "handling": "env-only-readonly-diagnostic",
-      "remainingDirectReads": 1
+      "remainingDirectReads": 0
     },
     {
       "name": "ATTENDEE_RETRY_BASE_MS",
-      "references": [
-        "src/transport-meet/meet-routes.js:44"
-      ],
+      "references": [],
       "ux": "deployment-readonly",
       "credentialClass": "none",
       "handling": "env-only-readonly-diagnostic",
-      "remainingDirectReads": 1
+      "remainingDirectReads": 0
     },
     {
       "name": "ATTENDEE_TIMEOUT_MS",
-      "references": [
-        "src/transport-meet/meet-routes.js:42"
-      ],
+      "references": [],
       "ux": "deployment-readonly",
       "credentialClass": "none",
       "handling": "env-only-readonly-diagnostic",
-      "remainingDirectReads": 1
+      "remainingDirectReads": 0
     },
     {
       "name": "BARGE_IN_CONFIDENCE_MIN",
@@ -149,13 +146,11 @@
     },
     {
       "name": "BODY_LIMIT_BYTES",
-      "references": [
-        "src/transport-meet/meet-routes.js:45"
-      ],
+      "references": [],
       "ux": "deployment-readonly",
       "credentialClass": "none",
       "handling": "env-only-readonly-diagnostic",
-      "remainingDirectReads": 1
+      "remainingDirectReads": 0
     },
     {
       "name": "BOT_IMAGE_URL",
@@ -196,7 +191,7 @@
     {
       "name": "ECHO_GATE_CLOSED_BYPASS",
       "references": [
-        "src/transport-meet/meet-routes.js:48"
+        "src/transport-meet/meet-routes.js:45"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -207,7 +202,7 @@
       "name": "ECHO_LOOP_COOLDOWN_MS",
       "references": [
         "src/config.js:52",
-        "src/transport-meet/meet-routes.js:47"
+        "src/transport-meet/meet-routes.js:44"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -346,7 +341,7 @@
     {
       "name": "JOIN_SHARED_TOKEN",
       "references": [
-        "src/transport-meet/meet-routes.js:49"
+        "src/transport-meet/meet-routes.js:46"
       ],
       "ux": "hidden",
       "credentialClass": "class-3-internal-control",
@@ -483,7 +478,7 @@
     {
       "name": "OPENCLAW_WORKSPACE",
       "references": [
-        "src/transport-meet/meet-routes.js:560"
+        "src/transport-meet/meet-routes.js:569"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -541,8 +536,8 @@
     {
       "name": "PUBLIC_WSS_URL",
       "references": [
-        "src/transport-meet/meet-routes.js:954",
-        "src/transport-meet/meet-routes.js:955"
+        "src/transport-meet/meet-routes.js:963",
+        "src/transport-meet/meet-routes.js:964"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -562,7 +557,7 @@
     {
       "name": "SESSION_GRACE_CLOSE_MS",
       "references": [
-        "src/transport-meet/meet-routes.js:46"
+        "src/transport-meet/meet-routes.js:43"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -816,7 +811,7 @@
     {
       "name": "WS_SHARED_TOKEN",
       "references": [
-        "src/transport-meet/meet-routes.js:50"
+        "src/transport-meet/meet-routes.js:47"
       ],
       "ux": "hidden",
       "credentialClass": "class-3-internal-control",
@@ -890,8 +885,8 @@
       "expression": "runtime.startup.{preDotenvEnv,dotenvSeeds}[name]",
       "helper": "per-agent Slack token compatibility lookup",
       "references": [
-        "src/settings/resolver.js:331",
-        "src/settings/resolver.js:333"
+        "src/settings/resolver.js:338",
+        "src/settings/resolver.js:340"
       ],
       "pattern": "^[A-Z0-9_-]+_SLACK_BOT_TOKEN$",
       "names": [],
