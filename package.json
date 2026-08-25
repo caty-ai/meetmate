@@ -52,5 +52,6 @@
   "engines": {
     "node": ">=26.0.0"
   },
+  "author": "Sho Jikumaru",
   "license": "MIT"
 }
