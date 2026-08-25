@@ -7,7 +7,7 @@ const readline = require("node:readline");
 const packageJson = require("../package.json");
 const { bundledPath, resolveHome } = require("../src/paths");
 
-const ENV_CREDENTIAL_KEYS = [
+const CLASS1_CONFIG_KEYS = [
   "SONIOX_API_KEY",
   "FISH_AUDIO_API_KEY",
   "FISH_AUDIO_VOICE_ID",
@@ -166,8 +166,8 @@ async function askWizard({ writeConfig, writeEnv, existingProvider }) {
   const answers = {};
 
   try {
-    if (writeEnv) {
-      for (const key of ENV_CREDENTIAL_KEYS) {
+    if (writeConfig) {
+      for (const key of CLASS1_CONFIG_KEYS) {
         answers[key] = await reader.ask(PROMPTS[key]);
       }
     }
@@ -190,10 +190,10 @@ async function askWizard({ writeConfig, writeEnv, existingProvider }) {
       answers.OPENCLAW_GATEWAY_TOKEN = await reader.ask(PROMPTS.OPENCLAW_GATEWAY_TOKEN);
     }
 
-    if (answers.provider === "openai-compatible" && writeConfig) {
-      answers.baseUrl = await reader.ask(PROMPTS.baseUrl);
-      answers.apiKey = await reader.ask(PROMPTS.apiKey);
-      answers.model = await reader.ask(PROMPTS.model);
+    if (answers.provider === "openai-compatible") {
+      if (writeConfig) answers.baseUrl = await reader.ask(PROMPTS.baseUrl);
+      if (writeEnv) answers.apiKey = await reader.ask(PROMPTS.apiKey);
+      if (writeConfig) answers.model = await reader.ask(PROMPTS.model);
     }
 
     return answers;
@@ -212,11 +212,10 @@ function replaceEnvLine(contents, key, value) {
 
 function buildEnvContents(template, answers) {
   const values = {
-    SONIOX_API_KEY: answers.SONIOX_API_KEY,
-    FISH_AUDIO_API_KEY: answers.FISH_AUDIO_API_KEY,
-    FISH_AUDIO_VOICE_ID: answers.FISH_AUDIO_VOICE_ID,
-    ATTENDEE_API_KEY: answers.ATTENDEE_API_KEY,
     LLM_PROVIDER: answers.provider,
+    OPENCLAW_GATEWAY_URL: "",
+    OPENCLAW_GATEWAY_TOKEN: "",
+    OPENAI_COMPATIBLE_API_KEY: "",
     JOIN_SHARED_TOKEN: crypto.randomBytes(32).toString("hex"),
     WS_SHARED_TOKEN: crypto.randomBytes(32).toString("hex"),
   };
@@ -225,6 +224,7 @@ function buildEnvContents(template, answers) {
     values.OPENCLAW_GATEWAY_URL = answers.OPENCLAW_GATEWAY_URL;
     values.OPENCLAW_GATEWAY_TOKEN = answers.OPENCLAW_GATEWAY_TOKEN;
   }
+  if (answers.provider === "openai-compatible") values.OPENAI_COMPATIBLE_API_KEY = answers.apiKey;
 
   return Object.entries(values).reduce(
     (contents, [key, value]) => replaceEnvLine(contents, key, value),
@@ -233,22 +233,41 @@ function buildEnvContents(template, answers) {
 }
 
 function buildConfigContents(template, answers) {
-  if (answers.provider === "openclaw") return template;
-
   const config = JSON.parse(template);
-  config.llm.provider = "openai-compatible";
-  config.llm.model = answers.model;
-  config.llm.openaiCompatible.baseUrl = answers.baseUrl;
-  config.llm.openaiCompatible.apiKey = answers.apiKey;
+  config.stt.sonioxApiKey = answers.SONIOX_API_KEY;
+  config.tts.apiKey = answers.FISH_AUDIO_API_KEY;
+  config.tts.voiceId = answers.FISH_AUDIO_VOICE_ID;
+  config.attendee.apiKey = answers.ATTENDEE_API_KEY;
+  config.llm.provider = answers.provider;
+  if (answers.provider === "openai-compatible") {
+    config.llm.model = answers.model;
+    config.llm.openaiCompatible.baseUrl = answers.baseUrl;
+  }
   return `${JSON.stringify(config, null, 2)}\n`;
 }
 
 function atomicWrite(destination, contents, options = {}) {
   const temporaryDestination = `${destination}.tmp-${process.pid}-${crypto.randomBytes(6).toString("hex")}`;
+  let descriptor = null;
   try {
-    fs.writeFileSync(temporaryDestination, contents, { ...options, flag: "wx" });
+    descriptor = fs.openSync(temporaryDestination, "wx", options.mode || 0o600);
+    fs.writeFileSync(descriptor, contents);
+    if (options.mode) fs.fchmodSync(descriptor, options.mode);
+    fs.fsyncSync(descriptor);
+    fs.closeSync(descriptor);
+    descriptor = null;
     fs.renameSync(temporaryDestination, destination);
+    let directoryDescriptor = null;
+    try {
+      directoryDescriptor = fs.openSync(path.dirname(destination), "r");
+      fs.fsyncSync(directoryDescriptor);
+    } catch (error) {
+      if (!["EINVAL", "ENOTSUP", "EISDIR", "EPERM"].includes(error.code)) throw error;
+    } finally {
+      if (directoryDescriptor !== null) fs.closeSync(directoryDescriptor);
+    }
   } catch (error) {
+    if (descriptor !== null) fs.closeSync(descriptor);
     fs.rmSync(temporaryDestination, { force: true });
     throw error;
   }
@@ -256,7 +275,7 @@ function atomicWrite(destination, contents, options = {}) {
 
 function hasMeetmateMarker(destination) {
   const firstLine = fs.readFileSync(destination, "utf8").split(/\r?\n/, 1)[0];
-  const match = firstLine.match(/^<!-- meetmate-generated template=(-?\d+) -->$/);
+  const match = firstLine.match(/^<!-- meetmate-generated template=([1-9]\d*) -->$/);
   if (!match) return false;
   try {
     BigInt(match[1]);
@@ -271,7 +290,6 @@ function assertExistingOpenAICompatibleConfig(destination) {
     "llm.provider",
     "llm.model",
     "llm.openaiCompatible.baseUrl",
-    "llm.openaiCompatible.apiKey",
   ];
   let config;
   try {
@@ -285,7 +303,6 @@ function assertExistingOpenAICompatibleConfig(destination) {
   if (config?.llm?.provider !== "openai-compatible") missingFields.push(requiredFields[0]);
   if (!isNonEmptyString(config?.llm?.model)) missingFields.push(requiredFields[1]);
   if (!isNonEmptyString(config?.llm?.openaiCompatible?.baseUrl)) missingFields.push(requiredFields[2]);
-  if (!isNonEmptyString(config?.llm?.openaiCompatible?.apiKey)) missingFields.push(requiredFields[3]);
 
   if (missingFields.length > 0) {
     throw new Error(`Existing config.json is missing required openai-compatible fields: ${missingFields.join(", ")}. Re-run with --force or fill them manually.`);
@@ -358,6 +375,7 @@ function start() {
 }
 
 function mcp() {
+  require(path.join(__dirname, "..", "src", "settings", "bootstrap.js")).captureStartup();
   return require(path.join(__dirname, "..", "src", "mcp", "server.js")).start();
 }
 

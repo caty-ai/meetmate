@@ -19,6 +19,8 @@ function setEnv(values) {
 }
 
 function freshConfig() {
+  require("../src/settings/bootstrap").resetStartupForTest();
+  require("../src/settings/resolver").resetRuntimeForTest();
   delete require.cache[configModulePath];
   return require(configModulePath);
 }
@@ -56,7 +58,7 @@ test("LLM config precedence is raw agent, environment, config.json, then default
         historyMaxTurns: 7,
         openaiCompatible: {
           baseUrl: "https://json.test/v1",
-          apiKey: "json-key",
+          apiKey: "legacy-json-key-must-be-ignored",
           emptyResponseRetry: false,
           trustedAgentTools: true,
         },
@@ -80,7 +82,7 @@ test("LLM config precedence is raw agent, environment, config.json, then default
         historyMaxTurns: 7,
         openaiCompatible: {
           baseUrl: "https://json.test/v1",
-          apiKey: "json-key",
+          apiKey: null,
           emptyResponseRetry: false,
           trustedAgentTools: true,
         },
@@ -126,7 +128,7 @@ test("LLM config precedence is raw agent, environment, config.json, then default
     assert.equal(config.llm.historyMaxTurns, 4);
     assert.deepEqual(config.llm.openaiCompatible, {
       baseUrl: "https://agent.test/v1",
-      apiKey: "agent-key",
+      apiKey: "env-key",
       emptyResponseRetry: true,
       trustedAgentTools: false,
     });
@@ -163,7 +165,11 @@ test("standalone system prompt precedence appends only neutral voice rules", () 
 });
 
 test("Gateway credentials are normalized under llm and required only by OpenClaw", () => {
-  const restore = setEnv(CLEAN_LLM_ENV);
+  const restore = setEnv({
+    ...CLEAN_LLM_ENV,
+    OPENCLAW_GATEWAY_URL: "https://gateway.test/prefix",
+    OPENCLAW_GATEWAY_TOKEN: "token",
+  });
   const errors = [];
   const originalError = console.error;
   console.error = (...args) => errors.push(args.join(" "));
@@ -179,9 +185,11 @@ test("Gateway credentials are normalized under llm and required only by OpenClaw
     });
     assert.equal(errors.length, 0);
 
-    getPipelineConfig({}, null, null, { llm: { provider: "openclaw" } });
+    delete process.env.OPENCLAW_GATEWAY_URL;
+    delete process.env.OPENCLAW_GATEWAY_TOKEN;
+    freshConfig().getPipelineConfig({}, null, null, { llm: { provider: "openclaw" } });
     assert.equal(errors.length, 1);
-    assert.match(errors[0], /OpenClaw Gateway is required/);
+    assert.match(errors[0], /selected LLM connection is not configured/);
   } finally {
     console.error = originalError;
     restore();
@@ -236,7 +244,11 @@ test("runtime-shaped configJson.agent does not change OpenClaw LLM resolution", 
 });
 
 test("unknown LLM providers are warned and normalized to OpenClaw", () => {
-  const restore = setEnv(CLEAN_LLM_ENV);
+  const restore = setEnv({
+    ...CLEAN_LLM_ENV,
+    OPENCLAW_GATEWAY_URL: "https://gateway.test",
+    OPENCLAW_GATEWAY_TOKEN: "token",
+  });
   const errors = [];
   const originalError = console.error;
   console.error = (...args) => errors.push(args.join(" "));

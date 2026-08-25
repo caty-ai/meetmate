@@ -3,6 +3,7 @@
 
 const { URL } = require("url");
 const { DEFAULT_MESSAGES } = require("./messages");
+const { getEffectiveValue } = require("./settings/resolver");
 
 const DEFAULT_WARMUP_TIMEOUT_MS = 8_000;
 
@@ -14,7 +15,7 @@ function warmUpGatewaySession(sessionId, config, briefing = null) {
   // Allow per-agent timeout via config (gateway.warmupTimeoutMs) or env var
   const WARMUP_REQUEST_TIMEOUT_MS =
     Number(config?.warmupTimeoutMs) ||
-    Number(process.env.GATEWAY_WARMUP_TIMEOUT_MS) ||
+    Number(getEffectiveValue("gateway_warmup_timeout_ms")) ||
     DEFAULT_WARMUP_TIMEOUT_MS;
   return new Promise((resolve) => {
     let settled = false;
@@ -25,7 +26,7 @@ function warmUpGatewaySession(sessionId, config, briefing = null) {
     };
 
     const sessionUser = String(sessionId || "").trim();
-    const configuredProvider = String(config?.llm?.provider || process.env.LLM_PROVIDER || "openclaw").toLowerCase();
+    const configuredProvider = String(config?.llm?.provider || getEffectiveValue("llm_provider") || "openclaw").toLowerCase();
     const provider = configuredProvider === "openai-compatible" ? configuredProvider : "openclaw";
     if (provider !== "openclaw") {
       console.log(`⏭️  Gateway warm-up skipped (provider=${provider}, session=${sessionUser})`);
@@ -151,8 +152,8 @@ function warmUpMultipleAgents(sessionId, agents, selectedAgentIds, baseConfig, b
 
     const agentConfig = {
       ...baseConfig,
-      openclawUrl: agent.gatewayUrl || baseConfig?.openclawUrl || null,
-      openclawToken: agent.gatewayToken || baseConfig?.openclawToken || null,
+      openclawUrl: baseConfig?.openclawUrl || null,
+      openclawToken: baseConfig?.openclawToken || null,
       llm: {
         ...(baseConfig?.llm || {}),
         model: agent.model || baseConfig?.llm?.model,

@@ -11,14 +11,15 @@
 
 const { createSTT: createDeepgramSTT, buildKeyterms } = require("./stt");
 const { createSonioxSTT } = require("./stt-soniox");
+const { getEffectiveValue } = require("./settings/resolver");
 
 function createSTT(deepgramKey, options = {}) {
   const provider = String(
-    options.provider || process.env.STT_PROVIDER || "soniox",
+    options.provider || getEffectiveValue("stt_provider") || "soniox",
   ).toLowerCase();
 
   if (provider === "soniox") {
-    const key = options.sonioxKey || process.env.SONIOX_API_KEY;
+    const key = options.sonioxKey || getEffectiveValue("soniox_api_key");
     if (!key) {
       console.error(
         "❌  STT provider=soniox ですが SONIOX_API_KEY が未設定です。.env を確認してください。",

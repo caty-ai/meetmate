@@ -1,10 +1,12 @@
 // calibrate-routes.js — Wake word calibration HTTP + WS handlers
 const fs = require("fs");
 const { configPath, bundledPath } = require("../paths");
+const { REGISTRY_BY_ID } = require("../settings/registry");
+const { getEffectiveValue, getRawConfig, getRuntime, publishState } = require("../settings/resolver");
+const { saveFields } = require("../settings/store");
 
 const CONFIG_PATH = configPath();
 const HTML_PATH = bundledPath("src", "wake-calibrate", "calibrate.html");
-const LOCK_PATH = CONFIG_PATH + ".lock";
 const TIMEOUT_MS = 30_000;
 
 function isEnabled() {
@@ -37,7 +39,7 @@ function handleCalibrate(req, res) {
   }
 
   if (pathname === "/calibrate/status") {
-    const json = JSON.stringify({ enabled: isEnabled() });
+    const json = JSON.stringify({ enabled: isEnabled(), revision: getRuntime().revision });
     res.writeHead(200, {
       "Content-Type": "application/json",
       "Content-Length": Buffer.byteLength(json),
@@ -87,24 +89,16 @@ function handleApply(req, res) {
     try {
       const parsed = JSON.parse(body);
       const variants = parsed.variants;
-      if (!Array.isArray(variants) || variants.length === 0) {
-        writeJson(res, 400, { ok: false, error: "variants must be a non-empty array" });
-        return;
-      }
-
-      let lockFd = null;
-      try {
-        lockFd = fs.openSync(LOCK_PATH, "wx");
-        fs.writeFileSync(lockFd, String(process.pid), "utf8");
-      } catch (err) {
-        writeJson(res, 423, { ok: false, error: "Config is locked by another write" });
+      const revision = parsed.revision;
+      if (Object.keys(parsed).some((key) => !["variants", "revision"].includes(key))
+          || !Array.isArray(variants) || variants.length === 0
+          || !/^[a-f0-9]{64}$/.test(revision)) {
+        writeJson(res, 422, { ok: false, error: "invalid calibration request" });
         return;
       }
 
       try {
-        const configRaw = fs.readFileSync(CONFIG_PATH, "utf8");
-        const config = JSON.parse(configRaw);
-        config.agent ||= {};
+        const config = getRawConfig();
 
         const existingVariants = Array.isArray(config.agent?.sttWakeVariants)
           ? config.agent.sttWakeVariants
@@ -134,25 +128,27 @@ function handleApply(req, res) {
         }
 
         // Rebuild array (keep original forms)
-        config.agent.sttWakeVariants = Array.from(normalizedExisting.values());
-
-        // Safe write: backup → tmp → rename
-        fs.writeFileSync(CONFIG_PATH + ".bak", configRaw, "utf8");
-        const newJson = JSON.stringify(config, null, 2) + "\n";
-        fs.writeFileSync(CONFIG_PATH + ".tmp", newJson, "utf8");
-        fs.renameSync(CONFIG_PATH + ".tmp", CONFIG_PATH);
+        const nextVariants = Array.from(normalizedExisting.values());
+        const validated = REGISTRY_BY_ID.agent_stt_wake_variants.schema.safeParse(nextVariants);
+        if (!validated.success) {
+          writeJson(res, 422, { ok: false, error: "invalid calibration variants" });
+          return;
+        }
+        const committed = saveFields({
+          configPath: CONFIG_PATH,
+          revision,
+          fields: { agent_stt_wake_variants: validated.data },
+        });
+        publishState(committed);
 
         writeJson(res, 200, {
           ok: true,
           added,
-          total: config.agent.sttWakeVariants.length,
+          total: nextVariants.length,
+          revision: committed.revision,
         });
-      } finally {
-        // Clean up tmp remnant if rename didn't complete
-        try { fs.unlinkSync(CONFIG_PATH + ".tmp"); } catch { /* ignore */ }
-        // Release lock
-        try { if (lockFd !== null) fs.closeSync(lockFd); } catch { /* ignore */ }
-        try { fs.unlinkSync(LOCK_PATH); } catch { /* ignore */ }
+      } catch (error) {
+        writeJson(res, error.status || 500, { ok: false, error: error.code || "settings write failed" });
       }
     } catch (err) {
       writeJson(res, 500, { ok: false, error: err.message });
@@ -178,9 +174,9 @@ function handleCalibrateWs(ws, _req) {
   }
 
   const { createSTT } = require("../stt-provider");
-  const provider = String(process.env.STT_PROVIDER || "soniox").toLowerCase();
-  const dgKey = process.env.DEEPGRAM_API_KEY;
-  const sonioxKey = process.env.SONIOX_API_KEY;
+  const provider = getEffectiveValue("stt_provider");
+  const dgKey = getEffectiveValue("deepgram_api_key");
+  const sonioxKey = getEffectiveValue("soniox_api_key");
   if (provider === "soniox" && !sonioxKey) {
     wsSend(ws, { type: "error", message: "SONIOX_API_KEY not configured" });
     ws.close(1011, "Missing API key");
@@ -219,7 +215,7 @@ function handleCalibrateWs(ws, _req) {
   let closed = false;
   let pendingFinalText = "";
   const sttModel = provider === "soniox"
-    ? process.env.SONIOX_MODEL || "stt-rt-v5"
+    ? getEffectiveValue("soniox_model")
     : "nova-3";
 
   function flushPendingFinalText() {

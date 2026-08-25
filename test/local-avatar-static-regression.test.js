@@ -280,6 +280,7 @@ function emptyIsolationEvidence() {
 }
 
 async function withMeetRoutes(fn) {
+  const settingsResolver = require("../src/settings/resolver");
   const routesPath = require.resolve("../src/transport-meet/meet-routes");
   const src = path.join(__dirname, "..", "src");
   const mockPaths = [
@@ -311,6 +312,36 @@ async function withMeetRoutes(fn) {
     SUMMARY_ENABLED: "false",
     JOIN_SHARED_TOKEN: undefined,
     WS_SHARED_TOKEN: undefined,
+  });
+  settingsResolver.resetRuntimeForTest();
+  settingsResolver.initializeRuntime({
+    state: {
+      exists: true,
+      valid: true,
+      revision: "a".repeat(64),
+      fingerprint: "local-avatar-regression",
+      parsed: {
+        agent: { id: "caty", displayName: "Caty", wakeWords: ["ケイティ"] },
+        stt: { provider: "soniox", sonioxApiKey: "soniox-test-key" },
+        tts: { apiKey: "fish-test-key", voiceId: "fish-test-voice" },
+        attendee: { apiKey: "test-key" },
+        slack: { notifications: { enabled: false } },
+        llm: { provider: "openclaw", model: "test" },
+      },
+    },
+    startup: Object.freeze({
+      preDotenvEnv: Object.freeze({}),
+      dotenvSeeds: Object.freeze({}),
+      resolvedHome: "/tmp/meetmate-m0-home",
+      configPath: "/tmp/meetmate-m0-home/config.json",
+      connection: Object.freeze({
+        provider: "openclaw",
+        openclawUrl: "http://gateway.invalid",
+        openclawToken: "test",
+        openaiApiKey: "",
+      }),
+    }),
+    serverPort: 5005,
   });
   const isolation = emptyIsolationEvidence();
   const httpsRequests = [];
@@ -563,6 +594,7 @@ async function withMeetRoutes(fn) {
     global.setInterval = originalSetInterval;
     Object.assign(console, originalConsole);
     restoreEnv();
+    settingsResolver.resetRuntimeForTest();
     for (const file of cachePaths) {
       const resolved = require.resolve(file);
       delete require.cache[resolved];

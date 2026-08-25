@@ -412,19 +412,27 @@ function tempDir() {
 
 function withEnv(values, fn) {
   const previous = setEnv(values);
+  require("../src/settings/bootstrap").resetStartupForTest();
+  require("../src/settings/resolver").resetRuntimeForTest();
   try {
     return fn();
   } finally {
     restoreEnv(previous);
+    require("../src/settings/bootstrap").resetStartupForTest();
+    require("../src/settings/resolver").resetRuntimeForTest();
   }
 }
 
 async function withEnvAsync(values, fn) {
   const previous = setEnv(values);
+  require("../src/settings/bootstrap").resetStartupForTest();
+  require("../src/settings/resolver").resetRuntimeForTest();
   try {
     return await fn();
   } finally {
     restoreEnv(previous);
+    require("../src/settings/bootstrap").resetStartupForTest();
+    require("../src/settings/resolver").resetRuntimeForTest();
   }
 }
 

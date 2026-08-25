@@ -1,8 +1,9 @@
 const https = require("node:https");
 
 const { stripEmojis } = require("./speech-policy");
+const { getEffectiveValue } = require("./settings/resolver");
 
-const ATTENDEE_API_BASE_URL = process.env.ATTENDEE_API_BASE_URL || "app.attendee.dev";
+const ATTENDEE_API_BASE_URL = getEffectiveValue("attendee_base_url");
 
 // Attendee rejects messages containing emojis with a 400 and the whole message
 // is lost (issue #81). Strip them before sending so the text part still lands.
@@ -18,7 +19,7 @@ function prepareAttendeeChatMessage(message) {
 function sendAttendeeChatMessage(botId, message, attendeeKey) {
   return new Promise((resolve) => {
     try {
-      const apiKey = attendeeKey || process.env.ATTENDEE_API_KEY || "";
+      const apiKey = attendeeKey || getEffectiveValue("attendee_api_key") || "";
       const prepared = prepareAttendeeChatMessage(message);
       if (prepared.skip) {
         console.warn(`💬  Attendee chat skipped (empty after emoji strip): ${botId} original=${JSON.stringify(String(message || "").slice(0, 100))}`);

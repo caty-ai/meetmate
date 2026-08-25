@@ -4,6 +4,7 @@
 const fs = require("fs");
 const { loadConfig } = require("./config");
 const { avatarCachePath, bundledAssetPath } = require("./paths");
+const { getEffectiveValue, registerCacheInvalidator } = require("./settings/resolver");
 
 class AgentNotFoundError extends Error {
   constructor(agentId) {
@@ -27,7 +28,7 @@ let _cached = null;
 function resolveAgentProfile(agentId) {
   const config = loadConfig();
   if (config?.agent) {
-    const effectiveId = config.agent.id || agentId || process.env.AGENT_ID;
+    const effectiveId = getEffectiveValue("agent_id") || agentId;
     if (!effectiveId) {
       throw new AgentNotFoundError("(no agent id in config.json)");
     }
@@ -36,7 +37,7 @@ function resolveAgentProfile(agentId) {
   }
 
   throw new AgentNotFoundError(
-    agentId || process.env.AGENT_ID || "(no config.json found — create one from config.json.example)"
+    agentId || getEffectiveValue("agent_id") || "(no config.json found — create one from config.json.example)"
   );
 }
 
@@ -45,7 +46,7 @@ function resolveAgentProfile(agentId) {
  */
 function _buildProfileFromConfig(config) {
   const agent = config.agent;
-  const agentId = agent.id;
+  const agentId = getEffectiveValue("agent_id") || agent.id;
 
   // Check avatar: single generic name since 1 server = 1 agent
   const cachedAvatarPath = avatarCachePath();
@@ -57,32 +58,29 @@ function _buildProfileFromConfig(config) {
 
   const profile = {
     agentId,
-    name: agent.name || agentId,
-    displayName: agent.displayName || agent.name || agentId,
+    name: getEffectiveValue("agent_name") || agent.name || agentId,
+    displayName: getEffectiveValue("agent_display_name") || agent.displayName || agent.name || agentId,
     systemPrompt: "", // Gateway manages prompts via SOUL.md
-    greeting: agent.greeting || "",
-    model: agent.model || null,
-    voiceId: config.tts?.voiceId || null,
-    wakeWords: agent.wakeWords || [],
-    keyterms: agent.keyterms || [],
-    emotionTags: agent.emotionTags !== false,
-    ackVariants: Array.isArray(agent.ackVariants) ? agent.ackVariants : null,
-    progressPings: Array.isArray(agent.progressPings) ? agent.progressPings : null,
-    timeoutFallback: agent.timeoutFallback || null,
-    exitFarewell: agent.exitFarewell || null,
-    cancelAck: agent.cancelAck || null,
+    greeting: getEffectiveValue("agent_greeting") || "",
+    model: getEffectiveValue("llm_model") || null,
+    voiceId: getEffectiveValue("fish_audio_voice_id") || null,
+    wakeWords: getEffectiveValue("agent_wake_words") || [],
+    keyterms: getEffectiveValue("agent_keyterms") || [],
+    emotionTags: getEffectiveValue("agent_emotion_tags") !== false,
+    ackVariants: getEffectiveValue("agent_ack_variants") || null,
+    progressPings: getEffectiveValue("agent_progress_pings") || null,
+    timeoutFallback: getEffectiveValue("agent_timeout_fallback") || null,
+    exitFarewell: getEffectiveValue("agent_exit_farewell") || null,
+    cancelAck: getEffectiveValue("agent_cancel_ack") || null,
     avatarPath: avatarExists ? avatarPath : null,
-    avatarUrl: agent.avatarUrl || null,
-    gatewayUrl: config.gateway?.url || null,
-    gatewayToken: config.gateway?.token || null,
-    attendeeApiKey: null,
+    avatarUrl: getEffectiveValue("agent_avatar_url") || null,
+    attendeeApiKey: getEffectiveValue("attendee_api_key") || null,
     isDefault: true,
     sttWakeVariants: Array.isArray(agent.sttWakeVariants) ? agent.sttWakeVariants : [],
     exitCommands: Array.isArray(agent.exitCommands) ? agent.exitCommands : [],
 
     toString() {
       const masked = { ...this };
-      if (masked.gatewayToken) masked.gatewayToken = "***";
       delete masked.toString;
       delete masked.toJSON;
       return JSON.stringify(masked, null, 2);
@@ -90,7 +88,6 @@ function _buildProfileFromConfig(config) {
 
     toJSON() {
       const obj = { ...this };
-      if (obj.gatewayToken) obj.gatewayToken = "***";
       delete obj.toString;
       delete obj.toJSON;
       return obj;
@@ -107,6 +104,8 @@ function _buildProfileFromConfig(config) {
 function clearProfileCache() {
   _cached = null;
 }
+
+registerCacheInvalidator(clearProfileCache);
 
 module.exports = {
   AgentNotFoundError,

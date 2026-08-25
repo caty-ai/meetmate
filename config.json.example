@@ -7,7 +7,6 @@
     "llm.historyMaxTurns": "Local conversation turns retained for standalone providers; default 12. Set 0 when the upstream gateway owns session history.",
     "llm.systemPrompt": "Standalone provider persona; leave empty to use the built-in persona template.",
     "llm.openaiCompatible.baseUrl": "OpenAI-compatible proxy base URL; required when llm.provider is openai-compatible.",
-    "llm.openaiCompatible.apiKey": "OpenAI-compatible proxy API key; required when llm.provider is openai-compatible.",
     "llm.openaiCompatible.emptyResponseRetry": "Retry one empty streaming response once (default true). Set false for stateful gateways where replaying the same turn is unsafe.",
     "llm.openaiCompatible.trustedAgentTools": "Send X-Caty-Agent-Trust: trusted (default false). Enable only for a trusted local tool-capable gateway in a trusted meeting.",
     "prompts.voiceEmotionLine": "Line inserted into the voice system addendum when agent.emotionTags is true.",
@@ -93,6 +92,7 @@
     "id": "your-agent-id",
     "name": "YourAgent",
     "displayName": "エージェント名",
+    "language": "ja",
     "greeting": "[warm] こんにちは！よろしくお願いします！",
     "emotionTags": true,
     "wakeWords": ["エージェント名", "your-agent"],
@@ -132,14 +132,11 @@
     "systemPrompt": "",
     "openaiCompatible": {
       "baseUrl": "",
-      "apiKey": "",
       "emptyResponseRetry": true,
       "trustedAgentTools": false
     }
   },
   "gateway": {
-    "url": "${OPENCLAW_GATEWAY_URL}",
-    "token": "${OPENCLAW_GATEWAY_TOKEN}",
     "warmupTimeoutMs": 8000,
     "displayName": "AI MeetServer"
   },
@@ -171,14 +168,35 @@
   },
   "tts": {
     "provider": "fish-audio",
-    "voiceId": "${FISH_AUDIO_VOICE_ID}"
+    "apiKey": "",
+    "voiceId": "",
+    "model": "s2-pro",
+    "speed": 1,
+    "latency": "balanced",
+    "sampleRate": 24000,
+    "cache": {
+      "enabled": true,
+      "prewarm": true
+    }
   },
   "stt": {
-    "apiKey": "${DEEPGRAM_API_KEY}"
+    "provider": "soniox",
+    "sonioxApiKey": "",
+    "apiKey": "",
+    "endpointingMs": 400,
+    "utteranceEndMs": 1200,
+    "soniox": {
+      "model": "stt-rt-v5",
+      "wsUrl": "wss://stt-rt.soniox.com/transcribe-websocket",
+      "endpointSensitivity": null,
+      "maxEndpointDelayMs": null,
+      "endpointLatencyLevel": null
+    }
   },
   "slack": {
-    "botToken": "${SLACK_BOT_TOKEN}",
+    "botToken": "",
     "notifications": {
+      "enabled": true,
       "target": "dm",
       "dmUserId": ""
     },
@@ -222,10 +240,18 @@
     "smokeDefaultKeyterms": "AIエージェント"
   },
   "attendee": {
-    "apiKey": "${ATTENDEE_API_KEY}"
+    "apiKey": "",
+    "baseUrl": "app.attendee.dev"
   },
   "server": {
     "port": 5005,
     "ngrokDomain": ""
+  },
+  "summary": {
+    "enabled": true
+  },
+  "features": {
+    "taskExtractionEnabled": true,
+    "streamingEquivalentEnabled": true
   }
 }
