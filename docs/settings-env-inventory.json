@@ -67,7 +67,7 @@
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "AI_MEET_HOME",
@@ -76,7 +76,7 @@
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "AI_MEET_JOIN_TIMEOUT_MS",
@@ -85,7 +85,7 @@
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "AI_MEET_JOIN_TOKEN",
@@ -102,7 +102,7 @@
         "src/attendee-chat.js:5",
         "src/transport-meet/meet-routes.js:33"
       ],
-      "ux": "deployment-readonly",
+      "ux": "detail",
       "credentialClass": "none",
       "handling": "ordinary-setting"
     },
@@ -121,45 +121,45 @@
       "references": [
         "src/transport-meet/meet-routes.js:35"
       ],
-      "ux": "detail",
+      "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "ATTENDEE_RETRY_BASE_MS",
       "references": [
         "src/transport-meet/meet-routes.js:36"
       ],
-      "ux": "detail",
+      "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "ATTENDEE_TIMEOUT_MS",
       "references": [
         "src/transport-meet/meet-routes.js:34"
       ],
-      "ux": "detail",
+      "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "BARGE_IN_CONFIDENCE_MIN",
       "references": [
         "src/pipeline.js:42"
       ],
-      "ux": "detail",
+      "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "BARGE_IN_MIN_CHARS",
       "references": [
         "src/pipeline.js:41"
       ],
-      "ux": "detail",
+      "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "BODY_LIMIT_BYTES",
@@ -168,14 +168,14 @@
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "BOT_IMAGE_URL",
       "references": [
         "src/transport-meet/meet-routes.js:63"
       ],
-      "ux": "deployment-readonly",
+      "ux": "detail",
       "credentialClass": "none",
       "handling": "ordinary-setting"
     },
@@ -184,18 +184,18 @@
       "references": [
         "src/pipeline.js:28"
       ],
-      "ux": "detail",
+      "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "COMFORT_NOISE_AMPLITUDE",
       "references": [
         "src/pipeline.js:35"
       ],
-      "ux": "detail",
+      "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "DEEPGRAM_API_KEY",
@@ -213,9 +213,9 @@
       "references": [
         "src/transport-meet/meet-routes.js:40"
       ],
-      "ux": "detail",
+      "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "ECHO_LOOP_COOLDOWN_MS",
@@ -223,63 +223,63 @@
         "src/config.js:59",
         "src/transport-meet/meet-routes.js:39"
       ],
-      "ux": "detail",
+      "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "ENABLE_BARGE_IN",
       "references": [
         "src/pipeline.js:43"
       ],
-      "ux": "detail",
+      "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "ENABLE_IMMEDIATE_ACK",
       "references": [
         "src/pipeline.js:44"
       ],
-      "ux": "detail",
+      "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "ENABLE_MEETING_CONTEXT_INJECTION",
       "references": [
         "src/pipeline.js:56"
       ],
-      "ux": "detail",
+      "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "ENABLE_PROGRESS_GUARD",
       "references": [
         "src/pipeline.js:45"
       ],
-      "ux": "detail",
+      "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "FIRST_CHUNK_MIN_CHARS",
       "references": [
         "src/pipeline.js:23"
       ],
-      "ux": "detail",
+      "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "FIRST_TOKEN_DELEGATE_MS",
       "references": [
         "src/config.js:52"
       ],
-      "ux": "detail",
+      "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "FISH_AUDIO_API_KEY",
@@ -316,9 +316,9 @@
         "src/tts-fish.js:30",
         "src/tts-fish.js:31"
       ],
-      "ux": "detail",
+      "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "FISH_AUDIO_SPEED",
@@ -344,9 +344,9 @@
       "references": [
         "src/config.js:106"
       ],
-      "ux": "detail",
+      "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "GATEWAY_WARMUP_TIMEOUT_MS",
@@ -402,36 +402,36 @@
       "references": [
         "src/config.js:48"
       ],
-      "ux": "detail",
+      "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "MEETING_CONTEXT_RAW_CHARS",
       "references": [
         "src/pipeline.js:51"
       ],
-      "ux": "detail",
+      "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "MEETING_CONTEXT_RAW_UTTERANCES",
       "references": [
         "src/pipeline.js:50"
       ],
-      "ux": "detail",
+      "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "METRICS_DISABLED",
       "references": [
         "src/metrics.js:10"
       ],
-      "ux": "detail",
+      "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "METRICS_LOG_DIR",
@@ -441,25 +441,25 @@
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "MIN_CLAUSE_LEN",
       "references": [
         "src/pipeline.js:21"
       ],
-      "ux": "detail",
+      "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "MIN_CLAUSE_PREFIX",
       "references": [
         "src/pipeline.js:22"
       ],
-      "ux": "detail",
+      "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "OPENAI_COMPATIBLE_API_KEY",
@@ -504,16 +504,16 @@
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "PENDING_QUEUE_MAX",
       "references": [
         "src/pipeline.js:49"
       ],
-      "ux": "detail",
+      "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "PORT",
@@ -529,27 +529,27 @@
       "references": [
         "src/pipeline.js:38"
       ],
-      "ux": "detail",
+      "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "PROGRESS_PING_INTERVAL_MS",
       "references": [
         "src/pipeline.js:39"
       ],
-      "ux": "detail",
+      "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "PROGRESS_PING_MAX",
       "references": [
         "src/pipeline.js:40"
       ],
-      "ux": "detail",
+      "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "PUBLIC_WSS_URL",
@@ -559,25 +559,25 @@
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "SENTENCE_PAUSE_MS",
       "references": [
         "src/pipeline.js:27"
       ],
-      "ux": "detail",
+      "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "SESSION_GRACE_CLOSE_MS",
       "references": [
         "src/transport-meet/meet-routes.js:38"
       ],
-      "ux": "detail",
+      "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "SLACK_BOT_TOKEN",
@@ -605,7 +605,7 @@
         "src/config.js:121",
         "src/transport-meet/meet-routes.js:95"
       ],
-      "ux": "detail",
+      "ux": "basic",
       "credentialClass": "none",
       "handling": "ordinary-setting"
     },
@@ -674,9 +674,9 @@
       "references": [
         "src/stt-soniox.js:55"
       ],
-      "ux": "detail",
+      "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "SONIOX_MAX_ENDPOINT_DELAY_MS",
@@ -704,9 +704,9 @@
       "references": [
         "src/stt-soniox.js:59"
       ],
-      "ux": "detail",
+      "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "SONIOX_WS_URL",
@@ -724,18 +724,18 @@
         "src/stt-soniox.js:16",
         "src/stt.js:7"
       ],
-      "ux": "detail",
+      "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "STT_ENABLE_KEYWORDS",
       "references": [
         "src/stt.js:15"
       ],
-      "ux": "detail",
+      "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "STT_PROVIDER",
@@ -754,7 +754,7 @@
         "src/config.js:122",
         "src/transport-meet/meet-routes.js:184"
       ],
-      "ux": "detail",
+      "ux": "basic",
       "credentialClass": "none",
       "handling": "ordinary-setting"
     },
@@ -763,9 +763,9 @@
       "references": [
         "src/pipeline.js:48"
       ],
-      "ux": "detail",
+      "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "TTS_CACHE_DIR",
@@ -775,7 +775,7 @@
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "TTS_CACHE_ENABLED",
@@ -801,18 +801,18 @@
       "references": [
         "src/pipeline.js:33"
       ],
-      "ux": "detail",
+      "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "TTS_LEAD_MS",
       "references": [
         "src/pipeline.js:34"
       ],
-      "ux": "detail",
+      "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "TTS_PROVIDER",
@@ -839,9 +839,9 @@
       "references": [
         "src/wake-calibrate/calibrate-routes.js:11"
       ],
-      "ux": "detail",
+      "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "name": "WAKE_WORDS",
@@ -877,9 +877,9 @@
         "REPORT_CHAT_ENABLED",
         "REPORT_VOICE_ENABLED"
       ],
-      "ux": "detail",
+      "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "expression": "process.env[name]",
@@ -893,9 +893,9 @@
         "DELEGATE_REPLY_FRESH_MS",
         "PARENT_COMPACT_DELAY_MS"
       ],
-      "ux": "detail",
+      "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "expression": "process.env[name]",
@@ -906,9 +906,9 @@
       "names": [
         "HANDOFF_INFLIGHT_MAX"
       ],
-      "ux": "detail",
+      "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "expression": "process.env[name]",
@@ -921,9 +921,9 @@
         "SHORT_UTTERANCE_SKIP_CHARS",
         "CIRCUIT_BREAKER_TIMEOUTS"
       ],
-      "ux": "detail",
+      "ux": "deployment-readonly",
       "credentialClass": "none",
-      "handling": "ordinary-setting"
+      "handling": "env-only-readonly-diagnostic"
     },
     {
       "expression": "process.env[`${agentIdForToken.toUpperCase()}_SLACK_BOT_TOKEN`]",
@@ -931,7 +931,7 @@
       "references": [
         "src/transport-meet/meet-routes.js:113"
       ],
-      "pattern": "^[A-Z0-9_]+_SLACK_BOT_TOKEN$",
+      "pattern": "^[A-Z0-9_-]+_SLACK_BOT_TOKEN$",
       "names": [],
       "ux": "hidden",
       "credentialClass": "class-1-external-vendor",
@@ -939,4 +939,3 @@
     }
   ]
 }
-
