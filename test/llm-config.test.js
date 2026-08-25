@@ -18,9 +18,16 @@ function setEnv(values) {
   };
 }
 
-function freshConfig() {
+function freshConfig(configJson) {
   require("../src/settings/bootstrap").resetStartupForTest();
   require("../src/settings/resolver").resetRuntimeForTest();
+  if (configJson !== undefined) {
+    const startup = require("../src/settings/bootstrap").captureStartup();
+    require("../src/settings/resolver").initializeRuntime({
+      state: { exists: true, valid: true, parsed: configJson, revision: "a".repeat(64), fingerprint: `bytes:${"a".repeat(64)}` },
+      startup,
+    });
+  }
   delete require.cache[configModulePath];
   return require(configModulePath);
 }
@@ -35,7 +42,7 @@ const CLEAN_LLM_ENV = {
   OPENCLAW_GATEWAY_TOKEN: undefined,
 };
 
-test("LLM config precedence is raw agent, environment, config.json, then defaults", () => {
+test("LLM config uses the boot resolver snapshot and ignores raw-agent bypasses", () => {
   const restore = setEnv(CLEAN_LLM_ENV);
   const originalError = console.error;
   console.error = () => {};
@@ -64,7 +71,7 @@ test("LLM config precedence is raw agent, environment, config.json, then default
         },
       },
     };
-    config = freshConfig().getPipelineConfig({}, null, null, configJson);
+    config = freshConfig(configJson).getPipelineConfig({}, null, null, configJson);
     assert.deepEqual(
       {
         provider: config.llm.provider,
@@ -94,7 +101,7 @@ test("LLM config precedence is raw agent, environment, config.json, then default
     process.env.OPENAI_COMPATIBLE_API_KEY = "env-key";
     process.env.AGENT_TEMPERATURE = "0.3";
     process.env.AGENT_MAX_TOKENS = "333";
-    config = freshConfig().getPipelineConfig({}, null, null, configJson);
+    config = freshConfig(configJson).getPipelineConfig({}, null, null, configJson);
     assert.equal(config.llm.provider, "openai-compatible");
     assert.equal(config.llm.temperature, 0.3);
     assert.equal(config.llm.maxTokens, 333);
@@ -120,17 +127,17 @@ test("LLM config precedence is raw agent, environment, config.json, then default
         trustedAgentTools: false,
       },
     };
-    config = freshConfig().getPipelineConfig({}, rawAgent, null, configJson);
-    assert.equal(config.llm.provider, "openclaw");
-    assert.equal(config.llm.model, "agent-model");
-    assert.equal(config.llm.temperature, 0.4);
-    assert.equal(config.llm.maxTokens, 444);
-    assert.equal(config.llm.historyMaxTurns, 4);
+    config = freshConfig(configJson).getPipelineConfig({}, rawAgent, null, configJson);
+    assert.equal(config.llm.provider, "openai-compatible");
+    assert.equal(config.llm.model, "json-model");
+    assert.equal(config.llm.temperature, 0.3);
+    assert.equal(config.llm.maxTokens, 333);
+    assert.equal(config.llm.historyMaxTurns, 7);
     assert.deepEqual(config.llm.openaiCompatible, {
-      baseUrl: "https://agent.test/v1",
+      baseUrl: "https://env.test/v1",
       apiKey: "env-key",
-      emptyResponseRetry: true,
-      trustedAgentTools: false,
+      emptyResponseRetry: false,
+      trustedAgentTools: true,
     });
   } finally {
     console.error = originalError;
@@ -142,16 +149,20 @@ test("LLM config precedence is raw agent, environment, config.json, then default
 test("standalone system prompt precedence appends only neutral voice rules", () => {
   const restore = setEnv({ ...CLEAN_LLM_ENV, LLM_PROVIDER: "openai-compatible" });
   try {
-    const { getPipelineConfig } = freshConfig();
-    let config = getPipelineConfig({}, null, { systemPrompt: "profile persona" }, {
+    const configJson = {
       agent: { systemPrompt: "agent persona" },
-      llm: { model: "standalone-model", systemPrompt: "llm persona" },
+      llm: { provider: "openai-compatible", model: "standalone-model", systemPrompt: "llm persona" },
+    };
+    let { getPipelineConfig } = freshConfig(configJson);
+    let config = getPipelineConfig({}, null, { systemPrompt: "profile persona" }, {
+      ...configJson,
     });
     assert.match(config.llm.systemPrompt, /^llm persona\n\n/);
     assert.doesNotMatch(config.llm.systemPrompt, /agent persona|profile persona|Slack|sessions_spawn|ツール実行ルール|サブエージェント結果/);
     assert.match(config.llm.systemPrompt, /【応答ルール】/);
     assert.match(config.llm.systemPrompt, /【絶対禁止事項】/);
 
+    ({ getPipelineConfig } = freshConfig({ llm: { provider: "openai-compatible", model: "standalone-model" } }));
     config = getPipelineConfig({}, null, { systemPrompt: "profile persona" }, { llm: { model: "standalone-model" } });
     assert.match(config.llm.systemPrompt, /^あなたは日本語で会話する音声アシスタントです。/);
     assert.doesNotMatch(config.llm.systemPrompt, /profile persona/);
@@ -174,11 +185,11 @@ test("Gateway credentials are normalized under llm and required only by OpenClaw
   const originalError = console.error;
   console.error = (...args) => errors.push(args.join(" "));
   try {
-    const { getPipelineConfig } = freshConfig();
-    const standalone = getPipelineConfig({}, null, null, {
+    const configJson = {
       llm: { provider: "openai-compatible", model: "standalone-model" },
       gateway: { url: "https://gateway.test/prefix", token: "token" },
-    });
+    };
+    const standalone = freshConfig(configJson).getPipelineConfig({}, null, null, configJson);
     assert.deepEqual(standalone.llm.gateway, {
       url: "https://gateway.test/prefix",
       token: "token",
@@ -187,7 +198,8 @@ test("Gateway credentials are normalized under llm and required only by OpenClaw
 
     delete process.env.OPENCLAW_GATEWAY_URL;
     delete process.env.OPENCLAW_GATEWAY_TOKEN;
-    freshConfig().getPipelineConfig({}, null, null, { llm: { provider: "openclaw" } });
+    const openclawJson = { llm: { provider: "openclaw" } };
+    freshConfig(openclawJson).getPipelineConfig({}, null, null, openclawJson);
     assert.equal(errors.length, 1);
     assert.match(errors[0], /selected LLM connection is not configured/);
   } finally {
@@ -200,12 +212,11 @@ test("Gateway credentials are normalized under llm and required only by OpenClaw
 test("OpenAI-compatible provider requires an explicit model without changing the OpenClaw default", () => {
   const restore = setEnv(CLEAN_LLM_ENV);
   try {
-    const { getPipelineConfig } = freshConfig();
     assert.throws(
-      () => getPipelineConfig({}, null, null, { llm: { provider: "openai-compatible" } }),
+      () => freshConfig({ llm: { provider: "openai-compatible" } }).getPipelineConfig(),
       /OpenAI-compatible model is required/,
     );
-    assert.equal(getPipelineConfig().llm.model, "openclaw");
+    assert.equal(freshConfig({}).getPipelineConfig().llm.model, "openclaw");
   } finally {
     restore();
     delete require.cache[configModulePath];
@@ -243,25 +254,23 @@ test("runtime-shaped configJson.agent does not change OpenClaw LLM resolution", 
   }
 });
 
-test("unknown LLM providers are warned and normalized to OpenClaw", () => {
+test("unknown stored LLM providers become setup VALUE_INVALID and fall back safely", () => {
   const restore = setEnv({
     ...CLEAN_LLM_ENV,
     OPENCLAW_GATEWAY_URL: "https://gateway.test",
     OPENCLAW_GATEWAY_TOKEN: "token",
   });
-  const errors = [];
-  const originalError = console.error;
-  console.error = (...args) => errors.push(args.join(" "));
   try {
-    const config = freshConfig().getPipelineConfig({}, null, null, {
+    const configJson = {
       llm: { provider: "typo-provider" },
       gateway: { url: "https://gateway.test", token: "token" },
-    });
+    };
+    const config = freshConfig(configJson).getPipelineConfig({}, null, null, configJson);
     assert.equal(config.llm.provider, "openclaw");
-    assert.equal(errors.length, 1);
-    assert.match(errors[0], /Unknown LLM provider.*typo-provider.*openclaw/);
+    assert.deepEqual(require("../src/settings/resolver").buildEnvelope().issues.find((issue) => issue.fieldId === "llm_provider"), {
+      fieldId: "llm_provider", code: "VALUE_INVALID",
+    });
   } finally {
-    console.error = originalError;
     restore();
     delete require.cache[configModulePath];
   }
@@ -273,18 +282,19 @@ test("standalone custom voice templates warn when openclawRules is missing", () 
   const originalWarn = console.warn;
   console.warn = (...args) => warnings.push(args.join(" "));
   try {
-    const { getPipelineConfig } = freshConfig();
-    getPipelineConfig({}, null, null, {
+    const first = {
       llm: { provider: "openai-compatible", model: "standalone-model" },
       prompts: { voiceSystemAddendumTemplate: "custom {emotionLine}" },
-    });
+    };
+    freshConfig(first).getPipelineConfig({}, null, null, first);
     assert.equal(warnings.length, 1);
     assert.match(warnings[0], /voiceSystemAddendumTemplate.*\{openclawRules\}/);
 
-    getPipelineConfig({}, null, null, {
+    const second = {
       llm: { provider: "openai-compatible", model: "standalone-model" },
       prompts: { voiceSystemAddendumTemplate: "custom {openclawRules}" },
-    });
+    };
+    freshConfig(second).getPipelineConfig({}, null, null, second);
     assert.equal(warnings.length, 1);
   } finally {
     console.warn = originalWarn;

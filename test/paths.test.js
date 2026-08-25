@@ -21,6 +21,8 @@ const {
 
 const pathsModule = require.resolve("../src/paths");
 
+require("./settings-hardening");
+
 function withFreshPaths(values, fn) {
   const previous = {};
   for (const [key, value] of Object.entries(values)) {

@@ -5,7 +5,7 @@ const http = require("http");
 const { URL } = require("url");
 const { WebSocketServer } = require("ws");
 const { readConfigState } = require("./settings/store");
-const { initializeRuntime, getStatus, setServerPort } = require("./settings/resolver");
+const { getEffectiveValue, initializeRuntime, getStatus, setServerPort } = require("./settings/resolver");
 const { warnLegacyClass2 } = require("./settings/class2-migration");
 const { createSettingsHandler } = require("./settings/routes");
 
@@ -26,8 +26,7 @@ const { loadConfig } = require("./config");
 const { resolveAgentProfile } = require("./agent-profile");
 
 const config = loadConfig();
-const envPort = startup.preDotenvEnv.PORT || startup.dotenvSeeds.PORT || undefined;
-const PORT = Number(config?.server?.port ?? envPort ?? 5005);
+const PORT = getEffectiveValue("server_port") || 5005;
 const pkg = (() => {
   try {
     return require("../package.json");

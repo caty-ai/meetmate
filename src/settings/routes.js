@@ -3,8 +3,7 @@
 const crypto = require("node:crypto");
 const { URL } = require("node:url");
 const { MASK, SETTINGS_REGISTRY } = require("./registry");
-const { getStartup } = require("./bootstrap");
-const { buildEnvelope, getBootstrapSeedFields, getRawConfig, meaningful, publishState, readPath } = require("./resolver");
+const { buildEnvelope, getBootstrapSeedFields, getRawConfig, getRuntime, meaningful, readPath } = require("./resolver");
 const { readConfigState, saveFields, settingsError } = require("./store");
 const { parseStrict, settingsMutationSchema, revisionOnlySchema } = require("./schemas");
 
@@ -33,10 +32,24 @@ function writeError(res, error, requestId) {
     SETTINGS_MULTI_PROCESS_UNSUPPORTED: 503,
     TEST_NOT_IMPLEMENTED: 501,
   }[error.code] || 500);
-  const body = { error: { code: error.code || "SETTINGS_TRANSACTION_FAILED", message: error.message || "Settings request failed" } };
+  const code = typeof error.code === "string" && (error.code.startsWith("SETTINGS_") || error.code === "TEST_NOT_IMPLEMENTED")
+    ? error.code
+    : "SETTINGS_TRANSACTION_FAILED";
+  const messages = {
+    SETTINGS_MALFORMED_JSON: "Malformed JSON",
+    SETTINGS_ORIGIN_REJECTED: "Request origin rejected",
+    SETTINGS_REVISION_CONFLICT: "Settings revision changed",
+    SETTINGS_BODY_TOO_LARGE: "Request body too large",
+    SETTINGS_MEDIA_TYPE_UNSUPPORTED: "Content type not supported",
+    SETTINGS_VALIDATION_FAILED: "Request validation failed",
+    SETTINGS_MULTI_PROCESS_UNSUPPORTED: "Settings are busy",
+    SETTINGS_SYMLINK_REJECTED: "Settings path is not allowed",
+    TEST_NOT_IMPLEMENTED: "Settings feature is not implemented",
+  };
+  const body = { error: { code, message: messages[code] || "Settings request failed" } };
   if (Array.isArray(error.details)) body.error.details = error.details.map(({ path, code }) => ({ path, code }));
   body.error.requestId = requestId;
-  writeJson(res, status, body);
+  writeJson(res, status, body, { Connection: "close" });
 }
 
 function actualPort(req, options) {
@@ -50,7 +63,8 @@ function isLoopback(address) {
 
 function isLocalAdminRequest(req, options) {
   if (!isLoopback(req.socket?.localAddress)) return false;
-  if (req.headers.forwarded || Object.keys(req.headers).some((name) => name.startsWith("x-forwarded-"))) return false;
+  if (Object.prototype.hasOwnProperty.call(req.headers, "forwarded")
+      || Object.keys(req.headers).some((name) => name.startsWith("x-forwarded-"))) return false;
   const port = actualPort(req, options);
   return new Set([`localhost:${port}`, `127.0.0.1:${port}`, `[::1]:${port}`]).has(req.headers.host);
 }
@@ -99,7 +113,7 @@ function prepareMutationFields(fields, revision) {
 
 async function migrateClass1(req, options) {
   const body = parseStrict(revisionOnlySchema, await readJson(req, JSON_LIMIT));
-  const startup = getStartup();
+  const startup = getRuntime().startup;
   const raw = getRawConfig();
   const fields = {};
   const imported = [];
@@ -119,7 +133,6 @@ async function migrateClass1(req, options) {
     revision: body.revision,
     fields: { ...(body.revision === "bootstrap" ? getBootstrapSeedFields() : {}), ...fields },
   });
-  publishState(committed);
   return { imported: imported.sort(), skipped: skipped.sort(), revision: committed.revision };
 }
 
@@ -135,7 +148,8 @@ function createSettingsHandler(options = {}) {
     if (!isSettingsPath) return false;
     const requestId = crypto.randomUUID();
     if (!isLocalAdminRequest(req, settingsOptions)) {
-      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      req.resume?.();
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8", Connection: "close" });
       res.end("Not Found");
       return true;
     }
@@ -154,13 +168,12 @@ function createSettingsHandler(options = {}) {
       if (req.method === "PUT" && url.pathname === "/api/settings") {
         requireSameOrigin(req, settingsOptions);
         const mutation = parseStrict(settingsMutationSchema, await readJson(req, JSON_LIMIT));
-        const startup = getStartup();
+        const startup = getRuntime().startup;
         const committed = saveFields({
           configPath: startup.configPath,
           revision: mutation.revision,
           fields: prepareMutationFields(mutation.fields, mutation.revision),
         });
-        publishState(committed);
         writeJson(res, 200, buildEnvelope());
         return true;
       }
@@ -185,10 +198,12 @@ function createSettingsHandler(options = {}) {
         throw settingsError("TEST_NOT_IMPLEMENTED", "Settings feature is not implemented", 501);
       }
 
-      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      req.resume?.();
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8", Connection: "close" });
       res.end("Not Found");
       return true;
     } catch (error) {
+      req.resume?.();
       writeError(res, error, requestId);
       return true;
     }

@@ -6,7 +6,7 @@
 const { buildVoiceAddendum } = require("./llm");
 const { buildVoiceAddendumFromMessages, resolveMessages } = require("./messages");
 const { getStartup } = require("./settings/bootstrap");
-const { getEffectiveSource, getEffectiveValue, getRawConfig } = require("./settings/resolver");
+const { getEffectiveValue, getRawConfig } = require("./settings/resolver");
 const { stripLegacyClass2 } = require("./settings/class2-migration");
 
 const SAMPLE_RATE = 16_000;
@@ -184,15 +184,9 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
   const isJapanese = LANG === "ja";
   const envVoiceId = getEffectiveValue("fish_audio_voice_id") || null;
   const messages = resolveMessages(configJson);
-  const llmJson = configJson?.llm || {};
-  const openaiJson = llmJson.openaiCompatible || {};
-  const contextSetting = (id, configValue) => getEffectiveSource(id) === "os-env"
-    ? getEffectiveValue(id)
-    : (configValue ?? getEffectiveValue(id));
   let provider = String(
     overrides.provider
-      || agent?.provider
-      || contextSetting("llm_provider", llmJson.provider)
+      || getEffectiveValue("llm_provider")
       || "openclaw"
   ).trim().toLowerCase();
   if (provider !== "openclaw" && provider !== "openai-compatible") {
@@ -201,21 +195,19 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
   }
   if (provider !== "openclaw" && Object.prototype.hasOwnProperty.call(configJson?.prompts || {}, "voiceSystemAddendumTemplate") && !String(configJson.prompts.voiceSystemAddendumTemplate).includes("{openclawRules}")) console.warn("⚠️  Non-OpenClaw voiceSystemAddendumTemplate should include {openclawRules} so OpenClaw-only rules can be omitted.");
   // Build voice addendum: use per-agent emotionTags flag
-  const agentEmotionTags = agent?.emotionTags !== false;
+  const agentEmotionTags = getEffectiveValue("agent_emotion_tags") !== false;
   const defaultVoiceAddendum = messages.prompts.voiceSystemAddendum
     || buildVoiceAddendumFromMessages(messages, { emotionTags: agentEmotionTags, openclaw: true })
     || buildVoiceAddendum({ emotionTags: agentEmotionTags });
   const llmAddendum = Object.prototype.hasOwnProperty.call(overrides, "openclawSystemAddendum")
     ? overrides.openclawSystemAddendum
     : (agent?.openclawSystemAddendum ?? defaultVoiceAddendum);
-  const ttsReferenceId = agent && Object.prototype.hasOwnProperty.call(agent, "voiceId")
-    ? (agent.voiceId || envVoiceId)
-    : envVoiceId;
+  const ttsReferenceId = envVoiceId;
 
   // OpenClaw manages its persona via the Gateway. Standalone providers need a
   // usable persona even when no prompt was configured explicitly.
   const configuredSystemPrompt = overrides.prompt
-    || llmJson.systemPrompt
+    || getEffectiveValue("llm_system_prompt")
     || messages.prompts.standaloneSystemPrompt;
   const systemAddendum = messages.prompts.voiceSystemAddendum
     || buildVoiceAddendumFromMessages(messages, {
@@ -233,44 +225,34 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
     console.error("❌  The selected LLM connection is not configured in the environment.");
   }
 
-  const envTemperature = contextSetting("llm_temperature", llmJson.temperature);
-  const envMaxTokens = contextSetting("llm_max_tokens", llmJson.maxTokens);
   const llmTemperature = overrides.temperature
-    ?? agent?.temperature
-    ?? (envTemperature !== undefined && envTemperature !== "" ? Number(envTemperature) : undefined)
-    ?? llmJson.temperature
+    ?? getEffectiveValue("llm_temperature")
     ?? 0.5;
   const llmMaxTokens = overrides.maxTokens
-    ?? agent?.maxTokens
-    ?? (envMaxTokens !== undefined && envMaxTokens !== "" ? Number(envMaxTokens) : undefined)
-    ?? llmJson.maxTokens
+    ?? getEffectiveValue("llm_max_tokens")
     ?? 300;
-  const llmModel = overrides.model || agent?.model || llmJson.model
+  const llmModel = overrides.model || getEffectiveValue("llm_model")
     || (provider === "openclaw" ? "openclaw" : null);
   if (!llmModel) {
     throw new Error("❌  OpenAI-compatible model is required. Set llm.model in config.json or configure an agent model.");
   }
   const historyMaxTurns = overrides.historyMaxTurns
-    ?? agent?.historyMaxTurns
-    ?? llmJson.historyMaxTurns
+    ?? getEffectiveValue("llm_history_max_turns")
     ?? 12;
   const openaiCompatible = {
     baseUrl: overrides.openaiCompatible?.baseUrl
-      || agent?.openaiCompatible?.baseUrl
-      || contextSetting("openai_base_url", openaiJson.baseUrl)
+      || getEffectiveValue("openai_base_url")
       || null,
     apiKey: getStartup().connection.openaiApiKey
       || null,
     emptyResponseRetry: boolOption(
       overrides.openaiCompatible?.emptyResponseRetry
-      ?? agent?.openaiCompatible?.emptyResponseRetry
-      ?? openaiJson.emptyResponseRetry,
+      ?? getEffectiveValue("openai_empty_response_retry"),
       true
     ),
     trustedAgentTools: boolOption(
       overrides.openaiCompatible?.trustedAgentTools
-      ?? agent?.openaiCompatible?.trustedAgentTools
-      ?? openaiJson.trustedAgentTools,
+      ?? getEffectiveValue("openai_trusted_agent_tools"),
       false
     ),
   };
@@ -289,7 +271,7 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
     // Backward-compatible aliases. New consumers read the normalized llm fields.
     openclawUrl: resolvedOpenclawUrl,
     openclawToken: resolvedOpenclawToken,
-    warmupTimeoutMs: configJson?.gateway?.warmupTimeoutMs || null,
+    warmupTimeoutMs: getEffectiveValue("gateway_warmup_timeout_ms"),
     gatewayBriefingPrompt: messages.prompts.gatewayBriefingSystem,
     gatewayWarmupUserPrompt: messages.prompts.gatewayWarmupUser,
     systemPrompt,
@@ -345,12 +327,13 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
     purposeStatement: overrides.purposeStatement || null,
     greeting,
     slack: {
-      botToken: configJson?.slack?.botToken || SLACK_BOT_TOKEN,
-      channelId: configJson?.slack?.notifyChannel || SLACK_NOTIFY_CHANNEL,
-      statusChannelId:
-        configJson?.slack?.statusChannel || SLACK_STATUS_CHANNEL || SLACK_SUMMARY_CHANNEL || SLACK_NOTIFY_CHANNEL,
-      summaryChannelId: configJson?.slack?.summaryChannel || SLACK_SUMMARY_CHANNEL || SLACK_NOTIFY_CHANNEL,
+      botToken: SLACK_BOT_TOKEN,
+      channelId: SLACK_NOTIFY_CHANNEL,
+      statusChannelId: SLACK_STATUS_CHANNEL || SLACK_SUMMARY_CHANNEL || SLACK_NOTIFY_CHANNEL,
+      summaryChannelId: SLACK_SUMMARY_CHANNEL || SLACK_NOTIFY_CHANNEL,
       enabled: SLACK_NOTIFY_ENABLED,
+      notifyTarget: getEffectiveValue("slack_notifications_target"),
+      dmUserId: getEffectiveValue("slack_dm_user_id") || "",
       labels: messages.slack,
     },
     summary: {
@@ -381,11 +364,11 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
     exit: messages.exit,
     // Per-agent voice extensions
     emotionTags: agentEmotionTags,
-    ackVariants: overrides.ackVariants || agentProfile?.ackVariants || agent?.ackVariants || messages.speech.ackVariants,
-    progressPings: agentProfile?.progressPings || agent?.progressPings || messages.speech.progressPings,
-    timeoutFallback: agentProfile?.timeoutFallback || agent?.timeoutFallback || messages.speech.timeoutFallback,
-    exitFarewell: agentProfile?.exitFarewell || agent?.exitFarewell || messages.speech.exitFarewell,
-    cancelAck: agentProfile?.cancelAck || agent?.cancelAck || null,
+    ackVariants: overrides.ackVariants || agentProfile?.ackVariants || getEffectiveValue("agent_ack_variants") || messages.speech.ackVariants,
+    progressPings: agentProfile?.progressPings || getEffectiveValue("agent_progress_pings") || messages.speech.progressPings,
+    timeoutFallback: agentProfile?.timeoutFallback || getEffectiveValue("agent_timeout_fallback") || messages.speech.timeoutFallback,
+    exitFarewell: agentProfile?.exitFarewell || getEffectiveValue("agent_exit_farewell") || messages.speech.exitFarewell,
+    cancelAck: agentProfile?.cancelAck || getEffectiveValue("agent_cancel_ack") || null,
   };
 }
 

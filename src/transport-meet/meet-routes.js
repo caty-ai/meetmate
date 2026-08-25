@@ -28,8 +28,15 @@ const { buildDelegationResultsSection } = require("../delegation-results");
 const { createGatewaySessionTracker } = require("../gateway-session-tracker");
 const { servePublicAsset, serveLocalAvatar, sendMetricsSummary } = require("../ui-routes");
 const { logsDir, avatarCachePath, bundledAssetPath, bundledPublicDir } = require("../paths");
-const { getStartup } = require("../settings/bootstrap");
-const { getEffectiveValue, getRawConfig, getStatus, registerCacheInvalidator } = require("../settings/resolver");
+const {
+  getEffectiveSource,
+  getEffectiveValue,
+  getRawConfig,
+  getStatus,
+  meaningful,
+  registerCacheInvalidator,
+  resolveDynamicSlackToken,
+} = require("../settings/resolver");
 
 const ATTENDEE_API_BASE_URL = getEffectiveValue("attendee_base_url");
 const ATTENDEE_TIMEOUT_MS = Number(process.env.ATTENDEE_TIMEOUT_MS || 15_000);
@@ -108,34 +115,22 @@ function getMeetSlackNotifier() {
   if (!meetSlackNotifier) {
     const notifyEnabled = getEffectiveValue("slack_notifications_enabled");
 
-    // Read notification config from config.json (new DM-first architecture)
-    const slackConfig = _configJson?.slack || {};
-    const notifications = slackConfig.notifications || {};
-
-    // Notification target: "dm" (default) or "channel"
-    const notifyTarget = notifications.target || "dm";
-    const dmUserId = notifications.dmUserId || "";
+    const notifyTarget = getEffectiveValue("slack_notifications_target") || "dm";
+    const dmUserId = getEffectiveValue("slack_dm_user_id") || "";
 
     // Channel mode fallback (legacy env vars + config.json)
     const fallback = getEffectiveValue("slack_notify_channel") || "";
     const summaryChannel = getEffectiveValue("slack_summary_channel") || fallback;
     const statusChannel = getEffectiveValue("slack_status_channel") || summaryChannel || fallback;
 
-    // Per-agent Slack bot token: ${AGENT_ID}_SLACK_BOT_TOKEN → config.json → SLACK_BOT_TOKEN
-    const agentIdForToken = FIXED_AGENT_ID || "unknown";
-    const dynamicName = /^[A-Z0-9_-]+$/.test(agentIdForToken.toUpperCase())
-      ? `${agentIdForToken.toUpperCase()}_SLACK_BOT_TOKEN`
-      : null;
-    const startup = getStartup();
-    const agentSlackToken = (dynamicName && (startup.preDotenvEnv[dynamicName] || startup.dotenvSeeds[dynamicName]))
-      || getEffectiveValue("slack_bot_token")
-      || "";
+    const agentSlackToken = resolveDynamicSlackToken();
+    const explicitlyEnabled = notifyEnabled && !["default", "unset"].includes(getEffectiveSource("slack_notifications_enabled"));
 
     meetSlackNotifier = new SlackNotifier(
       agentSlackToken,
       fallback,
       {
-        enabled: notifyEnabled,
+        enabled: explicitlyEnabled && meaningful(agentSlackToken),
         notifyTarget,
         dmUserId,
         statusChannelId: statusChannel,
@@ -694,7 +689,7 @@ function closeLocalAvatarSession(session, reason) {
 }
 
 function resolveLocalAvatarPublicOrigin() {
-  const configuredDomain = String(_configJson?.server?.ngrokDomain || "").trim();
+  const configuredDomain = String(getEffectiveValue("server_ngrok_domain") || "").trim();
   if (configuredDomain && /^[A-Za-z0-9.-]+(?::\d+)?$/.test(configuredDomain)) {
     return `https://${configuredDomain}`;
   }
@@ -884,7 +879,7 @@ function startNgrokDetection() {
   if (ngrokDetectionStarted) return;
   ngrokDetectionStarted = true;
 
-  const ngrokDomain = _configJson?.server?.ngrokDomain;
+  const ngrokDomain = getEffectiveValue("server_ngrok_domain");
   if (ngrokDomain) {
     detectedNgrokUrl = `wss://${ngrokDomain}`;
     console.log(`🌐  ngrok WSS URL (config.json): ${detectedNgrokUrl}`);
@@ -978,7 +973,7 @@ async function handleHttp(req, res) {
       ttsProvider: TTS_PROVIDER,
       lang: getEffectiveValue("agent_language"),
       publicWsUrl,
-      ready: true,
+      ready: getStatus().meetingReady,
       fixedAgentId: FIXED_AGENT_ID || null,
       primaryAgent,
     };

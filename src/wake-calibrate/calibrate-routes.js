@@ -1,11 +1,10 @@
 // calibrate-routes.js — Wake word calibration HTTP + WS handlers
 const fs = require("fs");
-const { configPath, bundledPath } = require("../paths");
+const { bundledPath } = require("../paths");
 const { REGISTRY_BY_ID } = require("../settings/registry");
-const { getEffectiveValue, getRawConfig, getRuntime, publishState } = require("../settings/resolver");
+const { getEffectiveValue, getRawConfig, getRuntime } = require("../settings/resolver");
 const { saveFields } = require("../settings/store");
 
-const CONFIG_PATH = configPath();
 const HTML_PATH = bundledPath("src", "wake-calibrate", "calibrate.html");
 const TIMEOUT_MS = 30_000;
 
@@ -76,9 +75,9 @@ function serveHtml(_req, res) {
       "Content-Length": Buffer.byteLength(html),
     });
     res.end(html);
-  } catch (err) {
+  } catch {
     res.writeHead(500, { "Content-Type": "text/plain" });
-    res.end("Failed to read calibrate.html: " + err.message);
+    res.end("Failed to read calibration page");
   }
 }
 
@@ -135,12 +134,10 @@ function handleApply(req, res) {
           return;
         }
         const committed = saveFields({
-          configPath: CONFIG_PATH,
+          configPath: getRuntime().startup.configPath,
           revision,
           fields: { agent_stt_wake_variants: validated.data },
         });
-        publishState(committed);
-
         writeJson(res, 200, {
           ok: true,
           added,
@@ -150,8 +147,8 @@ function handleApply(req, res) {
       } catch (error) {
         writeJson(res, error.status || 500, { ok: false, error: error.code || "settings write failed" });
       }
-    } catch (err) {
-      writeJson(res, 500, { ok: false, error: err.message });
+    } catch {
+      writeJson(res, 400, { ok: false, error: "invalid calibration request" });
     }
   });
 }
@@ -178,28 +175,21 @@ function handleCalibrateWs(ws, _req) {
   const dgKey = getEffectiveValue("deepgram_api_key");
   const sonioxKey = getEffectiveValue("soniox_api_key");
   if (provider === "soniox" && !sonioxKey) {
-    wsSend(ws, { type: "error", message: "SONIOX_API_KEY not configured" });
+    wsSend(ws, { type: "error", message: "Speech service is not configured" });
     ws.close(1011, "Missing API key");
     return;
   }
   if (provider === "deepgram" && !dgKey) {
-    wsSend(ws, { type: "error", message: "DEEPGRAM_API_KEY not configured" });
+    wsSend(ws, { type: "error", message: "Speech service is not configured" });
     ws.close(1011, "Missing API key");
     return;
   }
 
-  // Load language and calibration keyterms from config
-  let lang = "ja";
-  let keyterms = [];
-  try {
-    const config = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
-    const agent = config.agent || {};
-    lang = agent.lang || "ja";
-    keyterms = [
-      ...(Array.isArray(agent.keyterms) ? agent.keyterms : []),
-      ...(Array.isArray(agent.wakeWords) ? agent.wakeWords : []),
-    ];
-  } catch { /* default */ }
+  const lang = getEffectiveValue("agent_language") || "ja";
+  const keyterms = [
+    ...(getEffectiveValue("agent_keyterms") || []),
+    ...(getEffectiveValue("agent_wake_words") || []),
+  ];
 
   const stt = createSTT(dgKey, {
     provider,
@@ -256,10 +246,10 @@ function handleCalibrateWs(ws, _req) {
     pendingFinalText = "";
   });
 
-  stt.on("error", (err) => {
-    console.error(`❌  [calibrate] ${provider} STT error:`, err);
+  stt.on("error", () => {
+    console.error(`❌  [calibrate] ${provider} STT error`);
     flushPendingFinalText();
-    wsSend(ws, { type: "error", message: String(err?.message || "STT error") });
+    wsSend(ws, { type: "error", message: "Speech service error" });
     cleanup();
   });
 
@@ -288,8 +278,8 @@ function handleCalibrateWs(ws, _req) {
       }
       try {
         stt.send(Buffer.from(data));
-      } catch (err) {
-        console.error("❌  Calibrate relay error:", err.message);
+      } catch {
+        console.error("❌  Calibrate relay error");
       }
     }
   });
@@ -298,8 +288,8 @@ function handleCalibrateWs(ws, _req) {
     cleanup();
   });
 
-  ws.on("error", (err) => {
-    console.error("❌  Calibrate WS error:", err.message);
+  ws.on("error", () => {
+    console.error("❌  Calibrate WS error");
     cleanup();
   });
 }

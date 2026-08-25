@@ -76,11 +76,12 @@ function _buildProfileFromConfig(config) {
     avatarUrl: getEffectiveValue("agent_avatar_url") || null,
     attendeeApiKey: getEffectiveValue("attendee_api_key") || null,
     isDefault: true,
-    sttWakeVariants: Array.isArray(agent.sttWakeVariants) ? agent.sttWakeVariants : [],
+    sttWakeVariants: getEffectiveValue("agent_stt_wake_variants") || [],
     exitCommands: Array.isArray(agent.exitCommands) ? agent.exitCommands : [],
 
     toString() {
       const masked = { ...this };
+      if (masked.attendeeApiKey) masked.attendeeApiKey = "••••••••";
       delete masked.toString;
       delete masked.toJSON;
       return JSON.stringify(masked, null, 2);
@@ -88,6 +89,7 @@ function _buildProfileFromConfig(config) {
 
     toJSON() {
       const obj = { ...this };
+      if (obj.attendeeApiKey) obj.attendeeApiKey = "••••••••";
       delete obj.toString;
       delete obj.toJSON;
       return obj;

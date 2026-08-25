@@ -5,9 +5,37 @@ const path = require("node:path");
 const dotenv = require("dotenv");
 
 const STARTUP_KEY = Symbol.for("meetmate.settings.startup.v1");
+const PLACEHOLDER = /^\$\{[A-Z][A-Z0-9_]*\}$/;
+const SENTINELS = new Set([
+  "your_gateway_token_here", "your_deepgram_key", "your_soniox_key", "your_attendee_key",
+  "your_fish_audio_key", "your_voice_id", "your_slack_bot_token", "your-model-id",
+  "your_openai_compatible_key", "your-agent-id", "YourAgent", "your-agent", "エージェント名",
+]);
 
 function freezeRecord(value) {
   return Object.freeze({ ...value });
+}
+
+function meaningfulString(value) {
+  if (typeof value !== "string") return "";
+  const normalized = value.trim();
+  return normalized && !PLACEHOLDER.test(normalized) && !SENTINELS.has(normalized) ? normalized : "";
+}
+
+function connectionUrl(value) {
+  const normalized = meaningfulString(value);
+  if (!normalized || normalized !== value) return "";
+  try {
+    const parsed = new URL(normalized);
+    return ["http:", "https:"].includes(parsed.protocol)
+      && !parsed.username && !parsed.password && !parsed.hash ? normalized : "";
+  } catch {
+    return "";
+  }
+}
+
+function connectionValue(preDotenvEnv, dotenvSeeds, name, parser = meaningfulString) {
+  return parser(preDotenvEnv[name]) || parser(dotenvSeeds[name]) || "";
 }
 
 function captureStartup() {
@@ -39,10 +67,9 @@ function captureStartup() {
     resolvedHome,
     configPath: path.join(resolvedHome, "config.json"),
     connection: Object.freeze({
-      provider: preDotenvEnv.LLM_PROVIDER || dotenvSeeds.LLM_PROVIDER || "openclaw",
-      openclawUrl: preDotenvEnv.OPENCLAW_GATEWAY_URL || dotenvSeeds.OPENCLAW_GATEWAY_URL || "",
-      openclawToken: preDotenvEnv.OPENCLAW_GATEWAY_TOKEN || dotenvSeeds.OPENCLAW_GATEWAY_TOKEN || "",
-      openaiApiKey: preDotenvEnv.OPENAI_COMPATIBLE_API_KEY || dotenvSeeds.OPENAI_COMPATIBLE_API_KEY || "",
+      openclawUrl: connectionValue(preDotenvEnv, dotenvSeeds, "OPENCLAW_GATEWAY_URL", connectionUrl),
+      openclawToken: connectionValue(preDotenvEnv, dotenvSeeds, "OPENCLAW_GATEWAY_TOKEN"),
+      openaiApiKey: connectionValue(preDotenvEnv, dotenvSeeds, "OPENAI_COMPATIBLE_API_KEY"),
     }),
   });
   globalThis[STARTUP_KEY] = startup;

@@ -122,7 +122,9 @@ function acquireLock(configPath) {
     }
   } catch (error) {
     localWriteActive = false;
-    throw error;
+    throw error.code === "EEXIST"
+      ? settingsError("SETTINGS_MULTI_PROCESS_UNSUPPORTED", "Another process owns settings", 503)
+      : error;
   }
   return () => {
     try { fs.unlinkSync(lockPath); } catch (error) { if (error.code !== "ENOENT") console.warn("Settings lock cleanup failed"); }
@@ -186,6 +188,7 @@ function commitWholeConfig({ configPath, revision, mutate }) {
     const committed = readConfigState(configPath);
     if (!committed.valid) throw settingsError("SETTINGS_TRANSACTION_FAILED", "Settings transaction failed", 500);
     if (backup) { fs.unlinkSync(backup); backup = null; }
+    require("./resolver").publishCommittedState(configPath, committed);
     return committed;
   } catch (error) {
     if (replaced) {
@@ -222,7 +225,7 @@ function saveFields({ configPath, revision, fields }) {
       for (const [id, value] of Object.entries(fields)) {
         const entry = byId.get(id);
         if (!entry || entry.writeSurface !== "settings") continue;
-        applyPath(document, entry.path, value === null ? undefined : value);
+        applyPath(document, entry.path, entry.credential === "class-1" && value === null ? undefined : value);
       }
     },
   });

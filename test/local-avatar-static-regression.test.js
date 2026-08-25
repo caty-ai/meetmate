@@ -325,6 +325,7 @@ async function withMeetRoutes(fn) {
         stt: { provider: "soniox", sonioxApiKey: "soniox-test-key" },
         tts: { apiKey: "fish-test-key", voiceId: "fish-test-voice" },
         attendee: { apiKey: "test-key" },
+        server: { ngrokDomain: "meetmate.example" },
         slack: { notifications: { enabled: false } },
         llm: { provider: "openclaw", model: "test" },
       },
