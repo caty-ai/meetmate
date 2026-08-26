@@ -3,42 +3,35 @@
  * Keep persistence, precedence, credential classes, allowlists, and migrations aligned with that contract.
  */
 
-const fs = require("fs");
 const { buildVoiceAddendum } = require("./llm");
 const { buildVoiceAddendumFromMessages, resolveMessages } = require("./messages");
-const { configPath } = require("./paths");
+const { getStartup } = require("./settings/bootstrap");
+const { getEffectiveValue, getRawConfig } = require("./settings/resolver");
+const { stripLegacyClass2 } = require("./settings/class2-migration");
 
 const SAMPLE_RATE = 16_000;
 // TTS output rate. The code default is the single source of truth; env is kept
 // as an escape hatch only. Invalid env values (NaN/zero/negative) fall back to
 // the default so a typo can't propagate NaN into Fish Audio / silence buffers.
-const _ttsRateEnv = Number(process.env.TTS_SAMPLE_RATE);
-const TTS_SAMPLE_RATE = Number.isInteger(_ttsRateEnv) && _ttsRateEnv > 0 ? _ttsRateEnv : 24_000;
-if (process.env.TTS_SAMPLE_RATE && TTS_SAMPLE_RATE !== _ttsRateEnv) {
-  console.warn(`⚠️  Invalid TTS_SAMPLE_RATE "${process.env.TTS_SAMPLE_RATE}" — using default 24000`);
-}
-const TTS_PROVIDER = process.env.TTS_PROVIDER || "fish-audio";
-const LANG = process.env.AGENT_LANG || "ja";
+const TTS_SAMPLE_RATE = getEffectiveValue("tts_sample_rate");
+const TTS_PROVIDER = getEffectiveValue("tts_provider");
+const LANG = getEffectiveValue("agent_language");
 
-const LISTEN_ENDPOINTING_MS = Number(process.env.LISTEN_ENDPOINTING_MS || 400);
-const LISTEN_UTTERANCE_END_MS = Number(process.env.LISTEN_UTTERANCE_END_MS || 1200);
+const LISTEN_ENDPOINTING_MS = getEffectiveValue("listen_endpointing_ms");
+const LISTEN_UTTERANCE_END_MS = getEffectiveValue("listen_utterance_end_ms");
 
 // STT provider + Soniox settings. Soniox adopted as default 2026-06-23 (#52)
 // after live A/B: dramatically better JA accuracy + latency than Deepgram.
 // Instant revert: set STT_PROVIDER=deepgram and restart.
-const STT_PROVIDER = String(process.env.STT_PROVIDER || "soniox").toLowerCase();
-const SONIOX_MODEL = process.env.SONIOX_MODEL || "stt-rt-v5";
-const SONIOX_WS_URL = process.env.SONIOX_WS_URL || "wss://stt-rt.soniox.com/transcribe-websocket";
-const numOrNull = (v) => (v !== undefined && v !== "" ? Number(v) : null);
-const SONIOX_ENDPOINT_SENSITIVITY = numOrNull(process.env.SONIOX_ENDPOINT_SENSITIVITY);
-const SONIOX_MAX_ENDPOINT_DELAY_MS = numOrNull(process.env.SONIOX_MAX_ENDPOINT_DELAY_MS);
-const SONIOX_ENDPOINT_LATENCY_LEVEL = numOrNull(process.env.SONIOX_ENDPOINT_LATENCY_LEVEL);
-const SONIOX_CONTEXT_TERMS = (process.env.SONIOX_CONTEXT_TERMS || "")
-  .split(",")
-  .map((s) => s.trim())
-  .filter(Boolean);
-const AGENT_TEMPERATURE = Number(process.env.AGENT_TEMPERATURE || 0.5);
-const AGENT_MAX_TOKENS = Number(process.env.AGENT_MAX_TOKENS || 300);
+const STT_PROVIDER = getEffectiveValue("stt_provider");
+const SONIOX_MODEL = getEffectiveValue("soniox_model");
+const SONIOX_WS_URL = getEffectiveValue("soniox_ws_url");
+const SONIOX_ENDPOINT_SENSITIVITY = getEffectiveValue("soniox_endpoint_sensitivity");
+const SONIOX_MAX_ENDPOINT_DELAY_MS = getEffectiveValue("soniox_max_endpoint_delay_ms");
+const SONIOX_ENDPOINT_LATENCY_LEVEL = getEffectiveValue("soniox_endpoint_latency_level");
+const SONIOX_CONTEXT_TERMS = getEffectiveValue("agent_keyterms") || [];
+const AGENT_TEMPERATURE = getEffectiveValue("llm_temperature");
+const AGENT_MAX_TOKENS = getEffectiveValue("llm_max_tokens");
 // First-audio timeout: aborts the LLM turn if no chunk arrives in this window.
 // Pipeline clears the timer on the first streamed chunk (firstChunkSeen),
 // so this is effectively a "first audible chunk" deadline. The budget covers
@@ -114,39 +107,35 @@ const PARENT_COMPACT_MAX_LINES = nonNegativeIntEnv("PARENT_COMPACT_MAX_LINES", 0
 const SHORT_UTTERANCE_SKIP_CHARS = nonNegativeIntEnv("SHORT_UTTERANCE_SKIP_CHARS", 24);
 const CIRCUIT_BREAKER_TIMEOUTS = nonNegativeIntEnv("CIRCUIT_BREAKER_TIMEOUTS", 2);
 
-const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN || "";
-const SLACK_NOTIFY_CHANNEL = process.env.SLACK_NOTIFY_CHANNEL || "";
-const SLACK_SUMMARY_CHANNEL = process.env.SLACK_SUMMARY_CHANNEL || "";
-const SLACK_STATUS_CHANNEL = process.env.SLACK_STATUS_CHANNEL || "";
-const SLACK_NOTIFY_ENABLED = String(process.env.SLACK_NOTIFY_ENABLED || "true").toLowerCase() !== "false";
-const SUMMARY_ENABLED = String(process.env.SUMMARY_ENABLED || "true").toLowerCase() !== "false";
+const SLACK_BOT_TOKEN = getEffectiveValue("slack_bot_token") || "";
+const SLACK_NOTIFY_CHANNEL = getEffectiveValue("slack_notify_channel") || "";
+const SLACK_SUMMARY_CHANNEL = getEffectiveValue("slack_summary_channel") || "";
+const SLACK_STATUS_CHANNEL = getEffectiveValue("slack_status_channel") || "";
+const SLACK_NOTIFY_ENABLED = getEffectiveValue("slack_notifications_enabled");
+const SUMMARY_ENABLED = getEffectiveValue("summary_enabled");
 
 function validateSttProviderApiKey(options = {}) {
   const {
-    env = process.env,
-    provider = String(env.STT_PROVIDER || STT_PROVIDER).trim().toLowerCase(),
-    exitProcess = false,
+    env = null,
+    provider = String(env?.STT_PROVIDER || STT_PROVIDER).trim().toLowerCase(),
   } = options;
 
   // Mirrors the stt-provider.js dispatch: "soniox" → Soniox, anything else → Deepgram.
   let message = null;
-  if (provider === "soniox" && !env.SONIOX_API_KEY) {
+  const sonioxKey = env?.SONIOX_API_KEY || getEffectiveValue("soniox_api_key");
+  const deepgramKey = env?.DEEPGRAM_API_KEY || getEffectiveValue("deepgram_api_key");
+  if (provider === "soniox" && !sonioxKey) {
     message = "❌  Set SONIOX_API_KEY for the soniox STT provider (STT_PROVIDER=soniox is the default).";
-  } else if (provider !== "soniox" && !env.DEEPGRAM_API_KEY) {
+  } else if (provider !== "soniox" && !deepgramKey) {
     message = `❌  Set DEEPGRAM_API_KEY for the "${provider}" STT provider (any value other than "soniox" routes to Deepgram).`;
   }
 
   if (!message) return;
 
-  if (exitProcess) {
-    console.error(message);
-    process.exit(1);
-  }
-
   throw new Error(message);
 }
 
-function resolveConfigEnv(raw, env = process.env) {
+function resolveConfigEnv(raw, env = {}) {
   const unresolved = [];
   function resolveDeep(obj, keyPath = "") {
     if (typeof obj === "string") {
@@ -178,29 +167,8 @@ function resolveConfigEnv(raw, env = process.env) {
  * Returns parsed config or null if config.json not found.
  */
 function loadConfig() {
-  const resolvedConfigPath = configPath();
-  if (!fs.existsSync(resolvedConfigPath)) return null;
-
-  let raw;
-  try {
-    raw = JSON.parse(fs.readFileSync(resolvedConfigPath, "utf-8"));
-  } catch (err) {
-    console.error(`❌  Failed to parse config.json: ${err.message}`);
-    process.exit(1);
-  }
-
-  // Deep-resolve ${ENV_VAR} tokens in all string values
-  const { resolved, unresolved } = resolveConfigEnv(raw);
-
-  if (unresolved.length > 0) {
-    console.error(`❌  config.json has unresolved environment variables:`);
-    for (const { path: p, envVar } of unresolved) {
-      console.error(`   ${p}: \${${envVar}} is not set`);
-    }
-    process.exit(1);
-  }
-
-  return resolved;
+  const raw = getRawConfig();
+  return Object.keys(raw).length > 0 ? stripLegacyClass2(raw) : null;
 }
 
 /**
@@ -214,15 +182,11 @@ function loadConfig() {
  */
 function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, configJson = null) {
   const isJapanese = LANG === "ja";
-  const envVoiceId = process.env.FISH_AUDIO_VOICE_ID || null;
+  const envVoiceId = getEffectiveValue("fish_audio_voice_id") || null;
   const messages = resolveMessages(configJson);
-  const llmJson = configJson?.llm || {};
-  const openaiJson = llmJson.openaiCompatible || {};
   let provider = String(
     overrides.provider
-      || agent?.provider
-      || process.env.LLM_PROVIDER
-      || llmJson.provider
+      || getEffectiveValue("llm_provider")
       || "openclaw"
   ).trim().toLowerCase();
   if (provider !== "openclaw" && provider !== "openai-compatible") {
@@ -231,21 +195,19 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
   }
   if (provider !== "openclaw" && Object.prototype.hasOwnProperty.call(configJson?.prompts || {}, "voiceSystemAddendumTemplate") && !String(configJson.prompts.voiceSystemAddendumTemplate).includes("{openclawRules}")) console.warn("⚠️  Non-OpenClaw voiceSystemAddendumTemplate should include {openclawRules} so OpenClaw-only rules can be omitted.");
   // Build voice addendum: use per-agent emotionTags flag
-  const agentEmotionTags = agent?.emotionTags !== false;
+  const agentEmotionTags = getEffectiveValue("agent_emotion_tags") !== false;
   const defaultVoiceAddendum = messages.prompts.voiceSystemAddendum
     || buildVoiceAddendumFromMessages(messages, { emotionTags: agentEmotionTags, openclaw: true })
     || buildVoiceAddendum({ emotionTags: agentEmotionTags });
   const llmAddendum = Object.prototype.hasOwnProperty.call(overrides, "openclawSystemAddendum")
     ? overrides.openclawSystemAddendum
     : (agent?.openclawSystemAddendum ?? defaultVoiceAddendum);
-  const ttsReferenceId = agent && Object.prototype.hasOwnProperty.call(agent, "voiceId")
-    ? (agent.voiceId || envVoiceId)
-    : envVoiceId;
+  const ttsReferenceId = envVoiceId;
 
   // OpenClaw manages its persona via the Gateway. Standalone providers need a
   // usable persona even when no prompt was configured explicitly.
   const configuredSystemPrompt = overrides.prompt
-    || llmJson.systemPrompt
+    || getEffectiveValue("llm_system_prompt")
     || messages.prompts.standaloneSystemPrompt;
   const systemAddendum = messages.prompts.voiceSystemAddendum
     || buildVoiceAddendumFromMessages(messages, {
@@ -257,60 +219,40 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
     : `${configuredSystemPrompt}\n\n${systemAddendum}`;
 
   // Normalize Gateway config here so downstream consumers only read config.llm.
-  const resolvedOpenclawUrl = agent?.gatewayUrl
-    || process.env.OPENCLAW_GATEWAY_URL
-    || configJson?.gateway?.url
-    || null;
-  const resolvedOpenclawToken = agent?.gatewayToken
-    || process.env.OPENCLAW_GATEWAY_TOKEN
-    || configJson?.gateway?.token
-    || null;
+  const resolvedOpenclawUrl = getStartup().connection.openclawUrl || null;
+  const resolvedOpenclawToken = getStartup().connection.openclawToken || null;
   if (provider === "openclaw" && (!resolvedOpenclawUrl || !resolvedOpenclawToken)) {
-    console.error("❌  OpenClaw Gateway is required. Set OPENCLAW_GATEWAY_URL and OPENCLAW_GATEWAY_TOKEN in config.json or .env.");
+    console.error("❌  The selected LLM connection is not configured in the environment.");
   }
 
-  const envTemperature = process.env.AGENT_TEMPERATURE;
-  const envMaxTokens = process.env.AGENT_MAX_TOKENS;
   const llmTemperature = overrides.temperature
-    ?? agent?.temperature
-    ?? (envTemperature !== undefined && envTemperature !== "" ? Number(envTemperature) : undefined)
-    ?? llmJson.temperature
+    ?? getEffectiveValue("llm_temperature")
     ?? 0.5;
   const llmMaxTokens = overrides.maxTokens
-    ?? agent?.maxTokens
-    ?? (envMaxTokens !== undefined && envMaxTokens !== "" ? Number(envMaxTokens) : undefined)
-    ?? llmJson.maxTokens
+    ?? getEffectiveValue("llm_max_tokens")
     ?? 300;
-  const llmModel = overrides.model || agent?.model || llmJson.model
+  const llmModel = overrides.model || getEffectiveValue("llm_model")
     || (provider === "openclaw" ? "openclaw" : null);
   if (!llmModel) {
     throw new Error("❌  OpenAI-compatible model is required. Set llm.model in config.json or configure an agent model.");
   }
   const historyMaxTurns = overrides.historyMaxTurns
-    ?? agent?.historyMaxTurns
-    ?? llmJson.historyMaxTurns
+    ?? getEffectiveValue("llm_history_max_turns")
     ?? 12;
   const openaiCompatible = {
     baseUrl: overrides.openaiCompatible?.baseUrl
-      || agent?.openaiCompatible?.baseUrl
-      || process.env.OPENAI_COMPATIBLE_BASE_URL
-      || openaiJson.baseUrl
+      || getEffectiveValue("openai_base_url")
       || null,
-    apiKey: overrides.openaiCompatible?.apiKey
-      || agent?.openaiCompatible?.apiKey
-      || process.env.OPENAI_COMPATIBLE_API_KEY
-      || openaiJson.apiKey
+    apiKey: getStartup().connection.openaiApiKey
       || null,
     emptyResponseRetry: boolOption(
       overrides.openaiCompatible?.emptyResponseRetry
-      ?? agent?.openaiCompatible?.emptyResponseRetry
-      ?? openaiJson.emptyResponseRetry,
+      ?? getEffectiveValue("openai_empty_response_retry"),
       true
     ),
     trustedAgentTools: boolOption(
       overrides.openaiCompatible?.trustedAgentTools
-      ?? agent?.openaiCompatible?.trustedAgentTools
-      ?? openaiJson.trustedAgentTools,
+      ?? getEffectiveValue("openai_trusted_agent_tools"),
       false
     ),
   };
@@ -323,13 +265,13 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
     "";
 
   return {
-    dgKey: process.env.DEEPGRAM_API_KEY,
-    sonioxKey: process.env.SONIOX_API_KEY,
-    fishKey: process.env.FISH_AUDIO_API_KEY,
+    dgKey: getEffectiveValue("deepgram_api_key"),
+    sonioxKey: getEffectiveValue("soniox_api_key"),
+    fishKey: getEffectiveValue("fish_audio_api_key"),
     // Backward-compatible aliases. New consumers read the normalized llm fields.
     openclawUrl: resolvedOpenclawUrl,
     openclawToken: resolvedOpenclawToken,
-    warmupTimeoutMs: configJson?.gateway?.warmupTimeoutMs || null,
+    warmupTimeoutMs: getEffectiveValue("gateway_warmup_timeout_ms"),
     gatewayBriefingPrompt: messages.prompts.gatewayBriefingSystem,
     gatewayWarmupUserPrompt: messages.prompts.gatewayWarmupUser,
     systemPrompt,
@@ -373,26 +315,25 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
       provider: "fish-audio",
       referenceId: ttsReferenceId,
       sampleRate: TTS_SAMPLE_RATE,
-      latency: process.env.FISH_AUDIO_LATENCY || "balanced",
+      latency: getEffectiveValue("fish_audio_latency"),
       // Speech rate, 0.5-2.0 (1.0 = native speed). Default 1.0, chosen
       // 2026-05-04 after switching the default model to s2-pro: 0.9 felt
       // unnaturally slow on s2-pro's already-calmer delivery. env is kept
       // as an escape hatch only — change the default here for permanent
       // moves so there is one source of truth.
-      speed: process.env.FISH_AUDIO_SPEED !== undefined
-        ? Number(process.env.FISH_AUDIO_SPEED)
-        : 1.0,
+      speed: getEffectiveValue("fish_audio_speed"),
     },
     briefing: overrides.briefing || null,
     purposeStatement: overrides.purposeStatement || null,
     greeting,
     slack: {
-      botToken: configJson?.slack?.botToken || SLACK_BOT_TOKEN,
-      channelId: configJson?.slack?.notifyChannel || SLACK_NOTIFY_CHANNEL,
-      statusChannelId:
-        configJson?.slack?.statusChannel || SLACK_STATUS_CHANNEL || SLACK_SUMMARY_CHANNEL || SLACK_NOTIFY_CHANNEL,
-      summaryChannelId: configJson?.slack?.summaryChannel || SLACK_SUMMARY_CHANNEL || SLACK_NOTIFY_CHANNEL,
+      botToken: SLACK_BOT_TOKEN,
+      channelId: SLACK_NOTIFY_CHANNEL,
+      statusChannelId: SLACK_STATUS_CHANNEL || SLACK_SUMMARY_CHANNEL || SLACK_NOTIFY_CHANNEL,
+      summaryChannelId: SLACK_SUMMARY_CHANNEL || SLACK_NOTIFY_CHANNEL,
       enabled: SLACK_NOTIFY_ENABLED,
+      notifyTarget: getEffectiveValue("slack_notifications_target"),
+      dmUserId: getEffectiveValue("slack_dm_user_id") || "",
       labels: messages.slack,
     },
     summary: {
@@ -423,11 +364,11 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
     exit: messages.exit,
     // Per-agent voice extensions
     emotionTags: agentEmotionTags,
-    ackVariants: overrides.ackVariants || agentProfile?.ackVariants || agent?.ackVariants || messages.speech.ackVariants,
-    progressPings: agentProfile?.progressPings || agent?.progressPings || messages.speech.progressPings,
-    timeoutFallback: agentProfile?.timeoutFallback || agent?.timeoutFallback || messages.speech.timeoutFallback,
-    exitFarewell: agentProfile?.exitFarewell || agent?.exitFarewell || messages.speech.exitFarewell,
-    cancelAck: agentProfile?.cancelAck || agent?.cancelAck || null,
+    ackVariants: overrides.ackVariants || agentProfile?.ackVariants || getEffectiveValue("agent_ack_variants") || messages.speech.ackVariants,
+    progressPings: agentProfile?.progressPings || getEffectiveValue("agent_progress_pings") || messages.speech.progressPings,
+    timeoutFallback: agentProfile?.timeoutFallback || getEffectiveValue("agent_timeout_fallback") || messages.speech.timeoutFallback,
+    exitFarewell: agentProfile?.exitFarewell || getEffectiveValue("agent_exit_farewell") || messages.speech.exitFarewell,
+    cancelAck: agentProfile?.cancelAck || getEffectiveValue("agent_cancel_ack") || null,
   };
 }
 

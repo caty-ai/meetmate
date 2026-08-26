@@ -8,6 +8,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { ttsCacheDir } = require("./paths");
+const { getEffectiveValue } = require("./settings/resolver");
 
 const DEFAULT_SAMPLE_RATE = 24_000;
 const CHUNK_MS = 100;
@@ -27,7 +28,7 @@ function cacheKey(text, options = {}) {
   const payload = {
     text: String(text || ""),
     referenceId: options.referenceId || null,
-    model: process.env.FISH_AUDIO_MODEL || "s2-pro",
+    model: options.model || getEffectiveValue("fish_audio_model"),
     sampleRate: options.sampleRate || DEFAULT_SAMPLE_RATE,
     speed: normalizeSpeed(options.speed),
   };
@@ -35,7 +36,7 @@ function cacheKey(text, options = {}) {
 }
 
 function isCacheEnabled() {
-  return process.env.TTS_CACHE_ENABLED !== "false";
+  return getEffectiveValue("tts_cache_enabled");
 }
 
 function isValidPcmFile(file) {

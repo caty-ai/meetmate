@@ -122,6 +122,8 @@ test("sentence-boundary silence uses the TTS sample rate", async () => {
 });
 
 function freshConfig() {
+  require("../src/settings/bootstrap").resetStartupForTest();
+  require("../src/settings/resolver").resetRuntimeForTest();
   const configPath = path.join(__dirname, "..", "src", "config.js");
   delete require.cache[require.resolve(configPath)];
   return require(configPath);

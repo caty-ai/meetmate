@@ -8,6 +8,7 @@
 //   - Both are in addition to the HTTP-level 30s connect timeout
 
 const https = require("https");
+const { getEffectiveValue } = require("./settings/resolver");
 
 // Max audio duration per sentence: 15 seconds at any sample rate
 // (a single sentence should never produce more than this)
@@ -179,7 +180,7 @@ async function _synthesizeOnce(text, options = {}) {
           // after live A/B vs s1), "s1" (older, fallback for emergency rollback).
           // env is kept as an escape hatch only — change the default below for
           // permanent moves so there is one source of truth.
-          model: process.env.FISH_AUDIO_MODEL || "s2-pro",
+          model: getEffectiveValue("fish_audio_model"),
         },
       },
       (res) => {

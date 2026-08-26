@@ -280,6 +280,7 @@
         let audioContext = null;
         let countdownInterval = null;
         let secondsLeft = 30;
+        let settingsRevision = null;
         // { normalizedText: { original: string, count: number } }
         let detectedVariants = {};
 
@@ -309,8 +310,9 @@
         // Load agent info
         async function init() {
             try {
-                const res = await fetch('/agents');
-                const data = await res.json();
+                const [agentRes, statusRes] = await Promise.all([fetch('/agents'), fetch('/calibrate/status')]);
+                const [data, status] = await Promise.all([agentRes.json(), statusRes.json()]);
+                settingsRevision = status.revision;
                 const agents = Array.isArray(data.agents) ? data.agents : [];
                 if (agents.length > 0) {
                     const agent = agents[0];
@@ -502,11 +504,12 @@
                 const res = await fetch('/calibrate/apply', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ variants }),
+                    body: JSON.stringify({ variants, revision: settingsRevision }),
                 });
                 const data = await res.json();
 
                 if (data.ok) {
+                    settingsRevision = data.revision;
                     saveResultEl.className = 'status-msg success';
                     saveResultEl.textContent = `${data.added}件の新しいバリアントを追加しました（合計: ${data.total}件）`;
                     showScreen(screenSaved);

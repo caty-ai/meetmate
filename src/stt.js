@@ -3,6 +3,7 @@
 
 const { createClient, LiveTranscriptionEvents } = require("@deepgram/sdk");
 const { EventEmitter } = require("events");
+const { getEffectiveValue } = require("./settings/resolver");
 
 const STT_ACCUMULATED_MAX_CHARS = Number(process.env.STT_ACCUMULATED_MAX_CHARS || 120);
 
@@ -15,10 +16,7 @@ function buildKeyterms(extraKeyterms = []) {
   const enabled = String(process.env.STT_ENABLE_KEYWORDS || "true").toLowerCase() !== "false";
   if (!enabled) return [];
 
-  const baseTerms = (process.env.WAKE_WORDS || "")
-    .split(",")
-    .map((w) => w.trim())
-    .filter(Boolean);
+  const baseTerms = getEffectiveValue("agent_wake_words") || [];
 
   const extraTerms = [];
 
@@ -75,8 +73,8 @@ function createSTT(dgKey, options = {}) {
       channels: 1,
       smart_format: true,
       interim_results: true,
-      utterance_end_ms: Number(options.utteranceEndMs || process.env.LISTEN_UTTERANCE_END_MS || 1800),
-      endpointing: Number(options.endpointingMs || process.env.LISTEN_ENDPOINTING_MS || 700),
+      utterance_end_ms: Number(options.utteranceEndMs || getEffectiveValue("listen_utterance_end_ms")),
+      endpointing: Number(options.endpointingMs || getEffectiveValue("listen_endpointing_ms")),
       vad_events: true,
     };
 

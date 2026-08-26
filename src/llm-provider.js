@@ -9,6 +9,7 @@
 
 const { streamChat, complete, timeoutHandoff } = require("./llm-openclaw");
 const openai = require("./llm-openai");
+const { getEffectiveValue } = require("./settings/resolver");
 
 function openclawProvider() {
   return {
@@ -32,7 +33,7 @@ function openaiCompatibleProvider() {
 
 function createLlmProvider(options = {}) {
   const provider = String(
-    options.provider || process.env.LLM_PROVIDER || "openclaw",
+    options.provider || getEffectiveValue("llm_provider") || "openclaw",
   ).toLowerCase();
 
   if (provider === "openclaw") {

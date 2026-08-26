@@ -1,10 +1,24 @@
-const path = require("path");
-const { envPath } = require("./paths");
-require("dotenv").config({ path: envPath() });
+const startup = require("./settings/bootstrap").captureStartup();
 
+const path = require("path");
 const http = require("http");
 const { URL } = require("url");
 const { WebSocketServer } = require("ws");
+const { readConfigState } = require("./settings/store");
+const { getEffectiveValue, initializeRuntime, getStatus, setServerPort } = require("./settings/resolver");
+const { warnLegacyClass2 } = require("./settings/class2-migration");
+const { createSettingsHandler } = require("./settings/routes");
+
+let initialSettingsState;
+try {
+  initialSettingsState = readConfigState(startup.configPath);
+} catch (error) {
+  if (error.code !== "SETTINGS_SYMLINK_REJECTED") throw error;
+  initialSettingsState = { exists: true, valid: false, parsed: null, revision: "bootstrap", fingerprint: "symlink-rejected" };
+  console.warn("Settings config path was rejected; continuing in setup mode.");
+}
+initializeRuntime({ state: initialSettingsState, startup });
+if (initialSettingsState.valid) warnLegacyClass2(initialSettingsState.parsed);
 
 const meetRoutes = require("./transport-meet/meet-routes");
 const { handleCalibrate, handleCalibrateWs } = require("./wake-calibrate/calibrate-routes");
@@ -12,8 +26,7 @@ const { loadConfig } = require("./config");
 const { resolveAgentProfile } = require("./agent-profile");
 
 const config = loadConfig();
-const envPort = process.env.PORT === "" ? undefined : process.env.PORT;
-const PORT = Number(config?.server?.port ?? envPort ?? 5005);
+const PORT = getEffectiveValue("server_port") || 5005;
 const pkg = (() => {
   try {
     return require("../package.json");
@@ -32,16 +45,11 @@ function writeJson(res, status, body) {
 }
 
 async function bootstrap() {
-  // AGENT_ID vs config.agent.id mismatch check
-  if (process.env.AGENT_ID && config?.agent?.id &&
-      process.env.AGENT_ID !== config.agent.id) {
-    console.error(`❌  AGENT_ID mismatch: env="${process.env.AGENT_ID}" vs config="${config.agent.id}"`);
-    process.exit(1);
-  }
-
   await meetRoutes.init({ detectNgrok: true, loadAvatar: true });
 
-  const server = http.createServer((req, res) => {
+  let server;
+  const handleSettings = createSettingsHandler({ port: () => server?.address()?.port || PORT });
+  server = http.createServer(async (req, res) => {
     let pathname = "/";
     try {
       pathname = new URL(req.url || "/", "http://localhost").pathname;
@@ -49,15 +57,21 @@ async function bootstrap() {
       // keep default path
     }
 
+    if (await handleSettings(req, res)) return;
+
     if (pathname === "/health") {
       let agentId = "unknown";
       try { agentId = resolveAgentProfile()?.agentId || agentId; } catch { /* ignore */ }
+      const settingsStatus = getStatus();
       writeJson(res, 200, {
         ok: true,
         service: config?.agent?.id || "ai-meet-participant",
         agentId,
         version: pkg.version,
         uptime: process.uptime(),
+        setupMode: settingsStatus.setupMode,
+        meetingReady: settingsStatus.meetingReady,
+        settingsIssues: settingsStatus.issues,
       });
       return;
     }
@@ -107,7 +121,8 @@ async function bootstrap() {
 
   server.listen(PORT, () => {
     const address = server.address();
-    console.log(`Settings UI: http://localhost:${address.port}/`);
+    setServerPort(address.port);
+    console.log(`Settings UI: http://localhost:${address.port}/settings`);
   });
 }
 

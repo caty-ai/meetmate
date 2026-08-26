@@ -13,7 +13,6 @@ const {
   TTS_SAMPLE_RATE,
   TTS_PROVIDER,
   loadConfig,
-  validateSttProviderApiKey,
   resolveMessages,
 } = require("../config");
 const { createPipeline } = require("../pipeline");
@@ -29,12 +28,18 @@ const { buildDelegationResultsSection } = require("../delegation-results");
 const { createGatewaySessionTracker } = require("../gateway-session-tracker");
 const { servePublicAsset, serveLocalAvatar, sendMetricsSummary } = require("../ui-routes");
 const { logsDir, avatarCachePath, bundledAssetPath, bundledPublicDir } = require("../paths");
+const {
+  getDiagnosticValue,
+  getEffectiveSource,
+  getEffectiveValue,
+  getRawConfig,
+  getStatus,
+  meaningful,
+  registerCacheInvalidator,
+  resolveDynamicSlackToken,
+} = require("../settings/resolver");
 
-const ATTENDEE_API_BASE_URL = process.env.ATTENDEE_API_BASE_URL || "app.attendee.dev";
-const ATTENDEE_TIMEOUT_MS = Number(process.env.ATTENDEE_TIMEOUT_MS || 15_000);
-const ATTENDEE_RETRY_ATTEMPTS = Number(process.env.ATTENDEE_RETRY_ATTEMPTS || 3);
-const ATTENDEE_RETRY_BASE_MS = Number(process.env.ATTENDEE_RETRY_BASE_MS || 800);
-const BODY_LIMIT_BYTES = Number(process.env.BODY_LIMIT_BYTES || 1_000_000);
+const ATTENDEE_API_BASE_URL = getEffectiveValue("attendee_base_url");
 const SESSION_GRACE_CLOSE_MS = Number(process.env.SESSION_GRACE_CLOSE_MS || 15_000);
 const ECHO_LOOP_COOLDOWN_MS = Number(process.env.ECHO_LOOP_COOLDOWN_MS || 300);
 const ECHO_GATE_CLOSED_BYPASS = String(process.env.ECHO_GATE_CLOSED_BYPASS || "false").toLowerCase() === "true";
@@ -45,13 +50,22 @@ const LOCAL_AVATAR_EXPERIMENT = "hybrid-local-l0";
 const MEETING_URL_RE = /^https:\/\/(meet\.google\.com\/[a-z0-9-]+|[\w.-]*zoom\.us\/(j|my)\/[a-zA-Z0-9?=&._%-]+)(?:\?.*)?$/i;
 const CONVERSATION_MODES = new Set(["one_to_one", "group"]);
 
-const _configJson = loadConfig();
+function runtimeDiagnostics() {
+  return {
+    attendeeTimeoutMs: getDiagnosticValue("attendee_timeout_ms"),
+    attendeeRetryAttempts: getDiagnosticValue("attendee_retry_attempts"),
+    attendeeRetryBaseMs: getDiagnosticValue("attendee_retry_base_ms"),
+    bodyLimitBytes: getDiagnosticValue("body_limit_bytes"),
+  };
+}
+
+let _configJson = loadConfig();
 const _resolvedMessages = resolveMessages(_configJson);
 function buildConfiguredDelegationResultsSection(results) {
   return buildDelegationResultsSection(results, _resolvedMessages.delegation);
 }
-const DG_KEY = process.env.DEEPGRAM_API_KEY;
-const ATTENDEE_API_KEY = _configJson?.attendee?.apiKey || process.env.ATTENDEE_API_KEY;
+const DG_KEY = getEffectiveValue("deepgram_api_key");
+const ATTENDEE_API_KEY = getEffectiveValue("attendee_api_key");
 
 // Single-agent mode: resolve profile once at startup from config.json
 let _agentProfile = null;
@@ -60,14 +74,27 @@ try {
 } catch { /* will fail later with clear error */ }
 const FIXED_AGENT_ID = _agentProfile?.agentId || null;
 
-const FALLBACK_BOT_IMAGE_URL = process.env.BOT_IMAGE_URL || null;
+const FALLBACK_BOT_IMAGE_URL = getEffectiveValue("agent_avatar_url") || null;
+
+function currentAgentProfile() {
+  if (_agentProfile) return _agentProfile;
+  try { _agentProfile = resolveAgentProfile(); } catch { _agentProfile = null; }
+  return _agentProfile;
+}
+
+registerCacheInvalidator(() => {
+  _configJson = getRawConfig();
+  _agentProfile = null;
+  meetSlackNotifier = null;
+});
 
 function getBotImageConfig() {
-  if (_agentProfile) {
-    const localPath = _agentProfile.avatarPath || bundledAssetPath("avatar.png");
+  const profile = currentAgentProfile();
+  if (profile) {
+    const localPath = profile.avatarPath || bundledAssetPath("avatar.png");
     return {
       path: localPath,
-      url: _agentProfile.avatarUrl || FALLBACK_BOT_IMAGE_URL,
+      url: profile.avatarUrl || FALLBACK_BOT_IMAGE_URL,
     };
   }
   return {
@@ -92,34 +119,24 @@ let meetSlackNotifier = null;
 
 function getMeetSlackNotifier() {
   if (!meetSlackNotifier) {
-    const notifyEnabled = String(process.env.SLACK_NOTIFY_ENABLED || "true").toLowerCase() !== "false";
+    const notifyEnabled = getEffectiveValue("slack_notifications_enabled");
 
-    // Read notification config from config.json (new DM-first architecture)
-    const slackConfig = _configJson?.slack || {};
-    const notifications = slackConfig.notifications || {};
-
-    // Notification target: "dm" (default) or "channel"
-    const notifyTarget = notifications.target || "dm";
-    const dmUserId = notifications.dmUserId || "";
+    const notifyTarget = getEffectiveValue("slack_notifications_target") || "dm";
+    const dmUserId = getEffectiveValue("slack_dm_user_id") || "";
 
     // Channel mode fallback (legacy env vars + config.json)
-    const fallback = slackConfig.notifyChannel || process.env.SLACK_NOTIFY_CHANNEL || "";
-    const summaryChannel = slackConfig.summaryChannel || process.env.SLACK_SUMMARY_CHANNEL || fallback;
-    const statusChannel = slackConfig.statusChannel || process.env.SLACK_STATUS_CHANNEL || summaryChannel || fallback;
+    const fallback = getEffectiveValue("slack_notify_channel") || "";
+    const summaryChannel = getEffectiveValue("slack_summary_channel") || fallback;
+    const statusChannel = getEffectiveValue("slack_status_channel") || summaryChannel || fallback;
 
-    // Per-agent Slack bot token: ${AGENT_ID}_SLACK_BOT_TOKEN → config.json → SLACK_BOT_TOKEN
-    const agentIdForToken = FIXED_AGENT_ID || "unknown";
-    const agentSlackToken =
-      process.env[`${agentIdForToken.toUpperCase()}_SLACK_BOT_TOKEN`]
-      || slackConfig.botToken
-      || process.env.SLACK_BOT_TOKEN
-      || "";
+    const agentSlackToken = resolveDynamicSlackToken();
+    const explicitlyEnabled = notifyEnabled && !["default", "unset"].includes(getEffectiveSource("slack_notifications_enabled"));
 
     meetSlackNotifier = new SlackNotifier(
       agentSlackToken,
       fallback,
       {
-        enabled: notifyEnabled,
+        enabled: explicitlyEnabled && meaningful(agentSlackToken),
         notifyTarget,
         dmUserId,
         statusChannelId: statusChannel,
@@ -139,7 +156,7 @@ function getMeetSlackNotifier() {
   return meetSlackNotifier;
 }
 
-function getGatewayConfigForProfile(profile = _agentProfile) {
+function getGatewayConfigForProfile(profile = currentAgentProfile()) {
   const pipelineConfig = getPipelineConfig({}, null, profile, _configJson);
   return {
     ...pipelineConfig.gatewayEvents,
@@ -181,11 +198,11 @@ async function handleMeetSessionEnd(lifecycle) {
   notifier.stopElapsedUpdates(lifecycle.sessionId);
   await notifier.postStatus(lifecycle);
 
-  const summaryEnabled = String(process.env.SUMMARY_ENABLED || "true").toLowerCase() !== "false";
+  const summaryEnabled = getEffectiveValue("summary_enabled");
   if (summaryEnabled && lifecycle._conversationLog && lifecycle._conversationLog.length > 0) {
     try {
       const summary = await summarizeConversation(lifecycle._conversationLog, {
-        llm: getPipelineConfig({}, null, _agentProfile, _configJson).llm,
+        llm: getPipelineConfig({}, null, currentAgentProfile(), _configJson).llm,
         summaryPrompt: _resolvedMessages.prompts.summary,
       });
       await notifier.postSummary(lifecycle, summary);
@@ -224,7 +241,7 @@ async function sendLcmIngest(lifecycle) {
   const agentId = (Array.isArray(agentIds) && agentIds.length > 0 ? agentIds[0] : (FIXED_AGENT_ID || "unknown")).toLowerCase();
   const lcmKey = `${agentId}:${sid}`;
 
-  const llmConfig = getPipelineConfig({}, null, _agentProfile, _configJson).llm;
+  const llmConfig = getPipelineConfig({}, null, currentAgentProfile(), _configJson).llm;
   const providerName = llmConfig.provider;
   if (providerName !== "openclaw") {
     console.log(`⏭️  LCM ingest skipped — LLM provider=${providerName} is not openclaw`);
@@ -387,14 +404,15 @@ function checkJoinAuthorization(req, formData) {
 }
 
 function parseRequestBody(req) {
+  const { bodyLimitBytes } = runtimeDiagnostics();
   return new Promise((resolve, reject) => {
     let body = "";
     let received = 0;
 
     req.on("data", (chunk) => {
       received += chunk.length;
-      if (received > BODY_LIMIT_BYTES) {
-        reject(new Error(`Request body too large (>${BODY_LIMIT_BYTES} bytes)`));
+      if (received > bodyLimitBytes) {
+        reject(new Error(`Request body too large (>${bodyLimitBytes} bytes)`));
         req.destroy();
         return;
       }
@@ -408,6 +426,7 @@ function parseRequestBody(req) {
 
 function createAttendeeBot(attendeePayload, agentAttendeeKey) {
   const apiKey = agentAttendeeKey || ATTENDEE_API_KEY;
+  const { attendeeTimeoutMs } = runtimeDiagnostics();
   return new Promise((resolve, reject) => {
     const options = {
       hostname: ATTENDEE_API_BASE_URL,
@@ -431,8 +450,8 @@ function createAttendeeBot(attendeePayload, agentAttendeeKey) {
       });
     });
 
-    attendeeReq.setTimeout(ATTENDEE_TIMEOUT_MS, () => {
-      attendeeReq.destroy(new Error(`Attendee request timeout (${ATTENDEE_TIMEOUT_MS}ms)`));
+    attendeeReq.setTimeout(attendeeTimeoutMs, () => {
+      attendeeReq.destroy(new Error(`Attendee request timeout (${attendeeTimeoutMs}ms)`));
     });
 
     attendeeReq.on("error", reject);
@@ -442,10 +461,11 @@ function createAttendeeBot(attendeePayload, agentAttendeeKey) {
 }
 
 async function createAttendeeBotWithRetry(attendeePayload, agentAttendeeKey) {
+  const { attendeeRetryAttempts, attendeeRetryBaseMs } = runtimeDiagnostics();
   let lastResult = null;
   let lastError = null;
 
-  for (let attempt = 1; attempt <= ATTENDEE_RETRY_ATTEMPTS; attempt++) {
+  for (let attempt = 1; attempt <= attendeeRetryAttempts; attempt++) {
     try {
       const result = await createAttendeeBot(attendeePayload, agentAttendeeKey);
       lastResult = result;
@@ -454,18 +474,18 @@ async function createAttendeeBotWithRetry(attendeePayload, agentAttendeeKey) {
         return result;
       }
 
-      if (!shouldRetryStatus(result.statusCode) || attempt === ATTENDEE_RETRY_ATTEMPTS) {
+      if (!shouldRetryStatus(result.statusCode) || attempt === attendeeRetryAttempts) {
         return result;
       }
 
-      const delay = ATTENDEE_RETRY_BASE_MS * Math.pow(2, attempt - 1);
-      console.warn(`⚠️  Attendee API retry ${attempt}/${ATTENDEE_RETRY_ATTEMPTS} in ${delay}ms (status=${result.statusCode})`);
+      const delay = attendeeRetryBaseMs * Math.pow(2, attempt - 1);
+      console.warn(`⚠️  Attendee API retry ${attempt}/${attendeeRetryAttempts} in ${delay}ms (status=${result.statusCode})`);
       await sleep(delay);
     } catch (err) {
       lastError = err;
-      if (attempt === ATTENDEE_RETRY_ATTEMPTS) break;
-      const delay = ATTENDEE_RETRY_BASE_MS * Math.pow(2, attempt - 1);
-      console.warn(`⚠️  Attendee API network retry ${attempt}/${ATTENDEE_RETRY_ATTEMPTS} in ${delay}ms: ${err.message}`);
+      if (attempt === attendeeRetryAttempts) break;
+      const delay = attendeeRetryBaseMs * Math.pow(2, attempt - 1);
+      console.warn(`⚠️  Attendee API network retry ${attempt}/${attendeeRetryAttempts} in ${delay}ms: ${err.message}`);
       await sleep(delay);
     }
   }
@@ -545,7 +565,7 @@ function appendLateDelegationToPersistedLogs(session, item) {
 
 function appendToMemory(session) {
   try {
-    const provider = getPipelineConfig({}, null, _agentProfile, _configJson).llm.provider;
+    const provider = getPipelineConfig({}, null, currentAgentProfile(), _configJson).llm.provider;
     const workspaceOverride = String(process.env.OPENCLAW_WORKSPACE || "").trim();
     if (provider !== "openclaw" && !workspaceOverride) {
       console.debug("🐛  Memory write skipped (LLM provider is not openclaw)");
@@ -678,7 +698,7 @@ function closeLocalAvatarSession(session, reason) {
 }
 
 function resolveLocalAvatarPublicOrigin() {
-  const configuredDomain = String(_configJson?.server?.ngrokDomain || "").trim();
+  const configuredDomain = String(getEffectiveValue("server_ngrok_domain") || "").trim();
   if (configuredDomain && /^[A-Za-z0-9.-]+(?::\d+)?$/.test(configuredDomain)) {
     return `https://${configuredDomain}`;
   }
@@ -768,7 +788,7 @@ function createLegacyAgent(session, turnState, onAudio) {
 function createHandler(session, turnState, onAudio) {
   if (TTS_PROVIDER === "fish-audio") {
     console.log(`🐟  Fish Audio パイプラインモード (sid=${session.id})`);
-    const profile = _agentProfile;
+    const profile = currentAgentProfile();
 
     const config = getPipelineConfig({
       prompt: session.config.prompt,
@@ -779,8 +799,6 @@ function createHandler(session, turnState, onAudio) {
     const singleAgentMap = {
       [profile.agentId]: {
         ...profile,
-        gatewayUrl: profile.gatewayUrl,
-        gatewayToken: profile.gatewayToken,
         voiceId: profile.voiceId,
         model: profile.model,
       },
@@ -821,29 +839,6 @@ function createHandler(session, turnState, onAudio) {
 function writePlainResponse(res, status, text) {
   res.writeHead(status, { "Content-Type": "text/plain; charset=utf-8" });
   res.end(text);
-}
-
-function validateRequiredEnv() {
-  validateSttProviderApiKey({ exitProcess: true });
-
-  if (!ATTENDEE_API_KEY) {
-    console.error("❌  ATTENDEE_API_KEY が設定されていません。config.json または .env ファイルを確認してください。");
-    process.exit(1);
-  }
-
-  if (TTS_PROVIDER === "fish-audio") {
-    if (!process.env.FISH_AUDIO_API_KEY) {
-      console.error("❌  FISH_AUDIO_API_KEY が設定されていません。");
-      process.exit(1);
-    }
-  }
-
-  if (!JOIN_SHARED_TOKEN) {
-    console.warn("⚠️  JOIN_SHARED_TOKEN 未設定: /join-meeting はローカルネットワーク公開時に保護されません。");
-  }
-  if (!WS_SHARED_TOKEN) {
-    console.warn("⚠️  WS_SHARED_TOKEN 未設定: WebSocket は sid のみで接続可能です。");
-  }
 }
 
 function startBotImageLoad() {
@@ -893,7 +888,7 @@ function startNgrokDetection() {
   if (ngrokDetectionStarted) return;
   ngrokDetectionStarted = true;
 
-  const ngrokDomain = _configJson?.server?.ngrokDomain;
+  const ngrokDomain = getEffectiveValue("server_ngrok_domain");
   if (ngrokDomain) {
     detectedNgrokUrl = `wss://${ngrokDomain}`;
     console.log(`🌐  ngrok WSS URL (config.json): ${detectedNgrokUrl}`);
@@ -924,15 +919,9 @@ function startNgrokDetection() {
 async function init(options = {}) {
   if (initialized) return;
 
-  // Validate agent profile at startup — fail fast if not configured
-  if (_agentProfile) {
-    console.log(`[${_agentProfile.agentId}] Agent profile resolved: ${_agentProfile.displayName}`);
-  } else {
-    console.error(`❌  No agent configured. Create config.json from config.json.example.`);
-    process.exit(1);
-  }
-
-  validateRequiredEnv();
+  const profile = currentAgentProfile();
+  if (profile) console.log(`[${profile.agentId}] Agent profile resolved: ${profile.displayName}`);
+  else console.warn("Meetmate is running in setup mode; meeting start is disabled.");
   if (options.loadAvatar !== false) {
     startBotImageLoad();
   }
@@ -978,7 +967,7 @@ async function handleHttp(req, res) {
     // Resolve primary agent info for single-agent mode branding
     let primaryAgent = null;
     try {
-      const profile = _agentProfile;
+      const profile = currentAgentProfile();
       primaryAgent = {
         id: profile.agentId,
         name: profile.name,
@@ -991,9 +980,9 @@ async function handleHttp(req, res) {
 
     const info = {
       ttsProvider: TTS_PROVIDER,
-      lang: process.env.AGENT_LANG || "ja",
+      lang: getEffectiveValue("agent_language"),
       publicWsUrl,
-      ready: true,
+      ready: getStatus().meetingReady,
       fixedAgentId: FIXED_AGENT_ID || null,
       primaryAgent,
     };
@@ -1005,7 +994,7 @@ async function handleHttp(req, res) {
   if (req.method === "GET" && url.pathname === "/agents") {
     let agentList = [];
     try {
-      const profile = _agentProfile;
+      const profile = currentAgentProfile();
       agentList = [{
         id: profile.agentId,
         name: profile.name,
@@ -1112,6 +1101,12 @@ async function handleHttp(req, res) {
   if (req.method === "POST" && url.pathname === "/join-meeting") {
     let localAvatarSession = null;
     try {
+      const status = getStatus();
+      if (!status.meetingReady) {
+        res.writeHead(503, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+        res.end(JSON.stringify({ error: { code: "MEETING_SETUP_REQUIRED", message: "Meeting setup is incomplete", issues: status.issues } }));
+        return;
+      }
       const formData = await parseRequestBody(req);
       const hasExternalToken = req.headers["x-join-token"];
       if (hasExternalToken && !checkJoinAuthorization(req, formData)) {
@@ -1124,7 +1119,7 @@ async function handleHttp(req, res) {
       const conversationMode = toSafeString(formData.conversationMode) || "one_to_one";
       const briefing = toSafeString(formData.briefing) || null;
       const avatarExperiment = toSafeString(formData.avatarExperiment);
-      const profile = _agentProfile;
+      const profile = currentAgentProfile();
 
       if (avatarExperiment && avatarExperiment !== LOCAL_AVATAR_EXPERIMENT) {
         writePlainResponse(res, 400, "avatarExperiment が不正です。");
@@ -1251,8 +1246,8 @@ async function handleHttp(req, res) {
       let defaultBotName;
       if (selectedAgentNames.length > 0) {
         defaultBotName = `${selectedAgentNames.join(", ")} (AI)`;
-      } else if (_agentProfile) {
-        defaultBotName = `${_agentProfile.name || _agentProfile.agentId} (${_agentProfile.displayName || "AI"})`;
+      } else if (profile) {
+        defaultBotName = `${profile.name || profile.agentId} (${profile.displayName || "AI"})`;
       } else {
         defaultBotName = "AI Agent";
       }
@@ -1368,7 +1363,7 @@ function handleWsConnection(client, req) {
     getMeetSlackNotifier().postStatus(lifecycle).catch(() => {});
     getMeetSlackNotifier().startElapsedUpdates(lifecycle);
     lifecycle.setConversationLog(session.conversationLog);
-    trackGatewaySession(session, _agentProfile);
+    trackGatewaySession(session, currentAgentProfile());
   }
 
   const turnState = {
@@ -1530,5 +1525,5 @@ module.exports = {
   init,
   handleHttp,
   handleWsConnection,
-  _test: { appendToMemory },
+  _test: { appendToMemory, runtimeDiagnostics },
 };

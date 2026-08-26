@@ -11,6 +11,7 @@
 //   5. Send an empty frame to finish; server replies { finished: true } and closes.
 
 const { EventEmitter } = require("events");
+const { getEffectiveValue } = require("./settings/resolver");
 
 const DEFAULT_SONIOX_WS_URL = "wss://stt-rt.soniox.com/transcribe-websocket";
 const STT_ACCUMULATED_MAX_CHARS = Number(process.env.STT_ACCUMULATED_MAX_CHARS || 120);
@@ -45,10 +46,10 @@ function positiveInt(value, fallback) {
  */
 function createSonioxSTT(apiKey, options = {}) {
   const emitter = new EventEmitter();
-  const model = options.model || process.env.SONIOX_MODEL || "stt-rt-v5";
+  const model = options.model || getEffectiveValue("soniox_model");
   const language = options.language || "ja";
   const sampleRate = options.sampleRate || 16_000;
-  const wsUrl = options.wsUrl || process.env.SONIOX_WS_URL || DEFAULT_SONIOX_WS_URL;
+  const wsUrl = options.wsUrl || getEffectiveValue("soniox_ws_url") || DEFAULT_SONIOX_WS_URL;
   // Test-only injection points keep the wrapper hermetic without changing production defaults.
   const WebSocketCtor = options._wsCtor || require("ws");
   const keepAliveIntervalMs = positiveInt(
@@ -66,15 +67,15 @@ function createSonioxSTT(apiKey, options = {}) {
 
   const endpointSensitivity = numOpt(
     options.endpointSensitivity,
-    process.env.SONIOX_ENDPOINT_SENSITIVITY,
+    getEffectiveValue("soniox_endpoint_sensitivity"),
   );
   const maxEndpointDelayMs = numOpt(
     options.maxEndpointDelayMs,
-    process.env.SONIOX_MAX_ENDPOINT_DELAY_MS,
+    getEffectiveValue("soniox_max_endpoint_delay_ms"),
   );
   const endpointLatencyLevel = numOpt(
     options.endpointLatencyLevel,
-    process.env.SONIOX_ENDPOINT_LATENCY_LEVEL,
+    getEffectiveValue("soniox_endpoint_latency_level"),
   );
 
   if (!apiKey) {

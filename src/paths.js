@@ -1,9 +1,10 @@
 const path = require("node:path");
+const { getStartup } = require("./settings/bootstrap");
 
 // Pin the writable home before dotenv can mutate process.env. Every user-data
 // path joins against this launch-time value, while explicit cache/log overrides
 // remain lazy so dotenv can continue to supply them.
-const launchHome = path.resolve(process.env.AI_MEET_HOME || process.cwd());
+const launchHome = getStartup().resolvedHome;
 
 function resolveHome() {
   return launchHome;

@@ -1,10 +1,21 @@
+const { captureStartup, getStartup } = require("../settings/bootstrap");
 const packageJson = require("../../package.json");
 
 const DEFAULT_BASE_URL = "http://localhost:5005";
 const REQUEST_TIMEOUT_MS = 15_000;
 // /join-meeting can legitimately take ~50s server-side (Attendee create retries
 // with backoff), so the join call gets a longer budget than the other tools.
-const JOIN_TIMEOUT_MS = Number(process.env.AI_MEET_JOIN_TIMEOUT_MS) || 60_000;
+function startupValue(name) {
+  const startup = getStartup();
+  const launch = typeof startup.preDotenvEnv[name] === "string" ? startup.preDotenvEnv[name].trim() : "";
+  if (launch) return launch;
+  return typeof startup.dotenvSeeds[name] === "string" ? startup.dotenvSeeds[name].trim() : "";
+}
+
+function joinTimeoutMs() {
+  const configured = Number(startupValue("AI_MEET_JOIN_TIMEOUT_MS"));
+  return Number.isFinite(configured) && configured > 0 ? configured : 60_000;
+}
 
 function normalizeBase(base) {
   return (base || DEFAULT_BASE_URL).replace(/\/+$/, "");
@@ -57,7 +68,7 @@ function resultFor(response, path, includeStatus = false) {
   };
 }
 
-function createToolHandlers({ base = process.env.AI_MEET_BASE_URL, auth = process.env.AI_MEET_JOIN_TOKEN } = {}) {
+function createToolHandlers({ base = startupValue("AI_MEET_BASE_URL"), auth = startupValue("AI_MEET_JOIN_TOKEN") } = {}) {
   const resolvedBase = normalizeBase(base);
   const authValue = auth || undefined;
   const guarded = (fn) => async (args) => {
@@ -96,7 +107,7 @@ function createToolHandlers({ base = process.env.AI_MEET_BASE_URL, auth = proces
         base: resolvedBase,
         headers,
         body,
-        timeoutMs: JOIN_TIMEOUT_MS,
+        timeoutMs: joinTimeoutMs(),
       }), "/join-meeting");
     }),
 
@@ -151,6 +162,7 @@ async function start() {
 module.exports = { buildJoinBody, callApi, createToolHandlers, deriveWsUrl, start };
 
 if (require.main === module) {
+  captureStartup();
   start().catch((error) => {
     console.error(error.stack || error.message);
     process.exitCode = 1;

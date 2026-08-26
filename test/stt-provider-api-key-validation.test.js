@@ -64,7 +64,7 @@ test("deepgram provider fails when DEEPGRAM_API_KEY is missing", () => {
   );
 });
 
-test("unknown provider routes to deepgram and fails without DEEPGRAM_API_KEY", () => {
+test("unknown provider is rejected by the resolver and falls back to soniox", () => {
   withEnv(
     {
       STT_PROVIDER: "deepgrm",
@@ -72,10 +72,7 @@ test("unknown provider routes to deepgram and fails without DEEPGRAM_API_KEY", (
       DEEPGRAM_API_KEY: undefined,
     },
     () => {
-      assert.throws(
-        () => freshConfig().validateSttProviderApiKey(),
-        /DEEPGRAM_API_KEY.*deepgrm/,
-      );
+      assert.doesNotThrow(() => freshConfig().validateSttProviderApiKey());
     },
   );
 });
@@ -96,6 +93,8 @@ test("provider value is trimmed and case-insensitive", () => {
 });
 
 function freshConfig() {
+  require("../src/settings/bootstrap").resetStartupForTest();
+  require("../src/settings/resolver").resetRuntimeForTest();
   const configPath = path.join(__dirname, "..", "src", "config.js");
   delete require.cache[require.resolve(configPath)];
   return require(configPath);

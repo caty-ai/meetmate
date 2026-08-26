@@ -4,6 +4,7 @@
 const { createLlmProvider } = require("./llm-provider");
 const { synthesize } = require("./tts-fish");
 const { createTtsCache } = require("./tts-cache");
+const { getEffectiveValue } = require("./settings/resolver");
 const { getExitCommands, detectExitIntent } = require("./exit-handler");
 const { shouldSuppressReply, stripEmojis, stripRareScriptCharacters, extractChatTags } = require("./speech-policy");
 const { recordEvent } = require("./metrics");
@@ -164,7 +165,8 @@ function buildMeetingContextPromptWithEntries(transcriptBuffer, currentEntry, ad
 // Wake word detection: only respond when addressed
 // In single-agent mode, use the agent's wakeWords from config.json
 const _defaultWakeWords = (() => {
-  if (process.env.WAKE_WORDS) return process.env.WAKE_WORDS;
+  const configuredWakeWords = getEffectiveValue("agent_wake_words");
+  if (configuredWakeWords?.length) return configuredWakeWords.join(",");
   try {
     const { resolveAgentProfile } = require("./agent-profile");
     const profile = resolveAgentProfile();
@@ -478,7 +480,7 @@ function rememberBounded(set, key, max = SEEN_RUN_ID_MAX) {
 }
 
 function isTtsCacheEnabled() {
-  return process.env.TTS_CACHE_ENABLED !== "false";
+  return getEffectiveValue("tts_cache_enabled");
 }
 
 /**
@@ -590,8 +592,6 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   let circuitBreakerNoticeQueued = false;
 
   const agentState = {
-    openclawUrl: config.llm.gateway?.url,
-    openclawToken: config.llm.gateway?.token,
     voiceId: config.tts.referenceId || null,
     model: config.llm.model,
     openclawSystemAddendum: config.llm.openclawSystemAddendum,
@@ -604,8 +604,6 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     const oldId = currentAgentId;
     const agent = agents[agentId];
 
-    agentState.openclawUrl = agent.gatewayUrl || config.llm.gateway?.url;
-    agentState.openclawToken = agent.gatewayToken || config.llm.gateway?.token;
     agentState.voiceId = agent.voiceId || config.tts.referenceId || null;
     agentState.model = agent.model || config.llm.model;
     agentState.openclawSystemAddendum = Object.prototype.hasOwnProperty.call(agent, "openclawSystemAddendum")
@@ -1625,7 +1623,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         return Promise.resolve(false);
       }
 
-      if (isOpenclawProvider && (!agentState.openclawUrl || !agentState.openclawToken)) {
+      if (isOpenclawProvider && (!config.llm.gateway?.url || !config.llm.gateway?.token)) {
         console.log("⏭️  Timeout handoff skipped (OpenClaw Gateway unavailable)");
         return Promise.resolve(false);
       }
@@ -1663,8 +1661,8 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
           }
 
           llmProvider.timeoutHandoff({
-            openclawUrl: agentState.openclawUrl,
-            openclawToken: agentState.openclawToken,
+            openclawUrl: config.llm.gateway?.url,
+            openclawToken: config.llm.gateway?.token,
             model: agentState.model || config.llm.model || "openclaw",
             systemPrompt: gatewayModeHandoff
               ? resolvedPrompts.timeoutHandoffGatewaySystem
@@ -1944,8 +1942,8 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       for await (const chunk of llmProvider.streamChat(
         llmMessages,
         {
-          openclawUrl: agentState.openclawUrl,
-          openclawToken: agentState.openclawToken,
+          openclawUrl: config.llm.gateway?.url,
+          openclawToken: config.llm.gateway?.token,
           openclawSystemAddendum: agentState.openclawSystemAddendum,
           sessionUser: agentState.sessionUser,
           model: agentState.model,
@@ -2300,7 +2298,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
 
   function startTtsCachePrewarm() {
     if (!usePipelineTtsCache) return;
-    if (!isTtsCacheEnabled() || process.env.TTS_CACHE_PREWARM === "false") return;
+    if (!isTtsCacheEnabled() || !getEffectiveValue("tts_cache_prewarm")) return;
     const phrases = [
       ...new Set(
         collectFixedTtsPhrases(config, resolveGreetingText())
