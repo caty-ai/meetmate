@@ -24,6 +24,7 @@ WORKING_DIR=""
 PORT=""
 
 sed_escape() { local s="$1"; s="${s//\\/\\\\}"; s="${s//&/\\&}"; s="${s//|/\\|}"; printf '%s' "$s"; }
+xml_escape() { local s="$1"; s="${s//&/&amp;}"; s="${s//</&lt;}"; s="${s//>/&gt;}"; printf '%s' "$s"; }
 
 reject_newline() {
   local name="$1"
@@ -83,11 +84,11 @@ reject_newline "Node path" "$NODE_PATH"
 reject_newline "Node directory" "$NODE_DIR"
 reject_newline "Log directory" "$LOG_DIR"
 
-LABEL_ESCAPED="$(sed_escape "$LABEL")"
-WORKING_DIR_ESCAPED="$(sed_escape "$WORKING_DIR")"
-NODE_PATH_ESCAPED="$(sed_escape "$NODE_PATH")"
-NODE_DIR_ESCAPED="$(sed_escape "$NODE_DIR")"
-LOG_DIR_ESCAPED="$(sed_escape "$LOG_DIR")"
+LABEL_ESCAPED="$(sed_escape "$(xml_escape "$LABEL")")"
+WORKING_DIR_ESCAPED="$(sed_escape "$(xml_escape "$WORKING_DIR")")"
+NODE_PATH_ESCAPED="$(sed_escape "$(xml_escape "$NODE_PATH")")"
+NODE_DIR_ESCAPED="$(sed_escape "$(xml_escape "$NODE_DIR")")"
+LOG_DIR_ESCAPED="$(sed_escape "$(xml_escape "$LOG_DIR")")"
 
 echo "Installing LaunchAgent:"
 echo "  Label:      $LABEL"
@@ -117,6 +118,11 @@ sed \
 if grep -q '{{' "$PLIST_DEST"; then
   echo "Error: unrendered placeholder in $PLIST_DEST" >&2
   rm -f "$PLIST_DEST"
+  exit 1
+fi
+
+if ! plutil -lint "$PLIST_DEST" >/dev/null; then
+  echo "Error: generated plist failed plutil -lint: $PLIST_DEST" >&2
   exit 1
 fi
 
