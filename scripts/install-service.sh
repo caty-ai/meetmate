@@ -3,6 +3,7 @@
 #
 # Usage:
 #   ./scripts/install-service.sh --label LABEL --dir WORKING_DIR [--port PORT]
+#   --port PORT    Server port (informational — logged, not embedded in the unit)
 
 set -euo pipefail
 
@@ -59,6 +60,17 @@ LABEL=""
 WORKING_DIR=""
 PORT=""
 
+sed_escape() { local s="$1"; s="${s//\\/\\\\}"; s="${s//&/\\&}"; s="${s//|/\\|}"; printf '%s' "$s"; }
+
+reject_newline() {
+  local name="$1"
+  local value="$2"
+  if [[ "$value" == *$'\n'* ]]; then
+    echo "Error: $name must not contain a newline." >&2
+    exit 1
+  fi
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --label) LABEL="$2"; shift 2 ;;
@@ -76,6 +88,9 @@ if [ -z "$LABEL" ] || [ -z "$WORKING_DIR" ]; then
   echo "Usage: $0 --label LABEL --dir WORKING_DIR [--port PORT]" >&2
   exit 1
 fi
+
+reject_newline "Label" "$LABEL"
+reject_newline "Working directory" "$WORKING_DIR"
 
 if [ ! -f "$TEMPLATE" ]; then
   echo "Error: Template not found at $TEMPLATE" >&2
@@ -101,24 +116,39 @@ NODE_DIR="$(dirname "$NODE_PATH")"
 UNIT_DIR="$HOME/.config/systemd/user"
 UNIT_DEST="$UNIT_DIR/${LABEL}.service"
 
+reject_newline "Node path" "$NODE_PATH"
+reject_newline "Node directory" "$NODE_DIR"
+reject_newline "Log directory" "$LOG_DIR"
+
+LABEL_ESCAPED="$(sed_escape "$LABEL")"
+WORKING_DIR_ESCAPED="$(sed_escape "$WORKING_DIR")"
+NODE_PATH_ESCAPED="$(sed_escape "$NODE_PATH")"
+NODE_DIR_ESCAPED="$(sed_escape "$NODE_DIR")"
+LOG_DIR_ESCAPED="$(sed_escape "$LOG_DIR")"
+
 echo "Installing systemd user service:"
 echo "  Label:      $LABEL"
 echo "  Directory:  $WORKING_DIR"
 echo "  Node:       $NODE_PATH"
 echo "  Log dir:    $LOG_DIR"
-[ -n "$PORT" ] && echo "  Port:       $PORT"
+[ -n "$PORT" ] && echo "  Port:       $PORT (informational — logged, not embedded in the unit)"
 echo "  Unit:       $UNIT_DEST"
 echo ""
 
 mkdir -p "$LOG_DIR" "$UNIT_DIR"
 
 sed \
-  -e "s|{{LABEL}}|${LABEL}|g" \
-  -e "s|{{WORKING_DIR}}|${WORKING_DIR}|g" \
-  -e "s|{{NODE_PATH}}|${NODE_PATH}|g" \
-  -e "s|{{NODE_DIR}}|${NODE_DIR}|g" \
-  -e "s|{{LOG_DIR}}|${LOG_DIR}|g" \
+  -e "s|{{LABEL}}|${LABEL_ESCAPED}|g" \
+  -e "s|{{WORKING_DIR}}|${WORKING_DIR_ESCAPED}|g" \
+  -e "s|{{NODE_PATH}}|${NODE_PATH_ESCAPED}|g" \
+  -e "s|{{NODE_DIR}}|${NODE_DIR_ESCAPED}|g" \
+  -e "s|{{LOG_DIR}}|${LOG_DIR_ESCAPED}|g" \
   "$TEMPLATE" > "$UNIT_DEST"
+
+if grep -q '{{' "$UNIT_DEST"; then
+  echo "Error: unrendered placeholder in $UNIT_DEST" >&2
+  exit 1
+fi
 
 echo "Unit installed."
 
@@ -130,11 +160,27 @@ systemctl --user restart "${LABEL}.service"
 
 echo "Service enabled. Verifying..."
 
-if systemctl --user is-active --quiet "${LABEL}.service"; then
+SERVICE_READY=true
+# NRestarts resets on our explicit restart above, so any nonzero value here is a startup crash.
+for _ in 1 2 3 4 5; do
+  sleep 3
+  if ! systemctl --user is-active --quiet "${LABEL}.service"; then
+    SERVICE_READY=false
+    break
+  fi
+  NRESTARTS="$(systemctl --user show -p NRestarts --value "${LABEL}.service" 2>/dev/null || true)"
+  if [ "$NRESTARTS" != "0" ]; then
+    SERVICE_READY=false
+    break
+  fi
+done
+
+if [ "$SERVICE_READY" = true ]; then
   echo "✅ $LABEL is running."
 else
-  echo "Error: $LABEL did not become active." >&2
-  echo "Check: systemctl --user status ${LABEL}.service" >&2
+  echo "Error: $LABEL did not remain active without restarting." >&2
+  systemctl --user status "${LABEL}.service" --no-pager -l 2>&1 | tail -20 >&2 || true
+  journalctl --user -u "${LABEL}" --no-pager -n 20 >&2 || true
   exit 1
 fi
 

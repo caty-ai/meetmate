@@ -4,10 +4,9 @@
 
 [Unit]
 Description=meetmate agent ({{LABEL}})
-After=network-online.target
 
 [Service]
-ExecStart={{NODE_PATH}} src/server.js
+ExecStart="{{NODE_PATH}}" src/server.js
 WorkingDirectory={{WORKING_DIR}}
 Restart=always
 RestartSec=10
