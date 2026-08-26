@@ -1152,27 +1152,30 @@ test("settings static routes are GET-only and the asset namespace is allowlisted
   }
 });
 
-test("settings mock keeps all six accessible tabs, states, interactions, and dummy data", () => {
+test("settings UI keeps six accessible tabs and uses injected registry data without fixtures", () => {
   const publicDir = path.join(ROOT, "public");
   const html = fs.readFileSync(path.join(publicDir, "settings.html"), "utf8");
+  const js = fs.readFileSync(path.join(publicDir, "settings.js"), "utf8");
   const labels = Array.from(html.matchAll(/role="tab"[^>]*>([^<]+)<\/button>/g), (match) => match[1]);
   assert.deepEqual(labels, ["基本", "音声プリセット", "詳細", "デプロイ", "接続テスト", "エクスポート・インポート"]);
   assert.equal((html.match(/role="tabpanel"/g) || []).length, 6);
   assert.match(html, /aria-selected="true" aria-controls="panel-basic" tabindex="0"/);
-  for (const marker of [
-    "setup mode・未設定項目あり",
-    "保存済み・反映には再起動が必要",
-    "env により上書き中",
-    "credential-change",
-    "meeting-assistant",
-    "U012MOCK345",
-    "meetmate-demo.ngrok.app",
-    "greeting-friendly.mp3",
-    "filler-soft.mp3",
-    "farewell-warm.mp3",
-    "変更を保存",
-  ]) assert.match(html, new RegExp(marker.replaceAll(".", "\\.")));
-  assert.match(fs.readFileSync(path.join(publicDir, "settings.js"), "utf8"), /モック: 保存は本実装で有効化/);
+  assert.match(html, /id="settingsUiManifest">__SETTINGS_UI_MANIFEST__<\/script>/);
+  assert.match(html, /id="emotionTagsData">__MEETMATE_EMOTION_TAGS__<\/script>/);
+  for (const marker of ["basicFields", "voiceFields", "detailFields", "diagnosticsList", "変更を保存"]) {
+    assert.match(html, new RegExp(marker));
+  }
+  assert.match(html, /audio-drop-zone[^>]*disabled/);
+  assert.match(js, /fetch\("\/api\/settings"/);
+  assert.match(js, /method: "PUT"/);
+  assert.match(js, /NULLABLE_NUMBER_FIELDS\.has\(entry\.id\) \? null : ""/);
+  assert.match(js, /these fields take effect at next boot/);
+  for (const fixture of ["meeting-assistant", "U012MOCK345", "meetmate-demo.ngrok.app", "greeting-friendly.mp3"]) {
+    assert.doesNotMatch(`${html}\n${js}`, new RegExp(fixture.replaceAll(".", "\\.")));
+  }
+  for (const tag of ["soft voice", "friendly, warm", "empathetic, unhurried"]) {
+    assert.doesNotMatch(`${html}\n${js}`, new RegExp(tag));
+  }
 });
 
 test("home page remains the four-block meeting UI with only a settings header link", () => {

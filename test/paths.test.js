@@ -481,25 +481,23 @@ test("T12-05 bootstrap PUT materializes registry defaults and captured .env clas
   assert.equal(response.body.includes("bootstrap-seed-key"), false);
 });
 
-test("T12-06 child settings route shells return value-free 501 responses", async () => {
+test("T12-06 unimplemented settings route shells return value-free 501 responses", async () => {
   resetRuntimeForTest();
   initializeRuntime({ state: settingsState({}), startup: settingsStartup(), serverPort: 5005 });
   const handler = createSettingsHandler({ port: 5005 });
   const cases = [
-    ["GET", "/api/settings/export", {}],
-    ["POST", "/api/settings/import", { "content-type": "application/json" }],
-    ["POST", "/api/settings/connections/soniox/test", { "content-type": "application/json" }],
-    ["POST", "/api/settings/tts-preview", { "content-type": "application/json" }],
-    ["POST", "/api/settings/audio", { "content-type": "multipart/form-data; boundary=test" }],
-    ["DELETE", "/api/settings/audio/clip-id", {}],
+    ["POST", "/api/settings/connections/soniox/test", { "content-type": "application/json" }, JSON.stringify({ revision: "a".repeat(64) })],
+    ["POST", "/api/settings/tts-preview", { "content-type": "application/json" }, ""],
+    ["POST", "/api/settings/audio", { "content-type": "multipart/form-data; boundary=test" }, ""],
+    ["DELETE", "/api/settings/audio/clip-id", {}, ""],
   ];
-  for (const [method, url, headers] of cases) {
+  for (const [method, url, headers, body] of cases) {
     const response = settingsResponse();
     await handler(settingsRequest(method, url, {
       host: "localhost:5005",
       ...(method === "GET" ? {} : { origin: "http://localhost:5005", "sec-fetch-site": "same-origin" }),
       ...headers,
-    }), response);
+    }, body), response);
     assert.equal(response.status, 501, `${method} ${url}: ${response.body}`);
     assert.equal(JSON.parse(response.body).error.code, "TEST_NOT_IMPLEMENTED");
   }

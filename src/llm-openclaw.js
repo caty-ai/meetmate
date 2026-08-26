@@ -155,8 +155,8 @@ function timeoutHandoff(params) {
 // Tag syntax: Fish Audio S2-Pro uses [bracket] + natural language tags. Without
 // any tag the model's prosody is unstable (live testing showed sudden volume
 // jumps and voice-quality drift), so we *always* anchor every utterance with
-// at least one tag. [soft voice] is the default to keep the agent calm and gentle;
-// other tags are reserved for moments that call for them.
+// at least one tag. The canonical fallback keeps the agent calm and gentle;
+// the other canonical tags are reserved for moments that call for them.
 function buildVoiceAddendum({ emotionTags = true } = {}) {
   return buildVoiceAddendumFromMessages(resolveMessages(), { emotionTags });
 }

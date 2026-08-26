@@ -254,6 +254,29 @@ test("runtime-shaped configJson.agent does not change OpenClaw LLM resolution", 
   }
 });
 
+test("canonical emotion toggle removes tag instructions from voice and gateway prompts together", () => {
+  const restore = setEnv({
+    ...CLEAN_LLM_ENV,
+    OPENCLAW_GATEWAY_URL: "https://gateway.test",
+    OPENCLAW_GATEWAY_TOKEN: "token",
+  });
+  try {
+    const configJson = { agent: { emotionTags: false } };
+    const config = freshConfig(configJson).getPipelineConfig({}, null, null, configJson);
+    const { EMOTION_TAGS } = require("../src/messages");
+    assert.equal(config.emotionTags, false);
+    for (const { tag } of EMOTION_TAGS) {
+      assert.equal(config.llm.openclawSystemAddendum.includes(tag), false);
+      assert.equal(config.gatewayBriefingPrompt.includes(tag), false);
+    }
+    assert.doesNotMatch(config.llm.openclawSystemAddendum, /感情タグ.*必須|感情タグを1個/);
+    assert.doesNotMatch(config.gatewayBriefingPrompt, /感情タグ/);
+  } finally {
+    restore();
+    delete require.cache[configModulePath];
+  }
+});
+
 test("unknown stored LLM providers become setup VALUE_INVALID and fall back safely", () => {
   const restore = setEnv({
     ...CLEAN_LLM_ENV,

@@ -5,6 +5,27 @@ const { EventEmitter } = require("node:events");
 const { PassThrough } = require("node:stream");
 
 const openai = require("../src/llm-openai");
+const settingsResolver = require("../src/settings/resolver");
+
+function setStreamingEquivalent(enabled) {
+  settingsResolver.resetRuntimeForTest();
+  settingsResolver.initializeRuntime({
+    state: {
+      exists: true,
+      valid: true,
+      parsed: { features: { streamingEquivalentEnabled: enabled } },
+      revision: "a".repeat(64),
+      fingerprint: "runtime-feature-test",
+    },
+    startup: Object.freeze({
+      preDotenvEnv: Object.freeze({}),
+      dotenvSeeds: Object.freeze({}),
+      resolvedHome: "/tmp/meetmate-runtime-feature-test",
+      configPath: "/tmp/meetmate-runtime-feature-test/config.json",
+      connection: Object.freeze({ openclawUrl: "", openclawToken: "", openaiApiKey: "" }),
+    }),
+  });
+}
 
 function installMockServer(t, handle) {
   const originalRequest = http.request;
@@ -90,6 +111,41 @@ test("streamChat parses OpenAI SSE chunks and sends the configured request", asy
     user: "meet-1",
   });
   assert.equal(captured.options.headers["X-Caty-Agent-Trust"], undefined);
+});
+
+test("streamChat adapts nonstreaming completion as one filtered chunk when streaming-equivalent is disabled", async (t) => {
+  setStreamingEquivalent(false);
+  t.after(() => settingsResolver.resetRuntimeForTest());
+  const captured = [];
+  installMockServer(t, async (request) => {
+    captured.push(request);
+    return { chunks: ['{"choices":[{"message":{"content":"complete reply"}}]}'] };
+  });
+
+  const chunks = await collect(openai.streamChat(
+    [{ role: "user", content: "hello" }],
+    { baseUrl: "http://mock.test", apiKey: "key", model: "model" },
+  ));
+
+  assert.deepEqual(chunks, ["complete reply"]);
+  assert.equal(captured.length, 1);
+  assert.equal(captured[0].body.stream, false);
+});
+
+test("disabled streaming-equivalent still applies complete-reply suppression", async (t) => {
+  setStreamingEquivalent(false);
+  t.after(() => settingsResolver.resetRuntimeForTest());
+  installMockServer(t, async () => ({
+    chunks: ['{"choices":[{"message":{"content":"NO_REPLY"}}]}'],
+  }));
+
+  const chunks = await collect(openai.streamChat([], {
+    baseUrl: "http://mock.test",
+    apiKey: "key",
+    model: "model",
+  }));
+
+  assert.deepEqual(chunks, []);
 });
 
 test("complete returns status and text using a base-path-aware endpoint", async (t) => {

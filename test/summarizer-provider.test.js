@@ -71,6 +71,40 @@ test("summarizer retains OpenClaw gateway options from resolved config", async (
   }
 });
 
+test("summarizer omits task instructions and forces todos empty when task extraction is disabled", async () => {
+  const originalProvider = require.cache[providerPath];
+  const originalSummarizer = require.cache[summarizerPath];
+  let sentPrompt;
+  try {
+    require.cache[providerPath] = { exports: {
+      createLlmProvider: () => ({ complete: async (messages) => {
+        sentPrompt = messages[0].content;
+        return { statusCode: 200, text: '{"choices":[{"message":{"content":"{\\"summary\\":[\\"ok\\"],\\"decisions\\":[\\"decided\\"],\\"todos\\":[\\"must be ignored\\"]}"}}]}' };
+      } }),
+    } };
+    delete require.cache[summarizerPath];
+    const { summarizeConversation } = require("../src/summarizer");
+    const result = await summarizeConversation([{ role: "user", content: "hello" }], {
+      taskExtractionEnabled: false,
+      llm: {
+        provider: "openai-compatible",
+        model: "local-model",
+        openaiCompatible: { baseUrl: "https://llm.test/v1", apiKey: "key" },
+      },
+    });
+
+    assert.deepEqual(result, { summary: ["ok"], decisions: ["decided"], todos: [] });
+    assert.doesNotMatch(sentPrompt, /todos?|TODO|タスク/i);
+    assert.match(sentPrompt, /summary/);
+    assert.match(sentPrompt, /decisions/);
+  } finally {
+    delete require.cache[summarizerPath];
+    if (originalSummarizer) require.cache[summarizerPath] = originalSummarizer;
+    if (originalProvider === undefined) delete require.cache[providerPath];
+    else require.cache[providerPath] = originalProvider;
+  }
+});
+
 test("summarizer returns an empty result when its selected provider lacks credentials", async () => {
   const { summarizeConversation } = require("../src/summarizer");
   const result = await summarizeConversation([{ role: "user", content: "hello" }], {
@@ -110,4 +144,33 @@ test("summarizer uses a provider-neutral error label", async () => {
     if (originalProvider === undefined) delete require.cache[providerPath];
     else require.cache[providerPath] = originalProvider;
   }
+});
+
+test("meeting-end task extraction reads the restart-required boot value", () => {
+  const resolver = require("../src/settings/resolver");
+  const startup = Object.freeze({
+    preDotenvEnv: Object.freeze({}),
+    dotenvSeeds: Object.freeze({}),
+    resolvedHome: "/tmp/meetmate-summary-feature-test",
+    configPath: "/tmp/meetmate-summary-feature-test/config.json",
+    connection: Object.freeze({ openclawUrl: "", openclawToken: "", openaiApiKey: "" }),
+  });
+  const state = (enabled, revision) => ({
+    exists: true,
+    valid: true,
+    parsed: { features: { taskExtractionEnabled: enabled } },
+    revision,
+    fingerprint: `summary-feature-${revision}`,
+  });
+  resolver.resetRuntimeForTest();
+  resolver.initializeRuntime({ state: state(true, "a".repeat(64)), startup });
+  const { _test } = require("../src/transport-meet/meet-routes");
+  assert.equal(_test.taskExtractionEnabledAtBoot(), true);
+
+  resolver.publishState(state(false, "b".repeat(64)));
+  assert.equal(_test.taskExtractionEnabledAtBoot(), true);
+
+  resolver.initializeRuntime({ state: state(false, "b".repeat(64)), startup });
+  assert.equal(_test.taskExtractionEnabledAtBoot(), false);
+  resolver.resetRuntimeForTest();
 });

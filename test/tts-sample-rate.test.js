@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
 const { EventEmitter } = require("node:events");
+const https = require("node:https");
 
 test("getPipelineConfig keeps STT at 16k and defaults TTS to 24k", () => {
   withEnv({ TTS_SAMPLE_RATE: undefined }, () => {
@@ -119,6 +120,65 @@ test("sentence-boundary silence uses the TTS sample rate", async () => {
       }
     }
   );
+});
+
+test("Fish TTS strips only canonical emotion tags when the live toggle is OFF", async (t) => {
+  const resolver = require("../src/settings/resolver");
+  const { EMOTION_TAGS } = require("../src/messages");
+  const originalRequest = https.request;
+  const bodies = [];
+  https.request = (_options, callback) => {
+    const req = new EventEmitter();
+    let body = "";
+    req.write = (chunk) => { body += String(chunk); };
+    req.setTimeout = () => req;
+    req.destroy = (error) => error && req.emit("error", error);
+    req.end = () => process.nextTick(() => {
+      bodies.push(JSON.parse(body));
+      const response = new EventEmitter();
+      response.statusCode = 200;
+      response.headers = {};
+      response.destroy = () => {};
+      callback(response);
+      response.emit("data", Buffer.from([0, 0]));
+      response.emit("end");
+    });
+    return req;
+  };
+  t.after(() => {
+    https.request = originalRequest;
+    resolver.resetRuntimeForTest();
+  });
+
+  const setEmotionTags = (enabled) => {
+    resolver.resetRuntimeForTest();
+    resolver.initializeRuntime({
+      state: {
+        exists: true,
+        valid: true,
+        parsed: { agent: { emotionTags: enabled } },
+        revision: "a".repeat(64),
+        fingerprint: "tts-emotion-test",
+      },
+      startup: Object.freeze({
+        preDotenvEnv: Object.freeze({}),
+        dotenvSeeds: Object.freeze({}),
+        resolvedHome: "/tmp/meetmate-tts-emotion-test",
+        configPath: "/tmp/meetmate-tts-emotion-test/config.json",
+        connection: Object.freeze({ openclawUrl: "", openclawToken: "", openaiApiKey: "" }),
+      }),
+    });
+  };
+  const taggedText = `${EMOTION_TAGS[0].tag} hello ${EMOTION_TAGS[1].tag}`;
+  const { synthesize } = require("../src/tts-fish");
+
+  setEmotionTags(false);
+  await synthesize(taggedText, { apiKey: "key", onAudio: () => {} });
+  setEmotionTags(true);
+  await synthesize(taggedText, { apiKey: "key", onAudio: () => {} });
+
+  assert.equal(bodies[0].text, "hello");
+  assert.equal(bodies[1].text, taggedText);
 });
 
 function freshConfig() {

@@ -1,15 +1,61 @@
+const EMOTION_TAGS = Object.freeze([
+  { tag: "[soft voice]", labelJa: "デフォルト・優しい声", fallback: true },
+  { tag: "[warm]", labelJa: "温かみ" },
+  { tag: "[friendly, warm]", labelJa: "親しみ＋温かみ" },
+  { tag: "[empathetic, unhurried]", labelJa: "謝罪・落ち着き" },
+  { tag: "[thoughtful]", labelJa: "考え深く" }
+]);
+
+function buildVoiceEmotionLine() {
+  const available = EMOTION_TAGS.map(({ tag, labelJa }) => `${tag}（${labelJa}）`).join(", ");
+  const fallback = EMOTION_TAGS.find((entry) => entry.fallback).tag;
+  return `- すべての発話の先頭に必ず感情タグを1個入れる（タグなしだと声が暴走するため、スタイル安定化のアンカーとして使う）。使えるタグ: ${available}。迷ったら ${fallback}。\n`;
+}
+
+function buildGatewayBriefingSystem({ emotionTags = true } = {}) {
+  const fallback = EMOTION_TAGS.find((entry) => entry.fallback).tag;
+  const description = emotionTags ? "自然な話し言葉で。感情タグ付き。" : "自然な話し言葉で。";
+  const exampleTag = emotionTags ? `${EMOTION_TAGS[3].tag} ` : "";
+  const lines = [
+    "音声通話の準備中です。以下のブリーフィングを読んで準備してください。",
+    "",
+    "【重要】応答は以下のJSON形式のみで返してください：",
+    `{"purposeStatement": "挨拶の直後に話す、電話の目的を伝える1〜2文。${description}"}`,
+    "",
+    `例: {"purposeStatement": "${exampleTag}今日はレストランの予約の件でお電話させていただきました。来週の金曜日に4名で伺いたいのですが。"}`,
+    "",
+    "ルール:",
+    "- 1〜2文で簡潔に。長くならないこと",
+    "- 自然な敬語の話し言葉にする",
+    "- ブリーフィングの内容を要約・整形する（そのまま読まない）",
+  ];
+  if (emotionTags) {
+    lines.push(`- 先頭に感情タグを必ず1個入れる（スタイル安定化のため）。使えるタグ: ${EMOTION_TAGS.map(({ tag }) => tag).join(", ")}。迷ったら ${fallback}。`);
+  }
+  lines.push("- JSONのみ出力。説明やマークダウンは不要");
+  return lines.join("\n");
+}
+
+function stripCanonicalEmotionTags(text) {
+  const escaped = EMOTION_TAGS.map(({ tag }) => tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  return String(text || "")
+    .replace(new RegExp(escaped.join("|"), "g"), "")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
 const DEFAULT_MESSAGES = {
   prompts: {
     standaloneSystemPrompt: `あなたは日本語で会話する音声アシスタントです。
 ユーザーの話をよく聞き、自然で簡潔な話し言葉で答えてください。
 わからないことは推測せず、必要なら確認してください。`,
-    voiceEmotionLine: "- すべての発話の先頭に必ず感情タグを1個入れる（タグなしだと声が暴走するため、スタイル安定化のアンカーとして使う）。使えるタグ: [soft voice]（デフォルト・優しい声）, [warm]（温かみ）, [friendly, warm]（親しみ＋温かみ）, [empathetic, unhurried]（謝罪・落ち着き）, [thoughtful]（考え深く）。迷ったら [soft voice]。\n",
+    voiceEmotionLine: buildVoiceEmotionLine(),
     voiceSystemAddendumTemplate: `あなたは音声通話中です。
 
 【応答ルール】
 - 短く話す（1回の発話は2〜3文まで。長くならないこと！）
 {emotionLine}- コードブロック、マークダウン記法、長いリスト、テーブルは使わない（音声で読み上げるので）
-- 絵文字は使わない（音声で読み上げできないため。なお [soft voice] のような感情タグは絵文字ではないので必須で使うこと）
+{emotionEmojiLine}
 - URL、長い詳細、リスト、コード風テキストは会議チャット専用タグ [[[chat: ...]]] で送る（読み上げられない）。口頭は「チャットに貼っておくね」程度に短くし、1項目1タグ、タグ位置は応答内のどこでもよい。絵文字はチャットにも使えない（会議チャット側が絵文字入りメッセージを拒否するため）
 - 相手の話をしっかり聞いてから応答する
 - 音声では結論→次アクションを優先。{openclawSlackRule}
@@ -56,21 +102,7 @@ NO_REPLY は絶対に使わないこと（音声通話ではサイレント応�
 
 会話ログ:
 `,
-    gatewayBriefingSystem: [
-      "音声通話の準備中です。以下のブリーフィングを読んで準備してください。",
-      "",
-      "【重要】応答は以下のJSON形式のみで返してください：",
-      "{\"purposeStatement\": \"挨拶の直後に話す、電話の目的を伝える1〜2文。自然な話し言葉で。感情タグ付き。\"}",
-      "",
-      "例: {\"purposeStatement\": \"[empathetic, unhurried] 今日はレストランの予約の件でお電話させていただきました。来週の金曜日に4名で伺いたいのですが。\"}",
-      "",
-      "ルール:",
-      "- 1〜2文で簡潔に。長くならないこと",
-      "- 自然な敬語の話し言葉にする",
-      "- ブリーフィングの内容を要約・整形する（そのまま読まない）",
-      "- 先頭に感情タグを必ず1個入れる（スタイル安定化のため）。使えるタグ: [soft voice], [warm], [friendly, warm], [empathetic, unhurried], [thoughtful]。迷ったら [soft voice]。",
-      "- JSONのみ出力。説明やマークダウンは不要",
-    ].join("\n"),
+    gatewayBriefingSystem: buildGatewayBriefingSystem(),
     gatewayWarmupUser: "セッション準備中。次のメッセージから音声通話が始まります。",
     timeoutHandoffGateway: [
       "ユーザーの音声通話中に依頼処理がタイムアウトしました。",
@@ -92,25 +124,25 @@ NO_REPLY は絶対に使わないこと（音声通話ではサイレント応�
   },
   speech: {
     ackVariants: [
-      "[soft voice] 了解、すぐ取りかかるね。",
-      "[soft voice] 了解です。ちょっと待ってね。",
-      "[soft voice] はい、今確認するね。",
+      `${EMOTION_TAGS[0].tag} 了解、すぐ取りかかるね。`,
+      `${EMOTION_TAGS[0].tag} 了解です。ちょっと待ってね。`,
+      `${EMOTION_TAGS[0].tag} はい、今確認するね。`,
     ],
     progressPings: [
-      "[soft voice] いま処理中だよ、もう少し待ってね。",
-      "[soft voice] 進めてるよ、あと少しで返せそう。",
-      "[soft voice] ごめん、もう少しだけ待ってね。",
+      `${EMOTION_TAGS[0].tag} いま処理中だよ、もう少し待ってね。`,
+      `${EMOTION_TAGS[0].tag} 進めてるよ、あと少しで返せそう。`,
+      `${EMOTION_TAGS[0].tag} ごめん、もう少しだけ待ってね。`,
     ],
-    timeoutFallback: "[empathetic, unhurried] ごめん、ちょっと時間がかかってるね。少し待ってもらえるかな？",
+    timeoutFallback: `${EMOTION_TAGS[3].tag} ごめん、ちょっと時間がかかってるね。少し待ってもらえるかな？`,
     forcedDelegationFallback: "ちょっと時間がかかってるから、詳細はあとでSlackで共有するね。",
-    handoffSuccess: "[soft voice] 続きはSlackに共有しておくね。",
-    handoffFailure: "[soft voice] ごめん、うまく繋げられなかったみたい。あとでもう一回試してね。",
+    handoffSuccess: `${EMOTION_TAGS[0].tag} 続きはSlackに共有しておくね。`,
+    handoffFailure: `${EMOTION_TAGS[0].tag} ごめん、うまく繋げられなかったみたい。あとでもう一回試してね。`,
     forcedDelegationFallbackMeet: "ちょっと時間がかかってるから、裏でまとめておくね。",
-    handoffUnconfirmedMeet: "[soft voice] 続きは裏に回したよ。まとまったらチャットに貼るね。",
-    handoffBusyMeet: "[soft voice] ごめんね、いま立て込んでるから少し待ってね。",
+    handoffUnconfirmedMeet: `${EMOTION_TAGS[0].tag} 続きは裏に回したよ。まとまったらチャットに貼るね。`,
+    handoffBusyMeet: `${EMOTION_TAGS[0].tag} ごめんね、いま立て込んでるから少し待ってね。`,
     reportPostUnknown: "結果まとまったよ、あとでログにも残すね。",
-    circuitBreakerRecoveryNotice: "[soft voice] ごめんね、ちょっと立て直し中。急ぎはそのまま話しかけてね。",
-    exitFarewell: "[warm] 了解です！退出しますね。お疲れさまでした！",
+    circuitBreakerRecoveryNotice: `${EMOTION_TAGS[0].tag} ごめんね、ちょっと立て直し中。急ぎはそのまま話しかけてね。`,
+    exitFarewell: `${EMOTION_TAGS[1].tag} 了解です！退出しますね。お疲れさまでした！`,
     groupGreetingTemplate: "。今日は{agents}も一緒だよ！",
     completionVoiceTemplate: "さっきの「{label}」、まとまったよ。チャットに貼ったね。",
     staleCompletionVoicePrefix: "(遅くなってごめんね) ",
@@ -211,6 +243,9 @@ function buildVoiceAddendumFromMessages(messages = DEFAULT_MESSAGES, { emotionTa
   const prompts = messages.prompts || DEFAULT_MESSAGES.prompts;
   return renderTemplate(prompts.voiceSystemAddendumTemplate, {
     emotionLine: emotionTags ? prompts.voiceEmotionLine : "",
+    emotionEmojiLine: emotionTags
+      ? `- 絵文字は使わない（音声で読み上げできないため。なお ${EMOTION_TAGS[0].tag} のような感情タグは絵文字ではないので必須で使うこと）`
+      : "- 絵文字は使わない（音声で読み上げできないため）",
     openclawSlackRule: openclaw ? "詳細はSlackで共有する" : "",
     openclawRules: openclaw ? prompts.voiceOpenclawSystemAddendum : "",
   });
@@ -316,7 +351,11 @@ function resolveMessages(configJson = null) {
 
 module.exports = {
   DEFAULT_MESSAGES,
+  EMOTION_TAGS,
+  buildGatewayBriefingSystem,
   buildVoiceAddendumFromMessages,
+  buildVoiceEmotionLine,
   renderTemplate,
   resolveMessages,
+  stripCanonicalEmotionTags,
 };

@@ -355,10 +355,8 @@ const IMMEDIATE_ACK_PATTERNS = [
 
 // Fixed lines below: every line is anchored with an S2-Pro emotion tag.
 // Tagless input causes S2-Pro to drift (sudden volume / pitch / voice quality
-// changes), so we use [soft voice] as the default anchor across ack / progress
-// / handoff. Two moments use a different tag because the moment genuinely
-// calls for one: timeout fallback (apology) → [empathetic, unhurried],
-// exit farewell → [warm].
+// changes), so the canonical fallback tag anchors ack / progress / handoff.
+// Timeout and farewell use the corresponding canonical situational tags.
 const DEFAULT_ACK_VARIANTS = [
   ...DEFAULT_MESSAGES.speech.ackVariants,
 ];
