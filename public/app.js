@@ -30,8 +30,6 @@
   const installMessage = document.getElementById("installMessage");
   const installButton = document.getElementById("installButton");
   const installDismiss = document.getElementById("installDismiss");
-  const mockSettingsForm = document.getElementById("mockSettingsForm");
-  const settingsToast = document.getElementById("settingsToast");
 
   const INSTALL_DISMISSED_KEY = "aiMeetParticipantInstallDismissed";
 
@@ -50,7 +48,6 @@
   let endedShownUntilMs = 0;
   let pollEpoch = 0;
   let deferredInstallPrompt = null;
-  let settingsToastTimer = null;
 
   function getStoredTheme() {
     try {
@@ -179,76 +176,6 @@
     window.addEventListener("appinstalled", () => {
       deferredInstallPrompt = null;
       hideInstallBanner(true);
-    });
-  }
-
-  function showSettingsToast(message) {
-    if (!settingsToast) return;
-    window.clearTimeout(settingsToastTimer);
-    settingsToast.textContent = message;
-    settingsToast.classList.add("visible");
-    settingsToastTimer = window.setTimeout(() => {
-      settingsToast.classList.remove("visible");
-    }, 2600);
-  }
-
-  function closeCredentialEditor(item) {
-    const editor = item.querySelector(".credential-editor");
-    const changeButton = item.querySelector(".credential-change");
-    const input = editor && editor.querySelector("input");
-    const state = editor && editor.querySelector(".credential-edit-state");
-    if (!editor || !changeButton || !input || !state) return;
-
-    input.value = "";
-    state.textContent = "現在の値は表示されません";
-    editor.classList.add("is-hidden");
-    changeButton.setAttribute("aria-expanded", "false");
-    changeButton.textContent = "変更";
-  }
-
-  function initMockSettings() {
-    if (!mockSettingsForm) return;
-
-    mockSettingsForm.addEventListener("submit", (event) => {
-      event.preventDefault();
-      showSettingsToast("モック: 保存は本実装で有効化");
-    });
-
-    mockSettingsForm.querySelectorAll("[data-mock-action]").forEach((button) => {
-      button.addEventListener("click", () => showSettingsToast("モックです"));
-    });
-
-    mockSettingsForm.querySelectorAll(".credential-item").forEach((item) => {
-      const editor = item.querySelector(".credential-editor");
-      const changeButton = item.querySelector(".credential-change");
-      const cancelButton = item.querySelector(".credential-cancel");
-      const input = editor && editor.querySelector("input");
-      const state = editor && editor.querySelector(".credential-edit-state");
-      if (!editor || !changeButton || !cancelButton || !input || !state) return;
-
-      changeButton.addEventListener("click", () => {
-        const willOpen = editor.classList.contains("is-hidden");
-        if (!willOpen) {
-          closeCredentialEditor(item);
-          return;
-        }
-
-        editor.classList.remove("is-hidden");
-        changeButton.setAttribute("aria-expanded", "true");
-        changeButton.textContent = "閉じる";
-        input.focus();
-      });
-
-      input.addEventListener("input", () => {
-        state.textContent = input.value
-          ? "新しい値を入力済み（内容は表示しません）"
-          : "現在の値は表示されません";
-      });
-
-      cancelButton.addEventListener("click", () => {
-        closeCredentialEditor(item);
-        changeButton.focus();
-      });
     });
   }
 
@@ -700,7 +627,6 @@
 
   initTheme();
   initInstallPrompt();
-  initMockSettings();
   loadInfo();
   loadAgentsFromServer();
   loadCalibrateStatus();

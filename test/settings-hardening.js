@@ -1103,3 +1103,95 @@ test("invalid startup connection URLs become value-free setup issues", (t) => {
     assert.equal(serialized.includes("valid-but-private-token"), false);
   }
 });
+
+async function requestSettingsStatic(method, url) {
+  const res = response();
+  const handled = await createSettingsHandler({ port: 5005 })(request(method, url, { host: "localhost:5005" }), res);
+  return { handled, status: res.status, headers: res.headers, body: res.body };
+}
+
+test("settings page and allowlisted assets are served with exact MIME types and no-store", async () => {
+  const page = await requestSettingsStatic("GET", "/settings");
+  assert.equal(page.handled, true);
+  assert.equal(page.status, 200);
+  assert.equal(page.headers["Content-Type"], "text/html; charset=utf-8");
+  assert.equal(page.headers["Cache-Control"], "no-store");
+  assert.equal(Number(page.headers["Content-Length"]), Buffer.byteLength(page.body));
+  assert.match(page.body, /<title>設定 · Meetmate<\/title>/);
+  assert.match(page.body, /\/settings-assets\/settings\.css/);
+  assert.match(page.body, /\/settings-assets\/settings\.js/);
+  assert.doesNotMatch(page.body, /delivered by the next Epic child/i);
+
+  const css = await requestSettingsStatic("GET", "/settings-assets/settings.css");
+  assert.equal(css.status, 200);
+  assert.equal(css.headers["Content-Type"], "text/css; charset=utf-8");
+  assert.equal(css.headers["Cache-Control"], "no-store");
+  assert.match(css.body, /\.settings-panel/);
+
+  const js = await requestSettingsStatic("GET", "/settings-assets/settings.js");
+  assert.equal(js.status, 200);
+  assert.equal(js.headers["Content-Type"], "application/javascript; charset=utf-8");
+  assert.equal(js.headers["Cache-Control"], "no-store");
+  assert.match(js.body, /ArrowRight/);
+  assert.match(js.body, /Home/);
+  assert.match(js.body, /End/);
+});
+
+test("settings static routes are GET-only and the asset namespace is allowlisted", async () => {
+  for (const [method, url] of [
+    ["POST", "/settings"],
+    ["HEAD", "/settings"],
+    ["POST", "/settings-assets/settings.css"],
+    ["GET", "/settings-assets/unknown.css"],
+    ["GET", "/settings-assets/settings.css/extra"],
+  ]) {
+    const result = await requestSettingsStatic(method, url);
+    assert.equal(result.handled, true, `${method} ${url}`);
+    assert.equal(result.status, 404, `${method} ${url}`);
+    assert.equal(result.body, "Not Found", `${method} ${url}`);
+  }
+});
+
+test("settings mock keeps all six accessible tabs, states, interactions, and dummy data", () => {
+  const publicDir = path.join(ROOT, "public");
+  const html = fs.readFileSync(path.join(publicDir, "settings.html"), "utf8");
+  const labels = Array.from(html.matchAll(/role="tab"[^>]*>([^<]+)<\/button>/g), (match) => match[1]);
+  assert.deepEqual(labels, ["基本", "音声プリセット", "詳細", "デプロイ", "接続テスト", "エクスポート・インポート"]);
+  assert.equal((html.match(/role="tabpanel"/g) || []).length, 6);
+  assert.match(html, /aria-selected="true" aria-controls="panel-basic" tabindex="0"/);
+  for (const marker of [
+    "setup mode・未設定項目あり",
+    "保存済み・反映には再起動が必要",
+    "env により上書き中",
+    "credential-change",
+    "meeting-assistant",
+    "U012MOCK345",
+    "meetmate-demo.ngrok.app",
+    "greeting-friendly.mp3",
+    "filler-soft.mp3",
+    "farewell-warm.mp3",
+    "変更を保存",
+  ]) assert.match(html, new RegExp(marker.replaceAll(".", "\\.")));
+  assert.match(fs.readFileSync(path.join(publicDir, "settings.js"), "utf8"), /モック: 保存は本実装で有効化/);
+});
+
+test("home page remains the four-block meeting UI with only a settings header link", () => {
+  const publicDir = path.join(ROOT, "public");
+  const html = fs.readFileSync(path.join(publicDir, "index.html"), "utf8");
+  const css = fs.readFileSync(path.join(publicDir, "style.css"), "utf8");
+  const js = fs.readFileSync(path.join(publicDir, "app.js"), "utf8");
+  assert.equal((html.match(/<section\b/g) || []).length, 4);
+  for (const marker of ["Bot を起動", "activeCard", "metricsCard", "toolsCard"]) assert.match(html, new RegExp(marker));
+  assert.match(html, /<a class="settings-link" href="\/settings">⚙ 設定<\/a>/);
+  assert.doesNotMatch(html, /mockSettingsForm|Local admin preview|credential-item|settingsToast/);
+  assert.doesNotMatch(css, /Settings UI mock|\.settings-demo|\.credential-item/);
+  assert.doesNotMatch(js, /mockSettingsForm|settingsToast|initMockSettings/);
+});
+
+test("touched public UI sources do not contain circled step-number literals", () => {
+  const publicDir = path.join(ROOT, "public");
+  for (const filename of ["index.html", "style.css", "app.js", "settings.html", "settings.css", "settings.js"]) {
+    const source = fs.readFileSync(path.join(publicDir, filename), "utf8");
+    assert.doesNotMatch(source, /[②③]/, filename);
+  }
+});

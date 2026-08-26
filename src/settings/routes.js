@@ -1,6 +1,8 @@
 "use strict";
 
 const crypto = require("node:crypto");
+const fs = require("node:fs");
+const path = require("node:path");
 const { URL } = require("node:url");
 const { MASK, SETTINGS_REGISTRY } = require("./registry");
 const { buildEnvelope, getBootstrapSeedFields, getRawConfig, getRuntime, meaningful, readPath } = require("./resolver");
@@ -9,6 +11,12 @@ const { parseStrict, settingsMutationSchema, revisionOnlySchema } = require("./s
 
 const JSON_LIMIT = 256 * 1024;
 const PROVIDERS = new Set(["soniox", "deepgram", "fish-audio", "attendee", "slack"]);
+const PUBLIC_DIR = path.join(__dirname, "..", "..", "public");
+const SETTINGS_ASSETS = new Map([
+  ["/settings", { filename: "settings.html", contentType: "text/html; charset=utf-8" }],
+  ["/settings-assets/settings.css", { filename: "settings.css", contentType: "text/css; charset=utf-8" }],
+  ["/settings-assets/settings.js", { filename: "settings.js", contentType: "application/javascript; charset=utf-8" }],
+]);
 
 function writeJson(res, status, body, headers = {}) {
   const bytes = Buffer.from(JSON.stringify(body));
@@ -17,6 +25,16 @@ function writeJson(res, status, body, headers = {}) {
     "Content-Length": bytes.length,
     "Cache-Control": "no-store",
     ...headers,
+  });
+  res.end(bytes);
+}
+
+function writeStaticAsset(res, asset) {
+  const bytes = fs.readFileSync(path.join(PUBLIC_DIR, asset.filename));
+  res.writeHead(200, {
+    "Content-Type": asset.contentType,
+    "Content-Length": bytes.length,
+    "Cache-Control": "no-store",
   });
   res.end(bytes);
 }
@@ -155,10 +173,9 @@ function createSettingsHandler(options = {}) {
     }
 
     try {
-      if (req.method === "GET" && url.pathname === "/settings") {
-        const html = "<!doctype html><meta charset=utf-8><title>Meetmate settings</title><h1>Meetmate settings</h1><p>The settings editor is delivered by the next Epic child.</p>";
-        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Content-Length": Buffer.byteLength(html), "Cache-Control": "no-store" });
-        res.end(html);
+      const staticAsset = SETTINGS_ASSETS.get(url.pathname);
+      if (req.method === "GET" && staticAsset) {
+        writeStaticAsset(res, staticAsset);
         return true;
       }
       if (req.method === "GET" && url.pathname === "/api/settings") {
