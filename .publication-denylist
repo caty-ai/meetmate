@@ -5,6 +5,7 @@
 #   ここに現れるのは「個人環境の痕跡を検出するため」の検出子であって秘密の暴露ではない。）
 # 実名など機微パターンを足す場合は (b) secret 注入方式へ切り替える（オーナー決裁事項）。
 personal-home-path	/Users/shojikumaru
+linux-home-path	(?-i:/home/(?![<{])[A-Za-z0-9._-]+)
 handoffs-file	_handoffs/[A-Za-z0-9._-]
 tailscale-cgnat	\b100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]{1,3}\.[0-9]{1,3}\b
 family-vault-path	SharedHub/family-vault

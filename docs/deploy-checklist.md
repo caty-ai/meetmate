@@ -82,6 +82,11 @@
   # JPEG等の場合は変換 + リサイズ
   sips -s format png -z 256 256 assets/avatar.png --out assets/avatar.png
   ```
+  - Linux / WSL2（`sips` は macOS 専用）: ImageMagick か ffmpeg で代替
+    ```bash
+    magick input.jpg -resize 256x256 assets/avatar.png      # ImageMagick
+    ffmpeg -i input.jpg -vf scale=256:256 assets/avatar.png  # ffmpeg
+    ```
 
 ---
 
@@ -93,6 +98,9 @@
   ```
 - [ ] **ngrok API ポートが衝突していないか確認**
   - 同一マシンの 2台目以降: 専用 config ファイルで API ポートをずらす
+- [ ] **WSL2 の場合: ngrok を Windows 側で動かしていないか確認**
+  - 自動検出は `localhost:4040` を見るため、ngrok が Windows ホスト側で動いていると WSL2 内からは届かず「起動していない」扱いになり、bot に公開 WSS URL が渡らない
+  - 対策: ngrok を WSL2 内で動かすか、`config.json` の `server.ngrokDomain` にドメインを明示する（自動検出をバイパス）
     ```yaml
     # ~/.config/ngrok/ngrok-<agent-name>.yml
     version: 3
@@ -172,14 +180,18 @@
   - 設定後 Gateway を再起動（`openclaw gateway restart` or SIGUSR1）
   - ⚠️ 未設定だと Meet の会話（warm-up 含む）がメインの Slack チャットに流入してコンテキストが膨張する
 
-- [ ] LaunchAgent 登録（常駐化）
+- [ ] サービス登録（常駐化 — macOS: launchd / Linux・WSL2: systemd user unit を OS 判定で自動選択）
   ```bash
-  ./scripts/install-launchagent.sh \
+  ./scripts/install-service.sh \
     --label ai-meet.<agent-name> \
     --dir "$(pwd)" \
     --port <port>
   ```
-  - [ ] LaunchAgent plist に追加の環境変数（`WAKE_CALIBRATE_ENABLED` 等）を必要に応じて追加
+  - [ ] macOS: LaunchAgent plist に追加の環境変数（`WAKE_CALIBRATE_ENABLED` 等）を必要に応じて追加
+  - [ ] Linux: unit は `~/.config/systemd/user/<label>.service` に生成される。追加の環境変数は unit の `[Service]` に `Environment=KEY=value` で追記 → `systemctl --user daemon-reload && systemctl --user restart <label>`
+  - [ ] Linux: **ログアウト後も常駐させるには** `loginctl enable-linger $USER` を一度実行（未設定だと SSH 切断で停止する）
+  - [ ] WSL2: systemd が無効だとインストーラが失敗する。`/etc/wsl.conf` に `[boot]` `systemd=true` を追記 → Windows 側で `wsl --shutdown` → 再起動
+  - [ ] Linux のログ確認: `logs/meet-server.std{out,err}.log`（macOS と同じ）に加えて `journalctl --user -u <label>` も使える
 - [ ] ウェイクワードキャリブレーション実行（`/calibrate` UI）
 - [ ] watchdog 設定（任意）
   ```bash
