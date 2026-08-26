@@ -238,7 +238,7 @@ function buildIssues(runtime) {
     if (!issues.some((issue) => issue.fieldId === fieldId && issue.code === code)) issues.push({ fieldId, code });
   };
   if (runtime.documentExists && !runtime.documentValid) add("agent_id", "CONFIG_DOCUMENT_INVALID");
-  for (const entry of SETTINGS_REGISTRY.filter((item) => item.path)) {
+  for (const entry of SETTINGS_REGISTRY.filter((item) => item.path && item.writeSurface === "settings")) {
     const stored = readPath(runtime.published.raw, entry.path);
     if (meaningful(stored) && entry.schema.safeParse(stored).success === false) add(entry.id, "VALUE_INVALID");
   }
@@ -374,9 +374,24 @@ function buildEnvelope() {
     if (entry.writeSurface === "none") continue;
     const stored = validValue(entry, readPath(runtime.published.raw, entry.path));
     if (stored !== undefined || entry.id === "audio_clips" || entry.credential === "class-1") {
-      fields[entry.id] = entry.credential === "class-1"
-        ? credentialView(entry, stored, runtime.published.resolved.sources[entry.id])
-        : clone(stored !== undefined ? stored : entry.defaultValue);
+      if (entry.id === "audio_clips") {
+        const values = runtime.published.resolved.values;
+        const reference = typeof values.fish_audio_voice_id === "string" ? values.fish_audio_voice_id.trim() : "";
+        fields[entry.id] = require("./audio").projectClipViews(
+          clone(stored !== undefined ? stored : entry.defaultValue),
+          runtime.startup.resolvedHome,
+          {
+            referenceId: reference || null,
+            model: values.fish_audio_model,
+            sampleRate: values.tts_sample_rate,
+            speed: values.fish_audio_speed,
+          },
+        );
+      } else {
+        fields[entry.id] = entry.credential === "class-1"
+          ? credentialView(entry, stored, runtime.published.resolved.sources[entry.id])
+          : clone(stored !== undefined ? stored : entry.defaultValue);
+      }
     }
     if (entry.writeSurface !== "settings") continue;
     const nextBootEffective = runtime.published.resolved.values[entry.id];

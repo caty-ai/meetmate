@@ -41,10 +41,11 @@ function hostname(allowEmpty = false) {
 
 const absolutePath = z.string().refine((value) => value !== "" && path.isAbsolute(value) && !/^https?:/i.test(value), "invalid_absolute_path");
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
+const clipText = z.string().trim().min(1).refine((value) => utf8Length(value) <= 4096, "too_big");
 const clipRecord = z.object({
   id: z.string().uuid(),
   role: z.enum(["ack", "progress", "greeting", "farewell", "timeout"]),
-  text: text(4096),
+  text: clipText,
   sourceRelativePath: trimmedString(1024),
   pcmRelativePath: trimmedString(1024),
   sourceSha256: hash,

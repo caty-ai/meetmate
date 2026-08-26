@@ -1408,7 +1408,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       const farewellLog = farewellVoice.replace(/^[\[(][^\])]*[\])]\s*/, "");
       turnState.isAgentSpeaking = true;
       try {
-        await speakSentence(farewellVoice, null, { cacheable: true });
+        await speakSentence(farewellVoice, null, { cacheable: true, role: "farewell" });
       } catch {
         // ignore TTS error during exit
       }
@@ -1697,6 +1697,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       try {
         await speakSentence(timeoutMsg, null, {
           cacheable: true,
+          role: "timeout",
           onPlaybackStart: () => {
             if (forcedDelegationFired) {
               recordTtsPlaybackStartOnce(timeoutMsg, "forced_delegation");
@@ -1831,7 +1832,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       progressPingIndex += 1;
       turnState.isAgentSpeaking = true;
       console.log(`⏳  Progress ping: "${ping}"`);
-      await speakSentence(ping, abort.signal, { cacheable: true });
+      await speakSentence(ping, abort.signal, { cacheable: true, role: "progress" });
       if (!abort.signal.aborted) {
         appendAssistantLog(ping.replace(/^\([^)]*\)\s*/, ""));
         turnState.isAgentSpeaking = false;
@@ -1852,6 +1853,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         console.log(`⚡  Immediate ack: "${ack}"`);
         await speakSentence(ack, abort.signal, {
           cacheable: true,
+          role: "ack",
           onPlaybackStart: () => recordMetric("ack_playback_start", {
             turn_id: metricsTurnId,
             ack_text: ack,
@@ -2253,6 +2255,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       let playbackStarted = false;
       await synthesizeFn(cleaned, {
         apiKey: fishKey,
+        role: opts.role,
         referenceId: agentState.voiceId || config.tts.referenceId || null,
         sampleRate: config.tts.sampleRate,
         latency: config.tts.latency,
@@ -2352,7 +2355,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     isProcessing = true;
     turnState.isAgentSpeaking = true;
     try {
-      await speakSentence(greeting, greetAbort.signal, { cacheable: true });
+      await speakSentence(greeting, greetAbort.signal, { cacheable: true, role: "greeting" });
       if (purposeStatement && !greetAbort.signal.aborted) {
         // Small pause between greeting and purpose
         const silence = generateSilence(SENTENCE_PAUSE_MS || 500, config.tts.sampleRate);

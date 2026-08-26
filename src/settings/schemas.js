@@ -21,6 +21,11 @@ const settingsMutationSchema = z.object({
 
 const revisionOnlySchema = z.object({ revision: revisionSchema }).strict();
 const sha256RevisionOnlySchema = z.object({ revision: sha256RevisionSchema }).strict();
+const audioMetadataSchema = z.object({
+  role: z.enum(["ack", "progress", "greeting", "farewell", "timeout"]),
+  text: z.string().trim().min(1).refine((value) => Buffer.byteLength(value, "utf8") <= 4096, "too_big"),
+  revision: sha256RevisionSchema,
+}).strict();
 
 const importableShape = {};
 for (const entry of SETTINGS_REGISTRY.filter((item) => item.writeSurface === "settings" && item.credential === "none")) {
@@ -71,6 +76,7 @@ function parseStrict(schema, value) {
 }
 
 module.exports = {
+  audioMetadataSchema,
   parseStrict,
   exportDocumentSchema,
   exportSettingsSchema,

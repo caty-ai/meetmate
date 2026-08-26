@@ -24,7 +24,18 @@ function diffFields(loadedFields, currentFields) {
   return changed;
 }
 
-if (typeof module !== "undefined" && module.exports) module.exports = { diffFields };
+function clipMatchesCurrentText(clip, fields = {}) {
+  const values = {
+    ack: fields.agent_ack_variants || [],
+    progress: fields.agent_progress_pings || [],
+    greeting: [fields.agent_greeting],
+    farewell: [fields.agent_exit_farewell],
+    timeout: [fields.agent_timeout_fallback],
+  };
+  return Array.isArray(values[clip?.role]) && values[clip.role].some((text) => text === clip.text);
+}
+
+if (typeof module !== "undefined" && module.exports) module.exports = { clipMatchesCurrentText, diffFields };
 
 if (typeof document !== "undefined") {
   (function initializeSettingsUi() {
@@ -117,6 +128,9 @@ if (typeof document !== "undefined") {
       ["soniox", "Soniox"], ["deepgram", "Deepgram"], ["fish-audio", "Fish Audio"],
       ["attendee", "Attendee"], ["slack", "Slack"],
     ];
+    const AUDIO_ROLE_LABELS = {
+      ack: "応答確認", progress: "進捗", greeting: "あいさつ", farewell: "退出", timeout: "タイムアウト",
+    };
 
     const form = document.getElementById("settingsForm");
     const toast = document.getElementById("settingsToast");
@@ -124,6 +138,10 @@ if (typeof document !== "undefined") {
     const saveButton = document.getElementById("saveSettings");
     const dirtyStatus = document.getElementById("dirtyStatus");
     const importFile = document.getElementById("importFile");
+    const audioRole = document.getElementById("audioRole");
+    const audioText = document.getElementById("audioText");
+    const audioFile = document.getElementById("audioFile");
+    const uploadAudioButton = document.getElementById("uploadAudio");
     let manifest = [];
     let envelope = null;
     let loadedValues = {};
@@ -386,8 +404,78 @@ if (typeof document !== "undefined") {
         target.append(createField(entry, value));
       }
       renderEmotionHelp();
+      renderAudioClips();
       updateConditionalVisibility();
       updateDirtyState();
+    }
+
+    function currentSavedFields() {
+      return { ...(envelope?.effective || {}), ...(envelope?.fields || {}) };
+    }
+
+    function renderAudioClips() {
+      const list = document.getElementById("audioClipList");
+      list.replaceChildren();
+      const clips = Array.isArray(envelope?.fields?.audio_clips) ? envelope.fields.audio_clips : [];
+      for (const clip of clips) {
+        const row = document.createElement("article");
+        row.className = "audio-row";
+        const icon = document.createElement("span");
+        icon.className = "audio-icon";
+        icon.setAttribute("aria-hidden", "true");
+        icon.textContent = "♪";
+        const copy = document.createElement("div");
+        const title = document.createElement("strong");
+        title.textContent = `${AUDIO_ROLE_LABELS[clip.role] || clip.role}: ${clip.text}`;
+        const created = document.createElement("small");
+        const date = new Date(clip.createdAt);
+        created.textContent = Number.isNaN(date.getTime()) ? clip.createdAt : date.toLocaleString("ja-JP");
+        copy.append(title, created);
+        const badges = document.createElement("div");
+        badges.className = "audio-badges";
+        const stale = document.createElement("span");
+        stale.className = `status-badge ${clip.stale ? "mismatch" : "match"}`;
+        stale.textContent = clip.stale ? "stale" : "current";
+        const playable = document.createElement("span");
+        playable.className = `status-badge ${clip.playable ? "match" : "pending"}`;
+        playable.textContent = clip.playable ? "playable" : "unplayable";
+        badges.append(stale, playable);
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "btn-text danger-text";
+        remove.textContent = "削除";
+        remove.addEventListener("click", () => deleteAudioClip(clip.id, remove));
+        row.append(icon, copy, badges, remove);
+
+        const matches = clipMatchesCurrentText(clip, currentSavedFields());
+        if (clip.stale || !clip.playable || !matches) {
+          const warning = document.createElement("p");
+          warning.className = "audio-warning";
+          warning.textContent = !matches
+            ? "警告: クリップの文言が現在の設定文と一致しないため、自動再生されません。"
+            : clip.stale
+              ? "警告: 現在の音声設定と一致しない stale クリップのため、自動再生されません。"
+              : "警告: 音声ファイルを再生できないため、自動再生されません。";
+          row.append(warning);
+        } else {
+          const active = document.createElement("p");
+          active.className = "audio-active";
+          active.textContent = "この定型文の自動再生に使用されます。";
+          row.append(active);
+        }
+        list.append(row);
+      }
+      if (!clips.length) {
+        const empty = document.createElement("p");
+        empty.className = "empty-state";
+        empty.textContent = "登録済みの音声クリップはありません。";
+        list.append(empty);
+      }
+      updateAudioUploadState();
+    }
+
+    function updateAudioUploadState() {
+      uploadAudioButton.disabled = !envelope || !audioText.value.trim() || !audioFile.files?.length;
     }
 
     function renderEmotionHelp() {
@@ -583,6 +671,72 @@ if (typeof document !== "undefined") {
       return body;
     }
 
+    async function audioRequest(url, options) {
+      const response = await fetch(url, { ...options, headers: { Accept: "application/json", ...(options.headers || {}) } });
+      const body = await responseJson(response);
+      if (response.status === 409) {
+        await loadSettings(true);
+        const conflict = new Error("conflict");
+        conflict.handled = true;
+        throw conflict;
+      }
+      if (!response.ok) {
+        const failure = new Error(errorMessage(body, "音声クリップの操作に失敗しました。"));
+        failure.status = response.status;
+        throw failure;
+      }
+      return body;
+    }
+
+    async function uploadAudioClip() {
+      const result = document.getElementById("audioResult");
+      const file = audioFile.files?.[0];
+      const text = audioText.value.trim();
+      if (!file || !text) return;
+      if (!file.name.toLowerCase().endsWith(".mp3")) {
+        result.textContent = ".mp3 ファイルを選択してください。";
+        return;
+      }
+      if (file.size > 10 * 1024 * 1024) {
+        result.textContent = "MP3 は 10 MiB 以下にしてください。";
+        return;
+      }
+      uploadAudioButton.disabled = true;
+      uploadAudioButton.textContent = "変換中…";
+      result.textContent = "MP3 を検証・変換しています…";
+      try {
+        const formData = new FormData();
+        formData.append("metadata", JSON.stringify({ role: audioRole.value, text, revision: envelope.revision }));
+        formData.append("audio", new Blob([file], { type: "audio/mpeg" }), file.name);
+        const body = await audioRequest("/api/settings/audio", { method: "POST", body: formData });
+        envelope.revision = body.revision;
+        audioText.value = "";
+        audioFile.value = "";
+        result.textContent = "音声クリップを登録しました。";
+        await loadSettings();
+      } catch (error) {
+        if (!error.handled) result.textContent = error.message;
+      } finally {
+        uploadAudioButton.textContent = "アップロード";
+        updateAudioUploadState();
+      }
+    }
+
+    async function deleteAudioClip(id, button) {
+      const result = document.getElementById("audioResult");
+      button.disabled = true;
+      try {
+        const body = await jsonRequest(`/api/settings/audio/${encodeURIComponent(id)}`, {
+          method: "DELETE", body: JSON.stringify({ revision: envelope.revision }),
+        });
+        envelope.revision = body.revision;
+        result.textContent = "音声クリップを削除しました。";
+        await loadSettings();
+      } catch (error) {
+        if (!error.handled) result.textContent = error.message;
+      } finally { button.disabled = false; }
+    }
+
     async function saveSettings(event) {
       event.preventDefault();
       const fields = pendingChanges();
@@ -728,6 +882,9 @@ if (typeof document !== "undefined") {
       }
     });
     importFile.addEventListener("change", () => { document.getElementById("importSettings").disabled = !importFile.files?.length; });
+    audioText.addEventListener("input", updateAudioUploadState);
+    audioFile.addEventListener("change", updateAudioUploadState);
+    uploadAudioButton.addEventListener("click", uploadAudioClip);
     document.getElementById("exportSettings").addEventListener("click", exportSettings);
     document.getElementById("importSettings").addEventListener("click", importSettings);
     document.getElementById("migrateVendorSettings").addEventListener("click", migrateVendorSettings);

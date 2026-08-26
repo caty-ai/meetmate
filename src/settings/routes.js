@@ -8,6 +8,7 @@ const { EMOTION_TAGS } = require("../messages");
 const { MASK, SETTINGS_REGISTRY } = require("./registry");
 const { buildEnvelope, getBootstrapSeedFields, getRawConfig, getRuntime, meaningful, readPath } = require("./resolver");
 const { saveFields, settingsError } = require("./store");
+const { deleteAudio, uploadAudio } = require("./audio");
 const {
   exportDocumentSchema,
   importRequestSchema,
@@ -114,6 +115,7 @@ function writeError(res, error, requestId) {
     SETTINGS_MEDIA_TYPE_UNSUPPORTED: 415,
     SETTINGS_VALIDATION_FAILED: 422,
     SETTINGS_MULTI_PROCESS_UNSUPPORTED: 503,
+    SETTINGS_AUDIO_NOT_FOUND: 404,
     TEST_NOT_IMPLEMENTED: 501,
   }[error.code] || 500);
   const code = typeof error.code === "string" && (error.code.startsWith("SETTINGS_") || error.code === "TEST_NOT_IMPLEMENTED")
@@ -129,6 +131,12 @@ function writeError(res, error, requestId) {
     SETTINGS_VALIDATION_FAILED: "Request validation failed",
     SETTINGS_MULTI_PROCESS_UNSUPPORTED: "Settings are busy",
     SETTINGS_SYMLINK_REJECTED: "Settings path is not allowed",
+    SETTINGS_AUDIO_NOT_FOUND: "Audio clip was not found",
+    SETTINGS_AUDIO_SOURCE_TOO_LARGE: "Audio source is too large",
+    SETTINGS_AUDIO_TOTAL_LIMIT: "Managed audio limit exceeded",
+    SETTINGS_AUDIO_CLIP_LIMIT: "Managed audio clip limit exceeded",
+    SETTINGS_AUDIO_CONVERSION_TIMEOUT: "Audio conversion timed out",
+    SETTINGS_AUDIO_CLEANUP_FAILED: "Audio cleanup failed",
     TEST_NOT_IMPLEMENTED: "Settings feature is not implemented",
   };
   const body = { error: { code, message: messages[code] || "Settings request failed" } };
@@ -343,6 +351,19 @@ function createSettingsHandler(options = {}) {
         return true;
       }
 
+      if (req.method === "POST" && url.pathname === "/api/settings/audio") {
+        requireSameOrigin(req, settingsOptions);
+        writeJson(res, 200, await uploadAudio(req, options.audio || options));
+        return true;
+      }
+      const audioDeleteMatch = url.pathname.match(/^\/api\/settings\/audio\/([^/]+)$/);
+      if (req.method === "DELETE" && audioDeleteMatch) {
+        requireSameOrigin(req, settingsOptions);
+        const body = parseStrict(sha256RevisionOnlySchema, await readJson(req, JSON_LIMIT));
+        writeJson(res, 200, await deleteAudio(audioDeleteMatch[1], body.revision, options.audio || options));
+        return true;
+      }
+
       const connectionMatch = url.pathname.match(/^\/api\/settings\/connections\/([^/]+)\/test$/);
       if (req.method === "POST" && connectionMatch) {
         requireSameOrigin(req, settingsOptions);
@@ -353,8 +374,7 @@ function createSettingsHandler(options = {}) {
         throw settingsError("TEST_NOT_IMPLEMENTED", "Settings feature is not implemented", 501);
       }
 
-      const childShell = (req.method === "POST" && ["/api/settings/tts-preview", "/api/settings/audio"].includes(url.pathname))
-        || (req.method === "DELETE" && url.pathname.startsWith("/api/settings/audio/"));
+      const childShell = req.method === "POST" && url.pathname === "/api/settings/tts-preview";
       if (childShell) {
         if (req.method !== "GET") {
           requireSameOrigin(req, settingsOptions);

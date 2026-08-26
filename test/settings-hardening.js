@@ -394,15 +394,13 @@ test("T12-07 setup issues are registry-derived, semantic, provider-aware, and ab
 
   resetRuntimeForTest();
   initializeRuntime({ state: state({ server: { port: "bad" } }), startup: startup() });
-  assert.deepEqual(buildEnvelope().issues.find((issue) => issue.fieldId === "server_port"), { fieldId: "server_port", code: "VALUE_INVALID" });
+  assert.equal(buildEnvelope().issues.find((issue) => issue.fieldId === "server_port"), undefined);
   assert.equal(getEffectiveValue("server_port"), 5005);
-  assert.equal(buildEnvelope().setupMode, true);
 
   resetRuntimeForTest();
   initializeRuntime({ state: state({ audio: { clips: [{}] } }), startup: startup() });
-  assert.deepEqual(buildEnvelope().issues.find((issue) => issue.fieldId === "audio_clips"), { fieldId: "audio_clips", code: "VALUE_INVALID" });
+  assert.equal(buildEnvelope().issues.find((issue) => issue.fieldId === "audio_clips"), undefined);
   assert.deepEqual(buildEnvelope().fields.audio_clips, []);
-  assert.equal(buildEnvelope().setupMode, true);
 
   resetRuntimeForTest();
   initializeRuntime({ state: state({ gateway: { token: "legacy" } }), startup: startup() });
@@ -1165,7 +1163,10 @@ test("settings UI keeps six accessible tabs and uses injected registry data with
   for (const marker of ["basicFields", "voiceFields", "detailFields", "diagnosticsList", "変更を保存"]) {
     assert.match(html, new RegExp(marker));
   }
-  assert.match(html, /audio-drop-zone[^>]*disabled/);
+  assert.match(html, /id="audioRole"/);
+  assert.match(html, /id="audioFile"[^>]*accept="audio\/mpeg,\.mp3"/);
+  assert.match(html, /id="audioClipList"/);
+  assert.doesNotMatch(html, /audio-drop-zone[^>]*disabled/);
   assert.match(js, /fetch\("\/api\/settings"/);
   assert.match(js, /method: "PUT"/);
   assert.match(js, /NULLABLE_NUMBER_FIELDS\.has\(entry\.id\) \? null : ""/);

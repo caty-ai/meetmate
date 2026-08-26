@@ -104,6 +104,28 @@ function createTtsCache({ dir = defaultCacheDir(), synthesizeFn } = {}) {
   async function synthesizeCached(text, options = {}) {
     if (!options.onAudio) throw new Error("onAudio callback is required");
 
+    const identity = {
+      referenceId: options.referenceId || null,
+      model: options.model || getEffectiveValue("fish_audio_model"),
+      sampleRate: options.sampleRate || DEFAULT_SAMPLE_RATE,
+      speed: normalizeSpeed(options.speed),
+    };
+    const managed = require("./settings/audio").lookupManagedPcm({
+      role: options.role,
+      text,
+      ...identity,
+    });
+    if (managed) {
+      try {
+        console.log(`🎵 Managed TTS clip hit (${managed.clip.role}, ${managed.pcm.length} bytes)`);
+        await emitPacedPcm(managed.pcm, { ...options, sampleRate: identity.sampleRate });
+        return;
+      } catch {
+        // A playback callback failure must preserve the record and fall back
+        // through the existing synthesis path.
+      }
+    }
+
     if (!isCacheEnabled()) {
       return delegate(text, options);
     }

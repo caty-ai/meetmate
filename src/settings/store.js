@@ -231,10 +231,24 @@ function saveFields({ configPath, revision, fields }) {
   });
 }
 
+function saveAudioClips({ configPath, revision, clips }) {
+  const entry = SETTINGS_REGISTRY.find((item) => item.id === "audio_clips");
+  const parsed = entry.schema.safeParse(clips);
+  if (!parsed.success) throw settingsError("SETTINGS_VALIDATION_FAILED", "Request validation failed", 422);
+  return commitWholeConfig({
+    configPath,
+    revision,
+    mutate(document) {
+      applyPath(document, entry.path, parsed.data);
+    },
+  });
+}
+
 module.exports = {
   commitWholeConfig,
   readConfigState,
   rejectSymlink,
+  saveAudioClips,
   saveFields,
   settingsError,
   _test: { acquireLock, assertRevision, fsyncDirectory, sha256, writeTemp },

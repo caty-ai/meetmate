@@ -58,12 +58,21 @@
           </div>
           <div class="audio-manager" aria-labelledby="audioManagerTitle">
             <div class="audio-manager-heading">
-              <div><strong id="audioManagerTitle">事前録音 MP3</strong><span>アップロード・再生・試聴は Phase B で提供します。</span></div>
-              <span class="status-badge pending">Phase B</span>
+              <div><strong id="audioManagerTitle">事前録音 MP3</strong><span>定型文に合わせた MP3 を登録すると、現在の音声設定と一致する場合だけ自動再生します。</span></div>
+              <span class="status-badge match">利用可能</span>
             </div>
-            <button class="audio-drop-zone" type="button" disabled aria-disabled="true">
-              <span class="drop-icon" aria-hidden="true">↑</span><strong>MP3 アップロード</strong><small>現在は利用できません</small>
-            </button>
+            <div class="audio-upload-grid">
+              <label class="field"><span class="field-label">役割</span><select id="audioRole">
+                <option value="ack">応答確認</option><option value="progress">進捗</option>
+                <option value="greeting">あいさつ</option><option value="farewell">退出</option>
+                <option value="timeout">タイムアウト</option>
+              </select></label>
+              <label class="field span-2"><span class="field-label">クリップの文言</span><textarea id="audioText" rows="3" maxlength="4096" required></textarea></label>
+              <label class="file-picker audio-file-picker"><span>MP3 を選択</span><input id="audioFile" type="file" accept="audio/mpeg,.mp3"></label>
+              <button class="btn-secondary" id="uploadAudio" type="button" disabled>アップロード</button>
+            </div>
+            <div class="action-result" id="audioResult" role="status" aria-live="polite"></div>
+            <div class="audio-list" id="audioClipList" aria-live="polite"></div>
           </div>
         </section>
       </section>
