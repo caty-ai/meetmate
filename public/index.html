@@ -110,6 +110,282 @@
         </section>
       </div>
     </div>
+
+    <section class="settings-demo reveal reveal-5" id="settings" aria-labelledby="settingsTitle">
+      <div class="settings-heading">
+        <div>
+          <span class="eyebrow">Local admin preview</span>
+          <h2 class="settings-title" id="settingsTitle">設定</h2>
+          <p class="settings-lead">Meetmate の基本設定と音声プリセットを、この画面でまとめて管理する想定です。</p>
+        </div>
+        <span class="mock-badge">UI MOCK</span>
+      </div>
+
+      <div class="settings-state-stack" aria-label="設定状態の表示例">
+        <div class="settings-notice warning" role="alert">
+          <span class="notice-icon" aria-hidden="true">!</span>
+          <div>
+            <strong>setup mode・未設定項目あり</strong>
+            <p>必須設定が不足しています。Soniox API キーと Wake Word を設定すると、ミーティングを開始できます。</p>
+          </div>
+        </div>
+        <div class="settings-notice success" role="status">
+          <span class="notice-icon" aria-hidden="true">✓</span>
+          <div>
+            <strong>保存済み・反映には再起動が必要</strong>
+            <p>モデル、音声 ID、Wake Word の変更は、Meetmate を再起動した後に反映されます。</p>
+          </div>
+        </div>
+      </div>
+
+      <form class="settings-form" id="mockSettingsForm">
+        <section class="settings-panel" aria-labelledby="basicSettingsTitle">
+          <div class="settings-panel-heading">
+            <div>
+              <h3 id="basicSettingsTitle">基本設定</h3>
+              <p>エージェントの表示、応答、使用モデルを設定します。</p>
+            </div>
+            <span class="apply-badge">再起動後に反映</span>
+          </div>
+
+          <div class="settings-field-grid">
+            <label class="settings-field">
+              <span>エージェント名</span>
+              <input type="text" name="agentName" value="meeting-assistant">
+            </label>
+            <label class="settings-field">
+              <span>表示名</span>
+              <input type="text" name="agentDisplayName" value="Meetmate アシスタント">
+            </label>
+            <label class="settings-field">
+              <span>言語</span>
+              <select name="agentLanguage">
+                <option value="ja" selected>日本語</option>
+                <option value="en">English</option>
+              </select>
+            </label>
+            <label class="settings-field">
+              <span>Wake Words</span>
+              <input type="text" name="wakeWords" value="ミートメイト, アシスタント">
+              <small>カンマ区切りで入力</small>
+            </label>
+            <label class="settings-field span-2">
+              <span>アイコン URL</span>
+              <input type="url" name="avatarUrl" value="https://example.com/meetmate-icon.png">
+            </label>
+            <label class="settings-field">
+              <span>モデル</span>
+              <input type="text" name="model" value="meeting-agent-v1">
+              <span class="source-badge">env により上書き中</span>
+            </label>
+            <label class="settings-field">
+              <span>Fish Audio Voice ID</span>
+              <input type="text" name="voiceId" value="voice-jp-friendly-01">
+            </label>
+          </div>
+        </section>
+
+        <section class="settings-panel" aria-labelledby="credentialsTitle">
+          <div class="settings-panel-heading">
+            <div>
+              <h3 id="credentialsTitle">外部サービス接続</h3>
+              <p>保存済みの値は表示しません。「変更」から新しい値だけを入力できます。</p>
+            </div>
+            <span class="secure-badge">MASKED</span>
+          </div>
+
+          <div class="credential-list">
+            <div class="credential-item" data-credential="soniox">
+              <div class="credential-summary">
+                <div>
+                  <strong>Soniox API key</strong>
+                  <span class="credential-meta">Speech to Text <span class="source-badge">env により上書き中</span></span>
+                </div>
+                <code class="credential-mask" aria-label="保存済みの値">••••••••</code>
+                <button class="btn-quiet credential-change" type="button" aria-expanded="false">変更</button>
+              </div>
+              <div class="credential-editor is-hidden">
+                <label>
+                  <span>新しい API key</span>
+                  <input type="password" autocomplete="new-password" placeholder="新しい値を入力" value="">
+                </label>
+                <span class="credential-edit-state">現在の値は表示されません</span>
+                <button class="btn-text credential-cancel" type="button">キャンセル</button>
+              </div>
+            </div>
+            <div class="credential-item" data-credential="deepgram">
+              <div class="credential-summary">
+                <div><strong>Deepgram API key</strong><span class="credential-meta">Speech to Text</span></div>
+                <code class="credential-mask" aria-label="保存済みの値">••••••••</code>
+                <button class="btn-quiet credential-change" type="button" aria-expanded="false">変更</button>
+              </div>
+              <div class="credential-editor is-hidden">
+                <label><span>新しい API key</span><input type="password" autocomplete="new-password" placeholder="新しい値を入力" value=""></label>
+                <span class="credential-edit-state">現在の値は表示されません</span>
+                <button class="btn-text credential-cancel" type="button">キャンセル</button>
+              </div>
+            </div>
+            <div class="credential-item" data-credential="fish">
+              <div class="credential-summary">
+                <div><strong>Fish Audio API key</strong><span class="credential-meta">Text to Speech</span></div>
+                <code class="credential-mask" aria-label="保存済みの値">••••••••</code>
+                <button class="btn-quiet credential-change" type="button" aria-expanded="false">変更</button>
+              </div>
+              <div class="credential-editor is-hidden">
+                <label><span>新しい API key</span><input type="password" autocomplete="new-password" placeholder="新しい値を入力" value=""></label>
+                <span class="credential-edit-state">現在の値は表示されません</span>
+                <button class="btn-text credential-cancel" type="button">キャンセル</button>
+              </div>
+            </div>
+            <div class="credential-item" data-credential="attendee">
+              <div class="credential-summary">
+                <div><strong>Attendee API key</strong><span class="credential-meta">Meeting Bot</span></div>
+                <code class="credential-mask" aria-label="保存済みの値">••••••••</code>
+                <button class="btn-quiet credential-change" type="button" aria-expanded="false">変更</button>
+              </div>
+              <div class="credential-editor is-hidden">
+                <label><span>新しい API key</span><input type="password" autocomplete="new-password" placeholder="新しい値を入力" value=""></label>
+                <span class="credential-edit-state">現在の値は表示されません</span>
+                <button class="btn-text credential-cancel" type="button">キャンセル</button>
+              </div>
+            </div>
+            <div class="credential-item" data-credential="slack">
+              <div class="credential-summary">
+                <div><strong>Slack Bot token</strong><span class="credential-meta">通知</span></div>
+                <code class="credential-mask" aria-label="保存済みの値">••••••••</code>
+                <button class="btn-quiet credential-change" type="button" aria-expanded="false">変更</button>
+              </div>
+              <div class="credential-editor is-hidden">
+                <label><span>新しい token</span><input type="password" autocomplete="new-password" placeholder="新しい値を入力" value=""></label>
+                <span class="credential-edit-state">現在の値は表示されません</span>
+                <button class="btn-text credential-cancel" type="button">キャンセル</button>
+              </div>
+            </div>
+          </div>
+
+          <p class="mask-note">未変更のまま保存すると、マスク <code>••••••••</code> を往復して既存値を保持します。実際の値を画面へ戻すことはありません。</p>
+          <div class="connection-tests" aria-labelledby="connectionTestsTitle">
+            <div>
+              <strong id="connectionTestsTitle">接続テスト</strong>
+              <span>資格情報を保存する前の動作イメージです。</span>
+            </div>
+            <div class="inline-actions">
+              <button class="btn-secondary" type="button" data-mock-action>Soniox テスト</button>
+              <button class="btn-secondary" type="button" data-mock-action>Fish Audio テスト</button>
+              <button class="btn-secondary" type="button" data-mock-action>試聴</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="settings-panel" aria-labelledby="behaviorTitle">
+          <div class="settings-panel-heading">
+            <div>
+              <h3 id="behaviorTitle">応答と機能</h3>
+              <p>会議中の振る舞いと通知機能を選びます。</p>
+            </div>
+          </div>
+
+          <div class="toggle-grid">
+            <label class="toggle-row">
+              <span><strong>タスク抽出</strong><small>会議終了時に TODO を抽出</small></span>
+              <input type="checkbox" name="taskExtraction" checked><span class="toggle-ui" aria-hidden="true"></span>
+            </label>
+            <label class="toggle-row">
+              <span><strong>ストリーミング相当</strong><small>回答を順次処理する互換動作</small></span>
+              <input type="checkbox" name="streamingEquivalent" checked><span class="toggle-ui" aria-hidden="true"></span>
+            </label>
+            <label class="toggle-row">
+              <span><strong>Slack 通知</strong><small>会議結果を Slack へ通知</small></span>
+              <input type="checkbox" name="slackNotifications" checked><span class="toggle-ui" aria-hidden="true"></span>
+            </label>
+            <label class="toggle-row">
+              <span><strong>感情タグ</strong><small>Fish Audio の音声表現を有効化</small></span>
+              <input type="checkbox" name="emotionTags" checked><span class="toggle-ui" aria-hidden="true"></span>
+            </label>
+          </div>
+
+          <div class="emotion-help" aria-labelledby="emotionTagsTitle">
+            <strong id="emotionTagsTitle">固定の感情タグ（読み取り専用）</strong>
+            <ul>
+              <li><code>[soft voice]</code><span>デフォルト・優しい声</span></li>
+              <li><code>[warm]</code><span>温かみ</span></li>
+              <li><code>[friendly, warm]</code><span>親しみ＋温かみ</span></li>
+              <li><code>[empathetic, unhurried]</code><span>謝罪・落ち着き</span></li>
+              <li><code>[thoughtful]</code><span>考え深く</span></li>
+            </ul>
+          </div>
+        </section>
+
+        <section class="settings-panel" aria-labelledby="voicePresetsTitle">
+          <div class="settings-panel-heading">
+            <div>
+              <h3 id="voicePresetsTitle">音声プリセット</h3>
+              <p>会話の場面ごとに読み上げる文言を編集します。</p>
+            </div>
+            <span class="apply-badge live">すぐに反映</span>
+          </div>
+
+          <div class="preset-grid">
+            <div class="settings-field preset-field"><label for="presetGreeting">あいさつ</label><textarea id="presetGreeting" name="greeting">こんにちは。Meetmateです。本日の会議をサポートします。</textarea><button class="btn-text preset-preview" type="button" data-mock-action>音声をプレビュー</button></div>
+            <div class="settings-field preset-field"><label for="presetFiller">フィラー</label><textarea id="presetFiller" name="filler">はい、確認しています。少々お待ちください。</textarea><button class="btn-text preset-preview" type="button" data-mock-action>音声をプレビュー</button></div>
+            <div class="settings-field preset-field"><label for="presetProgress">進捗 Ping</label><textarea id="presetProgress" name="progressPing">もう少しでまとまります。</textarea><button class="btn-text preset-preview" type="button" data-mock-action>音声をプレビュー</button></div>
+            <div class="settings-field preset-field"><label for="presetFarewell">退出あいさつ</label><textarea id="presetFarewell" name="farewell">ありがとうございました。会議を退出します。</textarea><button class="btn-text preset-preview" type="button" data-mock-action>音声をプレビュー</button></div>
+            <div class="settings-field preset-field span-2"><label for="presetTimeout">タイムアウト</label><textarea id="presetTimeout" name="timeout">お待たせして申し訳ありません。時間をおいてもう一度お試しください。</textarea><button class="btn-text preset-preview" type="button" data-mock-action>音声をプレビュー</button></div>
+          </div>
+
+          <div class="audio-manager" aria-labelledby="audioManagerTitle">
+            <div class="audio-manager-heading">
+              <div><strong id="audioManagerTitle">事前録音 MP3</strong><span>テキスト・音声 ID・モデルなどの一致を確認します。</span></div>
+            </div>
+            <button class="audio-drop-zone" type="button" data-mock-action>
+              <span class="drop-icon" aria-hidden="true">↑</span>
+              <strong>MP3 をここにドロップ</strong>
+              <small>またはクリックしてアップロード · 最大 10 MiB</small>
+            </button>
+            <div class="audio-row"><span class="audio-icon" aria-hidden="true">♪</span><div><strong>greeting-friendly.mp3</strong><small>あいさつ · 1.8秒</small></div><span class="status-badge match">一致</span><button class="btn-text" type="button" data-mock-action>再生</button></div>
+            <div class="audio-row"><span class="audio-icon" aria-hidden="true">♪</span><div><strong>filler-soft.mp3</strong><small>フィラー · 1.2秒</small></div><span class="status-badge mismatch">不一致 · 再録音が必要</span><button class="btn-text" type="button" data-mock-action>再生</button></div>
+            <div class="audio-row"><span class="audio-icon" aria-hidden="true">♪</span><div><strong>farewell-warm.mp3</strong><small>退出あいさつ · 1.5秒</small></div><span class="status-badge match">一致</span><button class="btn-text" type="button" data-mock-action>再生</button></div>
+          </div>
+        </section>
+
+        <details class="settings-details">
+          <summary><span><strong>詳細設定</strong><small>Slack、ngrok、音声生成パラメータ</small></span><span class="details-chevron" aria-hidden="true">⌄</span></summary>
+          <div class="details-body settings-field-grid">
+            <label class="settings-field"><span>Slack 通知先</span><select name="slackTarget"><option selected>ダイレクトメッセージ</option><option>チャンネル</option></select></label>
+            <label class="settings-field"><span>Slack User ID</span><input type="text" name="slackUser" value="U012MOCK345"></label>
+            <label class="settings-field span-2"><span>ngrok ドメイン</span><input type="text" name="ngrokDomain" value="meetmate-demo.ngrok.app"></label>
+            <label class="settings-field"><span>Fish Audio モデル</span><input type="text" name="fishModel" value="s2-pro"></label>
+            <label class="settings-field"><span>音声速度</span><input type="number" name="voiceSpeed" value="1" min="0.5" max="2" step="0.1"></label>
+          </div>
+        </details>
+
+        <details class="settings-details">
+          <summary><span><strong>デプロイ設定（読み取り専用）</strong><small>現在の実行環境</small></span><span class="details-chevron" aria-hidden="true">⌄</span></summary>
+          <div class="details-body readonly-list">
+            <div><span>PORT</span><code>5005</code><small>runtime</small></div>
+            <div><span>Resolved home</span><code>/Users/demo/.meetmate</code><small>launch</small></div>
+            <div><span>Public meeting URL</span><code>https://meetmate-demo.ngrok.app</code><small>config</small></div>
+          </div>
+        </details>
+
+        <details class="settings-details">
+          <summary><span><strong>エクスポート / インポート</strong><small>資格情報を含まない設定ファイル</small></span><span class="details-chevron" aria-hidden="true">⌄</span></summary>
+          <div class="details-body export-panel">
+            <p>外部サービスのキーと音声ファイルはエクスポートされません。</p>
+            <div class="inline-actions">
+              <button class="btn-secondary" type="button" data-mock-action>設定をエクスポート</button>
+              <button class="btn-secondary" type="button" data-mock-action>設定をインポート</button>
+            </div>
+          </div>
+        </details>
+
+        <div class="settings-actions">
+          <p>これは画面構成を確認するためのモックです。入力内容は保存されません。</p>
+          <button class="btn settings-save" type="submit"><span>変更を保存</span></button>
+        </div>
+      </form>
+      <div class="settings-toast" id="settingsToast" role="status" aria-live="polite"></div>
+    </section>
   </div>
   <div class="install-banner is-hidden" id="installBanner" role="status" aria-live="polite">
     <div class="install-copy">
