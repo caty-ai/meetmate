@@ -315,6 +315,8 @@ test("T12-05 whole-store transaction preserves unknowns, strips class 2, and enf
     llm: { openaiCompatible: { apiKey: "legacy-key", baseUrl: "http://localhost:4000/v1" } },
   })}\n`, { mode: 0o644 });
   const before = readConfigState(config);
+  resetRuntimeForTest();
+  initializeRuntime({ state: before, startup: settingsStartup({ configPath: config, resolvedHome: directory }) });
   const committed = saveFields({ configPath: config, revision: before.revision, fields: { agent_language: "ja" } });
   assert.deepEqual(committed.parsed._comments, { preserved: true });
   assert.deepEqual(committed.parsed.agents, [{ future: true }]);
@@ -349,7 +351,10 @@ test("T12-05 bootstrap revision recovers absent and parse-invalid documents", (t
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-settings-bootstrap-"));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const config = path.join(directory, "config.json");
-  assert.equal(readConfigState(config).revision, "bootstrap");
+  const missing = readConfigState(config);
+  assert.equal(missing.revision, "bootstrap");
+  resetRuntimeForTest();
+  initializeRuntime({ state: missing, startup: settingsStartup({ configPath: config, resolvedHome: directory }) });
   assert.match(saveFields({ configPath: config, revision: "bootstrap", fields: { agent_language: "ja" } }).revision, /^[a-f0-9]{64}$/);
   assert.throws(() => saveFields({ configPath: config, revision: "bootstrap", fields: {} }), /revision changed/i);
   fs.writeFileSync(config, "{broken", { mode: 0o600 });

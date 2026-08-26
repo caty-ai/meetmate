@@ -1,5 +1,6 @@
 const startup = require("./settings/bootstrap").captureStartup();
 
+const crypto = require("node:crypto");
 const path = require("path");
 const http = require("http");
 const { URL } = require("url");
@@ -13,9 +14,16 @@ let initialSettingsState;
 try {
   initialSettingsState = readConfigState(startup.configPath);
 } catch (error) {
-  if (error.code !== "SETTINGS_SYMLINK_REJECTED") throw error;
-  initialSettingsState = { exists: true, valid: false, parsed: null, revision: "bootstrap", fingerprint: "symlink-rejected" };
-  console.warn("Settings config path was rejected; continuing in setup mode.");
+  const fingerprint = `read-error:${String(error.code || "unknown")}`;
+  initialSettingsState = {
+    exists: true,
+    valid: false,
+    bytes: null,
+    parsed: null,
+    revision: crypto.createHash("sha256").update(fingerprint).digest("hex"),
+    fingerprint,
+  };
+  console.warn("Settings config could not be read; continuing in setup mode.");
 }
 initializeRuntime({ state: initialSettingsState, startup });
 if (initialSettingsState.valid) warnLegacyClass2(initialSettingsState.parsed);
@@ -103,6 +111,12 @@ async function bootstrap() {
     try {
       pathname = new URL(req.url || "/", "http://localhost").pathname;
     } catch {
+      socket.destroy();
+      return;
+    }
+
+    if (pathname === "/settings" || pathname === "/api/settings" || pathname.startsWith("/api/settings/")
+        || pathname.startsWith("/settings-assets/")) {
       socket.destroy();
       return;
     }

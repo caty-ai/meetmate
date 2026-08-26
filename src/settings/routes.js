@@ -77,6 +77,8 @@ function buildSettingsUiManifest() {
       apply: entry.apply,
       envAlias: entry.envAlias,
       writeSurface: entry.writeSurface,
+      multiline: entry.multiline,
+      visibleWhen: entry.visibleWhen ? structuredClone(entry.visibleWhen) : null,
       ...(Object.prototype.hasOwnProperty.call(entry, "defaultValue")
         ? { defaultValue: structuredClone(entry.defaultValue) }
         : {}),
@@ -276,7 +278,7 @@ async function migrateClass1(req, options) {
   for (const entry of SETTINGS_REGISTRY.filter((item) => item.credential === "class-1")) {
     const current = readPath(raw, entry.path);
     const seed = typeof startup.dotenvSeeds[entry.envAlias] === "string" ? startup.dotenvSeeds[entry.envAlias].trim() : undefined;
-    if (!meaningful(current) && meaningful(seed) && entry.schema.safeParse(seed).success) {
+    if (!meaningful(current) && seed !== MASK && meaningful(seed) && entry.schema.safeParse(seed).success) {
       fields[entry.id] = seed;
       imported.push(entry.id);
     } else {
@@ -376,9 +378,7 @@ function createSettingsHandler(options = {}) {
 
       const childShell = req.method === "POST" && url.pathname === "/api/settings/tts-preview";
       if (childShell) {
-        if (req.method !== "GET") {
-          requireSameOrigin(req, settingsOptions);
-        }
+        requireSameOrigin(req, settingsOptions);
         throw settingsError("TEST_NOT_IMPLEMENTED", "Settings feature is not implemented", 501);
       }
 

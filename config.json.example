@@ -78,10 +78,8 @@
     "soniox.smokeDefaultKeyterms": "Default keyterms for scripts/soniox-smoke.js when WAKE_WORDS is unset."
   },
   "prompts": {
-    "voiceEmotionLine": "- すべての発話の先頭に必ず感情タグを1個入れる（タグなしだと声が暴走するため、スタイル安定化のアンカーとして使う）。使えるタグ: [soft voice]（デフォルト・優しい声）, [warm]（温かみ）, [friendly, warm]（親しみ＋温かみ）, [empathetic, unhurried]（謝罪・落ち着き）, [thoughtful]（考え深く）。迷ったら [soft voice]。\n",
     "voiceSystemAddendum": "",
     "summary": "以下の音声通話/会議の会話ログから、簡潔なサマリーをJSON形式で生成してください。\n\n出力フォーマット（必ずこのJSONのみ出力すること）:\n{\n  \"summary\": [\"要約1\", \"要約2\", \"要約3\"],\n  \"decisions\": [\"決定事項1\"],\n  \"todos\": [\"TODO1\"]\n}\n\nルール:\n- summaryは最大3項目の箇条書き\n- decisionsは決定事項があれば記載（なければ空配列）\n- todosはTODOがあれば記載（なければ空配列）\n- JSONのみ出力。説明やマークダウンは不要\n\n会話ログ:\n",
-    "gatewayBriefingSystem": "音声通話の準備中です。以下のブリーフィングを読んで準備してください。\n\n【重要】応答は以下のJSON形式のみで返してください：\n{\"purposeStatement\": \"挨拶の直後に話す、電話の目的を伝える1〜2文。自然な話し言葉で。感情タグ付き。\"}\n\n例: {\"purposeStatement\": \"[empathetic, unhurried] 今日はレストランの予約の件でお電話させていただきました。来週の金曜日に4名で伺いたいのですが。\"}\n\nルール:\n- 1〜2文で簡潔に。長くならないこと\n- 自然な敬語の話し言葉にする\n- ブリーフィングの内容を要約・整形する（そのまま読まない）\n- 先頭に感情タグを必ず1個入れる（スタイル安定化のため）。使えるタグ: [soft voice], [warm], [friendly, warm], [empathetic, unhurried], [thoughtful]。迷ったら [soft voice]。\n- JSONのみ出力。説明やマークダウンは不要",
     "gatewayWarmupUser": "セッション準備中。次のメッセージから音声通話が始まります。",
     "timeoutHandoffGateway": "ユーザーの音声通話中に依頼処理がタイムアウトしました。\n必ず sessions_spawn を使って作業を委譲してください。\nまずユーザー依頼を短く要約し、実行計画を立ててからサブエージェントを起動してください。\nサブエージェントの結果を最終回答としてそのまま返してください。会議への報告は音声ハーネス側が行います。\n\nユーザー依頼: {request}",
     "timeoutHandoffSlack": "ユーザーの音声通話中に依頼処理がタイムアウトしました。\n必ず sessions_spawn を使って作業を委譲し、結果をSlackに投稿してください。\nまずユーザー依頼を短く要約し、実行計画を立ててからサブエージェントを起動してください。\n\nユーザー依頼: {request}",

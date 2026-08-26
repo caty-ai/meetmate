@@ -55,6 +55,7 @@ test("LLM config uses the boot resolver snapshot and ignores raw-agent bypasses"
     assert.equal(config.llm.historyMaxTurns, 12);
     assert.equal(config.llm.openaiCompatible.emptyResponseRetry, true);
     assert.equal(config.llm.openaiCompatible.trustedAgentTools, false);
+    assert.equal(config.llm.openaiCompatible.streamingEquivalentEnabled, true);
 
     const configJson = {
       llm: {
@@ -92,6 +93,7 @@ test("LLM config uses the boot resolver snapshot and ignores raw-agent bypasses"
           apiKey: null,
           emptyResponseRetry: false,
           trustedAgentTools: true,
+          streamingEquivalentEnabled: true,
         },
       }
     );
@@ -110,6 +112,7 @@ test("LLM config uses the boot resolver snapshot and ignores raw-agent bypasses"
       apiKey: "env-key",
       emptyResponseRetry: false,
       trustedAgentTools: true,
+      streamingEquivalentEnabled: true,
     });
     assert.equal(config.llm.model, "json-model");
     assert.equal(config.llm.historyMaxTurns, 7);
@@ -138,6 +141,7 @@ test("LLM config uses the boot resolver snapshot and ignores raw-agent bypasses"
       apiKey: "env-key",
       emptyResponseRetry: false,
       trustedAgentTools: true,
+      streamingEquivalentEnabled: true,
     });
   } finally {
     console.error = originalError;

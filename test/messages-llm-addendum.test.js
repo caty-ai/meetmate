@@ -117,4 +117,12 @@ test("canonical emotion literals occur only in the structured source across src 
     assert.equal(source.split(tag).length - 1, 1, `${tag} must have one production literal`);
     assert.match(messagesSource, new RegExp(`tag: ${JSON.stringify(tag).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
   }
+
+  const examples = fs.readdirSync(root).filter((name) => name.endsWith(".example"));
+  const enumeratedTags = new RegExp(EMOTION_TAGS
+    .map(({ tag }) => tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("[^\\n]{0,240}"));
+  for (const example of examples) {
+    assert.doesNotMatch(fs.readFileSync(path.join(root, example), "utf8"), enumeratedTags, example);
+  }
 });

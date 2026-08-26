@@ -3,7 +3,6 @@
 const http = require("http");
 const https = require("https");
 const { filterSilentRepliesStream } = require("./speech-policy");
-const { getEffectiveValue } = require("./settings/resolver");
 
 function resolveCompletionPath(baseUrl) {
   const basePath = baseUrl.pathname && baseUrl.pathname !== "/"
@@ -164,7 +163,7 @@ function complete(messages, options = {}) {
 
 async function* streamChat(messages, options = {}) {
   if (options.signal?.aborted) throw new Error("LLM request aborted");
-  if (getEffectiveValue("streaming_equivalent_enabled") === false) {
+  if (options.streamingEquivalentEnabled === false) {
     const response = await complete(messages, options);
     if (response.statusCode !== 200) {
       throw new Error(`OpenAI-compatible error (${response.statusCode}): ${response.text.slice(0, 200)}`);

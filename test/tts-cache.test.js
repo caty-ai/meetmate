@@ -23,6 +23,54 @@ test("cache key changes with content inputs and ignores streaming-only inputs", 
   });
 });
 
+test("live emotion toggles use distinct effective text for cache, managed lookup, and synthesis", async (t) => {
+  const resolver = require("../src/settings/resolver");
+  const directory = tempDir();
+  t.after(() => {
+    resolver.resetRuntimeForTest();
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+  const startup = Object.freeze({
+    preDotenvEnv: Object.freeze({}),
+    dotenvSeeds: Object.freeze({}),
+    resolvedHome: directory,
+    configPath: path.join(directory, "config.json"),
+    connection: Object.freeze({ openclawUrl: "", openclawToken: "", openaiApiKey: "" }),
+  });
+  const state = (enabled, revision) => ({
+    exists: true,
+    valid: true,
+    parsed: { agent: { emotionTags: enabled }, tts: { cache: { enabled: true } } },
+    revision,
+    fingerprint: `bytes:${revision}`,
+  });
+  resolver.resetRuntimeForTest();
+  resolver.initializeRuntime({ state: state(true, "a".repeat(64)), startup });
+
+  const texts = [];
+  const cache = createTtsCache({
+    dir: path.join(directory, "cache"),
+    synthesizeFn: async (text, options) => {
+      texts.push(text);
+      options.onAudio(Buffer.from([texts.length, texts.length]));
+    },
+  });
+  const phrase = "[soft voice] 了解です";
+  const options = { sampleRate: 24_000, speed: 1, onAudio: () => {} };
+  const taggedFile = cache.fileFor(phrase, options);
+  await cache.synthesize(phrase, options);
+
+  resolver.publishState(state(false, "b".repeat(64)));
+  const plainFile = cache.fileFor(phrase, options);
+  await cache.synthesize(phrase, options);
+  assert.notEqual(taggedFile, plainFile);
+  assert.deepEqual(texts, [phrase, "了解です"]);
+
+  resolver.publishState(state(true, "c".repeat(64)));
+  await cache.synthesize(phrase, options);
+  assert.deepEqual(texts, [phrase, "了解です"], "OFF then ON reuses only the matching tagged cache");
+});
+
 test("miss calls synthesize, forwards chunks, and writes emitted PCM", async () => {
   const dir = tempDir();
   const chunks = [Buffer.from([1, 2]), Buffer.from([3, 4, 5, 6])];

@@ -60,7 +60,7 @@ function runtimeDiagnostics() {
 }
 
 let _configJson = loadConfig();
-const _resolvedMessages = resolveMessages(_configJson);
+let _resolvedMessages = resolveMessages(_configJson);
 function buildConfiguredDelegationResultsSection(results) {
   return buildDelegationResultsSection(results, _resolvedMessages.delegation);
 }
@@ -84,6 +84,7 @@ function currentAgentProfile() {
 
 registerCacheInvalidator(() => {
   _configJson = getRawConfig();
+  _resolvedMessages = resolveMessages(_configJson);
   _agentProfile = null;
   meetSlackNotifier = null;
 });
@@ -1530,5 +1531,11 @@ module.exports = {
   init,
   handleHttp,
   handleWsConnection,
-  _test: { appendToMemory, runtimeDiagnostics, taskExtractionEnabledAtBoot },
+  _test: {
+    appendToMemory,
+    buildConfiguredDelegationResultsSection,
+    configuredSummaryPrompt: () => _resolvedMessages.prompts.summary,
+    runtimeDiagnostics,
+    taskExtractionEnabledAtBoot,
+  },
 };

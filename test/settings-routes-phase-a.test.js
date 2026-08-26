@@ -102,7 +102,10 @@ test("Phase A export is an attachment containing only validated stored noncreden
     settings: { agent_emotion_tags: false, agent_language: "ja", llm_history_max_turns: 0 },
   });
   assert.equal(res.body.includes("must-not-export"), false);
-  assert.equal(handler instanceof Function, true);
+  const settings = response();
+  assert.equal(await handler(request("GET", "/api/settings"), settings), true);
+  assert.equal(settings.status, 200);
+  assert.match(JSON.parse(settings.body).revision, /^[a-f0-9]{64}$/);
 });
 
 test("Phase A import reports stored-value skips, imports changes, and preserves unknown config", async (t) => {

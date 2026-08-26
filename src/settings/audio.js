@@ -114,7 +114,7 @@ function expectedRelativePath(id, extension) {
   return `assets/settings-audio/${id}.${extension}`;
 }
 
-function resolveOwnedFile(record, kind, resolvedHome) {
+function resolveOwnedFile(record, kind, resolvedHome, { allowMissing = false } = {}) {
   const extension = kind === "source" ? "mp3" : "pcm";
   const field = kind === "source" ? "sourceRelativePath" : "pcmRelativePath";
   const expected = expectedRelativePath(record.id, extension);
@@ -126,7 +126,13 @@ function resolveOwnedFile(record, kind, resolvedHome) {
   if (path.dirname(target) !== managed.directory || !isWithin(managed.directory, target)) {
     throw audioError("SETTINGS_AUDIO_PATH_REJECTED");
   }
-  const stat = lstatNotSymlink(target);
+  let stat;
+  try {
+    stat = lstatNotSymlink(target);
+  } catch (error) {
+    if (allowMissing && error.code === "ENOENT") return { path: target, stat: null, missing: true };
+    throw error;
+  }
   if (!stat.isFile()) throw audioError("SETTINGS_AUDIO_PATH_REJECTED");
   const realTarget = fs.realpathSync(target);
   if (!isWithin(managed.realDirectory, realTarget)) throw audioError("SETTINGS_AUDIO_PATH_REJECTED");
@@ -250,8 +256,8 @@ async function parseMultipart(req, directory) {
       const rawType = String(headers.get("content-type") || "").toLowerCase();
       if (rawType) {
         const [mediaType, ...parameters] = rawType.split(";").map((item) => item.trim());
-        if (!["application/json", "text/plain"].includes(mediaType)
-            || parameters.some((item) => item && item !== "charset=utf-8" && item !== "charset=\"utf-8\"")) {
+        if (mediaType !== "application/json"
+            || parameters.some((item) => !/^[^=;\s]+=(?:"[^"]*"|[^;\s]+)$/.test(item))) {
           throw settingsError("SETTINGS_MEDIA_TYPE_UNSUPPORTED", "Content type not supported", 415);
         }
       }
@@ -426,14 +432,7 @@ function currentTtsIdentity() {
 }
 
 function configuredTtsIdentity() {
-  const values = require("./resolver").getRuntime().published.resolved.values;
-  const reference = typeof values.fish_audio_voice_id === "string" ? values.fish_audio_voice_id.trim() : "";
-  return {
-    referenceId: reference || null,
-    model: values.fish_audio_model,
-    sampleRate: values.tts_sample_rate,
-    speed: values.fish_audio_speed,
-  };
+  return currentTtsIdentity();
 }
 
 function canonicalKey(text, identity) {
@@ -463,19 +462,21 @@ function inspectClip(record, resolvedHome, identity) {
 }
 
 function projectClipViews(records, resolvedHome, identity = currentTtsIdentity()) {
-  const parsed = validators.clipRecord.array().max(CLIP_LIMIT).safeParse(records);
-  if (!parsed.success) return [];
-  return parsed.data.map((record) => inspectClip(record, resolvedHome, identity));
+  if (!Array.isArray(records)) return [];
+  return records.flatMap((record) => {
+    const parsed = validators.clipRecord.safeParse(record);
+    return parsed.success ? [inspectClip(parsed.data, resolvedHome, identity)] : [];
+  });
 }
 
 function lookupManagedPcm({ role, text, referenceId, model, sampleRate, speed }) {
   try {
-    const { getEffectiveValue, getRuntime } = require("./resolver");
+    const { getRuntime } = require("./resolver");
     if (!ROLES.includes(role)) return null;
     const identity = { referenceId: referenceId || null, model, sampleRate, speed };
     const configuredIdentity = configuredTtsIdentity();
     const wantedKey = canonicalKey(text, identity);
-    const clips = getEffectiveValue("audio_clips") || [];
+    const clips = storedClips().valid.map(({ record }) => record);
     const candidates = clips
       .filter((clip) => clip.role === role && clip.cacheKey === wantedKey
         && clip.cacheKey === canonicalKey(clip.text, configuredIdentity))
@@ -507,10 +508,13 @@ function assertCommittedRevision(configPath, revision) {
 function storedClips() {
   const raw = require("./resolver").getRawConfig();
   const value = raw?.audio?.clips;
-  if (value === undefined) return [];
-  const parsed = validators.clipRecord.array().max(CLIP_LIMIT).safeParse(value);
-  if (!parsed.success) throw audioError("SETTINGS_AUDIO_METADATA_INVALID");
-  return parsed.data;
+  const items = Array.isArray(value) ? structuredClone(value) : [];
+  const valid = [];
+  for (let index = 0; index < items.length; index += 1) {
+    const parsed = validators.clipRecord.safeParse(items[index]);
+    if (parsed.success) valid.push({ index, record: parsed.data });
+  }
+  return { items, valid };
 }
 
 function existingManagedBytes(directory) {
@@ -541,6 +545,7 @@ async function uploadAudio(req, options = {}) {
   const managed = managedDirectory(startup.resolvedHome, true);
   const workDirectory = fs.mkdtempSync(path.join(managed.directory, ".audio-work-"));
   fs.chmodSync(workDirectory, 0o700);
+  if ((fs.statSync(workDirectory).mode & 0o777) !== 0o700) throw audioError("SETTINGS_AUDIO_TEMP_FAILED", 500);
   let sourcePath = null;
   let pcmPath = null;
   const installed = [];
@@ -549,7 +554,8 @@ async function uploadAudio(req, options = {}) {
     sourcePath = multipart.sourcePath;
     assertCommittedRevision(startup.configPath, multipart.metadata.revision);
     if (!validMp3Signature(sourcePath)) throw audioError("SETTINGS_AUDIO_SIGNATURE_INVALID");
-    const clips = storedClips();
+    const stored = storedClips();
+    const clips = stored.valid.map(({ record }) => record);
     if (clips.length >= CLIP_LIMIT) throw audioError("SETTINGS_AUDIO_CLIP_LIMIT", 413);
     const recordedBytes = clips.reduce((total, clip) => total + clip.sourceBytes + clip.pcmBytes, 0);
     const existingBytes = Math.max(recordedBytes, existingManagedBytes(managed.directory));
@@ -632,7 +638,8 @@ async function uploadAudio(req, options = {}) {
     const committed = commit({
       configPath: startup.configPath,
       revision: multipart.metadata.revision,
-      clips: [...clips, record],
+      clips: [...stored.items, record],
+      preserveInvalid: true,
     });
     installed.length = 0;
     return { clip: inspectClip(record, startup.resolvedHome, configuredTtsIdentity()), revision: committed.revision };
@@ -654,20 +661,23 @@ async function deleteAudio(id, revision, options = {}) {
   const { getRuntime } = require("./resolver");
   const startup = getRuntime().startup;
   assertCommittedRevision(startup.configPath, revision);
-  const clips = storedClips();
-  const clip = clips.find((item) => item.id === id);
-  if (!clip) throw audioError("SETTINGS_AUDIO_NOT_FOUND", 404);
-  const source = resolveOwnedFile(clip, "source", startup.resolvedHome);
-  const pcm = resolveOwnedFile(clip, "pcm", startup.resolvedHome);
+  const stored = storedClips();
+  const selected = stored.valid.find(({ record }) => record.id === id);
+  if (!selected) throw audioError("SETTINGS_AUDIO_NOT_FOUND", 404);
+  const clip = selected.record;
+  const source = resolveOwnedFile(clip, "source", startup.resolvedHome, { allowMissing: true });
+  const pcm = resolveOwnedFile(clip, "pcm", startup.resolvedHome, { allowMissing: true });
   const commit = options.saveAudioClipsFn || saveAudioClips;
   const committed = commit({
     configPath: startup.configPath,
     revision,
-    clips: clips.filter((item) => item.id !== id),
+    clips: stored.items.filter((_item, index) => index !== selected.index),
+    preserveInvalid: true,
   });
   try {
-    fs.unlinkSync(source.path);
-    fs.unlinkSync(pcm.path);
+    for (const owned of [source, pcm]) {
+      try { fs.unlinkSync(owned.path); } catch (error) { if (error.code !== "ENOENT") throw error; }
+    }
     fsyncDirectory(path.dirname(source.path));
   } catch {
     throw audioError("SETTINGS_AUDIO_CLEANUP_FAILED", 500);

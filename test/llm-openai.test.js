@@ -5,27 +5,6 @@ const { EventEmitter } = require("node:events");
 const { PassThrough } = require("node:stream");
 
 const openai = require("../src/llm-openai");
-const settingsResolver = require("../src/settings/resolver");
-
-function setStreamingEquivalent(enabled) {
-  settingsResolver.resetRuntimeForTest();
-  settingsResolver.initializeRuntime({
-    state: {
-      exists: true,
-      valid: true,
-      parsed: { features: { streamingEquivalentEnabled: enabled } },
-      revision: "a".repeat(64),
-      fingerprint: "runtime-feature-test",
-    },
-    startup: Object.freeze({
-      preDotenvEnv: Object.freeze({}),
-      dotenvSeeds: Object.freeze({}),
-      resolvedHome: "/tmp/meetmate-runtime-feature-test",
-      configPath: "/tmp/meetmate-runtime-feature-test/config.json",
-      connection: Object.freeze({ openclawUrl: "", openclawToken: "", openaiApiKey: "" }),
-    }),
-  });
-}
 
 function installMockServer(t, handle) {
   const originalRequest = http.request;
@@ -95,6 +74,7 @@ test("streamChat parses OpenAI SSE chunks and sends the configured request", asy
       temperature: 0.4,
       maxTokens: 123,
       sessionUser: "meet-1",
+      streamingEquivalentEnabled: true,
     },
   ));
 
@@ -114,8 +94,6 @@ test("streamChat parses OpenAI SSE chunks and sends the configured request", asy
 });
 
 test("streamChat adapts nonstreaming completion as one filtered chunk when streaming-equivalent is disabled", async (t) => {
-  setStreamingEquivalent(false);
-  t.after(() => settingsResolver.resetRuntimeForTest());
   const captured = [];
   installMockServer(t, async (request) => {
     captured.push(request);
@@ -124,7 +102,7 @@ test("streamChat adapts nonstreaming completion as one filtered chunk when strea
 
   const chunks = await collect(openai.streamChat(
     [{ role: "user", content: "hello" }],
-    { baseUrl: "http://mock.test", apiKey: "key", model: "model" },
+    { baseUrl: "http://mock.test", apiKey: "key", model: "model", streamingEquivalentEnabled: false },
   ));
 
   assert.deepEqual(chunks, ["complete reply"]);
@@ -133,8 +111,6 @@ test("streamChat adapts nonstreaming completion as one filtered chunk when strea
 });
 
 test("disabled streaming-equivalent still applies complete-reply suppression", async (t) => {
-  setStreamingEquivalent(false);
-  t.after(() => settingsResolver.resetRuntimeForTest());
   installMockServer(t, async () => ({
     chunks: ['{"choices":[{"message":{"content":"NO_REPLY"}}]}'],
   }));
@@ -143,6 +119,7 @@ test("disabled streaming-equivalent still applies complete-reply suppression", a
     baseUrl: "http://mock.test",
     apiKey: "key",
     model: "model",
+    streamingEquivalentEnabled: false,
   }));
 
   assert.deepEqual(chunks, []);

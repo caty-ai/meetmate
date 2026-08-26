@@ -302,12 +302,20 @@ function publishState(state) {
 }
 
 function publishCommittedState(configPath, state) {
+  const mismatch = () => {
+    const error = new Error("Settings snapshot path mismatch");
+    error.code = "SETTINGS_PUBLISH_PATH_MISMATCH";
+    error.status = 500;
+    throw error;
+  };
   if (currentRuntime) {
-    if (path.resolve(currentRuntime.startup.configPath) === path.resolve(configPath)) publishState(state);
+    if (path.resolve(currentRuntime.startup.configPath) !== path.resolve(configPath)) mismatch();
+    publishState(state);
     return;
   }
   const startup = getStartup();
-  if (path.resolve(startup.configPath) === path.resolve(configPath)) initializeRuntime({ state, startup });
+  if (path.resolve(startup.configPath) !== path.resolve(configPath)) mismatch();
+  initializeRuntime({ state, startup });
 }
 
 function registerCacheInvalidator(invalidate) {
@@ -372,20 +380,13 @@ function buildEnvelope() {
   const restartRequired = [];
   for (const entry of SETTINGS_REGISTRY) {
     if (entry.writeSurface === "none") continue;
-    const stored = validValue(entry, readPath(runtime.published.raw, entry.path));
+    const rawStored = readPath(runtime.published.raw, entry.path);
+    const stored = validValue(entry, rawStored);
     if (stored !== undefined || entry.id === "audio_clips" || entry.credential === "class-1") {
       if (entry.id === "audio_clips") {
-        const values = runtime.published.resolved.values;
-        const reference = typeof values.fish_audio_voice_id === "string" ? values.fish_audio_voice_id.trim() : "";
         fields[entry.id] = require("./audio").projectClipViews(
-          clone(stored !== undefined ? stored : entry.defaultValue),
+          clone(Array.isArray(rawStored) ? rawStored : entry.defaultValue),
           runtime.startup.resolvedHome,
-          {
-            referenceId: reference || null,
-            model: values.fish_audio_model,
-            sampleRate: values.tts_sample_rate,
-            speed: values.fish_audio_speed,
-          },
         );
       } else {
         fields[entry.id] = entry.credential === "class-1"

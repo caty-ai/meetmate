@@ -193,6 +193,7 @@ test("standalone provider receives the exact session user contract and optional 
           apiKey: options.apiKey,
           emptyResponseRetry: options.emptyResponseRetry,
           trustedAgentTools: options.trustedAgentTools,
+          streamingEquivalentEnabled: options.streamingEquivalentEnabled,
         },
       });
       yield "ok。";
@@ -206,6 +207,7 @@ test("standalone provider receives the exact session user contract and optional 
       apiKey: "key",
       emptyResponseRetry: false,
       trustedAgentTools: true,
+      streamingEquivalentEnabled: false,
     },
   }, async (pipeline) => {
     await pipeline._test.processUserInput("alpha-one");
@@ -229,10 +231,31 @@ test("standalone provider receives the exact session user contract and optional 
   ]);
   assert.deepEqual(calls.map((call) => call.options.emptyResponseRetry), [false, false]);
   assert.deepEqual(calls.map((call) => call.options.trustedAgentTools), [true, true]);
+  assert.deepEqual(calls.map((call) => call.options.streamingEquivalentEnabled), [false, false]);
   assert.deepEqual(calls.map((call) => [call.options.baseUrl, call.options.apiKey]), [
     ["http://llm.test/v1", "key"],
     ["http://llm.test/v1", "key"],
   ]);
+});
+
+test("streaming-equivalent false remains outside the OpenClaw streaming path", { concurrency: false }, async () => {
+  const observed = [];
+  const provider = {
+    name: "openclaw",
+    streamChat: async function* (_messages, options) {
+      observed.push({
+        hasFlag: Object.prototype.hasOwnProperty.call(options, "streamingEquivalentEnabled"),
+        sessionUser: options.sessionUser,
+      });
+      yield "OpenClaw streamed reply。";
+    },
+  };
+  await withPipeline(provider, {
+    openaiCompatible: { streamingEquivalentEnabled: false },
+  }, async (pipeline) => {
+    await pipeline._test.processUserInput("stream check");
+  });
+  assert.deepEqual(observed, [{ hasFlag: false, sessionUser: "meet-provider-pipeline-alpha" }]);
 });
 
 test("historyMaxTurns=0 sends only system and latest user on later successful turns", { concurrency: false }, async () => {

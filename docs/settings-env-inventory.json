@@ -478,7 +478,7 @@
     {
       "name": "OPENCLAW_WORKSPACE",
       "references": [
-        "src/transport-meet/meet-routes.js:574"
+        "src/transport-meet/meet-routes.js:575"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -536,8 +536,8 @@
     {
       "name": "PUBLIC_WSS_URL",
       "references": [
-        "src/transport-meet/meet-routes.js:968",
-        "src/transport-meet/meet-routes.js:969"
+        "src/transport-meet/meet-routes.js:969",
+        "src/transport-meet/meet-routes.js:970"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -819,6 +819,18 @@
       "remainingDirectReads": 1
     }
   ],
+  "startupSnapshotReferences": [
+    {
+      "name": "FFMPEG",
+      "references": [
+        "src/settings/audio.js:537",
+        "src/settings/audio.js:538"
+      ],
+      "ux": "deployment-readonly",
+      "credentialClass": "none",
+      "handling": "startup-snapshot-consumed-binary-override"
+    }
+  ],
   "dynamicReferences": [
     {
       "expression": "process.env[name]",
@@ -885,8 +897,8 @@
       "expression": "runtime.startup.{preDotenvEnv,dotenvSeeds}[name]",
       "helper": "per-agent Slack token compatibility lookup",
       "references": [
-        "src/settings/resolver.js:338",
-        "src/settings/resolver.js:340"
+        "src/settings/resolver.js:346",
+        "src/settings/resolver.js:348"
       ],
       "pattern": "^[A-Z0-9_-]+_SLACK_BOT_TOKEN$",
       "names": [],

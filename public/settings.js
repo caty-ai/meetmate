@@ -24,6 +24,52 @@ function diffFields(loadedFields, currentFields) {
   return changed;
 }
 
+const OPENAI_FIELDS = new Set([
+  "openai_base_url", "openai_empty_response_retry", "openai_trusted_agent_tools",
+]);
+const SONIOX_FIELDS = new Set([
+  "soniox_api_key", "soniox_model", "soniox_ws_url", "soniox_endpoint_sensitivity",
+  "soniox_max_endpoint_delay_ms", "soniox_endpoint_latency_level",
+]);
+const DEEPGRAM_FIELDS = new Set(["deepgram_api_key"]);
+const ARRAY_FIELDS = new Set([
+  "agent_wake_words", "agent_keyterms", "agent_stt_wake_variants", "agent_ack_variants", "agent_progress_pings",
+]);
+const BOOLEAN_FIELDS = new Set([
+  "agent_emotion_tags", "openai_empty_response_retry", "openai_trusted_agent_tools",
+  "tts_cache_enabled", "tts_cache_prewarm", "slack_notifications_enabled", "summary_enabled",
+  "task_extraction_enabled", "streaming_equivalent_enabled",
+]);
+const NUMBER_FIELDS = new Set([
+  "llm_temperature", "llm_max_tokens", "llm_history_max_turns", "soniox_endpoint_sensitivity",
+  "soniox_max_endpoint_delay_ms", "soniox_endpoint_latency_level", "listen_endpointing_ms",
+  "listen_utterance_end_ms", "fish_audio_speed", "tts_sample_rate", "gateway_warmup_timeout_ms",
+]);
+const NULLABLE_NUMBER_FIELDS = new Set([
+  "soniox_endpoint_sensitivity", "soniox_max_endpoint_delay_ms", "soniox_endpoint_latency_level",
+]);
+const TEXTAREA_FIELDS = new Set([
+  "agent_greeting", "agent_ack_variants", "agent_progress_pings", "agent_exit_farewell",
+  "agent_cancel_ack", "agent_timeout_fallback", "llm_system_prompt",
+]);
+
+function shownValue(entry, nextEnvelope) {
+  if (Object.prototype.hasOwnProperty.call(nextEnvelope.fields || {}, entry.id)) return nextEnvelope.fields[entry.id];
+  if (Object.prototype.hasOwnProperty.call(nextEnvelope.effective || {}, entry.id)) return nextEnvelope.effective[entry.id];
+  if (Object.prototype.hasOwnProperty.call(entry, "defaultValue")) return entry.defaultValue;
+  if (BOOLEAN_FIELDS.has(entry.id)) return false;
+  if (ARRAY_FIELDS.has(entry.id)) return [];
+  return "";
+}
+
+function prefillValues(manifest, envelope) {
+  return Object.fromEntries((manifest || []).map((entry) => [entry.id, shownValue(entry, envelope)]));
+}
+
+function pendingChangesForValues(loadedValues, currentValues) {
+  return diffFields(loadedValues, currentValues);
+}
+
 function clipMatchesCurrentText(clip, fields = {}) {
   const values = {
     ack: fields.agent_ack_variants || [],
@@ -35,7 +81,18 @@ function clipMatchesCurrentText(clip, fields = {}) {
   return Array.isArray(values[clip?.role]) && values[clip.role].some((text) => text === clip.text);
 }
 
-if (typeof module !== "undefined" && module.exports) module.exports = { clipMatchesCurrentText, diffFields };
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = {
+    CLIENT_FIELD_SETS: {
+      OPENAI_FIELDS, SONIOX_FIELDS, DEEPGRAM_FIELDS, NULLABLE_NUMBER_FIELDS, TEXTAREA_FIELDS,
+    },
+    clipMatchesCurrentText,
+    diffFields,
+    pendingChangesForValues,
+    prefillValues,
+    shownValue,
+  };
+}
 
 if (typeof document !== "undefined") {
   (function initializeSettingsUi() {
@@ -43,34 +100,6 @@ if (typeof document !== "undefined") {
     const VOICE_FIELDS = new Set([
       "agent_emotion_tags", "agent_greeting", "agent_ack_variants", "agent_progress_pings",
       "agent_exit_farewell", "agent_cancel_ack", "agent_timeout_fallback",
-    ]);
-    const OPENAI_FIELDS = new Set([
-      "openai_base_url", "openai_empty_response_retry", "openai_trusted_agent_tools",
-    ]);
-    const SONIOX_FIELDS = new Set([
-      "soniox_api_key", "soniox_model", "soniox_ws_url", "soniox_endpoint_sensitivity",
-      "soniox_max_endpoint_delay_ms", "soniox_endpoint_latency_level",
-    ]);
-    const DEEPGRAM_FIELDS = new Set(["deepgram_api_key"]);
-    const ARRAY_FIELDS = new Set([
-      "agent_wake_words", "agent_keyterms", "agent_stt_wake_variants", "agent_ack_variants", "agent_progress_pings",
-    ]);
-    const BOOLEAN_FIELDS = new Set([
-      "agent_emotion_tags", "openai_empty_response_retry", "openai_trusted_agent_tools",
-      "tts_cache_enabled", "tts_cache_prewarm", "slack_notifications_enabled", "summary_enabled",
-      "task_extraction_enabled", "streaming_equivalent_enabled",
-    ]);
-    const NUMBER_FIELDS = new Set([
-      "llm_temperature", "llm_max_tokens", "llm_history_max_turns", "soniox_endpoint_sensitivity",
-      "soniox_max_endpoint_delay_ms", "soniox_endpoint_latency_level", "listen_endpointing_ms",
-      "listen_utterance_end_ms", "fish_audio_speed", "tts_sample_rate", "gateway_warmup_timeout_ms",
-    ]);
-    const NULLABLE_NUMBER_FIELDS = new Set([
-      "soniox_endpoint_sensitivity", "soniox_max_endpoint_delay_ms", "soniox_endpoint_latency_level",
-    ]);
-    const TEXTAREA_FIELDS = new Set([
-      "agent_greeting", "agent_ack_variants", "agent_progress_pings", "agent_exit_farewell",
-      "agent_cancel_ack", "agent_timeout_fallback", "llm_system_prompt",
     ]);
     const LABELS = {
       agent_id: "エージェント ID", agent_name: "エージェント名", agent_display_name: "表示名",
@@ -163,15 +192,6 @@ if (typeof document !== "undefined") {
 
     function labelFor(id) {
       return LABELS[id] || id.replaceAll("_", " ");
-    }
-
-    function shownValue(entry, nextEnvelope) {
-      if (Object.prototype.hasOwnProperty.call(nextEnvelope.fields || {}, entry.id)) return nextEnvelope.fields[entry.id];
-      if (Object.prototype.hasOwnProperty.call(nextEnvelope.effective || {}, entry.id)) return nextEnvelope.effective[entry.id];
-      if (Object.prototype.hasOwnProperty.call(entry, "defaultValue")) return entry.defaultValue;
-      if (BOOLEAN_FIELDS.has(entry.id)) return false;
-      if (ARRAY_FIELDS.has(entry.id)) return [];
-      return "";
     }
 
     function controlFor(entry) {
@@ -526,7 +546,7 @@ if (typeof document !== "undefined") {
     }
 
     function pendingChanges() {
-      return diffFields(loadedValues, currentValues());
+      return pendingChangesForValues(loadedValues, currentValues());
     }
 
     function updateDirtyState() {

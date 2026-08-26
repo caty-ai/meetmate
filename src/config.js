@@ -257,6 +257,11 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
       ?? getEffectiveValue("openai_trusted_agent_tools"),
       false
     ),
+    streamingEquivalentEnabled: boolOption(
+      overrides.openaiCompatible?.streamingEquivalentEnabled
+      ?? getEffectiveValue("streaming_equivalent_enabled"),
+      true
+    ),
   };
 
   // Resolve greeting: agentProfile > overrides > agent > empty (skip if unconfigured)
