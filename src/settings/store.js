@@ -223,6 +223,9 @@ function commitWholeConfig({ configPath, revision, mutate }) {
     if (temporary) {
       try { fs.unlinkSync(temporary); } catch { /* best effort */ }
     }
+    if (backup) {
+      try { fs.unlinkSync(backup); } catch { /* best effort */ }
+    }
     release();
   }
 }

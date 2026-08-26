@@ -544,6 +544,40 @@ test("backup cleanup failure restores the original bytes and publishes nothing",
   assert.deepEqual(fs.readdirSync(directory).filter((name) => name.startsWith(".settings-backup-")), []);
 });
 
+test("pre-replacement rename failure cleans up the backup artifact and keeps the original config", (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-pre-replacement-failure-"));
+  const configPath = path.join(directory, "config.json");
+  const originalBytes = Buffer.from('{\n  "agent": { "greeting": "before" },\n  "future": [1, 2, 3]\n}\n');
+  fs.writeFileSync(configPath, originalBytes, { mode: 0o600 });
+  const before = readConfigState(configPath);
+  resetRuntimeForTest();
+  initializeRuntime({ state: before, startup: startup({ configPath, resolvedHome: directory }) });
+  const originalRename = fs.renameSync;
+  fs.renameSync = function failSettingsCommit(source, target, ...args) {
+    if (
+      String(target) === configPath &&
+      path.basename(String(source)).startsWith(".settings-write-")
+    ) {
+      const error = new Error("rename blocked");
+      error.code = "EACCES";
+      throw error;
+    }
+    return originalRename.call(this, source, target, ...args);
+  };
+  t.after(() => {
+    fs.renameSync = originalRename;
+    resetRuntimeForTest();
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+
+  assert.throws(
+    () => saveFields({ configPath, revision: before.revision, fields: { agent_greeting: "after" } }),
+    (error) => error.code === "SETTINGS_TRANSACTION_FAILED" && error.status === 500,
+  );
+  assert.deepEqual(fs.readFileSync(configPath), originalBytes);
+  assert.deepEqual(fs.readdirSync(directory).filter((name) => name.startsWith(".settings-backup-")), []);
+});
+
 test("publish failure preserves committed config bytes and path mismatch never no-ops", (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-publish-failure-"));
   t.after(() => {
