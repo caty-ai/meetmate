@@ -5,7 +5,7 @@
 #
 # Usage: ./watchdog.sh [--service NAME] [--port PORT] [--log-dir DIR]
 # Environment variables (args take precedence):
-#   WATCHDOG_SERVICE  — LaunchAgent service label (default: ai-meet.server)
+#   WATCHDOG_SERVICE  — native service label / systemd unit name (default: ai-meet.server)
 #   WATCHDOG_PORT     — Server port to health-check (default: 5005)
 #   WATCHDOG_LOG_DIR  — Log directory (default: ./logs relative to script dir)
 
@@ -69,8 +69,18 @@ fi
 
 echo "unhealthy" > "$STATE_FILE"
 
-echo "$(ts) [WATCHDOG] Attempting restart via launchctl kickstart..." >> "$LOG_FILE"
-launchctl kickstart -k "gui/$(id -u)/$SERVICE" 2>>"$LOG_FILE"
+if [ "$(uname -s)" = "Darwin" ] && command -v launchctl >/dev/null 2>&1; then
+  echo "$(ts) [WATCHDOG] Attempting restart via launchctl kickstart..." >> "$LOG_FILE"
+  launchctl kickstart -k "gui/$(id -u)/$SERVICE" 2>>"$LOG_FILE"
+elif command -v systemctl >/dev/null 2>&1; then
+  # cron/heartbeat environments lack it and systemctl --user cannot reach the user bus without it.
+  export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+  echo "$(ts) [WATCHDOG] Attempting restart via systemctl --user restart..." >> "$LOG_FILE"
+  systemctl --user restart "$SERVICE" 2>>"$LOG_FILE"
+else
+  echo "$(ts) [WATCHDOG] no supported service manager (launchctl/systemctl) — cannot restart" >> "$LOG_FILE"
+  exit 1
+fi
 
 sleep 8
 

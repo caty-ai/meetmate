@@ -9,6 +9,7 @@
     {{LABEL}}       — LaunchAgent label (e.g. ai-meet.server)
     {{WORKING_DIR}} — Absolute path to the agent's working directory
     {{NODE_PATH}}   — Absolute path to the node binary
+    {{NODE_DIR}}    — Directory containing the node binary
     {{LOG_DIR}}     — Absolute path to the log directory
 -->
 <plist version="1.0">
@@ -45,7 +46,7 @@
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
-    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <string>{{NODE_DIR}}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
   </dict>
 </dict>
 </plist>

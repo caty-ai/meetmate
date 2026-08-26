@@ -158,7 +158,7 @@ Environment: `AI_MEET_BASE_URL` selects the Meetmate REST API to control (defaul
 Set `SONIOX_MAX_ENDPOINT_DELAY_MS=1000` in `.env` (when unset, the Soniox server-side default of `2000` applies; try `800` if needed) and restart the server. If your utterances start getting cut off mid-sentence, lower `SONIOX_ENDPOINT_SENSITIVITY` toward `0.0〜-0.2`. Details: [Soniox tuning](operations.md#stt-プロバイダ切替soniox-チューニング).
 
 **Q. Posting to the meeting chat fails**
-Messages containing emojis or rare script characters are rejected with a 400 by the Attendee server ("Message cannot contain emojis or rare script characters."). Send-failure warnings go to `logs/meet-server.stderr.log` when running under the launchd agent (with a plain `npm start` they appear on the terminal's stderr); check there first.
+Messages containing emojis or rare script characters are rejected with a 400 by the Attendee server ("Message cannot contain emojis or rare script characters."). Send-failure warnings go to `logs/meet-server.stderr.log` when running under the launchd/systemd service (with a plain `npm start` they appear on the terminal's stderr); check there first. (On a systemd install the unit appends app output to those files directly — `journalctl --user -u <label>` only shows service lifecycle lines, not these warnings.)
 
 **Q. The TTS voice is unstable or goes wild**
 S2-Pro tends to destabilize on tag-less utterances, so the design assumes the "anchor scheme": one emotion tag in every utterance ([voice profile](operations.md#音声プロファイルtts)). If it is still unstable, `FISH_AUDIO_MODEL=s1` rolls back to the previous model immediately.
@@ -196,10 +196,11 @@ npm run test:meet:repro           # only the Meet multi-participant reproduction
 | Script | Purpose |
 |---|---|
 | [`scripts/soniox-smoke.js`](../scripts/soniox-smoke.js) | Soniox STT connectivity check |
-| [`scripts/seed-tts-cache-from-fillers.js`](../scripts/seed-tts-cache-from-fillers.js) | Pre-generate the TTS cache from recorded takes |
+| [`scripts/seed-tts-cache-from-fillers.js`](../scripts/seed-tts-cache-from-fillers.js) | Pre-generate the TTS cache from recorded takes (requires `ffmpeg` on PATH — not installed by default on Ubuntu: `sudo apt install ffmpeg`) |
 | [`scripts/aggregate-metrics.js`](../scripts/aggregate-metrics.js) | Aggregate delegation-harness metrics |
-| [`scripts/install-launchagent.sh`](../scripts/install-launchagent.sh) | macOS launchd daemonization (with watchdog) |
+| [`scripts/install-service.sh`](../scripts/install-service.sh) | Cross-platform daemonization: dispatches to launchd (macOS) or a systemd user unit (Linux/WSL2), with watchdog restart support on both |
+| [`scripts/install-launchagent.sh`](../scripts/install-launchagent.sh) | macOS launchd daemonization (called by install-service.sh; usable directly) |
 
 ### Logs
 
-Runtime logs go under `logs/`. Application warnings/errors: `logs/meet-server.stderr.log` (under the launchd install; a plain `npm start` prints them to the terminal). Delegation metrics: `logs/metrics.jsonl`.
+Runtime logs go under `logs/`. Application warnings/errors: `logs/meet-server.stderr.log` (under a launchd or systemd install; a plain `npm start` prints them to the terminal). On systemd installs `journalctl --user -u <label>` carries only the systemd lifecycle events (start/stop/failure) — application output goes to the `logs/` files, not the journal. Delegation metrics: `logs/metrics.jsonl`.
