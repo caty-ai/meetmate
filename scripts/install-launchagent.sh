@@ -61,6 +61,8 @@ if [ -z "$NODE_PATH" ]; then
   exit 1
 fi
 
+NODE_DIR="$(dirname "$NODE_PATH")"
+
 PLIST_DEST="$HOME/Library/LaunchAgents/${LABEL}.plist"
 
 echo "Installing LaunchAgent:"
@@ -84,6 +86,7 @@ sed \
   -e "s|{{LABEL}}|${LABEL}|g" \
   -e "s|{{WORKING_DIR}}|${WORKING_DIR}|g" \
   -e "s|{{NODE_PATH}}|${NODE_PATH}|g" \
+  -e "s|{{NODE_DIR}}|${NODE_DIR}|g" \
   -e "s|{{LOG_DIR}}|${LOG_DIR}|g" \
   "$TEMPLATE" > "$PLIST_DEST"
 
