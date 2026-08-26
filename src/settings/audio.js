@@ -14,7 +14,7 @@ const TOTAL_LIMIT = 128 * 1024 * 1024;
 const CLIP_LIMIT = 32;
 const DURATION_LIMIT_MS = 30_000;
 const HEADER_LIMIT = 16 * 1024;
-const METADATA_LIMIT = 16 * 1024;
+const METADATA_LIMIT = 24 * 1024;
 const FFMPEG_TIMEOUT_MS = 35_000;
 const ROLES = ["ack", "progress", "greeting", "farewell", "timeout"];
 

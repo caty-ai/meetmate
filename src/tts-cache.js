@@ -104,8 +104,8 @@ async function emitPacedPcm(buffer, options = {}) {
 function createTtsCache({ dir = defaultCacheDir(), synthesizeFn } = {}) {
   const delegate = synthesizeFn || require("./tts-fish").synthesize;
 
-  function fileFor(text, options = {}) {
-    return path.join(dir, `${cacheKey(effectiveSynthesisText(text), options)}.pcm`);
+  function fileFor(effectiveText, options = {}) {
+    return path.join(dir, `${cacheKey(effectiveText, options)}.pcm`);
   }
 
   async function synthesizeCached(text, options = {}) {
@@ -139,7 +139,7 @@ function createTtsCache({ dir = defaultCacheDir(), synthesizeFn } = {}) {
       return delegate(effectiveText, options);
     }
 
-    const file = fileFor(effectiveText, options);
+    const file = fileFor(effectiveText, { ...identity, speed: options.speed });
     if (fs.existsSync(file)) {
       try {
         const stat = fs.statSync(file);
@@ -204,7 +204,9 @@ function createTtsCache({ dir = defaultCacheDir(), synthesizeFn } = {}) {
         referenceId: item.referenceId !== undefined ? item.referenceId : baseOptions.referenceId,
         onAudio: () => {},
       };
-      const file = fileFor(text, options);
+      const effectiveText = effectiveSynthesisText(text);
+      if (!effectiveText) continue;
+      const file = fileFor(effectiveText, options);
       if (isValidPcmFile(file)) continue;
       if (fs.existsSync(file)) unlinkBestEffort(file);
 

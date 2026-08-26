@@ -498,12 +498,50 @@ test("save publishes and invalidates caches while the shared lock is still owned
   t.after(unregister);
   const committed = saveFields({ configPath, revision: before.revision, fields: { agent_greeting: "after" } });
   assert.deepEqual(observed, [{ lock: true, greeting: "after" }]);
+  assert.deepEqual(fs.readdirSync(directory).filter((name) => name.startsWith(".settings-backup-")), []);
   fs.writeFileSync(path.join(directory, ".meetmate-settings.lock"), `${JSON.stringify({ pid: process.pid })}\n`, { mode: 0o600 });
   assert.throws(
     () => saveFields({ configPath, revision: committed.revision, fields: { agent_greeting: "blocked" } }),
     (error) => error.code === "SETTINGS_MULTI_PROCESS_UNSUPPORTED" && error.status === 503,
   );
   fs.unlinkSync(path.join(directory, ".meetmate-settings.lock"));
+});
+
+test("backup cleanup failure restores the original bytes and publishes nothing", (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-backup-cleanup-failure-"));
+  const configPath = path.join(directory, "config.json");
+  const originalBytes = Buffer.from('{\n  "agent": { "greeting": "before" },\n  "future": [1, 2, 3]\n}\n');
+  fs.writeFileSync(configPath, originalBytes, { mode: 0o600 });
+  const before = readConfigState(configPath);
+  resetRuntimeForTest();
+  initializeRuntime({ state: before, startup: startup({ configPath, resolvedHome: directory }) });
+  let invalidations = 0;
+  const unregister = registerCacheInvalidator(() => { invalidations += 1; });
+  const originalUnlink = fs.unlinkSync;
+  fs.unlinkSync = function rejectBackupCleanup(target, ...args) {
+    if (path.basename(String(target)).startsWith(".settings-backup-")) {
+      const error = new Error("backup cleanup failed");
+      error.code = "EACCES";
+      throw error;
+    }
+    return originalUnlink.call(this, target, ...args);
+  };
+  t.after(() => {
+    fs.unlinkSync = originalUnlink;
+    unregister();
+    resetRuntimeForTest();
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+
+  assert.throws(
+    () => saveFields({ configPath, revision: before.revision, fields: { agent_greeting: "after" } }),
+    (error) => error.code === "SETTINGS_TRANSACTION_FAILED" && error.status === 500,
+  );
+  assert.deepEqual(fs.readFileSync(configPath), originalBytes);
+  assert.equal(invalidations, 0);
+  assert.equal(buildEnvelope().revision, before.revision);
+  assert.equal(buildEnvelope().effective.agent_greeting, "before");
+  assert.deepEqual(fs.readdirSync(directory).filter((name) => name.startsWith(".settings-backup-")), []);
 });
 
 test("publish failure preserves committed config bytes and path mismatch never no-ops", (t) => {

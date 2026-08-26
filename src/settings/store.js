@@ -191,14 +191,15 @@ function commitWholeConfig({ configPath, revision, mutate }) {
     fsyncDirectory(directory);
     const committed = readConfigState(configPath);
     if (!committed.valid) throw settingsError("SETTINGS_TRANSACTION_FAILED", "Settings transaction failed", 500);
+    if (backup) {
+      fs.unlinkSync(backup);
+      backup = null;
+    }
     try {
       require("./resolver").publishCommittedState(configPath, committed);
     } catch {
       publishFailed = true;
       throw settingsError("SETTINGS_PUBLISH_FAILED", "Settings snapshot publish failed", 500);
-    }
-    if (backup) {
-      try { fs.unlinkSync(backup); backup = null; } catch { /* final cleanup retries without rolling back a published snapshot */ }
     }
     return committed;
   } catch (error) {
@@ -219,9 +220,8 @@ function commitWholeConfig({ configPath, revision, mutate }) {
       ? error
       : settingsError("SETTINGS_TRANSACTION_FAILED", "Settings transaction failed", 500);
   } finally {
-    for (const artifact of [temporary, backup]) {
-      if (!artifact) continue;
-      try { fs.unlinkSync(artifact); } catch { /* best effort */ }
+    if (temporary) {
+      try { fs.unlinkSync(temporary); } catch { /* best effort */ }
     }
     release();
   }

@@ -359,6 +359,14 @@ test("T12-09 metadata is strict, UTF-8, trimmed, SHA-only, and exactly one file 
   }
 });
 
+test("T12-09 accepts schema-maximum four-byte UTF-8 metadata text", async (t) => {
+  const setup = fixture(t);
+  const text = "😀".repeat(4096);
+  const res = await upload(setup.handler, { role: "ack", text, revision: setup.revision });
+  assert.equal(res.status, 200, res.body);
+  assert.equal(JSON.parse(res.body).clip.text, text);
+});
+
 test("T12-09 ffmpeg missing, stderr, odd PCM, duration overflow, and commit failure clean all temporaries and installed files", async (t) => {
   const variants = [
     { name: "missing", spawnFn: fakeSpawn({ error: new Error("ENOENT") }), expected: 422 },

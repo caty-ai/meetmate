@@ -38,9 +38,13 @@ function buildGatewayBriefingSystem({ emotionTags = true } = {}) {
 
 function stripCanonicalEmotionTags(text) {
   const escaped = EMOTION_TAGS.map(({ tag }) => tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const tagPattern = escaped.join("|");
+  const tags = new RegExp(tagPattern, "g");
+  const seams = new RegExp(`[ \\t]*(?:${tagPattern})(?:[ \\t]*(?:${tagPattern}))*[ \\t]*`, "g");
   return String(text || "")
-    .replace(new RegExp(escaped.join("|"), "g"), "")
-    .replace(/[ \t]{2,}/g, " ")
+    .replace(seams, (seam) => (
+      /[ \t]/.test(seam.replace(tags, "")) ? " " : ""
+    ))
     .trim();
 }
 
