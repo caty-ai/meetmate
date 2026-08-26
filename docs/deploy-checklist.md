@@ -84,7 +84,7 @@
   ```
   - Linux / WSL2（`sips` は macOS 専用）: ImageMagick か ffmpeg で代替
     ```bash
-    magick input.jpg -resize 256x256 assets/avatar.png      # ImageMagick
+    convert input.jpg -resize 256x256 assets/avatar.png      # ImageMagick 6（Ubuntu 24.04 の apt 標準。IM7 なら `magick`）
     ffmpeg -i input.jpg -vf scale=256:256 assets/avatar.png  # ffmpeg
     ```
 
@@ -191,7 +191,8 @@
   - [ ] Linux: unit は `~/.config/systemd/user/<label>.service` に生成される。追加の環境変数は unit の `[Service]` に `Environment=KEY=value` で追記 → `systemctl --user daemon-reload && systemctl --user restart <label>`
   - [ ] Linux: **ログアウト後も常駐させるには** `loginctl enable-linger $USER` を一度実行（未設定だと SSH 切断で停止する）
   - [ ] WSL2: systemd が無効だとインストーラが失敗する。`/etc/wsl.conf` に `[boot]` `systemd=true` を追記 → Windows 側で `wsl --shutdown` → 再起動
-  - [ ] Linux のログ確認: `logs/meet-server.std{out,err}.log`（macOS と同じ）に加えて `journalctl --user -u <label>` も使える
+  - [ ] Linux のログ確認: アプリのログは `logs/meet-server.std{out,err}.log`（macOS と同じ・unit が `append:` でファイル直行）。`journalctl --user -u <label>` に出るのは **systemd のライフサイクル行（起動/停止/失敗）だけ**でアプリ出力は流れない
+  - [ ] `--port` は表示用（unit には埋め込まれない。実際のポートは `config.json` / `.env` 側 — launchd 版と同じ扱い）
 - [ ] ウェイクワードキャリブレーション実行（`/calibrate` UI）
 - [ ] watchdog 設定（任意）
   ```bash
