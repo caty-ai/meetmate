@@ -32,7 +32,7 @@ npx meetmate init     # 向导会收集你的 API 密钥、语音 ID 和 LLM 端
 npx meetmate start    # 启动服务器并打印设置界面 URL
 ```
 
-打开打印出来的 URL,粘贴 Meet 或 Zoom 链接,点击 **Join**（[界面预览见这里](#界面长什么样)）。在 Meet 中批准机器人的“Ask to join”请求——然后叫它的唤醒词,开始说话。ngrok/Tailscale 和 Meet 的入会批准步骤仍需手动完成;向导结束时的提示和[安装指南](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md)会带你走完这些步骤。
+打开打印出来的 URL——这是设置界面,还不是仪表盘。如果还有必填项为空(或者你完全跳过了 `init`——服务器仍会启动,只是进入设置模式),你会看到一条「セットアップ中」（即“设置中”）横幅,提示缺少什么;填好后点击「変更を保存」（即“保存更改”）,再重启。加载完成后,打开同一主机的 `/` 进入仪表盘,粘贴 Meet 或 Zoom 链接,点击 **Join**（[界面预览见这里](#界面长什么样)）。在 Meet 中批准机器人的“Ask to join”请求——然后叫它的唤醒词,开始说话。ngrok/Tailscale 和 Meet 的入会批准步骤仍需手动完成;向导结束时的提示和[安装指南](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md)会带你走完这些步骤。
 
 ## 它能做什么
 
@@ -44,11 +44,11 @@ npx meetmate start    # 启动服务器并打印设置界面 URL
 
 ## 界面长什么样
 
-一个界面，一件事——把你的智能体送进会议室。`npx meetmate start` 打印的 URL 打开的就是这个设置界面。（界面文字目前为日语，下面的说明会告诉你每一步在做什么。）
+一个界面，一件事——把你的智能体送进会议室。这是仪表盘，就在 `/`——设置完成后，只需点击页眉里的 ⚙ 链接，一步就能到达设置界面（也就是 `npx meetmate start` 实际打印 URL 的那个界面）。（界面文字目前为日语，下面的说明会告诉你每一步在做什么。）
 
-<img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-ui-idle.png" alt="启动后的 Meetmate 设置界面 — 粘贴框、未激活的加入按钮和会话指标" width="100%">
+<img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-ui-idle.png" alt="设置完成后的 Meetmate 仪表盘 — 粘贴框、未激活的加入按钮、会话指标，以及页眉中的设置链接" width="100%">
 
-1. **启动。** 打开打印出的 URL 就到了这里。大输入框用来放会议信息；在此之前**加入按钮**保持禁用。
+1. **启动。** 设置完成后，打开 `/` 就会看到这个界面来迎接你。大输入框用来放会议信息；在此之前**加入按钮**保持禁用。
 2. **粘贴邀请。** 单独的 Meet / Zoom URL 可以，**整段日历邀请原样粘贴**也可以——Meetmate 会自动提取会议 URL（绿色的「検出済み」提示，即"已检测到"），并激活加入按钮。
 
    <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-ui-invite-pasted.png" alt="粘贴整段日历邀请 — Meet URL 被自动检测，加入按钮已激活" width="100%">
@@ -60,6 +60,32 @@ npx meetmate start    # 启动服务器并打印设置界面 URL
 4. **在 Meet 里批准。** 唯一的手动步骤，在你这一侧完成——像批准普通访客一样批准机器人的"请求加入"。然后喊它的唤醒词，开始对话。
 
 从 API 密钥到第一声问候的完整流程，见[设置指南](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md)。
+
+**在浏览器里配置。** 日常需要调整的一切都在同一个设置界面背后——服务商密钥、唤醒词、问候语、语音预设、连接测试——按标签页分类，每个字段都会注明改动是即时生效还是需要重启。不用克隆仓库，也不用手改 JSON；只有网关连接的密钥仍以环境变量的形式留在 `.env` 中。
+
+<img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-page-basic.png" alt="设置完成后设置界面的「基本」标签页 — 绿色的加载完成横幅，以及核心智能体、语音和连接相关字段" width="100%">
+
+完整的分标签页说明见[设置参考](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#設定リファレンスsettings-ui)。
+
+## 开会时是什么感觉
+
+从你叫出它的名字，到它离开会议，大概是这样:
+
+- 你说出唤醒词——它就醒了，开始倾听。
+- 加入时它会打个招呼，之后就安静下来，直到你叫它。
+- 开会过程中，像跟同事说话一样跟它说话:问它问题、让它查点东西、让它在 Slack 里留个备注，或者把一项任务交给它跟进。
+- 跟它道别，它会说一句简短的告别语，然后退出通话。
+- 会议结束后，如果你接入了 Slack，总结和捕捉到的行动项已经在那边等你了。
+
+会议中的一段简短对话:
+
+```
+你:       "Meetmate，能看看定价文档从周一到现在有什么变化吗?"
+Meetmate: [soft voice] 好的，马上查。
+          ...几秒后...
+Meetmate: [warm] 有两处变化——年度折扣改成了 15%，还新增了一个
+          企业版套餐。要我把改动发到频道里吗?
+```
 
 ## 当前状态
 
