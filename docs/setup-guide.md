@@ -330,11 +330,9 @@ node src/server.js
 
 3. 「Meet に参加させる」をクリックした瞬間に通話中カードが現れる。タイマーはクリック時点から回り始め、WS 接続状態とエージェント名もこの時点から表示される。状態表示は **🔄 起動中...** から始まり、Bot が Meet の入室許可を待っている間は **WS 未接続** のまま。入室が許可されると **WS 接続 OK** に変わる:
 
-   <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-ui-joining.png" alt="通話中カード。参加直後からタイマー・WS 状態・エージェント名が表示され、入室後に WS 接続 OK へ変わる" width="100%">
+   <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-ui-joining.png" alt="通話中カード。入室許可待ちの状態で、タイマー・WS 状態（未接続）・エージェント名が表示されている" width="100%">
 
-4. Meet 側に「〜が参加をリクエストしています」のダイアログが出るので**承認する**（ここだけは人間の手作業。アプリ側からは代行できない）:
-
-   <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/meet-ask-to-join.png" alt="Google Meet の参加リクエスト承認ダイアログ" width="480">
+4. Meet 側に「〜が参加をリクエストしています」のダイアログが出るので**承認する**（ここだけは人間の手作業。アプリ側からは代行できない）。
 
 5. 約30秒で Bot が参加 → 挨拶が流れれば成功 ✅ あとはウェイクワードで呼びかければ応答する。
 

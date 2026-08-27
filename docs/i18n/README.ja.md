@@ -55,11 +55,9 @@ npx meetmate start    # サーバーを起動し、設定 UI の URL を表示�
 
 3. **参加させて、入室待ち。** クリックした瞬間に通話中カードが現れます。タイマーはこの時点から回り始め、WS 接続状態とエージェント名が並びます。bot は起動（🔄 起動中...）→ Meet へ入室リクエスト → 入室が許可されると WS 表示が「接続 OK」に変わります。
 
-   <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-ui-joining.png" alt="通話中カード — 参加直後からタイマーが回り、入室後に WS 接続 OK へ変わる" width="100%">
+   <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-ui-joining.png" alt="通話中カード — 入室待ちの状態。タイマーは回り始め、WS は許可まで未接続" width="100%">
 
 4. **Meet 側で承認する。** 唯一の手動ステップ。ほかのゲストと同じように bot の「参加をリクエスト」を承認したら、あとはウェイクワードで呼びかけるだけです。
-
-   <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/meet-ask-to-join.png" alt="Google Meet の参加リクエスト承認ダイアログ" width="480">
 
 同じ流れを API キーの取得から最初の挨拶まで詳しく追った版は[セットアップガイド](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md)にあります。
 

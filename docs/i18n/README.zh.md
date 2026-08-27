@@ -55,11 +55,9 @@ npx meetmate start    # 启动服务器并打印设置界面 URL
 
 3. **加入并等待放行。** 点击的瞬间就会出现会话卡片——计时器从此刻开始走动，旁边是 WS 连接状态和智能体名字。机器人先启动（🔄 起動中...），向 Meet 请求入会；进入房间后 WS 状态变为已连接。
 
-   <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-ui-joining.png" alt="会话卡片 — 加入后计时器即开始走动，机器人获准入会后 WS 状态变为已连接" width="100%">
+   <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-ui-joining.png" alt="会话卡片 — 等待放行的状态：计时器已开始走动，WS 在获准入会前保持未连接" width="100%">
 
 4. **在 Meet 里批准。** 唯一的手动步骤，在你这一侧完成——像批准普通访客一样批准机器人的"请求加入"。然后喊它的唤醒词，开始对话。
-
-   <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/meet-ask-to-join.png" alt="Google Meet 的请求加入确认弹窗" width="480">
 
 从 API 密钥到第一声问候的完整流程，见[设置指南](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md)。
 

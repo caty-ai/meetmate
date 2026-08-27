@@ -55,11 +55,9 @@ npx meetmate start    # เริ่มเซิร์ฟเวอร์แล�
 
 3. **เข้าร่วมแล้วรอหน้าประตู** การ์ดเซสชันจะปรากฏทันทีที่คลิก — ตัวจับเวลาเริ่มเดินตั้งแต่ตอนนั้น พร้อมสถานะการเชื่อมต่อ WS และชื่อเอเจนต์ บอทจะเริ่มระบบ (🔄 起動中...) แล้วส่งคำขอเข้าห้องไปที่ Meet เมื่อได้รับอนุมัติ สถานะ WS จะเปลี่ยนเป็นเชื่อมต่อแล้ว
 
-   <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-ui-joining.png" alt="การ์ดเซสชัน — ตัวจับเวลาเดินตั้งแต่กดเข้าร่วม และสถานะ WS เปลี่ยนเป็นเชื่อมต่อเมื่อบอทเข้าห้องแล้ว" width="100%">
+   <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-ui-joining.png" alt="การ์ดเซสชันระหว่างรอการอนุมัติ — ตัวจับเวลาเดินแล้ว ส่วน WS ยังไม่เชื่อมต่อจนกว่าบอทจะได้เข้าห้อง" width="100%">
 
 4. **อนุมัติใน Meet** ขั้นตอนเดียวที่ต้องทำเอง ฝั่งคุณในสาย — อนุมัติคำขอ "ขอเข้าร่วม" ของบอทเหมือนแขกทั่วไป จากนั้นเรียกชื่อปลุก (wake word) แล้วเริ่มคุยได้เลย
-
-   <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/meet-ask-to-join.png" alt="กล่องคำขอเข้าร่วมของ Google Meet" width="480">
 
 ดูขั้นตอนเดียวกันแบบละเอียดตั้งแต่ API key จนถึงคำทักทายแรกได้ที่ [Setup guide](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md)
 
