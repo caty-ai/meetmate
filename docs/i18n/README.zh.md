@@ -32,7 +32,7 @@ npx meetmate init     # 向导会收集你的 API 密钥、语音 ID 和 LLM 端
 npx meetmate start    # 启动服务器并打印设置界面 URL
 ```
 
-打开打印出来的 URL——这是设置界面,还不是仪表盘。如果还有必填项为空(或者你完全跳过了 `init`——服务器仍会启动,只是进入设置模式),你会看到一条「セットアップ中」（即“设置中”）横幅,提示缺少什么;填好后点击「変更を保存」（即“保存更改”）,再重启。加载完成后,打开同一主机的 `/` 进入仪表盘,粘贴 Meet 或 Zoom 链接,点击 **Join**（[界面预览见这里](#界面长什么样)）。在 Meet 中批准机器人的“Ask to join”请求——然后叫它的唤醒词,开始说话。ngrok/Tailscale 和 Meet 的入会批准步骤仍需手动完成;向导结束时的提示和[安装指南](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md)会带你走完这些步骤。
+打开打印出来的 URL——这是设置界面,还不是仪表盘。如果还有必填项为空(或者你完全跳过了 `init`——服务器仍会启动,只是进入设置模式),你会看到一条「セットアップ中」（即“设置中”）横幅,提示缺少什么;填好后点击「変更を保存」（即“保存更改”）,再重启。有一个例外无法在浏览器里填写:LLM 连接值（网关 URL/Token,或 OpenAI 兼容密钥）只能来自环境变量——`init` 向导会替你写进 `.env`;如果你跳过了 `init`,请自行把它们加到 `.env`。加载完成后,打开同一主机的 `/` 进入仪表盘,粘贴 Meet 或 Zoom 链接,点击 **Join**（[界面预览见这里](#界面长什么样)）。在 Meet 中批准机器人的“Ask to join”请求——然后叫它的唤醒词,开始说话。ngrok/Tailscale 和 Meet 的入会批准步骤仍需手动完成;向导结束时的提示和[安装指南](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md)会带你走完这些步骤。
 
 ## 它能做什么
 
@@ -61,7 +61,7 @@ npx meetmate start    # 启动服务器并打印设置界面 URL
 
 从 API 密钥到第一声问候的完整流程，见[设置指南](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md)。
 
-**在浏览器里配置。** 日常需要调整的一切都在同一个设置界面背后——服务商密钥、唤醒词、问候语、语音预设、连接测试——按标签页分类，每个字段都会注明改动是即时生效还是需要重启。不用克隆仓库，也不用手改 JSON；只有网关连接的密钥仍以环境变量的形式留在 `.env` 中。
+**在浏览器里配置。** 日常需要调整的一切都在同一个设置界面背后——服务商密钥、唤醒词、问候语、语音预设、连接测试——按标签页分类，每个字段都会注明改动是即时生效还是需要重启。不用克隆仓库，也不用手改 JSON；只有网关 URL/Token 这类连接值（以及少数自动生成的令牌）仍以环境变量的形式留在 `.env` 中。
 
 <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-page-basic.png" alt="设置完成后设置界面的「基本」标签页 — 绿色的加载完成横幅，以及核心智能体、语音和连接相关字段" width="100%">
 
@@ -122,7 +122,7 @@ Meetmate: [warm] 有两处变化——年度折扣改成了 15%，还新增了�
 | 允许机器人加入的 Google Meet 权限 | 让机器人进入会议 | Meet UI 的"Ask to join"批准 | Google Meet | 你必须在 Meet 中批准加入请求。 |
 | [Zoom Marketplace](https://marketplace.zoom.us/) 应用/管理员设置 | Zoom 机器人权限模型 | Attendee/Zoom 侧应用设置 | 仅 Zoom | 视情况而定。不声称支持外部主办的会议和托管式 OAuth。 |
 
-所有密钥和令牌保存在 `.env` 中（openai-compatible 的 apiKey 则在 `config.json` 中——向导会自动写入正确位置）。这两个文件都不要提交,也不要提交密钥截图或含有有效凭据的共享配置文件。
+请通过 `init` 向导或设置界面录入密钥——服务商密钥（Soniox / Deepgram / Fish Audio / Attendee / Slack）保存在 `config.json`（以 0600 权限创建）中，连接类的值（网关 URL/Token、OpenAI 兼容密钥）则以环境变量形式保存在 `.env` 中。这两个文件都不要提交,也不要提交密钥截图或含有有效凭据的共享配置文件。
 
 如果你接入了具备工具调用能力的 OpenAI 兼容网关,请把这条路径限制在本地且可信的范围内。Meetmate 的信任选项仅适用于可信本地网关下的可信会议;外部或不可信的会议在该模式下仍不受支持。
 

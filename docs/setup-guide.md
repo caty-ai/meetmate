@@ -25,7 +25,7 @@
 | Zoom Marketplace | https://marketplace.zoom.us/ | Zoom Bot 権限・アプリ管理 | 条件付き | プラン/権限要件は運用形態次第 |
 | Slack Bot | https://api.slack.com/apps | ステータス通知・サマリー投稿 | 任意 | Slack 側プラン条件を確認 |
 
-> ⚠️ API key / token はすべて秘密情報。Git に commit しない、画面共有・ログ共有・Issue・スクリーンショットにも貼らないこと。保存場所は種類によって異なる — Soniox / Fish Audio / Attendee / Slack Bot token のようなベンダーキーは `config.json`（パーミッション 0600）、Gateway の URL/Token や OpenAI互換キーのような接続系の値は `.env`（環境変数）。どちらも入力先は設定 UI か `init` ウィザードで、`config.json` / `.env` を手で書く必要はない。
+> ⚠️ API key / token はすべて秘密情報。Git に commit しない、画面共有・ログ共有・Issue・スクリーンショットにも貼らないこと。保存場所は種類によって異なる — Soniox / Fish Audio / Attendee / Slack Bot token のようなベンダーキーは `config.json`（パーミッション 0600）、Gateway の URL/Token や OpenAI互換キーのような接続系の値は `.env`（環境変数）。ベンダーキーの入力先は `init` ウィザードか設定 UI。接続系の値だけは設定 UI から書けないため、`init` ウィザードで生成するか `.env` に直接書く。
 > ⚠️ tool 実行まで許可する OpenAI互換 gateway を使う場合も、その endpoint は **信頼できるローカル gateway** に限定すること。外部・不特定・未信頼 meeting では使わないこと。
 
 ### 前提条件
@@ -72,7 +72,7 @@ npx meetmate start    # サーバー起動。設定 UI の URL が表示され�
 Settings UI: http://localhost:<port>/settings
 ```
 
-`config.json` がまだ無い状態で `start` しても、サーバーはエラー終了しない。「設定を読み込めなかったため setup mode で継続します」とログに出したうえで、同じ1行を表示して起動する。つまり `init` を飛ばしていきなり `start` しても、ブラウザで設定を埋められる状態になる。
+`config.json` がまだ無い状態で `start` しても、サーバーはエラー終了せず setup mode で起動し、同じ1行を表示する。つまり `init` を飛ばしていきなり `start` しても、ベンダーキーや基本項目はブラウザから埋められる。ただし **LLM 接続情報（`OPENCLAW_GATEWAY_URL` / `OPENCLAW_GATEWAY_TOKEN`、または `OPENAI_COMPATIBLE_API_KEY`）だけは設定 UI から書けない** — `init` ウィザードが `.env` に書き込む値なので、`init` を飛ばした場合は `.env` に自分で用意する。
 
 1. 表示された URL をブラウザで開く。未設定の項目がある間はヘッダーのバッジが **`セットアップ中`**、黄色の `setup mode` バナー（`必須設定を入力して保存すると、ミーティングを開始できる状態へ進めます。`）と、`設定の確認が必要です` バナー（未設定・不正な項目が `<項目名>: <理由>` の形式で並ぶ。例: `必須値が未設定です`, `LLM 接続情報が不足しています`）が出る:
 
@@ -204,7 +204,7 @@ tailscale serve --https=443 http://127.0.0.1:<port>
 
 | タブ | 内容 |
 |---|---|
-| 基本 | 日常的に使う設定 — エージェント ID / エージェント名 / 表示名 / 言語 / あいさつ / 感情タグ / Wake Words / LLM プロバイダー / LLM モデル / Soniox・Deepgram の API key と音声認識プロバイダー / Fish Audio の API key・Voice ID と音声合成プロバイダー / Attendee API key / Slack Bot token・Slack 通知・Slack 通知先 / 会議サマリー |
+| 基本 | 日常的に使う設定 — エージェント ID / エージェント名 / 表示名 / 言語 / Wake Words / LLM プロバイダー / LLM モデル / Soniox・Deepgram の API key と音声認識プロバイダー / Fish Audio の API key・Voice ID と音声合成プロバイダー / Attendee API key / Slack Bot token・Slack 通知・Slack 通知先 / 会議サマリー（あいさつ・感情タグは音声プリセットタブ側） |
 | 音声プリセット | 会話中の定型文と感情表現（`ライブ設定` バッジつき＝保存後すぐ反映）— 感情タグ toggle、あいさつ、応答確認、進捗 Ping、退出あいさつ、キャンセル確認、タイムアウト、固定の感情タグ（読み取り専用）、Fish Audio プレビュー、事前録音 MP3 |
 | 詳細 | Soniox のチューニング・endpointing、Fish のモデル/速度/レイテンシ/サンプルレート/キャッシュ、Attendee host、Slack チャンネル、gateway warmup、ngrok ドメイン、feature flags など。多くは再起動が必要 |
 | デプロイ | 読み取り専用の診断情報 — 実際に bind されたポート（`server_port`）、解決済み home（`resolved_home`）、その他の環境診断値。ここでは編集できない |
@@ -213,7 +213,7 @@ tailscale serve --https=443 http://127.0.0.1:<port>
 
 ### ライブ設定 と 再起動待ち
 
-各項目には `保存後すぐに反映` か `再起動後に反映` のヘルプが添えられている。再起動が必要な項目を保存すると `保存済み・再起動待ち` のバナーが出て、対象の項目名が並ぶ。
+各項目には `すぐに反映` か `次回起動時に反映` のバッジが付いている。再起動が必要な項目を保存すると `保存済み・再起動待ち` のバナーが出て、対象の項目が並ぶ。
 
 ### 値の出どころ（source badge）
 
@@ -257,7 +257,7 @@ tailscale serve --https=443 http://127.0.0.1:<port>
 
 ## 8.x からの移行
 
-旧バージョン（8.x 系）では `init` が `.env` にベンダーキーを書いていたが、9系以降は `config.json` に書く。移行は次の手順:
+設定 UI 導入前のバージョン（公開済みの 8.x 系）では `init` が `.env` にベンダーキーを書いていたが、本バージョンからは `config.json` に書く。移行は次の手順:
 
 1. 同じ home で `meetmate init` を再実行する（`config.json` / `.env` が既にある場合、資格情報の質問は出ず `AGENTS.md` だけが対象になる。既存の `AGENTS.md` に meetmate 生成の目印があれば据え置き、無ければ変更しない — 作り直したい場合のみ `--force`）
 2. `meetmate start` する
@@ -276,7 +276,7 @@ tailscale serve --https=443 http://127.0.0.1:<port>
 
 これらは移行の対象外で、そのまま `.env` の環境変数として使い続ける: `OPENCLAW_GATEWAY_URL` / `OPENCLAW_GATEWAY_TOKEN` / `LLM_PROVIDER` / `OPENAI_COMPATIBLE_API_KEY` / `JOIN_SHARED_TOKEN` / `WS_SHARED_TOKEN`。
 
-`config.json` の `gateway.url` / `gateway.token` / `llm.openaiCompatible.apiKey`（旧バージョンで手書きしていたフィールド）は、9系では**無視される**。もし残っていると起動時に次のような警告が出る:
+`config.json` の `gateway.url` / `gateway.token` / `llm.openaiCompatible.apiKey`（旧バージョンで手書きしていたフィールド）は、本バージョンでは**無視される**。もし残っていると起動時に次のような警告が出る:
 
 ```
 Legacy connection settings were ignored and must be supplied through the environment: <path> -> <ENV>
@@ -297,11 +297,11 @@ Legacy connection settings were ignored and must be supplied through the environ
 - 実際に bind されたポート番号（`server_port`）
 - home のパス（`resolved_home`）
 
-<img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-transfer.png" alt="エクスポート・インポートタブ。設定をエクスポートボタンとインポート結果表示" width="100%">
+<img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-transfer.png" alt="エクスポート・インポートタブ。エクスポート・インポート・ベンダー値移行の3カード（ファイル選択とインポートボタンを含む）" width="100%">
 
 手順:
 
-1. **別の空フォルダ**（＝別の home）で `npx meetmate init` → `npx meetmate start`。ここで資格情報とポートは自分で用意する（1台目とキーを使い回すか、別アカウントで新規発行するかは運用次第。ポートは1台目と衝突しないこと）
+1. **別の空フォルダ**（＝別の home）で `npx meetmate init` → `npx meetmate start`。資格情報は自分で用意する（1台目とキーを使い回すか、別アカウントで新規発行するかは運用次第）。**ポートは1台目と衝突しない値にする** — ポートは設定 UI からは変更できないので、起動時の `PORT` 環境変数（例: `PORT=5006 npx meetmate start`）か、home の `config.json` の `server.port` で指定する（実際に bind されたポートはデプロイタブで確認できる）
 2. 2台目の設定 UI → **エクスポート・インポート** タブ → 1台目でダウンロードした `meetmate-settings.json` をインポートする。フォーマット/バージョンが合わない場合は失敗する。結果は「インポート済み: `<項目名...>` / スキップ: `<項目名...>`」（値が既に同じ項目はスキップ、空欄なら「なし」）の形で表示される
 3. 2台目用のアバター画像を `<2台目のhome>/assets/avatar.png` に配置する（[アバター画像を差し替える](#アバター画像を差し替える)）
 
@@ -348,7 +348,7 @@ Legacy connection settings were ignored and must be supplied through the environ
   --port <port>
 ```
 
-`--port` はログ表示用の情報であり、plist には埋め込まれない（実際に使うポートは `config.json` / 設定 UI 側の値）。
+`--port` はログ表示用の情報であり、plist には埋め込まれない（実際に使うポートは起動時の `PORT` 環境変数か `config.json` の `server.port`。設定 UI からは変更できず、デプロイタブに実測値が表示されるのみ）。
 
 ### 環境変数の追加
 
@@ -410,7 +410,7 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai-meet.<agent-name>.pli
 ### Bot が Meet に参加しない
 - Meet URL が `https://meet.google.com/xxx-xxxx-xxx` 形式か確認
 - Meet 側で「参加をリクエストしています」通知を承認
-- 設定 UI の基本タブで `Attendee API key` が正しいか確認（接続テストタブでも確認できる）
+- 設定 UI の基本タブで `Attendee API key` が正しいか確認（Attendee の接続テストは現在未実装のため、キー再入力→保存→再起動で確認する）
 - ngrok が起動しているか確認
 
 ### Bot は参加するが音声応答しない

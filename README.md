@@ -33,7 +33,7 @@ npx meetmate init     # the wizard collects your API keys, voice ID, and LLM end
 npx meetmate start    # starts the server and prints the settings-UI URL
 ```
 
-Open the printed URL — it's the settings UI, not the dashboard yet. If anything required is still empty (or you skipped `init` entirely — the server still starts, just in setup mode), a banner tells you what's missing; fill it in, save, and restart. Once it's loaded, open the dashboard at the same host's `/`, paste a Meet or Zoom URL, and click **Join** — [here's what that screen looks like](#what-it-looks-like). Approve the bot's "Ask to join" request in Meet — then call its wake word and start talking. ngrok/Tailscale and the Meet admission step stay manual; the wizard's closing message and the [Setup guide](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md) walk you through them.
+Open the printed URL — it's the settings UI, not the dashboard yet. If anything required is still empty (or you skipped `init` entirely — the server still starts, just in setup mode), a banner tells you what's missing; fill it in, save, and restart. One exception can't be filled in from the browser: the LLM connection values (gateway URL/token or the OpenAI-compatible key) are environment-only — the `init` wizard writes them to `.env` for you, so if you skipped it, add them there. Once it's loaded, open the dashboard at the same host's `/`, paste a Meet or Zoom URL, and click **Join** — [here's what that screen looks like](#what-it-looks-like). Approve the bot's "Ask to join" request in Meet — then call its wake word and start talking. ngrok/Tailscale and the Meet admission step stay manual; the wizard's closing message and the [Setup guide](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md) walk you through them.
 
 ## What it does
 
@@ -62,7 +62,7 @@ One screen, one job: get your agent into the room. This is the dashboard, at `/`
 
 The [Setup guide](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md) walks through the same flow with more detail, from API keys to first hello.
 
-**Configure from the browser.** Every day-to-day setting lives behind that same settings UI — vendor keys, the wake word, the greeting, voice presets, connection tests — organized into tabs, with per-field notes on whether a change applies live or needs a restart. There's no repo to clone or JSON to hand-edit; only the gateway connection secrets stay in `.env` as environment values.
+**Configure from the browser.** Every day-to-day setting lives behind that same settings UI — vendor keys, the wake word, the greeting, voice presets, connection tests — organized into tabs, with per-field notes on whether a change applies live or needs a restart. There's no repo to clone or JSON to hand-edit; only connection values like the gateway URL/token (and a couple of generated tokens) stay in `.env` as environment values.
 
 <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-page-basic.png" alt="The settings UI's Basic tab after setup is complete — a green loaded banner and the core agent, voice, and connection fields" width="100%">
 
@@ -123,7 +123,7 @@ The `init` wizard collects the API keys, the voice ID, and the LLM endpoint for 
 | Google Meet permission to admit the bot | Let the bot enter the meeting | Meet UI “Ask to join” approval | Google Meet | You must approve the join request in Meet. |
 | [Zoom Marketplace](https://marketplace.zoom.us/) app/admin setup | Zoom bot permission model | Attendee/Zoom-side app settings | Zoom only | Conditional. External-hosted meetings and managed OAuth are not claimed as supported. |
 
-Keep all keys and tokens in `.env` (plus `config.json` for the openai-compatible apiKey — the wizard puts each in the right place). Do not commit either file, screenshots of secrets, or shared config files with live credentials.
+Enter keys through the `init` wizard or the settings UI — vendor keys (Soniox / Deepgram / Fish Audio / Attendee / Slack) are stored in `config.json` (created with permissions 0600), while connection values (gateway URL/token, the OpenAI-compatible key) live in `.env` as environment values. Do not commit either file, screenshots of secrets, or shared config files with live credentials.
 
 If you connect a tool-capable OpenAI-compatible gateway, keep that route local and trusted. Meetmate's trust opt-in is intended only for a trusted meeting with a trusted local gateway; external or untrusted meetings remain unsupported for that mode.
 
