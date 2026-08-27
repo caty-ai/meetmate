@@ -584,6 +584,12 @@ function abortablePreviewDelay(ms, signal) {
   });
 }
 
+function isAbortError(error) {
+  return error?.name === "AbortError"
+    || error?.code === "ABORT_ERR"
+    || String(error?.message || "").toLowerCase() === "aborted";
+}
+
 async function bufferPreviewResponse(response, maxPcmBytes, controller) {
   if (!response.body) throw previewError("SETTINGS_PREVIEW_PROVIDER_FAILED");
   const chunks = [];
@@ -625,13 +631,15 @@ async function previewTts({ revision, text }, options = {}) {
     ? stripCanonicalEmotionTags(text)
     : text;
   if (!requestText) throw previewError("SETTINGS_VALIDATION_FAILED", 422);
+  if (typeof options.takeAllowance === "function" && !options.takeAllowance()) {
+    throw previewError("SETTINGS_PREVIEW_RATE_LIMITED", 429);
+  }
 
   const controller = new AbortController();
   const timeoutMs = options.timeoutMs ?? PREVIEW_TIMEOUT_MS;
-  let wallClockExpired = false;
+  const timeoutAbort = previewError("SETTINGS_PREVIEW_TIMEOUT", 504);
   const timer = setTimeout(() => {
-    wallClockExpired = true;
-    controller.abort();
+    controller.abort(timeoutAbort);
   }, timeoutMs);
   timer.unref?.();
   const fetchFn = options.fetchFn || globalThis.fetch;
@@ -641,9 +649,13 @@ async function previewTts({ revision, text }, options = {}) {
     format: "pcm",
     sample_rate: sampleRate,
     latency,
+    temperature: 0.7,
+    top_p: 0.7,
+    chunk_length: 300,
     normalize: true,
     ...(referenceId ? { reference_id: referenceId } : {}),
     ...(Number.isFinite(speed) ? { speed } : {}),
+    ...(Number.isFinite(speed) ? { prosody: { speed } } : {}),
   });
   try {
     for (let attempt = 0; ; attempt += 1) {
@@ -662,8 +674,8 @@ async function previewTts({ revision, text }, options = {}) {
           signal: controller.signal,
         });
       } catch (error) {
-        if (wallClockExpired || controller.signal.aborted) {
-          throw previewError("SETTINGS_PREVIEW_TIMEOUT", 504);
+        if (error === timeoutAbort || (controller.signal.reason === timeoutAbort && isAbortError(error))) {
+          throw timeoutAbort;
         }
         throw previewError("SETTINGS_PREVIEW_PROVIDER_FAILED");
       }
@@ -681,7 +693,7 @@ async function previewTts({ revision, text }, options = {}) {
       await abortablePreviewDelay((options.retryBaseMs ?? PREVIEW_RETRY_BASE_MS) * (4 ** attempt), controller.signal);
     }
   } catch (error) {
-    if (wallClockExpired) throw previewError("SETTINGS_PREVIEW_TIMEOUT", 504);
+    if (error === timeoutAbort || (controller.signal.reason === timeoutAbort && isAbortError(error))) throw timeoutAbort;
     throw error;
   } finally {
     clearTimeout(timer);

@@ -654,6 +654,7 @@ if (typeof document !== "undefined") {
       const code = body?.error?.code;
       if (code === "TEST_NOT_IMPLEMENTED") return "この接続テストは現在未実装です。";
       if (code === "SETTINGS_CONNECTION_RATE_LIMITED") return "接続テストの間隔が短すぎます。少し待ってから再試行してください。";
+      if (code === "SETTINGS_PREVIEW_RATE_LIMITED") return "音声プレビューの間隔が短すぎます。少し待ってから再試行してください。";
       if (code === "SETTINGS_PREVIEW_TIMEOUT") return "音声プレビューがタイムアウトしました。";
       if (code === "SETTINGS_REVISION_CONFLICT") return "設定が別の操作で更新されました。";
       const details = Array.isArray(body?.error?.details)
@@ -811,7 +812,10 @@ if (typeof document !== "undefined") {
             result.textContent = `${label}: ${body.code} — ${explanation} (${body.durationMs} ms)`;
             result.className = `action-result ${body.ok ? "success-text" : "danger-text"}`;
           } catch (error) {
-            if (!error.handled) {
+            if (error.handled) {
+              result.textContent = "設定を再読み込みしました。もう一度接続テストをお試しください。";
+              result.className = "action-result danger-text";
+            } else {
               result.textContent = `${label}: ${error.message}`;
               result.className = "action-result danger-text";
             }

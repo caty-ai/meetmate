@@ -22,6 +22,7 @@ const JSON_LIMIT = 256 * 1024;
 const CONNECTION_JSON_LIMIT = 4 * 1024;
 const CONNECTION_TIMEOUT_MS = 5_000;
 const CONNECTION_MIN_INTERVAL_MS = 1_000;
+const PREVIEW_MIN_INTERVAL_MS = 2_000;
 const PROVIDERS = new Set(["soniox", "deepgram", "fish-audio", "attendee", "slack"]);
 const IMPLEMENTED_PROVIDERS = new Set(["soniox", "fish-audio"]);
 const CONNECTION_ENDPOINTS = Object.freeze({
@@ -135,6 +136,7 @@ function writeError(res, error, requestId) {
     SETTINGS_MULTI_PROCESS_UNSUPPORTED: 503,
     SETTINGS_AUDIO_NOT_FOUND: 404,
     SETTINGS_CONNECTION_RATE_LIMITED: 429,
+    SETTINGS_PREVIEW_RATE_LIMITED: 429,
     SETTINGS_PREVIEW_TIMEOUT: 504,
     TEST_NOT_IMPLEMENTED: 501,
   }[error.code] || 500);
@@ -158,6 +160,7 @@ function writeError(res, error, requestId) {
     SETTINGS_AUDIO_CONVERSION_TIMEOUT: "Audio conversion timed out",
     SETTINGS_AUDIO_CLEANUP_FAILED: "Audio cleanup failed",
     SETTINGS_CONNECTION_RATE_LIMITED: "Connection tests are rate limited",
+    SETTINGS_PREVIEW_RATE_LIMITED: "TTS previews are rate limited",
     SETTINGS_PREVIEW_NOT_CONFIGURED: "TTS preview is not configured",
     SETTINGS_PREVIEW_DURATION_LIMIT: "TTS preview exceeded the duration limit",
     SETTINGS_PREVIEW_AUDIO_INVALID: "TTS preview audio is invalid",
@@ -244,11 +247,17 @@ function connectionResult(provider, code, durationMs) {
 function networkCode(error) {
   let current = error;
   for (let depth = 0; current && depth < 5; depth += 1, current = current.cause) {
-    if (["ECONNREFUSED", "ECONNRESET", "ENETUNREACH", "EHOSTUNREACH", "ENOTFOUND", "EAI_AGAIN"].includes(current.code)) {
+    if (["ECONNREFUSED", "ENETUNREACH", "EHOSTUNREACH", "ENOTFOUND", "EAI_AGAIN"].includes(current.code)) {
       return "UNREACHABLE";
     }
   }
   return "PROVIDER_ERROR";
+}
+
+function isAbortError(error) {
+  return error?.name === "AbortError"
+    || error?.code === "ABORT_ERR"
+    || String(error?.message || "").toLowerCase() === "aborted";
 }
 
 async function testConnection(provider, options = {}) {
@@ -257,13 +266,12 @@ async function testConnection(provider, options = {}) {
   const now = options.now || Date.now;
   const startedAt = now();
   if (typeof credential !== "string" || credential.trim() === "") {
-    return connectionResult(provider, "NOT_CONFIGURED", now() - startedAt);
+    return connectionResult(provider, "NOT_CONFIGURED", 0);
   }
   const controller = new AbortController();
-  let expired = false;
+  const timeoutAbort = new Error("Connection timeout");
   const timer = setTimeout(() => {
-    expired = true;
-    controller.abort();
+    controller.abort(timeoutAbort);
   }, options.timeoutMs ?? CONNECTION_TIMEOUT_MS);
   timer.unref?.();
   try {
@@ -279,12 +287,12 @@ async function testConnection(provider, options = {}) {
     try { await response.body?.cancel(); } catch { /* vendor bodies are never retained */ }
     let code = "PROVIDER_ERROR";
     if (response.ok) code = "CONNECTED";
-    else if (response.status === 401 || response.status === 403) code = "AUTH_FAILED";
-    else if (response.status === 408 || response.status === 504) code = "TIMEOUT";
+    else if (response.status === 401) code = "AUTH_FAILED";
     else if (response.status === 429) code = "RATE_LIMITED";
     return connectionResult(provider, code, now() - startedAt);
   } catch (error) {
-    return connectionResult(provider, expired ? "TIMEOUT" : networkCode(error), now() - startedAt);
+    const timedOut = error === timeoutAbort || (controller.signal.reason === timeoutAbort && isAbortError(error));
+    return connectionResult(provider, timedOut ? "TIMEOUT" : networkCode(error), now() - startedAt);
   } finally {
     clearTimeout(timer);
   }
@@ -301,6 +309,20 @@ function createConnectionLimiter(options = {}) {
     const previous = lastAttempt.get(provider);
     if (previous !== undefined && current - previous < minIntervalMs) return false;
     lastAttempt.set(provider, current);
+    return true;
+  };
+}
+
+function createPreviewLimiter(options = {}) {
+  // One preview per handler every two seconds. This process-local policy limits
+  // billable Fish calls without sharing state with connection tests or routes.
+  let lastAttempt;
+  const now = options.now || Date.now;
+  const minIntervalMs = options.minIntervalMs ?? PREVIEW_MIN_INTERVAL_MS;
+  return function take() {
+    const current = now();
+    if (lastAttempt !== undefined && current - lastAttempt < minIntervalMs) return false;
+    lastAttempt = current;
     return true;
   };
 }
@@ -415,7 +437,9 @@ async function migrateClass1(req, options) {
 function createSettingsHandler(options = {}) {
   const settingsOptions = { port: options.port || 5005 };
   const connectionOptions = options.connections || {};
+  const previewOptions = options.preview || {};
   const takeConnectionAllowance = createConnectionLimiter(connectionOptions);
+  const takePreviewAllowance = createPreviewLimiter(previewOptions);
   return async function handleSettings(req, res) {
     let url;
     try { url = new URL(req.url || "/", "http://localhost"); } catch { return false; }
@@ -494,11 +518,11 @@ function createSettingsHandler(options = {}) {
           throw settingsError("SETTINGS_VALIDATION_FAILED", "Request validation failed", 422);
         }
         const body = parseStrict(sha256RevisionOnlySchema, await readJson(req, CONNECTION_JSON_LIMIT));
-        assertCommittedRevision(body.revision);
         const provider = connectionMatch[1];
         if (!IMPLEMENTED_PROVIDERS.has(provider)) {
           throw settingsError("TEST_NOT_IMPLEMENTED", "Settings feature is not implemented", 501);
         }
+        assertCommittedRevision(body.revision);
         if (!takeConnectionAllowance(provider)) {
           throw settingsError("SETTINGS_CONNECTION_RATE_LIMITED", "Connection tests are rate limited", 429);
         }
@@ -513,7 +537,7 @@ function createSettingsHandler(options = {}) {
         let outcomeCode = "SETTINGS_PREVIEW_FAILED";
         try {
           const body = parseStrict(ttsPreviewSchema, await readJson(req, JSON_LIMIT));
-          const preview = await previewTts(body, options.preview || {});
+          const preview = await previewTts(body, { ...previewOptions, takeAllowance: takePreviewAllowance });
           byteCount = preview.wav.length;
           outcomeCode = "SETTINGS_PREVIEW_OK";
           logPreview(options.logger, {
@@ -551,6 +575,7 @@ module.exports = {
     buildSettingsUiManifest,
     CONNECTION_TIMEOUT_MS,
     createConnectionLimiter,
+    createPreviewLimiter,
     importSettings,
     parseImportRequest,
     readJson,
@@ -558,5 +583,6 @@ module.exports = {
     requireSameOrigin,
     safeEmbeddedJson,
     testConnection,
+    PREVIEW_MIN_INTERVAL_MS,
   },
 };
