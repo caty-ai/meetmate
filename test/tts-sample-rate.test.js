@@ -134,7 +134,7 @@ test("Fish TTS strips only canonical emotion tags when the live toggle is OFF", 
     req.setTimeout = () => req;
     req.destroy = (error) => error && req.emit("error", error);
     req.end = () => process.nextTick(() => {
-      bodies.push(JSON.parse(body));
+      bodies.push(body);
       const response = new EventEmitter();
       response.statusCode = 200;
       response.headers = {};
@@ -171,14 +171,18 @@ test("Fish TTS strips only canonical emotion tags when the live toggle is OFF", 
   };
   const taggedText = `${EMOTION_TAGS[0].tag} hello ${EMOTION_TAGS[1].tag}`;
   const { synthesize } = require("../src/tts-fish");
+  const options = { apiKey: "key", referenceId: "voice-33", sampleRate: 8_000, latency: "low", speed: 1.25, onAudio: () => {} };
 
   setEmotionTags(false);
-  await synthesize(taggedText, { apiKey: "key", onAudio: () => {} });
+  await synthesize(taggedText, options);
   setEmotionTags(true);
-  await synthesize(taggedText, { apiKey: "key", onAudio: () => {} });
+  await synthesize(taggedText, options);
 
-  assert.equal(bodies[0].text, "hello");
-  assert.equal(bodies[1].text, taggedText);
+  assert.equal(bodies[0], '{"text":"hello","format":"pcm","sample_rate":8000,"latency":"low",'
+    + '"temperature":0.7,"top_p":0.7,"chunk_length":300,"normalize":true,'
+    + '"reference_id":"voice-33","speed":1.25,"prosody":{"speed":1.25}}');
+  assert.equal(JSON.parse(bodies[1]).text, taggedText);
+  assert.deepEqual(JSON.parse(bodies[1]).prosody, { speed: 1.25 });
 });
 
 function freshConfig() {

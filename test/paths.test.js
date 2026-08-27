@@ -486,13 +486,19 @@ test("T12-05 bootstrap PUT materializes registry defaults and captured .env clas
   assert.equal(response.body.includes("bootstrap-seed-key"), false);
 });
 
-test("T12-06 remaining unimplemented settings route shells return value-free 501 responses", async () => {
+test("T12-06 optional connection tests remain exact value-free 501 responses", async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-settings-optional-tests-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const configPath = path.join(directory, "config.json");
+  fs.writeFileSync(configPath, "{}\n", { mode: 0o600 });
+  const state = readConfigState(configPath);
   resetRuntimeForTest();
-  initializeRuntime({ state: settingsState({}), startup: settingsStartup(), serverPort: 5005 });
+  initializeRuntime({ state, startup: settingsStartup({ configPath, resolvedHome: directory }), serverPort: 5005 });
   const handler = createSettingsHandler({ port: 5005 });
   const cases = [
-    ["POST", "/api/settings/connections/soniox/test", { "content-type": "application/json" }, JSON.stringify({ revision: "a".repeat(64) })],
-    ["POST", "/api/settings/tts-preview", { "content-type": "application/json" }, ""],
+    ["POST", "/api/settings/connections/deepgram/test", { "content-type": "application/json" }, JSON.stringify({ revision: state.revision })],
+    ["POST", "/api/settings/connections/attendee/test", { "content-type": "application/json" }, JSON.stringify({ revision: state.revision })],
+    ["POST", "/api/settings/connections/slack/test", { "content-type": "application/json" }, JSON.stringify({ revision: state.revision })],
   ];
   for (const [method, url, headers, body] of cases) {
     const response = settingsResponse();

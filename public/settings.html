@@ -56,6 +56,18 @@
             <strong id="emotionTagsTitle">固定の感情タグ（読み取り専用）</strong>
             <ul id="emotionTagsList"></ul>
           </div>
+          <div class="tts-preview" aria-labelledby="ttsPreviewTitle">
+            <div class="audio-manager-heading">
+              <div><strong id="ttsPreviewTitle">Fish Audio プレビュー</strong><span>現在このプロセスが使用している音声設定で試聴します。</span></div>
+            </div>
+            <p class="billing-notice">プレビューは、オペレーター自身の Fish Audio キー／アカウントの利用となり、Fish Audio の利用量・料金が発生します。Meetmate の共通キーや料金補助はありません。</p>
+            <div class="tts-preview-controls">
+              <label class="field"><span class="field-label">プレビュー文</span><textarea id="ttsPreviewText" rows="3" maxlength="500" placeholder="1〜500文字で入力"></textarea></label>
+              <button class="btn-secondary" id="playTtsPreview" type="button" disabled>プレビューを再生</button>
+            </div>
+            <audio id="ttsPreviewPlayer" controls preload="none"></audio>
+            <div class="action-result" id="ttsPreviewResult" role="status" aria-live="polite"></div>
+          </div>
           <div class="audio-manager" aria-labelledby="audioManagerTitle">
             <div class="audio-manager-heading">
               <div><strong id="audioManagerTitle">事前録音 MP3</strong><span>定型文に合わせた MP3 を登録すると、現在の音声設定と一致する場合だけ自動再生します。</span></div>

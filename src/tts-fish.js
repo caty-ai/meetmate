@@ -135,7 +135,9 @@ async function _synthesizeOnce(text, options = {}) {
   // valid finite number in [0.5, 2.0]. Older Fish models that don't recognize
   // the field will ignore unknown keys, so this stays safe to send.
   if (Number.isFinite(options.speed) && options.speed > 0) {
-    requestBody.speed = Math.min(2.0, Math.max(0.5, options.speed));
+    const speed = Math.min(2.0, Math.max(0.5, options.speed));
+    requestBody.speed = speed;
+    requestBody.prosody = { speed };
   }
 
   const body = JSON.stringify(requestBody);

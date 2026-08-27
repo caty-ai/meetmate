@@ -539,6 +539,167 @@ function ffmpegExecutable(options, startup) {
   return launch || seed || "ffmpeg";
 }
 
+const PREVIEW_TIMEOUT_MS = 30_000;
+const PREVIEW_DURATION_MS = 15_000;
+const PREVIEW_RETRY_MAX = 2;
+const PREVIEW_RETRY_BASE_MS = 100;
+const FISH_TTS_URL = "https://api.fish.audio/v1/tts";
+
+function previewError(code, status = 500) {
+  return settingsError(code, "TTS preview failed", status);
+}
+
+function wavFromPcm(pcm, sampleRate) {
+  const wav = Buffer.allocUnsafe(44 + pcm.length);
+  wav.write("RIFF", 0, "ascii");
+  wav.writeUInt32LE(36 + pcm.length, 4);
+  wav.write("WAVE", 8, "ascii");
+  wav.write("fmt ", 12, "ascii");
+  wav.writeUInt32LE(16, 16);
+  wav.writeUInt16LE(1, 20);
+  wav.writeUInt16LE(1, 22);
+  wav.writeUInt32LE(sampleRate, 24);
+  wav.writeUInt32LE(sampleRate * 2, 28);
+  wav.writeUInt16LE(2, 32);
+  wav.writeUInt16LE(16, 34);
+  wav.write("data", 36, "ascii");
+  wav.writeUInt32LE(pcm.length, 40);
+  pcm.copy(wav, 44);
+  return wav;
+}
+
+function abortablePreviewDelay(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(signal.reason || new Error("aborted"));
+      return;
+    }
+    const timer = setTimeout(() => { cleanup(); resolve(); }, ms);
+    function onAbort() { cleanup(); reject(signal.reason || new Error("aborted")); }
+    function cleanup() {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+    }
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+function isAbortError(error) {
+  return error?.name === "AbortError"
+    || error?.code === "ABORT_ERR"
+    || String(error?.message || "").toLowerCase() === "aborted";
+}
+
+async function bufferPreviewResponse(response, maxPcmBytes, controller) {
+  if (!response.body) throw previewError("SETTINGS_PREVIEW_PROVIDER_FAILED");
+  const chunks = [];
+  let total = 0;
+  const reader = response.body.getReader();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = Buffer.from(value);
+      total += chunk.length;
+      if (total > maxPcmBytes) {
+        controller.abort();
+        throw previewError("SETTINGS_PREVIEW_DURATION_LIMIT", 422);
+      }
+      chunks.push(chunk);
+    }
+  } finally {
+    try { reader.releaseLock(); } catch { /* best effort */ }
+  }
+  if (total === 0 || total % 2 !== 0) throw previewError("SETTINGS_PREVIEW_AUDIO_INVALID", 422);
+  return Buffer.concat(chunks, total);
+}
+
+async function previewTts({ revision, text }, options = {}) {
+  const { stripCanonicalEmotionTags } = require("../messages");
+  const { getEffectiveValue, getRuntime } = require("./resolver");
+  assertCommittedRevision(getRuntime().startup.configPath, revision);
+  const apiKey = getEffectiveValue("fish_audio_api_key");
+  if (typeof apiKey !== "string" || apiKey.trim() === "") {
+    throw previewError("SETTINGS_PREVIEW_NOT_CONFIGURED", 422);
+  }
+  const referenceId = getEffectiveValue("fish_audio_voice_id");
+  const model = getEffectiveValue("fish_audio_model");
+  const sampleRate = getEffectiveValue("tts_sample_rate");
+  const speed = getEffectiveValue("fish_audio_speed");
+  const latency = getEffectiveValue("fish_audio_latency");
+  const requestText = getEffectiveValue("agent_emotion_tags") === false
+    ? stripCanonicalEmotionTags(text)
+    : text;
+  if (!requestText) throw previewError("SETTINGS_VALIDATION_FAILED", 422);
+  if (typeof options.takeAllowance === "function" && !options.takeAllowance()) {
+    throw previewError("SETTINGS_PREVIEW_RATE_LIMITED", 429);
+  }
+
+  const controller = new AbortController();
+  const timeoutMs = options.timeoutMs ?? PREVIEW_TIMEOUT_MS;
+  const timeoutAbort = previewError("SETTINGS_PREVIEW_TIMEOUT", 504);
+  const timer = setTimeout(() => {
+    controller.abort(timeoutAbort);
+  }, timeoutMs);
+  timer.unref?.();
+  const fetchFn = options.fetchFn || globalThis.fetch;
+  const maxPcmBytes = sampleRate * 2 * (PREVIEW_DURATION_MS / 1000);
+  const body = JSON.stringify({
+    text: requestText,
+    format: "pcm",
+    sample_rate: sampleRate,
+    latency,
+    temperature: 0.7,
+    top_p: 0.7,
+    chunk_length: 300,
+    normalize: true,
+    ...(referenceId ? { reference_id: referenceId } : {}),
+    ...(Number.isFinite(speed) ? { speed } : {}),
+    ...(Number.isFinite(speed) ? { prosody: { speed } } : {}),
+  });
+  try {
+    for (let attempt = 0; ; attempt += 1) {
+      let response;
+      try {
+        response = await fetchFn(options.url || FISH_TTS_URL, {
+          method: "POST",
+          headers: {
+            Accept: "application/octet-stream",
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+            model,
+          },
+          body,
+          redirect: "error",
+          signal: controller.signal,
+        });
+      } catch (error) {
+        if (error === timeoutAbort || (controller.signal.reason === timeoutAbort && isAbortError(error))) {
+          throw timeoutAbort;
+        }
+        throw previewError("SETTINGS_PREVIEW_PROVIDER_FAILED");
+      }
+      if (response.ok) {
+        const pcm = await bufferPreviewResponse(response, maxPcmBytes, controller);
+        const wav = wavFromPcm(pcm, sampleRate);
+        if (wav.length > sampleRate * 2 * 15 + 44) throw previewError("SETTINGS_PREVIEW_DURATION_LIMIT", 422);
+        return { wav, pcmBytes: pcm.length };
+      }
+      try { await response.body?.cancel(); } catch { /* vendor body is deliberately discarded */ }
+      const retryable = response.status === 429 || response.status >= 500;
+      if (!retryable || attempt >= (options.retryMax ?? PREVIEW_RETRY_MAX)) {
+        throw previewError("SETTINGS_PREVIEW_PROVIDER_FAILED");
+      }
+      await abortablePreviewDelay((options.retryBaseMs ?? PREVIEW_RETRY_BASE_MS) * (4 ** attempt), controller.signal);
+    }
+  } catch (error) {
+    if (error === timeoutAbort || (controller.signal.reason === timeoutAbort && isAbortError(error))) throw timeoutAbort;
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function uploadAudio(req, options = {}) {
   const { getRuntime } = require("./resolver");
   const startup = getRuntime().startup;
@@ -688,6 +849,7 @@ async function deleteAudio(id, revision, options = {}) {
 module.exports = {
   deleteAudio,
   lookupManagedPcm,
+  previewTts,
   projectClipViews,
   uploadAudio,
   _test: {
@@ -696,8 +858,10 @@ module.exports = {
     inspectClip,
     managedDirectory,
     parseMultipart,
+    PREVIEW_TIMEOUT_MS,
     resolveOwnedFile,
     runFfmpeg,
     validMp3Signature,
+    wavFromPcm,
   },
 };

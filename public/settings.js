@@ -157,6 +157,11 @@ if (typeof document !== "undefined") {
       ["soniox", "Soniox"], ["deepgram", "Deepgram"], ["fish-audio", "Fish Audio"],
       ["attendee", "Attendee"], ["slack", "Slack"],
     ];
+    const CONNECTION_EXPLANATIONS = {
+      CONNECTED: "接続できました。", NOT_CONFIGURED: "キーが未設定です。", AUTH_FAILED: "キーが不正です。",
+      UNREACHABLE: "プロバイダーへ到達できません。", TIMEOUT: "接続がタイムアウトしました。",
+      RATE_LIMITED: "プロバイダー側のレート制限に達しました。", PROVIDER_ERROR: "プロバイダーでエラーが発生しました。",
+    };
     const AUDIO_ROLE_LABELS = {
       ack: "応答確認", progress: "進捗", greeting: "あいさつ", farewell: "退出", timeout: "タイムアウト",
     };
@@ -171,11 +176,15 @@ if (typeof document !== "undefined") {
     const audioText = document.getElementById("audioText");
     const audioFile = document.getElementById("audioFile");
     const uploadAudioButton = document.getElementById("uploadAudio");
+    const ttsPreviewText = document.getElementById("ttsPreviewText");
+    const playTtsPreviewButton = document.getElementById("playTtsPreview");
+    const ttsPreviewPlayer = document.getElementById("ttsPreviewPlayer");
     let manifest = [];
     let envelope = null;
     let loadedValues = {};
     let credentialChanges = {};
     let toastTimer = null;
+    let previewObjectUrl = null;
 
     function readInjectedJson(id) {
       const node = document.getElementById(id);
@@ -643,7 +652,10 @@ if (typeof document !== "undefined") {
 
     function errorMessage(body, fallback) {
       const code = body?.error?.code;
-      if (code === "TEST_NOT_IMPLEMENTED") return "この機能は #33 で実装予定です。";
+      if (code === "TEST_NOT_IMPLEMENTED") return "この接続テストは現在未実装です。";
+      if (code === "SETTINGS_CONNECTION_RATE_LIMITED") return "接続テストの間隔が短すぎます。少し待ってから再試行してください。";
+      if (code === "SETTINGS_PREVIEW_RATE_LIMITED") return "音声プレビューの間隔が短すぎます。少し待ってから再試行してください。";
+      if (code === "SETTINGS_PREVIEW_TIMEOUT") return "音声プレビューがタイムアウトしました。";
       if (code === "SETTINGS_REVISION_CONFLICT") return "設定が別の操作で更新されました。";
       const details = Array.isArray(body?.error?.details)
         ? body.error.details.map((detail) => detail.path).filter(Boolean).join(", ") : "";
@@ -790,18 +802,70 @@ if (typeof document !== "undefined") {
         button.addEventListener("click", async () => {
           const result = document.getElementById("connectionResult");
           button.disabled = true;
+          result.className = "action-result";
           result.textContent = `${label} の接続を確認しています…`;
           try {
             const body = await jsonRequest(`/api/settings/connections/${provider}/test`, {
               method: "POST", body: JSON.stringify({ revision: envelope.revision }),
             });
-            result.textContent = `${label}: ${body.message} (${body.durationMs} ms)`;
+            const explanation = CONNECTION_EXPLANATIONS[body.code] || "接続結果を確認できませんでした。";
+            result.textContent = `${label}: ${body.code} — ${explanation} (${body.durationMs} ms)`;
             result.className = `action-result ${body.ok ? "success-text" : "danger-text"}`;
           } catch (error) {
-            if (!error.handled) result.textContent = error.status === 501 ? `${label}: #33 で実装予定です。` : error.message;
+            if (error.handled) {
+              result.textContent = "設定を再読み込みしました。もう一度接続テストをお試しください。";
+              result.className = "action-result danger-text";
+            } else {
+              result.textContent = `${label}: ${error.message}`;
+              result.className = "action-result danger-text";
+            }
           } finally { button.disabled = false; }
         });
         container.append(button);
+      }
+    }
+
+    function updateTtsPreviewState() {
+      const text = ttsPreviewText.value.trim();
+      playTtsPreviewButton.disabled = !envelope || !text || [...text].length > 500;
+    }
+
+    async function playTtsPreview() {
+      const result = document.getElementById("ttsPreviewResult");
+      const text = ttsPreviewText.value.trim();
+      if (!text || [...text].length > 500 || !envelope) return;
+      playTtsPreviewButton.disabled = true;
+      playTtsPreviewButton.textContent = "生成中…";
+      result.className = "action-result";
+      result.textContent = "Fish Audio でプレビューを生成しています…";
+      try {
+        const response = await fetch("/api/settings/tts-preview", {
+          method: "POST",
+          headers: { Accept: "audio/wav, application/json", "Content-Type": "application/json" },
+          body: JSON.stringify({ revision: envelope.revision, text }),
+        });
+        if (response.status === 409) {
+          await loadSettings(true);
+          result.textContent = "設定を再読み込みしました。もう一度お試しください。";
+          return;
+        }
+        if (!response.ok) {
+          const body = await responseJson(response);
+          throw new Error(errorMessage(body, "音声プレビューを生成できませんでした。"));
+        }
+        const blob = await response.blob();
+        if (previewObjectUrl) URL.revokeObjectURL(previewObjectUrl);
+        previewObjectUrl = URL.createObjectURL(blob);
+        ttsPreviewPlayer.src = previewObjectUrl;
+        await ttsPreviewPlayer.play();
+        result.textContent = "プレビューを再生しています。";
+        result.className = "action-result success-text";
+      } catch (error) {
+        result.textContent = error.message || "音声プレビューを再生できませんでした。";
+        result.className = "action-result danger-text";
+      } finally {
+        playTtsPreviewButton.textContent = "プレビューを再生";
+        updateTtsPreviewState();
       }
     }
 
@@ -904,6 +968,8 @@ if (typeof document !== "undefined") {
     importFile.addEventListener("change", () => { document.getElementById("importSettings").disabled = !importFile.files?.length; });
     audioText.addEventListener("input", updateAudioUploadState);
     audioFile.addEventListener("change", updateAudioUploadState);
+    ttsPreviewText.addEventListener("input", updateTtsPreviewState);
+    playTtsPreviewButton.addEventListener("click", playTtsPreview);
     uploadAudioButton.addEventListener("click", uploadAudioClip);
     document.getElementById("exportSettings").addEventListener("click", exportSettings);
     document.getElementById("importSettings").addEventListener("click", importSettings);
