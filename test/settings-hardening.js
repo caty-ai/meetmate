@@ -4,7 +4,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const test = require("node:test");
+const test = module.parent ? require("node:test") : () => {};
 const { Readable } = require("node:stream");
 const { spawn, spawnSync } = require("node:child_process");
 
@@ -16,6 +16,7 @@ const {
   buildEnvelope,
   getEffectiveValue,
   initializeRuntime,
+  publishCommittedState,
   registerCacheInvalidator,
   resetRuntimeForTest,
   resolveDiagnostic,
@@ -175,6 +176,21 @@ test("T12-01 registry metadata and generated mutation/effective surfaces deep-ma
     SETTINGS_REGISTRY.filter((entry) => entry.requiredAtMeetingStart).map((entry) => entry.id).sort(),
     ["agent_display_name", "agent_id", "agent_wake_words", "attendee_api_key", "deepgram_api_key", "fish_audio_api_key", "fish_audio_voice_id", "soniox_api_key"],
   );
+  assert.equal(REGISTRY_BY_ID.agent_greeting.schema.safeParse("😀".repeat(4096)).success, true);
+  assert.equal(REGISTRY_BY_ID.agent_greeting.schema.safeParse("😀".repeat(4097)).success, false);
+  assert.equal(REGISTRY_BY_ID.agent_wake_words.schema.safeParse(["😀".repeat(128)]).success, true);
+  assert.equal(REGISTRY_BY_ID.agent_wake_words.schema.safeParse(["😀".repeat(129)]).success, false);
+  const clip = {
+    id: "550e8400-e29b-41d4-a716-446655440000", role: "ack", text: "x",
+    sourceRelativePath: "assets/settings-audio/550e8400-e29b-41d4-a716-446655440000.mp3",
+    pcmRelativePath: "assets/settings-audio/550e8400-e29b-41d4-a716-446655440000.pcm",
+    sourceSha256: "a".repeat(64), pcmSha256: "b".repeat(64), cacheKey: "c".repeat(64),
+    referenceId: null, model: "s2-pro", sampleRate: 24000, speed: 1,
+    durationMs: 1, sourceBytes: 1, pcmBytes: 2, createdAt: "2026-08-27T00:00:00.000Z",
+  };
+  assert.equal(REGISTRY_BY_ID.audio_clips.schema.safeParse([{ ...clip, text: "😀".repeat(4096) }]).success, true);
+  assert.equal(REGISTRY_BY_ID.audio_clips.schema.safeParse([{ ...clip, text: "😀".repeat(4097) }]).success, false);
+  assert.equal(REGISTRY_BY_ID.audio_clips.schema.safeParse([{ ...clip, createdAt: "2026-08-27T07:00:00+07:00" }]).success, false);
 });
 
 function tokenize(source) {
@@ -281,6 +297,17 @@ test("T12-02 syntax-consuming environment inventory locks direct, computed, and 
   const inventory = JSON.parse(fs.readFileSync(path.join(ROOT, "docs/settings-env-inventory.json"), "utf8"));
   const inventoryByName = new Map(inventory.directReferences.map((entry) => [entry.name, entry]));
   assert.equal(inventoryByName.size, 89);
+  assert.deepEqual(inventory.startupSnapshotReferences, [{
+    name: "FFMPEG",
+    references: ["src/settings/audio.js:537", "src/settings/audio.js:538"],
+    ux: "deployment-readonly",
+    credentialClass: "none",
+    handling: "startup-snapshot-consumed-binary-override",
+  }]);
+  for (const reference of inventory.startupSnapshotReferences[0].references) {
+    const [, file, rawLine] = reference.match(/^(.+):(\d+)$/);
+    assert.match(fs.readFileSync(path.join(ROOT, file), "utf8").split(/\r?\n/)[Number(rawLine) - 1], /startup\.(?:preDotenvEnv|dotenvSeeds)\.FFMPEG/);
+  }
   const actual = [];
   for (const file of productionJavaScript()) {
     const relative = path.relative(ROOT, file);
@@ -378,6 +405,8 @@ test("T12-04 empty and null tiers fall through while nullable null persists", (t
   const configPath = path.join(directory, "config.json");
   fs.writeFileSync(configPath, "{}\n", { mode: 0o600 });
   const before = readConfigState(configPath);
+  resetRuntimeForTest();
+  initializeRuntime({ state: before, startup: startup({ configPath, resolvedHome: directory }) });
   const committed = saveFields({ configPath, revision: before.revision, fields: { soniox_endpoint_latency_level: null } });
   assert.equal(committed.parsed.stt.soniox.endpointLatencyLevel, null);
 });
@@ -392,17 +421,23 @@ test("T12-07 setup issues are registry-derived, semantic, provider-aware, and ab
   initializeRuntime({ state: state({ agent: { language: "xx" } }), startup: startup() });
   assert.deepEqual(buildEnvelope().issues.find((issue) => issue.fieldId === "agent_language"), { fieldId: "agent_language", code: "VALUE_INVALID" });
 
+  const ready = {
+    agent: { id: "alpha", displayName: "Alpha", wakeWords: ["alpha"] },
+    stt: { provider: "soniox", sonioxApiKey: "soniox" },
+    tts: { apiKey: "fish", voiceId: "voice" },
+    attendee: { apiKey: "attendee" },
+  };
   resetRuntimeForTest();
-  initializeRuntime({ state: state({ server: { port: "bad" } }), startup: startup() });
-  assert.deepEqual(buildEnvelope().issues.find((issue) => issue.fieldId === "server_port"), { fieldId: "server_port", code: "VALUE_INVALID" });
+  initializeRuntime({ state: state({ ...ready, server: { port: "bad" } }), startup: startup() });
+  assert.equal(buildEnvelope().issues.find((issue) => issue.fieldId === "server_port"), undefined);
   assert.equal(getEffectiveValue("server_port"), 5005);
-  assert.equal(buildEnvelope().setupMode, true);
+  assert.equal(buildEnvelope().setupMode, false);
 
   resetRuntimeForTest();
-  initializeRuntime({ state: state({ audio: { clips: [{}] } }), startup: startup() });
-  assert.deepEqual(buildEnvelope().issues.find((issue) => issue.fieldId === "audio_clips"), { fieldId: "audio_clips", code: "VALUE_INVALID" });
+  initializeRuntime({ state: state({ ...ready, audio: { clips: [{}] } }), startup: startup() });
+  assert.equal(buildEnvelope().issues.find((issue) => issue.fieldId === "audio_clips"), undefined);
   assert.deepEqual(buildEnvelope().fields.audio_clips, []);
-  assert.equal(buildEnvelope().setupMode, true);
+  assert.equal(buildEnvelope().setupMode, false);
 
   resetRuntimeForTest();
   initializeRuntime({ state: state({ gateway: { token: "legacy" } }), startup: startup() });
@@ -429,6 +464,25 @@ test("restart-required unset-to-set changes stay on the boot snapshot until rest
   assert.equal(profileModule.resolveAgentProfile().name, "alpha");
 });
 
+test("published saves invalidate delegation and summary message caches", () => {
+  resetRuntimeForTest();
+  initializeRuntime({ state: state({}), startup: startup() });
+  const meetRoutes = require("../src/transport-meet/meet-routes");
+  require("../src/settings/resolver").publishState(state({
+    delegation: { sectionHeading: "## Before" },
+    prompts: { summary: "before summary" },
+  }, "b".repeat(64)));
+  assert.match(meetRoutes._test.buildConfiguredDelegationResultsSection([{ status: "ok", resultText: "done" }]), /## Before/);
+  assert.equal(meetRoutes._test.configuredSummaryPrompt(), "before summary");
+
+  require("../src/settings/resolver").publishState(state({
+    delegation: { sectionHeading: "## After" },
+    prompts: { summary: "after summary" },
+  }, "c".repeat(64)));
+  assert.match(meetRoutes._test.buildConfiguredDelegationResultsSection([{ status: "ok", resultText: "done" }]), /## After/);
+  assert.equal(meetRoutes._test.configuredSummaryPrompt(), "after summary");
+});
+
 test("save publishes and invalidates caches while the shared lock is still owned", (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-lock-publish-"));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
@@ -444,12 +498,134 @@ test("save publishes and invalidates caches while the shared lock is still owned
   t.after(unregister);
   const committed = saveFields({ configPath, revision: before.revision, fields: { agent_greeting: "after" } });
   assert.deepEqual(observed, [{ lock: true, greeting: "after" }]);
+  assert.deepEqual(fs.readdirSync(directory).filter((name) => name.startsWith(".settings-backup-")), []);
   fs.writeFileSync(path.join(directory, ".meetmate-settings.lock"), `${JSON.stringify({ pid: process.pid })}\n`, { mode: 0o600 });
   assert.throws(
     () => saveFields({ configPath, revision: committed.revision, fields: { agent_greeting: "blocked" } }),
     (error) => error.code === "SETTINGS_MULTI_PROCESS_UNSUPPORTED" && error.status === 503,
   );
   fs.unlinkSync(path.join(directory, ".meetmate-settings.lock"));
+});
+
+test("backup cleanup failure restores the original bytes and publishes nothing", (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-backup-cleanup-failure-"));
+  const configPath = path.join(directory, "config.json");
+  const originalBytes = Buffer.from('{\n  "agent": { "greeting": "before" },\n  "future": [1, 2, 3]\n}\n');
+  fs.writeFileSync(configPath, originalBytes, { mode: 0o600 });
+  const before = readConfigState(configPath);
+  resetRuntimeForTest();
+  initializeRuntime({ state: before, startup: startup({ configPath, resolvedHome: directory }) });
+  let invalidations = 0;
+  const unregister = registerCacheInvalidator(() => { invalidations += 1; });
+  const originalUnlink = fs.unlinkSync;
+  fs.unlinkSync = function rejectBackupCleanup(target, ...args) {
+    if (path.basename(String(target)).startsWith(".settings-backup-")) {
+      const error = new Error("backup cleanup failed");
+      error.code = "EACCES";
+      throw error;
+    }
+    return originalUnlink.call(this, target, ...args);
+  };
+  t.after(() => {
+    fs.unlinkSync = originalUnlink;
+    unregister();
+    resetRuntimeForTest();
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+
+  assert.throws(
+    () => saveFields({ configPath, revision: before.revision, fields: { agent_greeting: "after" } }),
+    (error) => error.code === "SETTINGS_TRANSACTION_FAILED" && error.status === 500,
+  );
+  assert.deepEqual(fs.readFileSync(configPath), originalBytes);
+  assert.equal(invalidations, 0);
+  assert.equal(buildEnvelope().revision, before.revision);
+  assert.equal(buildEnvelope().effective.agent_greeting, "before");
+  assert.deepEqual(fs.readdirSync(directory).filter((name) => name.startsWith(".settings-backup-")), []);
+});
+
+test("pre-replacement rename failure cleans up the backup artifact and keeps the original config", (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-pre-replacement-failure-"));
+  const configPath = path.join(directory, "config.json");
+  const originalBytes = Buffer.from('{\n  "agent": { "greeting": "before" },\n  "future": [1, 2, 3]\n}\n');
+  fs.writeFileSync(configPath, originalBytes, { mode: 0o600 });
+  const before = readConfigState(configPath);
+  resetRuntimeForTest();
+  initializeRuntime({ state: before, startup: startup({ configPath, resolvedHome: directory }) });
+  const originalRename = fs.renameSync;
+  fs.renameSync = function failSettingsCommit(source, target, ...args) {
+    if (
+      String(target) === configPath &&
+      path.basename(String(source)).startsWith(".settings-write-")
+    ) {
+      const error = new Error("rename blocked");
+      error.code = "EACCES";
+      throw error;
+    }
+    return originalRename.call(this, source, target, ...args);
+  };
+  t.after(() => {
+    fs.renameSync = originalRename;
+    resetRuntimeForTest();
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+
+  assert.throws(
+    () => saveFields({ configPath, revision: before.revision, fields: { agent_greeting: "after" } }),
+    (error) => error.code === "SETTINGS_TRANSACTION_FAILED" && error.status === 500,
+  );
+  assert.deepEqual(fs.readFileSync(configPath), originalBytes);
+  assert.deepEqual(fs.readdirSync(directory).filter((name) => name.startsWith(".settings-backup-")), []);
+});
+
+test("publish failure preserves committed config bytes and path mismatch never no-ops", (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-publish-failure-"));
+  t.after(() => {
+    resetRuntimeForTest();
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+  const configPath = path.join(directory, "config.json");
+  fs.writeFileSync(configPath, '{"agent":{"greeting":"before"}}\n', { mode: 0o600 });
+  const before = readConfigState(configPath);
+  initializeRuntime({
+    state: before,
+    startup: startup({ configPath: path.join(directory, "different.json"), resolvedHome: directory }),
+  });
+
+  assert.throws(
+    () => saveFields({ configPath, revision: before.revision, fields: { agent_greeting: "committed" } }),
+    (error) => error.code === "SETTINGS_PUBLISH_FAILED" && error.status === 500,
+  );
+  assert.equal(readConfigState(configPath).parsed.agent.greeting, "committed");
+  assert.deepEqual(fs.readdirSync(directory).filter((name) => name.startsWith(".settings-backup-")), []);
+  assert.throws(
+    () => publishCommittedState(configPath, readConfigState(configPath)),
+    (error) => error.code === "SETTINGS_PUBLISH_PATH_MISMATCH" && error.status === 500,
+  );
+
+  resetRuntimeForTest();
+  assert.throws(
+    () => publishCommittedState(path.join(directory, "still-different.json"), before),
+    (error) => error.code === "SETTINGS_PUBLISH_PATH_MISMATCH" && error.status === 500,
+  );
+});
+
+test("lock acquisition owns first-home creation and blocks pre-lock filesystem writes", (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-lock-order-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const lockConfig = path.join(directory, "owner", "config.json");
+  const release = require("../src/settings/store")._test.acquireLock(lockConfig);
+  assert.equal(fs.existsSync(path.dirname(lockConfig)), true);
+  const blockedDirectory = path.join(directory, "blocked-home");
+  try {
+    assert.throws(
+      () => saveFields({ configPath: path.join(blockedDirectory, "config.json"), revision: "bootstrap", fields: {} }),
+      (error) => error.code === "SETTINGS_MULTI_PROCESS_UNSUPPORTED",
+    );
+    assert.equal(fs.existsSync(blockedDirectory), false);
+  } finally {
+    release();
+  }
 });
 
 test("T12-04 PUT cannot bypass the boot operational snapshot", async (t) => {
@@ -495,6 +671,19 @@ test("T12-04 PUT cannot bypass the boot operational snapshot", async (t) => {
   assert.deepEqual(buildEnvelope().restartRequired.filter((id) => ["llm_model", "llm_temperature", "gateway_warmup_timeout_ms"].includes(id)), [
     "gateway_warmup_timeout_ms", "llm_model", "llm_temperature",
   ]);
+});
+
+test("T12-11 pipeline config resolves and forwards streaming-equivalent at the config boundary", () => {
+  resetRuntimeForTest();
+  initializeRuntime({
+    state: state({
+      features: { streamingEquivalentEnabled: false },
+      llm: { provider: "openai-compatible", model: "model" },
+    }),
+    startup: startup({ connection: { openaiApiKey: "key" } }),
+  });
+  const config = require("../src/config").getPipelineConfig({}, null, null, {});
+  assert.equal(config.llm.openaiCompatible.streamingEquivalentEnabled, false);
 });
 
 test("gateway warm-up timeout preserves stored zero and falls back to 8000 only when unset", async () => {
@@ -782,6 +971,32 @@ test("T12-12 class-1 migration is strict, seed-only, transactional, and value-fr
   assert.equal(readConfigState(bootstrapPath).parsed.tts.apiKey, "bootstrap-fish");
 });
 
+test("T12-12 protocol mask is never migrated or persisted by the store credential path", async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-mask-seed-"));
+  t.after(() => {
+    resetRuntimeForTest();
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+  const configPath = path.join(directory, "config.json");
+  fs.writeFileSync(configPath, '{"stt":{"sonioxApiKey":"original"}}\n', { mode: 0o600 });
+  let current = readConfigState(configPath);
+  initializeRuntime({
+    state: current,
+    startup: startup({ configPath, resolvedHome: directory, dotenvSeeds: { FISH_AUDIO_API_KEY: MASK } }),
+  });
+  const res = response();
+  await createSettingsHandler({ port: 5005 })(request("POST", "/api/settings/migrate-env-class1", {
+    host: "localhost:5005", origin: "http://localhost:5005", "sec-fetch-site": "same-origin", "content-type": "application/json",
+  }, JSON.stringify({ revision: current.revision })), res);
+  assert.equal(res.status, 200, res.body);
+  assert.equal(readConfigState(configPath).parsed.tts?.apiKey, undefined);
+
+  current = readConfigState(configPath);
+  const committed = saveFields({ configPath, revision: current.revision, fields: { soniox_api_key: MASK } });
+  assert.equal(committed.parsed.stt.sonioxApiKey, "original");
+  assert.equal(fs.readFileSync(configPath, "utf8").includes(MASK), false);
+});
+
 test("actual child-process lock ownership rejects a second writer", async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-live-lock-"));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
@@ -905,7 +1120,12 @@ test("T12-07 empty-home server bootstrap stays alive and serves health plus setu
           const tunnelHome = await run(handler, "GET", "/", "public.ngrok.app:5005");
           const tunnelHealth = await run(handler, "GET", "/health", "public.ngrok.app:5005");
           const tunnelSettings = await run(handler, "GET", "/settings", "public.ngrok.app:5005");
-          process.stdout.write("SETUP_RESULT=" + JSON.stringify({ health, join, tunnelHome, tunnelHealth, tunnelSettings, alive: process.exitCode == null }) + "\n");
+          const settingsUpgradeDestroyed = [];
+          for (const url of ["/settings", "/api/settings/audio", "/settings-assets/settings.js"]) {
+            const socket = { destroy() { settingsUpgradeDestroyed.push(url); } };
+            server.emit("upgrade", { url }, socket, Buffer.alloc(0));
+          }
+          process.stdout.write("SETUP_RESULT=" + JSON.stringify({ health, join, tunnelHome, tunnelHealth, tunnelSettings, settingsUpgradeDestroyed, alive: process.exitCode == null }) + "\n");
           process.exit(0);
         });
         return server;
@@ -938,6 +1158,81 @@ test("T12-07 empty-home server bootstrap stays alive and serves health plus setu
   assert.equal(result.tunnelHome.status, 200);
   assert.equal(result.tunnelHealth.status, 200);
   assert.equal(result.tunnelSettings.status, 404);
+  assert.deepEqual(result.settingsUpgradeDestroyed, ["/settings", "/api/settings/audio", "/settings-assets/settings.js"]);
+});
+
+test("T12-07 unreadable and symlink-rejected startup configs stay in non-bootstrap setup mode", (t) => {
+  const run = (mode) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), `meetmate-read-failure-${mode}-`));
+    t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+    if (mode === "symlink") {
+      const target = path.join(directory, "target.json");
+      fs.writeFileSync(target, "{}\n", { mode: 0o600 });
+      fs.symlinkSync(target, path.join(directory, "config.json"));
+    }
+    const script = String.raw`
+      const { EventEmitter } = require("node:events");
+      const { Readable } = require("node:stream");
+      const http = require("node:http");
+      if (process.argv[1] === "eacces") {
+        const store = require(${JSON.stringify(require.resolve("../src/settings/store"))});
+        store.readConfigState = () => { const error = new Error("denied"); error.code = "EACCES"; throw error; };
+      }
+      function request(handler, method, url, body = "", headers = {}) {
+        return new Promise((resolve) => {
+          const req = Readable.from(body ? [Buffer.from(body)] : []);
+          Object.assign(req, { method, url, headers: { host: "localhost:5005", ...headers }, socket: { localAddress: "127.0.0.1", localPort: 5005 } });
+          const res = { status: 0, body: "", writeHead(status) { this.status = status; }, end(chunk = "") { this.body += String(chunk); resolve({ status: this.status, body: this.body }); } };
+          Promise.resolve(handler(req, res)).catch((error) => resolve({ status: 599, body: error.message }));
+        });
+      }
+      http.createServer = (handler) => {
+        const server = new EventEmitter();
+        server.address = () => ({ port: 5005 });
+        server.listen = (_port, callback) => {
+          callback();
+          setImmediate(async () => {
+            const get = await request(handler, "GET", "/api/settings");
+            let put = null;
+            if (process.argv[1] === "symlink") {
+              const revision = JSON.parse(get.body).revision;
+              put = await request(handler, "PUT", "/api/settings", JSON.stringify({ schemaVersion: 1, revision, fields: {} }), {
+                origin: "http://localhost:5005", "sec-fetch-site": "same-origin", "content-type": "application/json",
+              });
+            }
+            process.stdout.write("READ_FAILURE_RESULT=" + JSON.stringify({ get, put }) + "\n");
+            process.exit(0);
+          });
+          return server;
+        };
+        return server;
+      };
+      require(${JSON.stringify(path.join(ROOT, "src/server.js"))});
+    `;
+    const child = spawnSync(process.execPath, ["-e", script, mode], {
+      cwd: directory,
+      env: { ...process.env, AI_MEET_HOME: directory, PORT: "5005", WAKE_CALIBRATE_ENABLED: "" },
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+    assert.equal(child.status, 0, child.stderr);
+    const match = child.stdout.match(/READ_FAILURE_RESULT=(\{.*\})/);
+    assert.ok(match, child.stdout);
+    return JSON.parse(match[1]);
+  };
+
+  for (const mode of ["eacces", "symlink"]) {
+    const result = run(mode);
+    assert.equal(result.get.status, 200, mode);
+    const envelope = JSON.parse(result.get.body);
+    assert.equal(envelope.setupMode, true, mode);
+    assert.match(envelope.revision, /^[a-f0-9]{64}$/, mode);
+    assert.notEqual(envelope.revision, "bootstrap", mode);
+    if (mode === "symlink") {
+      assert.equal(result.put.status, 422);
+      assert.equal(JSON.parse(result.put.body).error.code, "SETTINGS_SYMLINK_REJECTED");
+    }
+  }
 });
 
 test("T12-13 bootstrap, MCP direct main, warmup, profiles, and templates remain value-safe", async () => {
@@ -1012,6 +1307,8 @@ test("T12-13 bootstrap, MCP direct main, warmup, profiles, and templates remain 
     assert.equal(generated.status, 0, generated.stderr);
     const agents = fs.readFileSync(path.join(generatedHome, "AGENTS.md"), "utf8");
     assert.doesNotMatch(agents, /^[A-Z][A-Z0-9_]*\s*=/m);
+    const generatedConfig = fs.readFileSync(path.join(generatedHome, "config.json"), "utf8");
+    assert.doesNotMatch(generatedConfig, /\[soft voice\].{0,240}\[warm\].{0,240}\[friendly, warm\].{0,240}\[empathetic, unhurried\].{0,240}\[thoughtful\]/);
     for (const suffix of ["soniox", "fish", "voice", "attendee", "openai-key", "model"]) {
       assert.equal(agents.includes(`${prefix}-${suffix}`), false, suffix);
     }
@@ -1101,5 +1398,103 @@ test("invalid startup connection URLs become value-free setup issues", (t) => {
     assert.equal(serialized.includes(badUrl.trim()), false);
     assert.equal(serialized.includes("OPENCLAW_GATEWAY"), false);
     assert.equal(serialized.includes("valid-but-private-token"), false);
+  }
+});
+
+async function requestSettingsStatic(method, url) {
+  const res = response();
+  const handled = await createSettingsHandler({ port: 5005 })(request(method, url, { host: "localhost:5005" }), res);
+  return { handled, status: res.status, headers: res.headers, body: res.body };
+}
+
+test("settings page and allowlisted assets are served with exact MIME types and no-store", async () => {
+  const page = await requestSettingsStatic("GET", "/settings");
+  assert.equal(page.handled, true);
+  assert.equal(page.status, 200);
+  assert.equal(page.headers["Content-Type"], "text/html; charset=utf-8");
+  assert.equal(page.headers["Cache-Control"], "no-store");
+  assert.equal(Number(page.headers["Content-Length"]), Buffer.byteLength(page.body));
+  assert.match(page.body, /<title>設定 · Meetmate<\/title>/);
+  assert.match(page.body, /\/settings-assets\/settings\.css/);
+  assert.match(page.body, /\/settings-assets\/settings\.js/);
+  assert.doesNotMatch(page.body, /delivered by the next Epic child/i);
+
+  const css = await requestSettingsStatic("GET", "/settings-assets/settings.css");
+  assert.equal(css.status, 200);
+  assert.equal(css.headers["Content-Type"], "text/css; charset=utf-8");
+  assert.equal(css.headers["Cache-Control"], "no-store");
+  assert.match(css.body, /\.settings-panel/);
+
+  const js = await requestSettingsStatic("GET", "/settings-assets/settings.js");
+  assert.equal(js.status, 200);
+  assert.equal(js.headers["Content-Type"], "application/javascript; charset=utf-8");
+  assert.equal(js.headers["Cache-Control"], "no-store");
+  assert.match(js.body, /ArrowRight/);
+  assert.match(js.body, /Home/);
+  assert.match(js.body, /End/);
+});
+
+test("settings static routes are GET-only and the asset namespace is allowlisted", async () => {
+  for (const [method, url] of [
+    ["POST", "/settings"],
+    ["HEAD", "/settings"],
+    ["POST", "/settings-assets/settings.css"],
+    ["GET", "/settings-assets/unknown.css"],
+    ["GET", "/settings-assets/settings.css/extra"],
+  ]) {
+    const result = await requestSettingsStatic(method, url);
+    assert.equal(result.handled, true, `${method} ${url}`);
+    assert.equal(result.status, 404, `${method} ${url}`);
+    assert.equal(result.body, "Not Found", `${method} ${url}`);
+  }
+});
+
+test("settings UI keeps six accessible tabs and uses injected registry data without fixtures", () => {
+  const publicDir = path.join(ROOT, "public");
+  const html = fs.readFileSync(path.join(publicDir, "settings.html"), "utf8");
+  const js = fs.readFileSync(path.join(publicDir, "settings.js"), "utf8");
+  const labels = Array.from(html.matchAll(/role="tab"[^>]*>([^<]+)<\/button>/g), (match) => match[1]);
+  assert.deepEqual(labels, ["基本", "音声プリセット", "詳細", "デプロイ", "接続テスト", "エクスポート・インポート"]);
+  assert.equal((html.match(/role="tabpanel"/g) || []).length, 6);
+  assert.match(html, /aria-selected="true" aria-controls="panel-basic" tabindex="0"/);
+  assert.match(html, /id="settingsUiManifest">__SETTINGS_UI_MANIFEST__<\/script>/);
+  assert.match(html, /id="emotionTagsData">__MEETMATE_EMOTION_TAGS__<\/script>/);
+  for (const marker of ["basicFields", "voiceFields", "detailFields", "diagnosticsList", "変更を保存"]) {
+    assert.match(html, new RegExp(marker));
+  }
+  assert.match(html, /id="audioRole"/);
+  assert.match(html, /id="audioFile"[^>]*accept="audio\/mpeg,\.mp3"/);
+  assert.match(html, /id="audioClipList"/);
+  assert.doesNotMatch(html, /audio-drop-zone[^>]*disabled/);
+  assert.match(js, /fetch\("\/api\/settings"/);
+  assert.match(js, /method: "PUT"/);
+  assert.match(js, /NULLABLE_NUMBER_FIELDS\.has\(entry\.id\) \? null : ""/);
+  assert.match(js, /these fields take effect at next boot/);
+  for (const fixture of ["meeting-assistant", "U012MOCK345", "meetmate-demo.ngrok.app", "greeting-friendly.mp3"]) {
+    assert.doesNotMatch(`${html}\n${js}`, new RegExp(fixture.replaceAll(".", "\\.")));
+  }
+  for (const tag of ["soft voice", "friendly, warm", "empathetic, unhurried"]) {
+    assert.doesNotMatch(`${html}\n${js}`, new RegExp(tag));
+  }
+});
+
+test("home page remains the four-block meeting UI with only a settings header link", () => {
+  const publicDir = path.join(ROOT, "public");
+  const html = fs.readFileSync(path.join(publicDir, "index.html"), "utf8");
+  const css = fs.readFileSync(path.join(publicDir, "style.css"), "utf8");
+  const js = fs.readFileSync(path.join(publicDir, "app.js"), "utf8");
+  assert.equal((html.match(/<section\b/g) || []).length, 4);
+  for (const marker of ["Bot を起動", "activeCard", "metricsCard", "toolsCard"]) assert.match(html, new RegExp(marker));
+  assert.match(html, /<a class="settings-link" href="\/settings">⚙ 設定<\/a>/);
+  assert.doesNotMatch(html, /mockSettingsForm|Local admin preview|credential-item|settingsToast/);
+  assert.doesNotMatch(css, /Settings UI mock|\.settings-demo|\.credential-item/);
+  assert.doesNotMatch(js, /mockSettingsForm|settingsToast|initMockSettings/);
+});
+
+test("touched public UI sources do not contain circled step-number literals", () => {
+  const publicDir = path.join(ROOT, "public");
+  for (const filename of ["index.html", "style.css", "app.js", "settings.html", "settings.css", "settings.js"]) {
+    const source = fs.readFileSync(path.join(publicDir, filename), "utf8");
+    assert.doesNotMatch(source, /[②③]/, filename);
   }
 });

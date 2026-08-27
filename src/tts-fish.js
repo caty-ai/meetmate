@@ -8,6 +8,7 @@
 //   - Both are in addition to the HTTP-level 30s connect timeout
 
 const https = require("https");
+const { stripCanonicalEmotionTags } = require("./messages");
 const { getEffectiveValue } = require("./settings/resolver");
 
 // Max audio duration per sentence: 15 seconds at any sample rate
@@ -101,7 +102,10 @@ async function synthesize(text, options = {}) {
 async function _synthesizeOnce(text, options = {}) {
   const apiKey = options.apiKey;
   if (!apiKey) throw new Error("FISH_AUDIO_API_KEY is required for TTS");
-  if (!text || !text.trim()) return;
+  const requestText = getEffectiveValue("agent_emotion_tags") === false
+    ? stripCanonicalEmotionTags(text)
+    : String(text || "").trim();
+  if (!requestText) return;
 
   const sampleRate = options.sampleRate || 24_000;
   const latency = options.latency || "balanced";
@@ -113,7 +117,7 @@ async function _synthesizeOnce(text, options = {}) {
   const maxBytes = Math.floor((sampleRate * MAX_AUDIO_DURATION_MS) / 1000) * 2;
 
   const requestBody = {
-    text: text.trim(),
+    text: requestText,
     format: "pcm",
     sample_rate: sampleRate,
     latency,
@@ -237,7 +241,7 @@ async function _synthesizeOnce(text, options = {}) {
               }
               totalBytesReceived = maxBytes;
               console.warn(
-                `⚠️  TTS duration cap hit: ${MAX_AUDIO_DURATION_MS}ms (${maxBytes} bytes) for text: "${text.slice(0, 60)}…" — truncating`
+                `⚠️  TTS duration cap hit: ${MAX_AUDIO_DURATION_MS}ms (${maxBytes} bytes) for text: "${requestText.slice(0, 60)}…" — truncating`
               );
               // Destroy request to stop receiving more data
               res.destroy();

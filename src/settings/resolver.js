@@ -238,7 +238,7 @@ function buildIssues(runtime) {
     if (!issues.some((issue) => issue.fieldId === fieldId && issue.code === code)) issues.push({ fieldId, code });
   };
   if (runtime.documentExists && !runtime.documentValid) add("agent_id", "CONFIG_DOCUMENT_INVALID");
-  for (const entry of SETTINGS_REGISTRY.filter((item) => item.path)) {
+  for (const entry of SETTINGS_REGISTRY.filter((item) => item.path && item.writeSurface === "settings")) {
     const stored = readPath(runtime.published.raw, entry.path);
     if (meaningful(stored) && entry.schema.safeParse(stored).success === false) add(entry.id, "VALUE_INVALID");
   }
@@ -302,12 +302,20 @@ function publishState(state) {
 }
 
 function publishCommittedState(configPath, state) {
+  const mismatch = () => {
+    const error = new Error("Settings snapshot path mismatch");
+    error.code = "SETTINGS_PUBLISH_PATH_MISMATCH";
+    error.status = 500;
+    throw error;
+  };
   if (currentRuntime) {
-    if (path.resolve(currentRuntime.startup.configPath) === path.resolve(configPath)) publishState(state);
+    if (path.resolve(currentRuntime.startup.configPath) !== path.resolve(configPath)) mismatch();
+    publishState(state);
     return;
   }
   const startup = getStartup();
-  if (path.resolve(startup.configPath) === path.resolve(configPath)) initializeRuntime({ state, startup });
+  if (path.resolve(startup.configPath) !== path.resolve(configPath)) mismatch();
+  initializeRuntime({ state, startup });
 }
 
 function registerCacheInvalidator(invalidate) {
@@ -372,11 +380,19 @@ function buildEnvelope() {
   const restartRequired = [];
   for (const entry of SETTINGS_REGISTRY) {
     if (entry.writeSurface === "none") continue;
-    const stored = validValue(entry, readPath(runtime.published.raw, entry.path));
+    const rawStored = readPath(runtime.published.raw, entry.path);
+    const stored = validValue(entry, rawStored);
     if (stored !== undefined || entry.id === "audio_clips" || entry.credential === "class-1") {
-      fields[entry.id] = entry.credential === "class-1"
-        ? credentialView(entry, stored, runtime.published.resolved.sources[entry.id])
-        : clone(stored !== undefined ? stored : entry.defaultValue);
+      if (entry.id === "audio_clips") {
+        fields[entry.id] = require("./audio").projectClipViews(
+          clone(Array.isArray(rawStored) ? rawStored : entry.defaultValue),
+          runtime.startup.resolvedHome,
+        );
+      } else {
+        fields[entry.id] = entry.credential === "class-1"
+          ? credentialView(entry, stored, runtime.published.resolved.sources[entry.id])
+          : clone(stored !== undefined ? stored : entry.defaultValue);
+      }
     }
     if (entry.writeSurface !== "settings") continue;
     const nextBootEffective = runtime.published.resolved.values[entry.id];

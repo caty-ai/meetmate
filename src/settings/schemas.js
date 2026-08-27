@@ -20,6 +20,30 @@ const settingsMutationSchema = z.object({
 }).strict();
 
 const revisionOnlySchema = z.object({ revision: revisionSchema }).strict();
+const sha256RevisionOnlySchema = z.object({ revision: sha256RevisionSchema }).strict();
+const audioMetadataSchema = z.object({
+  role: z.enum(["ack", "progress", "greeting", "farewell", "timeout"]),
+  text: z.string().trim().min(1).refine((value) => [...value].length <= 4096, "too_big"),
+  revision: sha256RevisionSchema,
+}).strict();
+
+const importableShape = {};
+for (const entry of SETTINGS_REGISTRY.filter((item) => item.writeSurface === "settings" && item.credential === "none")) {
+  importableShape[entry.id] = entry.schema.optional();
+}
+
+const exportSettingsSchema = z.object(importableShape).strict();
+const exportDocumentSchema = z.object({
+  format: z.literal("meetmate-settings"),
+  version: z.literal(1),
+  exportedAt: z.string().datetime({ offset: false }),
+  settings: exportSettingsSchema,
+}).strict();
+
+const importRequestSchema = z.object({
+  revision: sha256RevisionSchema,
+  document: exportDocumentSchema,
+}).strict();
 
 function findPrototypeKey(value, currentPath = []) {
   if (!value || typeof value !== "object") return null;
@@ -52,9 +76,14 @@ function parseStrict(schema, value) {
 }
 
 module.exports = {
+  audioMetadataSchema,
   parseStrict,
+  exportDocumentSchema,
+  exportSettingsSchema,
+  importRequestSchema,
   revisionOnlySchema,
   revisionSchema,
   settingsMutationSchema,
+  sha256RevisionOnlySchema,
   sha256RevisionSchema,
 };

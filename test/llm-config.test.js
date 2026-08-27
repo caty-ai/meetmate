@@ -55,6 +55,7 @@ test("LLM config uses the boot resolver snapshot and ignores raw-agent bypasses"
     assert.equal(config.llm.historyMaxTurns, 12);
     assert.equal(config.llm.openaiCompatible.emptyResponseRetry, true);
     assert.equal(config.llm.openaiCompatible.trustedAgentTools, false);
+    assert.equal(config.llm.openaiCompatible.streamingEquivalentEnabled, true);
 
     const configJson = {
       llm: {
@@ -92,6 +93,7 @@ test("LLM config uses the boot resolver snapshot and ignores raw-agent bypasses"
           apiKey: null,
           emptyResponseRetry: false,
           trustedAgentTools: true,
+          streamingEquivalentEnabled: true,
         },
       }
     );
@@ -110,6 +112,7 @@ test("LLM config uses the boot resolver snapshot and ignores raw-agent bypasses"
       apiKey: "env-key",
       emptyResponseRetry: false,
       trustedAgentTools: true,
+      streamingEquivalentEnabled: true,
     });
     assert.equal(config.llm.model, "json-model");
     assert.equal(config.llm.historyMaxTurns, 7);
@@ -138,6 +141,7 @@ test("LLM config uses the boot resolver snapshot and ignores raw-agent bypasses"
       apiKey: "env-key",
       emptyResponseRetry: false,
       trustedAgentTools: true,
+      streamingEquivalentEnabled: true,
     });
   } finally {
     console.error = originalError;
@@ -248,6 +252,29 @@ test("runtime-shaped configJson.agent does not change OpenClaw LLM resolution", 
     assert.equal(config.emotionTags, true);
     assert.match(config.llm.openclawSystemAddendum, /すべての発話の先頭に必ず感情タグ/);
     assert.doesNotMatch(config.llm.openclawSystemAddendum, /configured agent addendum/);
+  } finally {
+    restore();
+    delete require.cache[configModulePath];
+  }
+});
+
+test("canonical emotion toggle removes tag instructions from voice and gateway prompts together", () => {
+  const restore = setEnv({
+    ...CLEAN_LLM_ENV,
+    OPENCLAW_GATEWAY_URL: "https://gateway.test",
+    OPENCLAW_GATEWAY_TOKEN: "token",
+  });
+  try {
+    const configJson = { agent: { emotionTags: false } };
+    const config = freshConfig(configJson).getPipelineConfig({}, null, null, configJson);
+    const { EMOTION_TAGS } = require("../src/messages");
+    assert.equal(config.emotionTags, false);
+    for (const { tag } of EMOTION_TAGS) {
+      assert.equal(config.llm.openclawSystemAddendum.includes(tag), false);
+      assert.equal(config.gatewayBriefingPrompt.includes(tag), false);
+    }
+    assert.doesNotMatch(config.llm.openclawSystemAddendum, /感情タグ.*必須|感情タグを1個/);
+    assert.doesNotMatch(config.gatewayBriefingPrompt, /感情タグ/);
   } finally {
     restore();
     delete require.cache[configModulePath];

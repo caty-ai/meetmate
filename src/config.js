@@ -4,7 +4,7 @@
  */
 
 const { buildVoiceAddendum } = require("./llm");
-const { buildVoiceAddendumFromMessages, resolveMessages } = require("./messages");
+const { buildGatewayBriefingSystem, buildVoiceAddendumFromMessages, resolveMessages } = require("./messages");
 const { getStartup } = require("./settings/bootstrap");
 const { getEffectiveValue, getRawConfig } = require("./settings/resolver");
 const { stripLegacyClass2 } = require("./settings/class2-migration");
@@ -196,12 +196,14 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
   if (provider !== "openclaw" && Object.prototype.hasOwnProperty.call(configJson?.prompts || {}, "voiceSystemAddendumTemplate") && !String(configJson.prompts.voiceSystemAddendumTemplate).includes("{openclawRules}")) console.warn("⚠️  Non-OpenClaw voiceSystemAddendumTemplate should include {openclawRules} so OpenClaw-only rules can be omitted.");
   // Build voice addendum: use per-agent emotionTags flag
   const agentEmotionTags = getEffectiveValue("agent_emotion_tags") !== false;
-  const defaultVoiceAddendum = messages.prompts.voiceSystemAddendum
+  const defaultVoiceAddendum = (agentEmotionTags && messages.prompts.voiceSystemAddendum)
     || buildVoiceAddendumFromMessages(messages, { emotionTags: agentEmotionTags, openclaw: true })
     || buildVoiceAddendum({ emotionTags: agentEmotionTags });
-  const llmAddendum = Object.prototype.hasOwnProperty.call(overrides, "openclawSystemAddendum")
-    ? overrides.openclawSystemAddendum
-    : (agent?.openclawSystemAddendum ?? defaultVoiceAddendum);
+  const llmAddendum = agentEmotionTags
+    ? (Object.prototype.hasOwnProperty.call(overrides, "openclawSystemAddendum")
+        ? overrides.openclawSystemAddendum
+        : (agent?.openclawSystemAddendum ?? defaultVoiceAddendum))
+    : defaultVoiceAddendum;
   const ttsReferenceId = envVoiceId;
 
   // OpenClaw manages its persona via the Gateway. Standalone providers need a
@@ -209,7 +211,7 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
   const configuredSystemPrompt = overrides.prompt
     || getEffectiveValue("llm_system_prompt")
     || messages.prompts.standaloneSystemPrompt;
-  const systemAddendum = messages.prompts.voiceSystemAddendum
+  const systemAddendum = (agentEmotionTags && messages.prompts.voiceSystemAddendum)
     || buildVoiceAddendumFromMessages(messages, {
       emotionTags: agentEmotionTags,
       openclaw: false,
@@ -255,6 +257,11 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
       ?? getEffectiveValue("openai_trusted_agent_tools"),
       false
     ),
+    streamingEquivalentEnabled: boolOption(
+      overrides.openaiCompatible?.streamingEquivalentEnabled
+      ?? getEffectiveValue("streaming_equivalent_enabled"),
+      true
+    ),
   };
 
   // Resolve greeting: agentProfile > overrides > agent > empty (skip if unconfigured)
@@ -272,7 +279,9 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
     openclawUrl: resolvedOpenclawUrl,
     openclawToken: resolvedOpenclawToken,
     warmupTimeoutMs: getEffectiveValue("gateway_warmup_timeout_ms"),
-    gatewayBriefingPrompt: messages.prompts.gatewayBriefingSystem,
+    gatewayBriefingPrompt: agentEmotionTags
+      ? messages.prompts.gatewayBriefingSystem
+      : buildGatewayBriefingSystem({ emotionTags: false }),
     gatewayWarmupUserPrompt: messages.prompts.gatewayWarmupUser,
     systemPrompt,
     exitDetection: overrides.exitDetection,

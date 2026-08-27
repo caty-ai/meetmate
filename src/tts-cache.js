@@ -8,6 +8,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { ttsCacheDir } = require("./paths");
+const { stripCanonicalEmotionTags } = require("./messages");
 const { getEffectiveValue } = require("./settings/resolver");
 
 const DEFAULT_SAMPLE_RATE = 24_000;
@@ -37,6 +38,12 @@ function cacheKey(text, options = {}) {
 
 function isCacheEnabled() {
   return getEffectiveValue("tts_cache_enabled");
+}
+
+function effectiveSynthesisText(text) {
+  return getEffectiveValue("agent_emotion_tags") === false
+    ? stripCanonicalEmotionTags(text)
+    : String(text || "").trim();
 }
 
 function isValidPcmFile(file) {
@@ -97,24 +104,48 @@ async function emitPacedPcm(buffer, options = {}) {
 function createTtsCache({ dir = defaultCacheDir(), synthesizeFn } = {}) {
   const delegate = synthesizeFn || require("./tts-fish").synthesize;
 
-  function fileFor(text, options = {}) {
-    return path.join(dir, `${cacheKey(text, options)}.pcm`);
+  function fileFor(effectiveText, options = {}) {
+    return path.join(dir, `${cacheKey(effectiveText, options)}.pcm`);
   }
 
   async function synthesizeCached(text, options = {}) {
     if (!options.onAudio) throw new Error("onAudio callback is required");
+    const effectiveText = effectiveSynthesisText(text);
+    if (!effectiveText) return;
 
-    if (!isCacheEnabled()) {
-      return delegate(text, options);
+    const identity = {
+      referenceId: options.referenceId || null,
+      model: options.model || getEffectiveValue("fish_audio_model"),
+      sampleRate: options.sampleRate || DEFAULT_SAMPLE_RATE,
+      speed: normalizeSpeed(options.speed),
+    };
+    const managed = require("./settings/audio").lookupManagedPcm({
+      role: options.role,
+      text: effectiveText,
+      ...identity,
+    });
+    if (managed) {
+      try {
+        console.log(`🎵 Managed TTS clip hit (${managed.clip.role}, ${managed.pcm.length} bytes)`);
+        await emitPacedPcm(managed.pcm, { ...options, sampleRate: identity.sampleRate });
+        return;
+      } catch {
+        // A playback callback failure must preserve the record and fall back
+        // through the existing synthesis path.
+      }
     }
 
-    const file = fileFor(text, options);
+    if (!isCacheEnabled()) {
+      return delegate(effectiveText, options);
+    }
+
+    const file = fileFor(effectiveText, { ...identity, speed: options.speed });
     if (fs.existsSync(file)) {
       try {
         const stat = fs.statSync(file);
         if (stat.size > 0 && stat.size % 2 === 0) {
           const pcm = fs.readFileSync(file);
-          console.log(`🎵 TTS cache hit (${previewText(text)}, ${pcm.length} bytes)`);
+          console.log(`🎵 TTS cache hit (${previewText(effectiveText)}, ${pcm.length} bytes)`);
           await emitPacedPcm(pcm, options);
           return;
         }
@@ -128,7 +159,7 @@ function createTtsCache({ dir = defaultCacheDir(), synthesizeFn } = {}) {
     const chunks = [];
     let totalBytes = 0;
     try {
-      await delegate(text, {
+      await delegate(effectiveText, {
         ...options,
         onAudio: (chunk) => {
           if (options.signal?.aborted) return;
@@ -152,7 +183,7 @@ function createTtsCache({ dir = defaultCacheDir(), synthesizeFn } = {}) {
     try {
       fs.writeFileSync(tmp, pcm);
       fs.renameSync(tmp, file);
-      console.log(`🎵 TTS cache store (${previewText(text)}, ${pcm.length} bytes)`);
+      console.log(`🎵 TTS cache store (${previewText(effectiveText)}, ${pcm.length} bytes)`);
     } catch (err) {
       unlinkBestEffort(tmp);
       throw err;
@@ -173,7 +204,9 @@ function createTtsCache({ dir = defaultCacheDir(), synthesizeFn } = {}) {
         referenceId: item.referenceId !== undefined ? item.referenceId : baseOptions.referenceId,
         onAudio: () => {},
       };
-      const file = fileFor(text, options);
+      const effectiveText = effectiveSynthesisText(text);
+      if (!effectiveText) continue;
+      const file = fileFor(effectiveText, options);
       if (isValidPcmFile(file)) continue;
       if (fs.existsSync(file)) unlinkBestEffort(file);
 
@@ -198,6 +231,7 @@ module.exports = {
   _test: {
     cacheKey,
     defaultCacheDir,
+    effectiveSynthesisText,
     emitPacedPcm,
     normalizeSpeed,
   },

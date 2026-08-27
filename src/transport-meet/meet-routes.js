@@ -60,7 +60,7 @@ function runtimeDiagnostics() {
 }
 
 let _configJson = loadConfig();
-const _resolvedMessages = resolveMessages(_configJson);
+let _resolvedMessages = resolveMessages(_configJson);
 function buildConfiguredDelegationResultsSection(results) {
   return buildDelegationResultsSection(results, _resolvedMessages.delegation);
 }
@@ -84,6 +84,7 @@ function currentAgentProfile() {
 
 registerCacheInvalidator(() => {
   _configJson = getRawConfig();
+  _resolvedMessages = resolveMessages(_configJson);
   _agentProfile = null;
   meetSlackNotifier = null;
 });
@@ -192,6 +193,10 @@ const gatewayTracker = createGatewaySessionTracker({
 });
 const { trackGatewaySession, untrackGatewaySession, findGatewayRoute } = gatewayTracker;
 
+function taskExtractionEnabledAtBoot() {
+  return getEffectiveValue("task_extraction_enabled") !== false;
+}
+
 async function handleMeetSessionEnd(lifecycle) {
   untrackGatewaySession(lifecycle.sessionId, { retainIfDelegations: true });
   const notifier = getMeetSlackNotifier();
@@ -204,6 +209,7 @@ async function handleMeetSessionEnd(lifecycle) {
       const summary = await summarizeConversation(lifecycle._conversationLog, {
         llm: getPipelineConfig({}, null, currentAgentProfile(), _configJson).llm,
         summaryPrompt: _resolvedMessages.prompts.summary,
+        taskExtractionEnabled: taskExtractionEnabledAtBoot(),
       });
       await notifier.postSummary(lifecycle, summary);
       console.log("📋  Meetサマリー投稿完了");
@@ -1525,5 +1531,11 @@ module.exports = {
   init,
   handleHttp,
   handleWsConnection,
-  _test: { appendToMemory, runtimeDiagnostics },
+  _test: {
+    appendToMemory,
+    buildConfiguredDelegationResultsSection,
+    configuredSummaryPrompt: () => _resolvedMessages.prompts.summary,
+    runtimeDiagnostics,
+    taskExtractionEnabledAtBoot,
+  },
 };

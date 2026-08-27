@@ -3,15 +3,15 @@
 const path = require("node:path");
 const { z } = require("zod");
 
-const utf8Length = (value) => Buffer.byteLength(value, "utf8");
+const characterLength = (value) => [...value].length;
 const trimmedString = (max) => z.string().trim().min(1).max(max);
-const text = (max) => z.string().refine((value) => utf8Length(value) <= max, "too_big");
+const text = (max) => z.string().refine((value) => characterLength(value) <= max, "too_big");
 const secret = z.string().trim().min(1).max(4096);
 const bool = z.boolean();
 const integer = (min, max) => z.number().int().min(min).max(max);
 const number = (min, max) => z.number().finite().min(min).max(max);
 const nullable = (schema) => schema.nullable();
-const stringArray = z.array(z.string().trim().min(1).refine((value) => utf8Length(value) <= 128, "too_big"))
+const stringArray = z.array(z.string().trim().min(1).refine((value) => characterLength(value) <= 128, "too_big"))
   .max(64)
   .refine((values) => new Set(values).size === values.length, "duplicate");
 
@@ -41,10 +41,11 @@ function hostname(allowEmpty = false) {
 
 const absolutePath = z.string().refine((value) => value !== "" && path.isAbsolute(value) && !/^https?:/i.test(value), "invalid_absolute_path");
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
+const clipText = z.string().trim().min(1).refine((value) => characterLength(value) <= 4096, "too_big");
 const clipRecord = z.object({
   id: z.string().uuid(),
   role: z.enum(["ack", "progress", "greeting", "farewell", "timeout"]),
-  text: text(4096),
+  text: clipText,
   sourceRelativePath: trimmedString(1024),
   pcmRelativePath: trimmedString(1024),
   sourceSha256: hash,
@@ -57,7 +58,7 @@ const clipRecord = z.object({
   durationMs: integer(0, Number.MAX_SAFE_INTEGER),
   sourceBytes: integer(0, Number.MAX_SAFE_INTEGER),
   pcmBytes: integer(0, Number.MAX_SAFE_INTEGER),
-  createdAt: z.string().datetime({ offset: true }),
+  createdAt: z.string().datetime({ offset: false }),
 }).strict();
 
 function definition(id, configPath, schema, options = {}) {
@@ -72,6 +73,8 @@ function definition(id, configPath, schema, options = {}) {
     ...(Object.prototype.hasOwnProperty.call(options, "defaultValue") ? { defaultValue: options.defaultValue } : {}),
     requiredAtMeetingStart: options.requiredAtMeetingStart === true,
     writeSurface: options.writeSurface || (options.ux === "deployment-readonly" ? "none" : "settings"),
+    multiline: options.multiline === true,
+    visibleWhen: options.visibleWhen ? Object.freeze({ ...options.visibleWhen }) : null,
   });
 }
 
@@ -81,34 +84,34 @@ const SETTINGS_REGISTRY = Object.freeze([
   d("agent_name", "agent.name", trimmedString(128), { ux: "basic" }),
   d("agent_display_name", "agent.displayName", trimmedString(128), { ux: "basic", requiredAtMeetingStart: true }),
   d("agent_language", "agent.language", z.enum(["ja", "en"]), { ux: "basic", envAlias: "AGENT_LANG", defaultValue: "ja" }),
-  d("agent_greeting", "agent.greeting", text(4096), { ux: "basic", apply: "live" }),
+  d("agent_greeting", "agent.greeting", text(4096), { ux: "basic", apply: "live", multiline: true }),
   d("agent_emotion_tags", "agent.emotionTags", bool, { ux: "basic", apply: "live", defaultValue: true }),
   d("agent_wake_words", "agent.wakeWords", stringArray, { ux: "basic", envAlias: "WAKE_WORDS", requiredAtMeetingStart: true }),
   d("agent_keyterms", "agent.keyterms", stringArray, { envAlias: "SONIOX_CONTEXT_TERMS" }),
   d("agent_stt_wake_variants", "agent.sttWakeVariants", stringArray),
-  d("agent_ack_variants", "agent.ackVariants", stringArray, { apply: "live" }),
-  d("agent_progress_pings", "agent.progressPings", stringArray, { apply: "live" }),
-  d("agent_exit_farewell", "agent.exitFarewell", text(4096), { apply: "live" }),
-  d("agent_cancel_ack", "agent.cancelAck", text(4096), { apply: "live" }),
-  d("agent_timeout_fallback", "agent.timeoutFallback", text(4096), { apply: "live" }),
+  d("agent_ack_variants", "agent.ackVariants", stringArray, { apply: "live", multiline: true }),
+  d("agent_progress_pings", "agent.progressPings", stringArray, { apply: "live", multiline: true }),
+  d("agent_exit_farewell", "agent.exitFarewell", text(4096), { apply: "live", multiline: true }),
+  d("agent_cancel_ack", "agent.cancelAck", text(4096), { apply: "live", multiline: true }),
+  d("agent_timeout_fallback", "agent.timeoutFallback", text(4096), { apply: "live", multiline: true }),
   d("agent_avatar_url", "agent.avatarUrl", exactUrl(["http:", "https:"], true), { envAlias: "BOT_IMAGE_URL" }),
   d("llm_provider", "llm.provider", z.enum(["openclaw", "openai-compatible"]), { ux: "basic", envAlias: "LLM_PROVIDER", defaultValue: "openclaw" }),
   d("llm_model", "llm.model", trimmedString(256), { ux: "basic" }),
   d("llm_temperature", "llm.temperature", number(0, 2), { envAlias: "AGENT_TEMPERATURE", defaultValue: 0.5 }),
   d("llm_max_tokens", "llm.maxTokens", integer(1, 32768), { envAlias: "AGENT_MAX_TOKENS", defaultValue: 300 }),
   d("llm_history_max_turns", "llm.historyMaxTurns", integer(0, 256), { defaultValue: 12 }),
-  d("llm_system_prompt", "llm.systemPrompt", text(16384), { defaultValue: "" }),
-  d("openai_base_url", "llm.openaiCompatible.baseUrl", exactUrl(["http:", "https:"], true), { envAlias: "OPENAI_COMPATIBLE_BASE_URL" }),
-  d("openai_empty_response_retry", "llm.openaiCompatible.emptyResponseRetry", bool, { defaultValue: true }),
-  d("openai_trusted_agent_tools", "llm.openaiCompatible.trustedAgentTools", bool, { defaultValue: false }),
-  d("soniox_api_key", "stt.sonioxApiKey", secret, { ux: "basic", credential: "class-1", envAlias: "SONIOX_API_KEY", requiredAtMeetingStart: true }),
-  d("deepgram_api_key", "stt.apiKey", secret, { ux: "basic", credential: "class-1", envAlias: "DEEPGRAM_API_KEY", requiredAtMeetingStart: true }),
+  d("llm_system_prompt", "llm.systemPrompt", text(16384), { defaultValue: "", multiline: true }),
+  d("openai_base_url", "llm.openaiCompatible.baseUrl", exactUrl(["http:", "https:"], true), { envAlias: "OPENAI_COMPATIBLE_BASE_URL", visibleWhen: { id: "llm_provider", value: "openai-compatible" } }),
+  d("openai_empty_response_retry", "llm.openaiCompatible.emptyResponseRetry", bool, { defaultValue: true, visibleWhen: { id: "llm_provider", value: "openai-compatible" } }),
+  d("openai_trusted_agent_tools", "llm.openaiCompatible.trustedAgentTools", bool, { defaultValue: false, visibleWhen: { id: "llm_provider", value: "openai-compatible" } }),
+  d("soniox_api_key", "stt.sonioxApiKey", secret, { ux: "basic", credential: "class-1", envAlias: "SONIOX_API_KEY", requiredAtMeetingStart: true, visibleWhen: { id: "stt_provider", value: "soniox" } }),
+  d("deepgram_api_key", "stt.apiKey", secret, { ux: "basic", credential: "class-1", envAlias: "DEEPGRAM_API_KEY", requiredAtMeetingStart: true, visibleWhen: { id: "stt_provider", value: "deepgram" } }),
   d("stt_provider", "stt.provider", z.enum(["soniox", "deepgram"]), { ux: "basic", envAlias: "STT_PROVIDER", defaultValue: "soniox" }),
-  d("soniox_model", "stt.soniox.model", trimmedString(128), { envAlias: "SONIOX_MODEL", defaultValue: "stt-rt-v5" }),
-  d("soniox_ws_url", "stt.soniox.wsUrl", exactUrl(["wss:"]), { envAlias: "SONIOX_WS_URL" }),
-  d("soniox_endpoint_sensitivity", "stt.soniox.endpointSensitivity", nullable(number(-1, 1)), { envAlias: "SONIOX_ENDPOINT_SENSITIVITY" }),
-  d("soniox_max_endpoint_delay_ms", "stt.soniox.maxEndpointDelayMs", nullable(integer(0, 30000)), { envAlias: "SONIOX_MAX_ENDPOINT_DELAY_MS" }),
-  d("soniox_endpoint_latency_level", "stt.soniox.endpointLatencyLevel", nullable(integer(0, 5)), { envAlias: "SONIOX_ENDPOINT_LATENCY_LEVEL" }),
+  d("soniox_model", "stt.soniox.model", trimmedString(128), { envAlias: "SONIOX_MODEL", defaultValue: "stt-rt-v5", visibleWhen: { id: "stt_provider", value: "soniox" } }),
+  d("soniox_ws_url", "stt.soniox.wsUrl", exactUrl(["wss:"]), { envAlias: "SONIOX_WS_URL", visibleWhen: { id: "stt_provider", value: "soniox" } }),
+  d("soniox_endpoint_sensitivity", "stt.soniox.endpointSensitivity", nullable(number(-1, 1)), { envAlias: "SONIOX_ENDPOINT_SENSITIVITY", visibleWhen: { id: "stt_provider", value: "soniox" } }),
+  d("soniox_max_endpoint_delay_ms", "stt.soniox.maxEndpointDelayMs", nullable(integer(0, 30000)), { envAlias: "SONIOX_MAX_ENDPOINT_DELAY_MS", visibleWhen: { id: "stt_provider", value: "soniox" } }),
+  d("soniox_endpoint_latency_level", "stt.soniox.endpointLatencyLevel", nullable(integer(0, 5)), { envAlias: "SONIOX_ENDPOINT_LATENCY_LEVEL", visibleWhen: { id: "stt_provider", value: "soniox" } }),
   d("listen_endpointing_ms", "stt.endpointingMs", integer(0, 30000), { envAlias: "LISTEN_ENDPOINTING_MS", defaultValue: 400 }),
   d("listen_utterance_end_ms", "stt.utteranceEndMs", integer(0, 30000), { envAlias: "LISTEN_UTTERANCE_END_MS", defaultValue: 1200 }),
   d("fish_audio_api_key", "tts.apiKey", secret, { ux: "basic", credential: "class-1", envAlias: "FISH_AUDIO_API_KEY", requiredAtMeetingStart: true }),

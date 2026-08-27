@@ -3,7 +3,7 @@
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
-const { SETTINGS_REGISTRY } = require("./registry");
+const { MASK, SETTINGS_REGISTRY } = require("./registry");
 const { stripLegacyClass2 } = require("./class2-migration");
 
 let localWriteActive = false;
@@ -104,8 +104,12 @@ function pidIsLive(pid) {
 function acquireLock(configPath) {
   if (localWriteActive) throw settingsError("SETTINGS_MULTI_PROCESS_UNSUPPORTED", "Settings are busy", 503);
   localWriteActive = true;
-  const lockPath = path.join(path.dirname(configPath), ".meetmate-settings.lock");
+  const directory = path.dirname(configPath);
+  const lockPath = path.join(directory, ".meetmate-settings.lock");
   try {
+    // The lock lives beside config.json, so first-home creation is part of
+    // acquiring the gate. localWriteActive is already held before this write.
+    fs.mkdirSync(directory, { recursive: true });
     rejectSymlink(lockPath);
     try {
       fs.writeFileSync(lockPath, `${JSON.stringify({ pid: process.pid })}\n`, { flag: "wx", mode: 0o600 });
@@ -155,12 +159,12 @@ function applyPath(document, dottedPath, value) {
 }
 
 function commitWholeConfig({ configPath, revision, mutate }) {
-  fs.mkdirSync(path.dirname(configPath), { recursive: true });
   rejectSymlink(configPath);
   const release = acquireLock(configPath);
   let temporary = null;
   let backup = null;
   let replaced = false;
+  let publishFailed = false;
   let before;
   try {
     before = readConfigState(configPath);
@@ -187,11 +191,19 @@ function commitWholeConfig({ configPath, revision, mutate }) {
     fsyncDirectory(directory);
     const committed = readConfigState(configPath);
     if (!committed.valid) throw settingsError("SETTINGS_TRANSACTION_FAILED", "Settings transaction failed", 500);
-    if (backup) { fs.unlinkSync(backup); backup = null; }
-    require("./resolver").publishCommittedState(configPath, committed);
+    if (backup) {
+      fs.unlinkSync(backup);
+      backup = null;
+    }
+    try {
+      require("./resolver").publishCommittedState(configPath, committed);
+    } catch {
+      publishFailed = true;
+      throw settingsError("SETTINGS_PUBLISH_FAILED", "Settings snapshot publish failed", 500);
+    }
     return committed;
   } catch (error) {
-    if (replaced) {
+    if (replaced && !publishFailed) {
       try {
         if (backup) {
           fs.renameSync(backup, configPath);
@@ -208,9 +220,11 @@ function commitWholeConfig({ configPath, revision, mutate }) {
       ? error
       : settingsError("SETTINGS_TRANSACTION_FAILED", "Settings transaction failed", 500);
   } finally {
-    for (const artifact of [temporary, backup]) {
-      if (!artifact) continue;
-      try { fs.unlinkSync(artifact); } catch { /* best effort */ }
+    if (temporary) {
+      try { fs.unlinkSync(temporary); } catch { /* best effort */ }
+    }
+    if (backup) {
+      try { fs.unlinkSync(backup); } catch { /* best effort */ }
     }
     release();
   }
@@ -225,8 +239,35 @@ function saveFields({ configPath, revision, fields }) {
       for (const [id, value] of Object.entries(fields)) {
         const entry = byId.get(id);
         if (!entry || entry.writeSurface !== "settings") continue;
+        if (entry.credential === "class-1" && value === MASK) continue;
         applyPath(document, entry.path, entry.credential === "class-1" && value === null ? undefined : value);
       }
+    },
+  });
+}
+
+function saveAudioClips({ configPath, revision, clips, preserveInvalid = false }) {
+  const entry = SETTINGS_REGISTRY.find((item) => item.id === "audio_clips");
+  if (!Array.isArray(clips)) throw settingsError("SETTINGS_VALIDATION_FAILED", "Request validation failed", 422);
+  const validClips = clips.filter((clip) => entry.schema.element.safeParse(clip).success);
+  if (validClips.length > 32 || (!preserveInvalid && validClips.length !== clips.length)) {
+    throw settingsError("SETTINGS_VALIDATION_FAILED", "Request validation failed", 422);
+  }
+  return commitWholeConfig({
+    configPath,
+    revision,
+    mutate(document) {
+      if (preserveInvalid) {
+        const current = document?.audio?.clips;
+        const existingInvalid = Array.isArray(current)
+          ? current.filter((clip) => !entry.schema.element.safeParse(clip).success)
+          : [];
+        const nextInvalid = clips.filter((clip) => !entry.schema.element.safeParse(clip).success);
+        if (JSON.stringify(nextInvalid) !== JSON.stringify(existingInvalid)) {
+          throw settingsError("SETTINGS_VALIDATION_FAILED", "Request validation failed", 422);
+        }
+      }
+      applyPath(document, entry.path, clips);
     },
   });
 }
@@ -235,6 +276,7 @@ module.exports = {
   commitWholeConfig,
   readConfigState,
   rejectSymlink,
+  saveAudioClips,
   saveFields,
   settingsError,
   _test: { acquireLock, assertRevision, fsyncDirectory, sha256, writeTemp },
