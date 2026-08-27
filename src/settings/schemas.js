@@ -21,6 +21,10 @@ const settingsMutationSchema = z.object({
 
 const revisionOnlySchema = z.object({ revision: revisionSchema }).strict();
 const sha256RevisionOnlySchema = z.object({ revision: sha256RevisionSchema }).strict();
+const ttsPreviewSchema = z.object({
+  revision: sha256RevisionSchema,
+  text: z.string().trim().min(1).refine((value) => [...value].length <= 500, "too_big"),
+}).strict();
 const audioMetadataSchema = z.object({
   role: z.enum(["ack", "progress", "greeting", "farewell", "timeout"]),
   text: z.string().trim().min(1).refine((value) => [...value].length <= 4096, "too_big"),
@@ -86,4 +90,5 @@ module.exports = {
   settingsMutationSchema,
   sha256RevisionOnlySchema,
   sha256RevisionSchema,
+  ttsPreviewSchema,
 };

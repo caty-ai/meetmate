@@ -7,8 +7,8 @@ const { URL } = require("node:url");
 const { EMOTION_TAGS } = require("../messages");
 const { MASK, SETTINGS_REGISTRY } = require("./registry");
 const { buildEnvelope, getBootstrapSeedFields, getRawConfig, getRuntime, meaningful, readPath } = require("./resolver");
-const { saveFields, settingsError } = require("./store");
-const { deleteAudio, uploadAudio } = require("./audio");
+const { readConfigState, saveFields, settingsError } = require("./store");
+const { deleteAudio, previewTts, uploadAudio } = require("./audio");
 const {
   exportDocumentSchema,
   importRequestSchema,
@@ -16,11 +16,18 @@ const {
   revisionOnlySchema,
   settingsMutationSchema,
   sha256RevisionOnlySchema,
+  ttsPreviewSchema,
 } = require("./schemas");
-
 const JSON_LIMIT = 256 * 1024;
 const CONNECTION_JSON_LIMIT = 4 * 1024;
+const CONNECTION_TIMEOUT_MS = 5_000;
+const CONNECTION_MIN_INTERVAL_MS = 1_000;
 const PROVIDERS = new Set(["soniox", "deepgram", "fish-audio", "attendee", "slack"]);
+const IMPLEMENTED_PROVIDERS = new Set(["soniox", "fish-audio"]);
+const CONNECTION_ENDPOINTS = Object.freeze({
+  soniox: "https://api.soniox.com/v1/models",
+  "fish-audio": "https://api.fish.audio/model?page_size=1&page_number=1&self=true",
+});
 const PUBLIC_DIR = path.join(__dirname, "..", "..", "public");
 const SETTINGS_ASSETS = new Map([
   ["/settings", { filename: "settings.html", contentType: "text/html; charset=utf-8" }],
@@ -35,6 +42,15 @@ function writeJson(res, status, body, headers = {}) {
     "Content-Length": bytes.length,
     "Cache-Control": "no-store",
     ...headers,
+  });
+  res.end(bytes);
+}
+
+function writeWav(res, bytes) {
+  res.writeHead(200, {
+    "Content-Type": "audio/wav",
+    "Content-Length": bytes.length,
+    "Cache-Control": "no-store",
   });
   res.end(bytes);
 }
@@ -118,6 +134,8 @@ function writeError(res, error, requestId) {
     SETTINGS_VALIDATION_FAILED: 422,
     SETTINGS_MULTI_PROCESS_UNSUPPORTED: 503,
     SETTINGS_AUDIO_NOT_FOUND: 404,
+    SETTINGS_CONNECTION_RATE_LIMITED: 429,
+    SETTINGS_PREVIEW_TIMEOUT: 504,
     TEST_NOT_IMPLEMENTED: 501,
   }[error.code] || 500);
   const code = typeof error.code === "string" && (error.code.startsWith("SETTINGS_") || error.code === "TEST_NOT_IMPLEMENTED")
@@ -139,6 +157,12 @@ function writeError(res, error, requestId) {
     SETTINGS_AUDIO_CLIP_LIMIT: "Managed audio clip limit exceeded",
     SETTINGS_AUDIO_CONVERSION_TIMEOUT: "Audio conversion timed out",
     SETTINGS_AUDIO_CLEANUP_FAILED: "Audio cleanup failed",
+    SETTINGS_CONNECTION_RATE_LIMITED: "Connection tests are rate limited",
+    SETTINGS_PREVIEW_NOT_CONFIGURED: "TTS preview is not configured",
+    SETTINGS_PREVIEW_DURATION_LIMIT: "TTS preview exceeded the duration limit",
+    SETTINGS_PREVIEW_AUDIO_INVALID: "TTS preview audio is invalid",
+    SETTINGS_PREVIEW_PROVIDER_FAILED: "TTS preview provider request failed",
+    SETTINGS_PREVIEW_TIMEOUT: "TTS preview timed out",
     TEST_NOT_IMPLEMENTED: "Settings feature is not implemented",
   };
   const body = { error: { code, message: messages[code] || "Settings request failed" } };
@@ -189,6 +213,101 @@ async function readJson(req, limit) {
   } catch {
     throw settingsError("SETTINGS_MALFORMED_JSON", "Malformed JSON", 400);
   }
+}
+
+function assertCommittedRevision(revision) {
+  const state = readConfigState(getRuntime().startup.configPath);
+  if (!state.valid || state.revision !== revision) {
+    throw settingsError("SETTINGS_REVISION_CONFLICT", "Settings revision changed", 409);
+  }
+}
+
+function connectionResult(provider, code, durationMs) {
+  const messages = {
+    CONNECTED: "Connection succeeded",
+    NOT_CONFIGURED: "Connection is not configured",
+    AUTH_FAILED: "Authentication failed",
+    UNREACHABLE: "Provider is unreachable",
+    TIMEOUT: "Connection timed out",
+    RATE_LIMITED: "Provider rate limit exceeded",
+    PROVIDER_ERROR: "Provider request failed",
+  };
+  return {
+    ok: code === "CONNECTED",
+    provider,
+    code,
+    message: messages[code],
+    durationMs: Math.max(0, Math.round(durationMs)),
+  };
+}
+
+function networkCode(error) {
+  let current = error;
+  for (let depth = 0; current && depth < 5; depth += 1, current = current.cause) {
+    if (["ECONNREFUSED", "ECONNRESET", "ENETUNREACH", "EHOSTUNREACH", "ENOTFOUND", "EAI_AGAIN"].includes(current.code)) {
+      return "UNREACHABLE";
+    }
+  }
+  return "PROVIDER_ERROR";
+}
+
+async function testConnection(provider, options = {}) {
+  const credentialId = provider === "soniox" ? "soniox_api_key" : "fish_audio_api_key";
+  const credential = require("./resolver").getEffectiveValue(credentialId);
+  const now = options.now || Date.now;
+  const startedAt = now();
+  if (typeof credential !== "string" || credential.trim() === "") {
+    return connectionResult(provider, "NOT_CONFIGURED", now() - startedAt);
+  }
+  const controller = new AbortController();
+  let expired = false;
+  const timer = setTimeout(() => {
+    expired = true;
+    controller.abort();
+  }, options.timeoutMs ?? CONNECTION_TIMEOUT_MS);
+  timer.unref?.();
+  try {
+    const response = await (options.fetchFn || globalThis.fetch)(
+      options.endpoints?.[provider] || CONNECTION_ENDPOINTS[provider],
+      {
+        method: "GET",
+        headers: { Accept: "application/json", Authorization: `Bearer ${credential}` },
+        redirect: "error",
+        signal: controller.signal,
+      },
+    );
+    try { await response.body?.cancel(); } catch { /* vendor bodies are never retained */ }
+    let code = "PROVIDER_ERROR";
+    if (response.ok) code = "CONNECTED";
+    else if (response.status === 401 || response.status === 403) code = "AUTH_FAILED";
+    else if (response.status === 408 || response.status === 504) code = "TIMEOUT";
+    else if (response.status === 429) code = "RATE_LIMITED";
+    return connectionResult(provider, code, now() - startedAt);
+  } catch (error) {
+    return connectionResult(provider, expired ? "TIMEOUT" : networkCode(error), now() - startedAt);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function createConnectionLimiter(options = {}) {
+  // One attempt per provider per second. State is handler-local and keyed by the
+  // validated provider literal, so one vendor cannot consume another's allowance.
+  const lastAttempt = new Map();
+  const now = options.now || Date.now;
+  const minIntervalMs = options.minIntervalMs ?? CONNECTION_MIN_INTERVAL_MS;
+  return function take(provider) {
+    const current = now();
+    const previous = lastAttempt.get(provider);
+    if (previous !== undefined && current - previous < minIntervalMs) return false;
+    lastAttempt.set(provider, current);
+    return true;
+  };
+}
+
+function logPreview(logger, record) {
+  const write = typeof logger?.info === "function" ? logger.info.bind(logger) : console.info;
+  write(JSON.stringify(record));
 }
 
 function prepareMutationFields(fields, revision) {
@@ -295,6 +414,8 @@ async function migrateClass1(req, options) {
 
 function createSettingsHandler(options = {}) {
   const settingsOptions = { port: options.port || 5005 };
+  const connectionOptions = options.connections || {};
+  const takeConnectionAllowance = createConnectionLimiter(connectionOptions);
   return async function handleSettings(req, res) {
     let url;
     try { url = new URL(req.url || "/", "http://localhost"); } catch { return false; }
@@ -372,14 +493,41 @@ function createSettingsHandler(options = {}) {
         if (!PROVIDERS.has(connectionMatch[1])) {
           throw settingsError("SETTINGS_VALIDATION_FAILED", "Request validation failed", 422);
         }
-        parseStrict(sha256RevisionOnlySchema, await readJson(req, CONNECTION_JSON_LIMIT));
-        throw settingsError("TEST_NOT_IMPLEMENTED", "Settings feature is not implemented", 501);
+        const body = parseStrict(sha256RevisionOnlySchema, await readJson(req, CONNECTION_JSON_LIMIT));
+        assertCommittedRevision(body.revision);
+        const provider = connectionMatch[1];
+        if (!IMPLEMENTED_PROVIDERS.has(provider)) {
+          throw settingsError("TEST_NOT_IMPLEMENTED", "Settings feature is not implemented", 501);
+        }
+        if (!takeConnectionAllowance(provider)) {
+          throw settingsError("SETTINGS_CONNECTION_RATE_LIMITED", "Connection tests are rate limited", 429);
+        }
+        writeJson(res, 200, await testConnection(provider, connectionOptions));
+        return true;
       }
 
-      const childShell = req.method === "POST" && url.pathname === "/api/settings/tts-preview";
-      if (childShell) {
+      if (req.method === "POST" && url.pathname === "/api/settings/tts-preview") {
         requireSameOrigin(req, settingsOptions);
-        throw settingsError("TEST_NOT_IMPLEMENTED", "Settings feature is not implemented", 501);
+        const startedAt = Date.now();
+        let byteCount = 0;
+        let outcomeCode = "SETTINGS_PREVIEW_FAILED";
+        try {
+          const body = parseStrict(ttsPreviewSchema, await readJson(req, JSON_LIMIT));
+          const preview = await previewTts(body, options.preview || {});
+          byteCount = preview.wav.length;
+          outcomeCode = "SETTINGS_PREVIEW_OK";
+          logPreview(options.logger, {
+            requestId, durationMs: Math.max(0, Date.now() - startedAt), byteCount, outcomeCode,
+          });
+          writeWav(res, preview.wav);
+          return true;
+        } catch (error) {
+          outcomeCode = typeof error.code === "string" ? error.code : outcomeCode;
+          logPreview(options.logger, {
+            requestId, durationMs: Math.max(0, Date.now() - startedAt), byteCount, outcomeCode,
+          });
+          throw error;
+        }
       }
 
       req.resume?.();
@@ -401,11 +549,14 @@ module.exports = {
   _test: {
     buildExportDocument,
     buildSettingsUiManifest,
+    CONNECTION_TIMEOUT_MS,
+    createConnectionLimiter,
     importSettings,
     parseImportRequest,
     readJson,
     renderSettingsHtml,
     requireSameOrigin,
     safeEmbeddedJson,
+    testConnection,
   },
 };

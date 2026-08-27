@@ -132,6 +132,12 @@ h1 { margin: 0; font-size: clamp(30px, 5vw, 44px); letter-spacing: -.04em; line-
 
 .preset-field textarea { min-height: 105px; padding: 11px 12px; font-size: 13px; line-height: 1.6; }
 .preset-field .btn-text { align-self: flex-start; }
+.tts-preview { margin-top: 20px; padding: 16px; border: 1px solid var(--hairline); border-radius: 9px; background: var(--sunken); }
+.tts-preview .audio-manager-heading { margin-bottom: 10px; }
+.billing-notice { margin: 0 0 12px; padding: 10px 12px; border-left: 3px solid var(--warning); color: var(--ink-secondary); background: var(--warning-soft); font-size: 11px; line-height: 1.6; }
+.tts-preview-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 12px; }
+.tts-preview-controls textarea { min-height: 74px; }
+.tts-preview audio { width: 100%; height: 36px; margin-top: 12px; }
 .audio-manager { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--hairline); }
 .audio-manager-heading { align-items: center; margin-bottom: 8px; }
 .audio-manager-heading > div { display: flex; flex-direction: column; gap: 3px; }
@@ -190,7 +196,7 @@ h1 { margin: 0; font-size: clamp(30px, 5vw, 44px); letter-spacing: -.04em; line-
 }
 
 @media (max-width: 700px) {
-  .settings-state-stack, .field-grid, .preset-grid, .toggle-grid, .emotion-help ul, .transfer-grid, .audio-upload-grid { grid-template-columns: 1fr; }
+  .settings-state-stack, .field-grid, .preset-grid, .toggle-grid, .emotion-help ul, .transfer-grid, .audio-upload-grid, .tts-preview-controls { grid-template-columns: 1fr; }
   .field.span-2 { grid-column: auto; }
   .credential-item.span-2, .transfer-card.span-2 { grid-column: auto; }
   .credential-summary { grid-template-columns: minmax(0, 1fr) auto; gap: 10px; }

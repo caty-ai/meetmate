@@ -1,6 +1,7 @@
 "use strict";
 
 require("./settings-audio-cases");
+require("./settings-connections-preview-cases");
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -280,9 +281,17 @@ test("Phase A handler mutation proof covers conflict, import reports, and live e
   assert.equal(envelope.restartRequired.includes("agent_emotion_tags"), false);
 });
 
-test("Phase A connection shells retain all providers and require a SHA-256 revision", async (t) => {
+test("connection routes retain all providers and require a SHA-256 revision", async (t) => {
   const { handler, configState } = fixture(t, {});
-  for (const provider of ["soniox", "deepgram", "fish-audio", "attendee", "slack"]) {
+  for (const provider of ["soniox", "fish-audio"]) {
+    const res = response();
+    await handler(request("POST", `/api/settings/connections/${provider}/test`, { revision: configState.revision }), res);
+    assert.equal(res.status, 200, `${provider} ${res.body}`);
+    assert.deepEqual(JSON.parse(res.body), {
+      ok: false, provider, code: "NOT_CONFIGURED", message: "Connection is not configured", durationMs: 0,
+    });
+  }
+  for (const provider of ["deepgram", "attendee", "slack"]) {
     const res = response();
     await handler(request("POST", `/api/settings/connections/${provider}/test`, { revision: configState.revision }), res);
     assert.equal(res.status, 501, `${provider} ${res.body}`);
