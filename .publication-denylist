@@ -5,6 +5,9 @@
 #   ここに現れるのは「個人環境の痕跡を検出するため」の検出子であって秘密の暴露ではない。）
 # 実名など機微パターンを足す場合は (b) secret 注入方式へ切り替える（オーナー決裁事項）。
 personal-home-path	/Users/shojikumaru
+# family-os#138 の結合 shape をそのまま採用（/Users/ 総称 + /home/ 実名。<user>/{user} プレースホルダは除外）。
+# 上の personal-home-path（オーナー実パス検出子）とは役割が重なるが、家族整合を優先して併置する。
+absolute-personal-path	(?-i:/Users/|/home/(?![<{])[A-Za-z0-9._-]+)
 handoffs-file	_handoffs/[A-Za-z0-9._-]
 tailscale-cgnat	\b100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]{1,3}\.[0-9]{1,3}\b
 family-vault-path	SharedHub/family-vault

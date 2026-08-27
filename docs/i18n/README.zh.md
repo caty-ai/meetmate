@@ -32,7 +32,7 @@ npx meetmate init     # 向导会收集你的 API 密钥、语音 ID 和 LLM 端
 npx meetmate start    # 启动服务器并打印设置界面 URL
 ```
 
-打开打印出来的 URL,粘贴 Meet 或 Zoom 链接,点击 **Join**。在 Meet 中批准机器人的“Ask to join”请求——然后叫它的唤醒词,开始说话。ngrok/Tailscale 和 Meet 的入会批准步骤仍需手动完成;向导结束时的提示和[安装指南](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md)会带你走完这些步骤。
+打开打印出来的 URL,粘贴 Meet 或 Zoom 链接,点击 **Join**（[界面预览见这里](#界面长什么样)）。在 Meet 中批准机器人的“Ask to join”请求——然后叫它的唤醒词,开始说话。ngrok/Tailscale 和 Meet 的入会批准步骤仍需手动完成;向导结束时的提示和[安装指南](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md)会带你走完这些步骤。
 
 ## 它能做什么
 
@@ -42,7 +42,24 @@ npx meetmate start    # 启动服务器并打印设置界面 URL
 - **“平平无奇”正是卖点。** 不用按键发言,没有特殊命令,没有尴尬的沉默。你像跟同事说话一样跟它说话——这种“没什么特别”的感觉,本身就是产品。
 - **在哪开会都行,在哪运行都行。** 会议侧支持 Google Meet 和 Zoom;服务器侧支持 Windows、macOS 和 Linux。一份配置、几个 API 密钥、一条命令——头像图片想换就换。
 
-> 📸 真实会议中的截图和演示 GIF 正在路上。
+## 界面长什么样
+
+一个界面，一件事——把你的智能体送进会议室。`npx meetmate start` 打印的 URL 打开的就是这个设置界面。（界面文字目前为日语，下面的说明会告诉你每一步在做什么。）
+
+<img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-ui-idle.png" alt="启动后的 Meetmate 设置界面 — 粘贴框、未激活的加入按钮和会话指标" width="100%">
+
+1. **启动。** 打开打印出的 URL 就到了这里。大输入框用来放会议信息；在此之前**加入按钮**保持禁用。
+2. **粘贴邀请。** 单独的 Meet / Zoom URL 可以，**整段日历邀请原样粘贴**也可以——Meetmate 会自动提取会议 URL（绿色的「検出済み」提示，即"已检测到"），并激活加入按钮。
+
+   <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-ui-invite-pasted.png" alt="粘贴整段日历邀请 — Meet URL 被自动检测，加入按钮已激活" width="100%">
+
+3. **加入并等待放行。** 点击的瞬间就会出现会话卡片——计时器从此刻开始走动，旁边是 WS 连接状态和智能体名字。机器人先启动（🔄 起動中...），向 Meet 请求入会；进入房间后 WS 状态变为已连接。
+
+   <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-ui-joining.png" alt="会话卡片 — 等待放行的状态：计时器已开始走动，WS 在获准入会前保持未连接" width="100%">
+
+4. **在 Meet 里批准。** 唯一的手动步骤，在你这一侧完成——像批准普通访客一样批准机器人的"请求加入"。然后喊它的唤醒词，开始对话。
+
+从 API 密钥到第一声问候的完整流程，见[设置指南](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md)。
 
 ## 当前状态
 

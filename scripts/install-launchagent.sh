@@ -23,6 +23,18 @@ LABEL=""
 WORKING_DIR=""
 PORT=""
 
+sed_escape() { local s="$1"; s="${s//\\/\\\\}"; s="${s//&/\\&}"; s="${s//|/\\|}"; printf '%s' "$s"; }
+xml_escape() { local s="$1"; s="${s//&/&amp;}"; s="${s//</&lt;}"; s="${s//>/&gt;}"; printf '%s' "$s"; }
+
+reject_newline() {
+  local name="$1"
+  local value="$2"
+  if [[ "$value" == *$'\n'* ]]; then
+    echo "Error: $name must not contain a newline." >&2
+    exit 1
+  fi
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --label) LABEL="$2"; shift 2 ;;
@@ -40,6 +52,9 @@ if [ -z "$LABEL" ] || [ -z "$WORKING_DIR" ]; then
   echo "Usage: $0 --label LABEL --dir WORKING_DIR [--port PORT]" >&2
   exit 1
 fi
+
+reject_newline "Label" "$LABEL"
+reject_newline "Working directory" "$WORKING_DIR"
 
 if [ ! -f "$TEMPLATE" ]; then
   echo "Error: Template not found at $TEMPLATE" >&2
@@ -61,7 +76,19 @@ if [ -z "$NODE_PATH" ]; then
   exit 1
 fi
 
+NODE_DIR="$(dirname "$NODE_PATH")"
+
 PLIST_DEST="$HOME/Library/LaunchAgents/${LABEL}.plist"
+
+reject_newline "Node path" "$NODE_PATH"
+reject_newline "Node directory" "$NODE_DIR"
+reject_newline "Log directory" "$LOG_DIR"
+
+LABEL_ESCAPED="$(sed_escape "$(xml_escape "$LABEL")")"
+WORKING_DIR_ESCAPED="$(sed_escape "$(xml_escape "$WORKING_DIR")")"
+NODE_PATH_ESCAPED="$(sed_escape "$(xml_escape "$NODE_PATH")")"
+NODE_DIR_ESCAPED="$(sed_escape "$(xml_escape "$NODE_DIR")")"
+LOG_DIR_ESCAPED="$(sed_escape "$(xml_escape "$LOG_DIR")")"
 
 echo "Installing LaunchAgent:"
 echo "  Label:      $LABEL"
@@ -81,11 +108,23 @@ mkdir -p "$LOG_DIR"
 
 # Generate plist from template
 sed \
-  -e "s|{{LABEL}}|${LABEL}|g" \
-  -e "s|{{WORKING_DIR}}|${WORKING_DIR}|g" \
-  -e "s|{{NODE_PATH}}|${NODE_PATH}|g" \
-  -e "s|{{LOG_DIR}}|${LOG_DIR}|g" \
+  -e "s|{{LABEL}}|${LABEL_ESCAPED}|g" \
+  -e "s|{{WORKING_DIR}}|${WORKING_DIR_ESCAPED}|g" \
+  -e "s|{{NODE_PATH}}|${NODE_PATH_ESCAPED}|g" \
+  -e "s|{{NODE_DIR}}|${NODE_DIR_ESCAPED}|g" \
+  -e "s|{{LOG_DIR}}|${LOG_DIR_ESCAPED}|g" \
   "$TEMPLATE" > "$PLIST_DEST"
+
+if grep -q '{{' "$PLIST_DEST"; then
+  echo "Error: unrendered placeholder in $PLIST_DEST" >&2
+  rm -f "$PLIST_DEST"
+  exit 1
+fi
+
+if ! plutil -lint "$PLIST_DEST" >/dev/null; then
+  echo "Error: generated plist failed plutil -lint: $PLIST_DEST" >&2
+  exit 1
+fi
 
 echo "Plist installed."
 

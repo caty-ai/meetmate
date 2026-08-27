@@ -32,7 +32,7 @@ npx meetmate init     # ウィザードが API キー・ボイスID・LLM エン
 npx meetmate start    # サーバーを起動し、設定 UI の URL を表示します
 ```
 
-表示された URL を開き、Meet または Zoom の URL を貼り付けて **Join** をクリックします。Meet 側でボットの「参加をリクエスト」を承認してから、ウェイクワードで呼びかけて話し始めてください。ngrok/Tailscale と Meet の入室承認は手動のままです。詳しい手順はウィザードの締めのメッセージと[セットアップガイド](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md)で確認できます。
+表示された URL を開き、Meet または Zoom の URL を貼り付けて **「Meet に参加させる」** をクリックします（[実際の画面はこちら](#画面はこんな感じ)）。Meet 側でボットの「参加をリクエスト」を承認してから、ウェイクワードで呼びかけて話し始めてください。ngrok/Tailscale と Meet の入室承認は手動のままです。詳しい手順はウィザードの締めのメッセージと[セットアップガイド](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md)で確認できます。
 
 ## 何ができるのか
 
@@ -42,7 +42,24 @@ npx meetmate start    # サーバーを起動し、設定 UI の URL を表示�
 - **「普通にできる」が製品です。** プッシュトゥトーク不要、特別なコマンド不要、気まずい沈黙もなし。同僚に話しかけるのと同じように話す——それが当たり前に感じられることこそ、磨いた部分です。
 - **会議はどこでも、サーバーもどこでも。** 会議側は Google Meet と Zoom、サーバー側は Windows / macOS / Linux。設定ファイルと API キーを用意して、コマンド1発（アバター画像はお好みで差し替え可能）。
 
-> 📸 実際の会議に参加しているスクリーンショットとデモ GIF は準備中です。
+## 画面はこんな感じ
+
+画面は1つ、やることも1つ——エージェントを会議室に入れるだけ。`npx meetmate start` が URL を表示する設定画面がこれです。
+
+<img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-ui-idle.png" alt="起動直後の Meetmate 設定画面 — 貼り付け欄・無効状態の参加ボタン・セッション指標" width="100%">
+
+1. **起動する。** 表示された URL を開くとこの画面。大きな入力欄に会議情報を入れるまで、**参加ボタン**は押せません。
+2. **招待文を貼る。** Meet / Zoom の URL 単体でも、**カレンダーの招待文をまるごと**でもOK。Meetmate が URL を自動抽出して（緑の「検出済み」表示）、参加ボタンが有効になります。
+
+   <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-ui-invite-pasted.png" alt="カレンダー招待文をそのまま貼り付け — Meet URL が自動検出され参加ボタンが有効化" width="100%">
+
+3. **参加させて、入室待ち。** クリックした瞬間に通話中カードが現れます。タイマーはこの時点から回り始め、WS 接続状態とエージェント名が並びます。bot は起動（🔄 起動中...）→ Meet へ入室リクエスト → 入室が許可されると WS 表示が「接続 OK」に変わります。
+
+   <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-ui-joining.png" alt="通話中カード — 入室待ちの状態。タイマーは回り始め、WS は許可まで未接続" width="100%">
+
+4. **Meet 側で承認する。** 唯一の手動ステップ。ほかのゲストと同じように bot の「参加をリクエスト」を承認したら、あとはウェイクワードで呼びかけるだけです。
+
+同じ流れを API キーの取得から最初の挨拶まで詳しく追った版は[セットアップガイド](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md)にあります。
 
 ## 現在のステータス
 

@@ -1,6 +1,6 @@
 {
   "name": "meetmate",
-  "version": "8.1.1",
+  "version": "8.2.0",
   "description": "Bring your own AI agent into Google Meet & Zoom, as a real voice participant.",
   "keywords": [
     "ai-agent",
@@ -52,5 +52,6 @@
   "engines": {
     "node": ">=26.0.0"
   },
+  "author": "Sho Jikumaru",
   "license": "MIT"
 }
