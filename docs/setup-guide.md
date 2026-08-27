@@ -318,12 +318,23 @@ node src/server.js
 🚀  Meet Server started: http://localhost:5006
 ```
 
-### 7. 動作確認
+### 7. 動作確認（画面つきウォークスルー）
 
-1. ブラウザで `http://localhost:5006` を開く
-2. Google Meet URL を貼り付けて「参加させる」をクリック
-3. Meet 側で参加リクエストを承認
-4. 約30秒で Bot が参加 → 挨拶が流れれば成功 ✅
+1. ブラウザで `http://localhost:5006`（設定したポート）を開く。起動直後はこの画面。参加ボタンは会議情報を入れるまで無効のまま:
+
+   <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-ui-idle.png" alt="起動直後の設定画面。上に会議情報の貼り付け欄と無効状態の参加ボタン、右にセッション指標" width="100%">
+
+2. 会議情報を貼り付ける。Meet / Zoom の URL 単体でもよいし、**Google カレンダーの招待文をまるごと貼っても URL だけ自動抽出される**。抽出に成功すると緑の「検出済み: <URL>」が出て、参加ボタンが有効になる:
+
+   <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-ui-invite-pasted.png" alt="招待文をまるごと貼り付けた状態。検出済みの緑表示と有効化された参加ボタン" width="100%">
+
+3. 「Meet に参加させる」をクリックした瞬間に通話中カードが現れる。タイマーはクリック時点から回り始め、WS 接続状態とエージェント名もこの時点から表示される。状態表示は **🔄 起動中...** から始まり、Bot が Meet の入室許可を待っている間は **WS 未接続** のまま。入室が許可されると **WS 接続 OK** に変わる:
+
+   <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-ui-joining.png" alt="通話中カード。入室許可待ちの状態で、タイマー・WS 状態（未接続）・エージェント名が表示されている" width="100%">
+
+4. Meet 側に「〜が参加をリクエストしています」のダイアログが出るので**承認する**（ここだけは人間の手作業。アプリ側からは代行できない）。
+
+5. 約30秒で Bot が参加 → 挨拶が流れれば成功 ✅ あとはウェイクワードで呼びかければ応答する。
 
 ---
 

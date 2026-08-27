@@ -33,7 +33,7 @@ npx meetmate init     # the wizard collects your API keys, voice ID, and LLM end
 npx meetmate start    # starts the server and prints the settings-UI URL
 ```
 
-Open the printed URL, paste a Meet or Zoom URL, and click **Join**. Approve the bot's "Ask to join" request in Meet — then call its wake word and start talking. ngrok/Tailscale and the Meet admission step stay manual; the wizard's closing message and the [Setup guide](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md) walk you through them.
+Open the printed URL, paste a Meet or Zoom URL, and click **Join** — [here's what that screen looks like](#what-it-looks-like). Approve the bot's "Ask to join" request in Meet — then call its wake word and start talking. ngrok/Tailscale and the Meet admission step stay manual; the wizard's closing message and the [Setup guide](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md) walk you through them.
 
 ## What it does
 
@@ -43,7 +43,24 @@ Open the printed URL, paste a Meet or Zoom URL, and click **Join**. Approve the 
 - **Ordinary is the point.** No push-to-talk, no special commands, no awkward silences. You talk to it the way you talk to a colleague — that this feels unremarkable is the product.
 - **Works where you meet, runs where you work.** Google Meet and Zoom on the meeting side; Windows, macOS, and Linux on the server side. A config file, your API keys, one command — add a custom avatar if you like.
 
-> 📸 Screenshots and a demo GIF of a live meeting are on the way.
+## What it looks like
+
+One screen, one job: get your agent into the room. This is the settings UI that `npx meetmate start` prints the URL for. (Its labels are Japanese today; the captions below tell you what each step does.)
+
+<img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-ui-idle.png" alt="Meetmate settings UI right after start — a paste field, a disabled Join button, and session metrics" width="100%">
+
+1. **Start.** Open the printed URL and you land here. The big field takes a meeting; **Join** stays disabled until it has one.
+2. **Paste an invite.** A bare Meet/Zoom URL works — but so does a whole calendar invite, pasted as-is. Meetmate extracts the meeting URL for you (the green "検出済み" line) and enables **Join**.
+
+   <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-ui-invite-pasted.png" alt="A full calendar invite pasted — the Meet URL is auto-detected and Join is enabled" width="100%">
+
+3. **Join and wait at the door.** A session card appears the moment you click — the elapsed timer starts right away, next to the WS status and your agent's name. The bot spins up (🔄 起動中...), asks Meet for admission, and the WS status flips to connected once it's in the room.
+
+   <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-ui-joining.png" alt="Active session card while the bot waits for admission — timer already running, WS still disconnected" width="100%">
+
+4. **Admit it in Meet.** The one manual step, on your side of the call — approve the bot's "Ask to join" request like any other guest. Then call its wake word and start talking.
+
+The [Setup guide](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md) walks through the same flow with more detail, from API keys to first hello.
 
 ## Current status
 
