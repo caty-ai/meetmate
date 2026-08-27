@@ -1,4 +1,7 @@
 # Meetmate
+<!-- repo-state:begin (generated; do not edit) -->
+<p align="center"><sub>generation: <code>f84fee3</code> (2026-08-26T20:06:34Z) · verify: <a href="https://api.github.com/repos/caty-ai/meetmate/commits/feat/repo-state-caller-36">API HEAD</a> · <a href="./status.json">status.json</a></sub></p>
+<!-- repo-state:end -->
 
 **English** | [日本語](https://github.com/caty-ai/meetmate/blob/main/docs/i18n/README.ja.md) | [中文](https://github.com/caty-ai/meetmate/blob/main/docs/i18n/README.zh.md) | [ไทย](https://github.com/caty-ai/meetmate/blob/main/docs/i18n/README.th.md)
 
