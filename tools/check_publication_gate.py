@@ -920,6 +920,12 @@ def selftest_shipped_denylist():
         all(wsl_user_path.search(path) is None for path in wsl_safe_paths),
         "shipped wsl-drvfs-user-path permits clean controls",
     )
+    # Accepted cost, frozen by the x-collector#75 panel: URL paths spelling /mnt/<drive>/users/<name> DO match (fail-closed). Do not "fix" this as a false positive.
+    _selftest_check(
+        wsl_user_path.search("https://example.com/mn" + "t/c/us" + "ers/alice")
+        is not None,
+        "shipped wsl-drvfs-user-path accepted URL over-detection cost",
+    )
     wsl_failures = []
     _selftest_check(
         check_denylist({"wsl.txt": wsl_lowercase_leak}, wsl_rules, wsl_failures)
