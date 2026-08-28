@@ -30,7 +30,6 @@ const { servePublicAsset, serveLocalAvatar, sendMetricsSummary } = require("../u
 const { logsDir, avatarCachePath, bundledAssetPath, bundledPublicDir } = require("../paths");
 const {
   getDiagnosticValue,
-  getEffectiveSource,
   getEffectiveValue,
   getRawConfig,
   getStatus,
@@ -39,6 +38,7 @@ const {
   resolveDynamicSlackToken,
 } = require("../settings/resolver");
 
+// Direct environment reads below are line-pinned by settings-env-inventory.json.
 const ATTENDEE_API_BASE_URL = getEffectiveValue("attendee_base_url");
 const SESSION_GRACE_CLOSE_MS = Number(process.env.SESSION_GRACE_CLOSE_MS || 15_000);
 const ECHO_LOOP_COOLDOWN_MS = Number(process.env.ECHO_LOOP_COOLDOWN_MS || 300);
@@ -131,13 +131,13 @@ function getMeetSlackNotifier() {
     const statusChannel = getEffectiveValue("slack_status_channel") || summaryChannel || fallback;
 
     const agentSlackToken = resolveDynamicSlackToken();
-    const explicitlyEnabled = notifyEnabled && !["default", "unset"].includes(getEffectiveSource("slack_notifications_enabled"));
+    // The default-backed true value enables notifications; a saved false still disables them.
 
     meetSlackNotifier = new SlackNotifier(
       agentSlackToken,
       fallback,
       {
-        enabled: explicitlyEnabled && meaningful(agentSlackToken),
+        enabled: notifyEnabled && meaningful(agentSlackToken),
         notifyTarget,
         dmUserId,
         statusChannelId: statusChannel,
@@ -1283,11 +1283,13 @@ async function handleHttp(req, res) {
       const attendeePayload = JSON.stringify(botPayload);
       const attendeeResult = await createAttendeeBotWithRetry(attendeePayload, agentAttendeeKey);
       if (attendeeResult.statusCode >= 200 && attendeeResult.statusCode < 300) {
-        console.log("✅  Bot起動成功:", attendeeResult.body);
+        let parsedBotId = null;
         try {
           const botData = JSON.parse(attendeeResult.body);
+          if (typeof botData.id === "string" || typeof botData.id === "number") parsedBotId = botData.id;
           if (botData.id) sessionBotIds.set(sessionId, { botId: botData.id, attendeeKey: agentAttendeeKey });
         } catch { /* ignore parse errors */ }
+        console.log("✅  Bot起動成功:", { statusCode: attendeeResult.statusCode, botId: parsedBotId });
         writePlainResponse(
           res,
           200,

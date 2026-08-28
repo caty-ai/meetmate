@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
+const util = require("node:util");
 const { Readable } = require("node:stream");
 const { ENV_DIAGNOSTICS, SETTINGS_REGISTRY, REGISTRY_BY_ID, MASK } = require("../src/settings/registry");
 const { settingsMutationSchema } = require("../src/settings/schemas");
@@ -269,7 +270,7 @@ test("T12-03 startup/bootstrap boundary allows exactly eight settings modules", 
   assert.deepEqual(files, ["audio.js", "bootstrap.js", "class2-migration.js", "registry.js", "resolver.js", "routes.js", "schemas.js", "store.js"]);
   for (const file of files) {
     if (file === "bootstrap.js") continue;
-    assert.doesNotMatch(fs.readFileSync(path.join(directory, file), "utf8"), /process\.env|dotenv\.parse|\.env["'`]/, file);
+    assert.doesNotMatch(fs.readFileSync(path.join(directory, file), "utf8"), /process\.env|dotenv\.parse|\benvPath\b|\.env["'`]/, file);
   }
   assert.match(fs.readFileSync(path.join(__dirname, "..", "src", "server.js"), "utf8").split(/\r?\n/).slice(0, 4).join("\n"), /settings\/bootstrap.*captureStartup/);
   assert.match(fs.readFileSync(path.join(__dirname, "..", "bin", "ai-meet.js"), "utf8"), /function mcp\(\)[\s\S]*settings["', ]+bootstrap\.js["']\)\)\.captureStartup\(\)/);
@@ -403,6 +404,57 @@ test("T12-06/T12-07/T12-13 admin shell is local, masked, and setup-safe", async 
   await require("../src/transport-meet/meet-routes").handleHttp(settingsRequest("POST", "/join-meeting", { host: "localhost:5005" }), meeting);
   assert.equal(meeting.status, 503);
   assert.equal(JSON.parse(meeting.body).error.code, "MEETING_SETUP_REQUIRED");
+});
+
+test("T12-13 conjunctive class-1/2/3 sentinels stay out of every settings exit", { concurrency: false }, async (t) => {
+  const class1 = "CLASS1-JOINT-SWEEP-29-a83f1c";
+  const class2 = "CLASS2-JOINT-SWEEP-29-b94e2d";
+  const class3 = "CLASS3-JOINT-SWEEP-29-c05f3e";
+  const sentinels = [class1, class2, class3];
+  const logs = [];
+  const originalConsole = { log: console.log, warn: console.warn, error: console.error };
+  t.after(() => Object.assign(console, originalConsole));
+  console.log = (...args) => { logs.push(util.format(...args)); };
+  console.warn = (...args) => { logs.push(util.format(...args)); };
+  console.error = (...args) => { logs.push(util.format(...args)); };
+
+  resetRuntimeForTest();
+  initializeRuntime({
+    state: settingsState({
+      stt: { sonioxApiKey: class1 },
+      gateway: { token: class2 },
+      unknownControl: { WS_SHARED_TOKEN: class3 },
+    }),
+    startup: settingsStartup({
+      preDotenvEnv: { WS_SHARED_TOKEN: class3 },
+      connection: { openclawToken: class2 },
+    }),
+    serverPort: 5005,
+  });
+  const handler = createSettingsHandler({ port: 5005, now: () => new Date("2026-08-28T00:00:00.000Z") });
+  const exits = [];
+
+  for (const url of ["/api/settings", "/api/settings/export", "/settings", "/settings-assets/settings.js"]) {
+    const response = settingsResponse();
+    await handler(settingsRequest("GET", url, { host: "localhost:5005" }), response);
+    assert.equal(response.status, 200, `${url}: ${response.body}`);
+    exits.push([url, response.body]);
+  }
+
+  for (const [name, headers, body, status] of [
+    ["origin error", { host: "localhost:5005", origin: "https://remote.example", "content-type": "application/json" }, "{}", 403],
+    ["validation error", { host: "localhost:5005", origin: "http://localhost:5005", "sec-fetch-site": "same-origin", "content-type": "application/json" }, JSON.stringify({ schemaVersion: 1, revision: "a".repeat(64), fields: { agent_temperature: class1 } }), 422],
+  ]) {
+    const response = settingsResponse();
+    await handler(settingsRequest("PUT", "/api/settings", headers, body), response);
+    assert.equal(response.status, status, `${name}: ${response.body}`);
+    exits.push([name, response.body]);
+  }
+
+  exits.push(["captured logs", logs.join("\n")]);
+  for (const [name, output] of exits) {
+    for (const sentinel of sentinels) assert.equal(output.includes(sentinel), false, `${name} leaked ${sentinel}`);
+  }
 });
 
 test("T12-06 PUT accepts bootstrap/mask round trips and publishes before success", async (t) => {
