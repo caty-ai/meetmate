@@ -8,6 +8,8 @@ personal-home-path	/Users/shojikumaru
 # family-os#138 の結合 shape をそのまま採用（/Users/ 総称 + /home/ 実名。<user>/{user} プレースホルダは除外）。
 # 上の personal-home-path（オーナー実パス検出子）とは役割が重なるが、家族整合を優先して併置する。
 absolute-personal-path	(?-i:/Users/|/home/(?![<{])[A-Za-z0-9._-]+)
+# x-collector#71 で凍結した family windows-user-path shape をそのまま採用（Windows パス意味論 = 大文字小文字非区別・ドライブ文字任意・非 ASCII ユーザー名対象。<user>/{user} は除外）。
+windows-user-path	\b[A-Za-z]:[\\/]+Users[\\/]+(?![<{])[\w.-]+
 handoffs-file	_handoffs/[A-Za-z0-9._-]
 tailscale-cgnat	\b100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]{1,3}\.[0-9]{1,3}\b
 family-vault-path	SharedHub/family-vault
