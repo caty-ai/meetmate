@@ -770,6 +770,75 @@ def selftest_shipped_denylist():
             and not failures,
             "shipped absolute-personal-path permits placeholder or bare path",
         )
+    windows_rules = tuple(
+        rule for rule in load_denylist(root) if rule[0] == "windows-user-path"
+    )
+    _selftest_check(len(windows_rules) == 1, "shipped windows-user-path rule")
+    windows_user_path = windows_rules[0][1]
+    windows_backslash_leak = "C:\\Us" + "ers\\alice\\meetmate\\.env"
+    windows_mixed_sep_leak = "C:\\Us" + "ers/alice\\meetmate\\.env"
+    windows_cjk_leak = "C:\\Us" + "ers\\翔太郎\\meetmate\\.env"
+    windows_json_escaped_leak = "C:\\\\Us" + "ers\\\\alice\\\\meetmate\\\\.env"
+    windows_lowercase_leak = "c:\\us" + "ers\\bob\\secrets.txt"
+    windows_forward_leak = "C:/Us" + "ers/alice/meetmate/.env"
+    windows_drive_d_leak = "D:\\Us" + "ers\\carol\\notes.md"
+    windows_file_url_leak = "file:///C:/Us" + "ers/carol/meetmate/.env"
+    _selftest_check(
+        all(
+            windows_user_path.search(leak) is not None
+            for leak in (
+                windows_backslash_leak,
+                windows_mixed_sep_leak,
+                windows_cjk_leak,
+                windows_json_escaped_leak,
+                windows_lowercase_leak,
+                windows_forward_leak,
+                windows_drive_d_leak,
+                windows_file_url_leak,
+            )
+        ),
+        "shipped windows-user-path detects leak shapes",
+    )
+    windows_dotted_leak = "C:\\Us" + "ers\\j.doe\\meetmate\\.env"
+    windows_dotted_match = windows_user_path.search(windows_dotted_leak)
+    _selftest_check(
+        windows_dotted_match is not None
+        and windows_dotted_match.group(0) == "C:\\Us" + "ers\\j.doe",
+        "shipped windows-user-path dotted leak",
+    )
+    windows_safe_paths = (
+        "C:\\Us" + "ers\\<user>\\meetmate\\.env",
+        "C:\\Us" + "ers\\{user}\\meetmate\\.env",
+        "https://api.github.com/users/alice",
+        "mailto:Users/alice",
+        "mailto:/Us" + "ers/alice",
+    )
+    _selftest_check(
+        all(windows_user_path.search(path) is None for path in windows_safe_paths),
+        "shipped windows-user-path permits clean controls",
+    )
+    windows_failures = []
+    _selftest_check(
+        check_denylist(
+            {"win.txt": windows_backslash_leak}, windows_rules, windows_failures
+        )
+        == 1
+        and windows_failures
+        == ["denylist: win.txt:1 contains windows-user-path"],
+        "shipped windows-user-path scan finding",
+    )
+    windows_decoded_failures = []
+    _selftest_check(
+        check_denylist(
+            {"enc.txt": "C:%5CUs" + "ers%5Calice"},
+            windows_rules,
+            windows_decoded_failures,
+        )
+        == 1
+        and windows_decoded_failures
+        == ["denylist: enc.txt:1 contains windows-user-path (decoded view)"],
+        "shipped windows-user-path decoded scan finding",
+    )
 
 
 def selftest_scanners():
