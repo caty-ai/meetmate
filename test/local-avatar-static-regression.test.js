@@ -6,6 +6,7 @@ const http = require("node:http");
 const https = require("node:https");
 const crypto = require("node:crypto");
 const Module = require("node:module");
+const util = require("node:util");
 const { EventEmitter } = require("node:events");
 const { stringify } = require("node:querystring");
 
@@ -59,6 +60,58 @@ test("initialized static payload pins bot_image and omits voice_agent_settings",
     assert.equal("voice_agent_settings" in JSON.parse(createRequest.body), false);
     assertStaticIsolation(harness.isolation);
   });
+});
+
+test("Attendee success logging excludes an echoed WebSocket token", { concurrency: false }, async () => {
+  const sentinel = "WS-SHARED-TOKEN-ECHO-29-7f9c2e";
+  await withMeetRoutes(async (harness) => {
+    const join = await harness.join();
+    assert.equal(join.statusCode, 200);
+
+    const createRequest = harness.httpsRequests.find((request) => request.options.path === "/api/v1/bots");
+    assert.ok(createRequest, "Attendee create request was not made");
+    const echoed = JSON.parse(createRequest.responseBody);
+    assert.equal(new URL(echoed.websocket_settings.audio.url).searchParams.get("token"), sentinel);
+    assert.equal(
+      harness.consoleOutput.some((line) => line.includes(sentinel)),
+      false,
+      harness.consoleOutput.join("\n"),
+    );
+    assert.equal(harness.consoleOutput.some((line) => /Bot起動成功:.*statusCode.*201.*botId.*bot-echo-29/.test(line)), true);
+  }, {
+    env: { WS_SHARED_TOKEN: sentinel },
+    attendeeCreateResponse: (requestBody) => {
+      const payload = JSON.parse(requestBody);
+      return JSON.stringify({ id: "bot-echo-29", websocket_settings: payload.websocket_settings });
+    },
+  });
+});
+
+test("Slack notifier honors default-enabled and saved-false settings", { concurrency: false }, async () => {
+  const cases = [
+    { notifications: { target: "dm", dmUserId: "UDEFAULT29" }, expected: true },
+    { notifications: { enabled: false, target: "dm", dmUserId: "UDISABLED29" }, expected: false },
+  ];
+
+  for (const { notifications, expected } of cases) {
+    await withMeetRoutes(async (harness) => {
+      assert.equal((await harness.join()).statusCode, 200);
+      assert.equal(harness.slackNotifiers.length, 1);
+      assert.equal(harness.slackNotifiers[0].options.enabled, expected);
+      assert.equal(harness.slackNotifiers[0].enabled, expected);
+    }, {
+      env: { SLACK_NOTIFY_ENABLED: undefined },
+      settingsParsed: {
+        agent: { id: "caty", displayName: "Caty", wakeWords: ["ケイティ"] },
+        stt: { provider: "soniox", sonioxApiKey: "soniox-test-key" },
+        tts: { apiKey: "fish-test-key", voiceId: "fish-test-voice" },
+        attendee: { apiKey: "test-key" },
+        server: { ngrokDomain: "meetmate.example" },
+        slack: { botToken: "xoxb-test!fixture", notifications },
+        llm: { provider: "openclaw", model: "test" },
+      },
+    });
+  }
 });
 
 test("hybrid-local-l0 adds only voice_agent_settings to the initialized payload", { concurrency: false }, async () => {
@@ -279,7 +332,7 @@ function emptyIsolationEvidence() {
   };
 }
 
-async function withMeetRoutes(fn) {
+async function withMeetRoutes(fn, options = {}) {
   const settingsResolver = require("../src/settings/resolver");
   const routesPath = require.resolve("../src/transport-meet/meet-routes");
   const src = path.join(__dirname, "..", "src");
@@ -312,6 +365,7 @@ async function withMeetRoutes(fn) {
     SUMMARY_ENABLED: "false",
     JOIN_SHARED_TOKEN: undefined,
     WS_SHARED_TOKEN: undefined,
+    ...(options.env || {}),
   });
   settingsResolver.resetRuntimeForTest();
   settingsResolver.initializeRuntime({
@@ -320,7 +374,7 @@ async function withMeetRoutes(fn) {
       valid: true,
       revision: "a".repeat(64),
       fingerprint: "local-avatar-regression",
-      parsed: {
+      parsed: options.settingsParsed || {
         agent: { id: "caty", displayName: "Caty", wakeWords: ["ケイティ"] },
         stt: { provider: "soniox", sonioxApiKey: "soniox-test-key" },
         tts: { apiKey: "fish-test-key", voiceId: "fish-test-voice" },
@@ -348,6 +402,8 @@ async function withMeetRoutes(fn) {
   const httpsRequests = [];
   const pipelines = [];
   const pipelineConfigCalls = [];
+  const slackNotifiers = [];
+  const consoleOutput = [];
   const originalHttpsRequest = https.request;
   const originalHttpRequest = http.request;
   const originalHttpGet = http.get;
@@ -416,7 +472,14 @@ async function withMeetRoutes(fn) {
     warmUpMultipleAgents: () => {},
   });
   installMock(path.join(src, "session-events.js"), { SessionLifecycle: FakeLifecycle });
-  installMock(path.join(src, "slack-notifier.js"), { SlackNotifier: FakeSlackNotifier });
+  installMock(path.join(src, "slack-notifier.js"), {
+    SlackNotifier: class CapturingSlackNotifier extends FakeSlackNotifier {
+      constructor(...args) {
+        super(...args);
+        slackNotifiers.push(this);
+      }
+    },
+  });
   installMock(path.join(src, "summarizer.js"), { summarizeConversation: async () => "" });
   installMock(path.join(src, "agent-profile.js"), {
     resolveAgentProfile: () => ({
@@ -490,26 +553,31 @@ async function withMeetRoutes(fn) {
     if (/src\/.*local-avatar/i.test(stack)) isolation.timerCreations.push(stack);
     return originalSetInterval(callback, ms, ...args);
   };
-  https.request = (options, callback) => {
-    const record = { options, body: "" };
+  https.request = (requestOptions, callback) => {
+    const record = { options: requestOptions, body: "" };
     httpsRequests.push(record);
-    if (options.hostname !== "app.attendee.dev") isolation.networkRequests.push(`${options.hostname}${options.path}`);
+    if (requestOptions.hostname !== "app.attendee.dev") isolation.networkRequests.push(`${requestOptions.hostname}${requestOptions.path}`);
     const request = new EventEmitter();
     request.setTimeout = () => request;
     request.destroy = () => {};
     request.write = (chunk) => { record.body += String(chunk); };
     request.end = () => {
-      if (options.path === "/api/v1/bots") {
+      let responseBody = "{}";
+      if (requestOptions.path === "/api/v1/bots") {
         const payload = JSON.parse(record.body);
         for (const key of Object.keys(payload)) {
           if (/avatar|voice_agent/i.test(key)) isolation.capabilities.push(key);
         }
+        responseBody = typeof options.attendeeCreateResponse === "function"
+          ? options.attendeeCreateResponse(record.body)
+          : '{"id":"bot-static-173"}';
       }
+      record.responseBody = responseBody;
       const response = new EventEmitter();
-      response.statusCode = options.path === "/api/v1/bots" ? 201 : 200;
+      response.statusCode = requestOptions.path === "/api/v1/bots" ? 201 : 200;
       callback(response);
       queueMicrotask(() => {
-        response.emit("data", options.path === "/api/v1/bots" ? '{"id":"bot-static-173"}' : "{}");
+        response.emit("data", responseBody);
         response.emit("end");
       });
     };
@@ -533,9 +601,9 @@ async function withMeetRoutes(fn) {
   };
   crypto.randomUUID = () => FIXED_SESSION_ID;
   crypto.randomBytes = (size) => Buffer.alloc(size, 0x5a);
-  console.log = () => {};
-  console.warn = () => {};
-  console.error = () => {};
+  console.log = (...args) => { consoleOutput.push(util.format(...args)); };
+  console.warn = (...args) => { consoleOutput.push(util.format(...args)); };
+  console.error = (...args) => { consoleOutput.push(util.format(...args)); };
 
   let routes;
   const clients = [];
@@ -546,6 +614,8 @@ async function withMeetRoutes(fn) {
       httpsRequests,
       pipelines,
       pipelineConfigCalls,
+      slackNotifiers,
+      consoleOutput,
       init() {
         return routes.init({ detectNgrok: false, loadAvatar: true });
       },
@@ -622,7 +692,14 @@ class FakeLifecycle extends EventEmitter {
 }
 
 class FakeSlackNotifier {
-  constructor() { this.enabled = false; }
+  constructor(botToken, channelId, options = {}) {
+    this.botToken = botToken;
+    this.channelId = channelId;
+    this.options = options;
+    this.enabled = options.enabled !== false
+      && !!botToken
+      && (options.notifyTarget === "dm" ? !!options.dmUserId : !!(options.statusChannelId || channelId));
+  }
   postStatus() { return Promise.resolve(); }
   startElapsedUpdates() {}
   stopElapsedUpdates() {}
