@@ -52,8 +52,7 @@
   - [ ] `agent.keyterms` — Deepgram キーワードブースト用
   - [ ] `agent.sttWakeVariants` — 初期は `[]`（キャリブレーション後に更新）
   - [ ] `agent.ackVariants`, `exitFarewell`, `cancelAck`, `progressPings`, `timeoutFallback` — エージェントの口調に合わせる
-  - [ ] `gateway.url` — `${OPENCLAW_GATEWAY_URL}`（.envから読む）
-  - [ ] `gateway.token` — `${OPENCLAW_GATEWAY_TOKEN}`（.envから読む）
+  - [ ] Gateway 接続情報は **`.env` の環境変数のみ**（`OPENCLAW_GATEWAY_URL` / `OPENCLAW_GATEWAY_TOKEN`）。`config.json` の `gateway.url` / `gateway.token` は**書かない** — 書いても無視され、起動時に警告が出る
   - [ ] `server.port` — 他エージェントと被らないポート
   - [ ] `server.ngrokDomain` — ngrok 固定ドメイン（**自動検出に頼らない**）
   - [ ] `slack.botToken` — 必要なら設定

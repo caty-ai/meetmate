@@ -81,7 +81,7 @@ OpenClaw Gateway 連携により、Slack等のチャットと**同一のエー�
 - Fish Audio S1 REST API（ストリーミング）
 - PCM 16-bit signed LE, 16kHz 出力
 - **PCM バイトアラインメントバッファ**: 奇数バイトチャンクによるノイズ防止
-- 感情タグ（`(happy)`, `(nervous)` 等）を自動解釈
+- 感情タグ（`[soft voice]`, `[warm]` 等の角括弧5種固定 — 一覧は `src/messages.js`）を自動解釈
 
 #### pipeline.js — オーケストレーター
 - STT → LLM → TTS パイプラインの全体制御

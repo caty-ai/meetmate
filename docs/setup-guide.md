@@ -293,6 +293,8 @@ Legacy connection settings were ignored and must be supplied through the environ
 **エクスポートに含まれないもの**（＝2台目で自分で用意する必要があるもの）:
 
 - Soniox / Deepgram / Fish Audio / Attendee / Slack Bot token などの資格情報（class-1）
+- Gateway 接続情報（class-2 = `OPENCLAW_GATEWAY_URL` / `OPENCLAW_GATEWAY_TOKEN` / `OPENAI_COMPATIBLE_API_KEY` — そもそも設定ストアに存在せず `.env` 側）
+- 共有トークン（class-3 = `JOIN_SHARED_TOKEN` / `WS_SHARED_TOKEN` — 2台目の home で `npx meetmate init` を実行すれば自動で再生成される）
 - 事前録音 MP3（`audio_clips`）
 - 実際に bind されたポート番号（`server_port`）
 - home のパス（`resolved_home`）
