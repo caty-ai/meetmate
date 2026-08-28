@@ -411,6 +411,41 @@ test("T12-13 conjunctive class-1/2/3 sentinels stay out of every settings exit",
   const class2 = "CLASS2-JOINT-SWEEP-29-b94e2d";
   const class3 = "CLASS3-JOINT-SWEEP-29-c05f3e";
   const sentinels = [class1, class2, class3];
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-settings-sentinel-"));
+  const configPath = path.join(directory, "config.json");
+  const envPath = path.join(directory, ".env");
+  const agentsPath = path.join(directory, "AGENTS.md");
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  fs.writeFileSync(configPath, `${JSON.stringify({
+    agent: {
+      emotionTags: true,
+      greeting: "sentinel sweep greeting",
+      ackVariants: ["sentinel sweep acknowledgement"],
+      progressPings: ["sentinel sweep progress"],
+      exitFarewell: "sentinel sweep farewell",
+      cancelAck: "sentinel sweep cancellation",
+      timeoutFallback: "sentinel sweep timeout",
+    },
+    stt: { sonioxApiKey: class1 },
+    tts: { apiKey: class1, voiceId: "sentinel-sweep-voice" },
+    gateway: { token: class2 },
+    unknownControl: { WS_SHARED_TOKEN: class3 },
+  })}\n`, { mode: 0o600 });
+  fs.writeFileSync(envPath, [
+    "LLM_PROVIDER=openclaw",
+    `OPENCLAW_GATEWAY_TOKEN=${class2}`,
+    `WS_SHARED_TOKEN=${class3}`,
+    "",
+  ].join("\n"), { mode: 0o600 });
+
+  const generated = spawnSync(process.execPath, [path.join(__dirname, "..", "bin", "ai-meet.js"), "init"], {
+    cwd: directory,
+    env: { ...process.env, AI_MEET_HOME: directory },
+    encoding: "utf8",
+  });
+  assert.equal(generated.status, 0, generated.stderr);
+  assert.equal(fs.existsSync(agentsPath), true);
+
   const logs = [];
   const originalConsole = { log: console.log, warn: console.warn, error: console.error };
   t.after(() => Object.assign(console, originalConsole));
@@ -419,31 +454,88 @@ test("T12-13 conjunctive class-1/2/3 sentinels stay out of every settings exit",
   console.error = (...args) => { logs.push(util.format(...args)); };
 
   resetRuntimeForTest();
+  const state = readConfigState(configPath);
   initializeRuntime({
-    state: settingsState({
-      stt: { sonioxApiKey: class1 },
-      gateway: { token: class2 },
-      unknownControl: { WS_SHARED_TOKEN: class3 },
-    }),
+    state,
     startup: settingsStartup({
+      configPath,
+      resolvedHome: directory,
       preDotenvEnv: { WS_SHARED_TOKEN: class3 },
       connection: { openclawToken: class2 },
     }),
     serverPort: 5005,
   });
-  const handler = createSettingsHandler({ port: 5005, now: () => new Date("2026-08-28T00:00:00.000Z") });
+  const vendorCalls = [];
+  const handler = createSettingsHandler({
+    port: 5005,
+    now: () => new Date("2026-08-28T00:00:00.000Z"),
+    connections: {
+      minIntervalMs: 0,
+      endpoints: {
+        soniox: "http://127.0.0.1:1/soniox",
+        "fish-audio": "http://127.0.0.1:1/fish-audio",
+      },
+      fetchFn: async (_url, options) => {
+        vendorCalls.push(options.headers.Authorization);
+        const error = new TypeError("fetch failed");
+        error.cause = { code: "ECONNREFUSED" };
+        throw error;
+      },
+    },
+  });
   const exits = [];
+  let settingsEnvelope;
+  let exportDocument;
 
-  for (const url of ["/api/settings", "/api/settings/export", "/settings", "/settings-assets/settings.js"]) {
+  for (const [name, url] of [
+    ["API (settings GET)", "/api/settings"],
+    ["export", "/api/settings/export"],
+    ["UI (settings HTML)", "/settings"],
+    ["UI (served settings JS)", "/settings-assets/settings.js"],
+  ]) {
     const response = settingsResponse();
     await handler(settingsRequest("GET", url, { host: "localhost:5005" }), response);
     assert.equal(response.status, 200, `${url}: ${response.body}`);
-    exits.push([url, response.body]);
+    exits.push([name, response.body]);
+    if (url === "/api/settings") settingsEnvelope = JSON.parse(response.body);
+    if (url === "/api/settings/export") exportDocument = JSON.parse(response.body);
   }
 
+  const voicePresetIds = [
+    "agent_emotion_tags", "agent_greeting", "agent_ack_variants", "agent_progress_pings",
+    "agent_exit_farewell", "agent_cancel_ack", "agent_timeout_fallback",
+  ];
+  assert.equal(voicePresetIds.every((id) => Object.hasOwn(settingsEnvelope.fields, id)), true);
+  exits.push(["presets", JSON.stringify(Object.fromEntries(
+    voicePresetIds.map((id) => [id, settingsEnvelope.fields[id]]),
+  ))]);
+
+  for (const provider of ["soniox", "fish-audio"]) {
+    const response = settingsResponse();
+    await handler(settingsRequest("POST", `/api/settings/connections/${provider}/test`, {
+      host: "localhost:5005",
+      origin: "http://localhost:5005",
+      "sec-fetch-site": "same-origin",
+      "content-type": "application/json",
+    }, JSON.stringify({ revision: state.revision })), response);
+    assert.equal(response.status, 200, `${provider}: ${response.body}`);
+    exits.push([`connection-test responses (${provider})`, response.body]);
+  }
+  assert.deepEqual(vendorCalls, [`Bearer ${class1}`, `Bearer ${class1}`]);
+
+  const imported = settingsResponse();
+  await handler(settingsRequest("POST", "/api/settings/import", {
+    host: "localhost:5005",
+    origin: "http://localhost:5005",
+    "sec-fetch-site": "same-origin",
+    "content-type": "application/json",
+  }, JSON.stringify({ revision: state.revision, document: exportDocument })), imported);
+  assert.equal(imported.status, 200, imported.body);
+  exits.push(["import output", imported.body]);
+
   for (const [name, headers, body, status] of [
-    ["origin error", { host: "localhost:5005", origin: "https://remote.example", "content-type": "application/json" }, "{}", 403],
-    ["validation error", { host: "localhost:5005", origin: "http://localhost:5005", "sec-fetch-site": "same-origin", "content-type": "application/json" }, JSON.stringify({ schemaVersion: 1, revision: "a".repeat(64), fields: { agent_temperature: class1 } }), 422],
+    ["errors (origin)", { host: "localhost:5005", origin: "https://remote.example", "content-type": "application/json" }, "{}", 403],
+    ["errors (validation)", { host: "localhost:5005", origin: "http://localhost:5005", "sec-fetch-site": "same-origin", "content-type": "application/json" }, JSON.stringify({ schemaVersion: 1, revision: "a".repeat(64), fields: { agent_temperature: class1 } }), 422],
   ]) {
     const response = settingsResponse();
     await handler(settingsRequest("PUT", "/api/settings", headers, body), response);
@@ -451,7 +543,68 @@ test("T12-13 conjunctive class-1/2/3 sentinels stay out of every settings exit",
     exits.push([name, response.body]);
   }
 
-  exits.push(["captured logs", logs.join("\n")]);
+  const healthScript = String.raw`
+    const { EventEmitter } = require("node:events");
+    const { Readable } = require("node:stream");
+    const http = require("node:http");
+    const meetRoutesPath = require.resolve(${JSON.stringify(path.join(__dirname, "..", "src", "transport-meet", "meet-routes.js"))});
+    require.cache[meetRoutesPath] = { exports: {
+      init: async () => {}, handleHttp(_req, res) { res.writeHead(404); res.end("Not Found"); },
+      handleWsConnection() {},
+    } };
+    function invoke(handler) {
+      return new Promise((resolve) => {
+        const req = Readable.from([]);
+        Object.assign(req, { method: "GET", url: "/health", headers: { host: "localhost:5005" }, socket: { localAddress: "127.0.0.1", localPort: 5005 } });
+        const res = { status: 0, body: "", writeHead(status) { this.status = status; }, end(chunk = "") { this.body += String(chunk); resolve(this); } };
+        Promise.resolve(handler(req, res)).catch((error) => resolve({ status: 599, body: error.message }));
+      });
+    }
+    http.createServer = (handler) => {
+      const server = new EventEmitter();
+      server.address = () => ({ port: 5005 });
+      server.listen = (_port, callback) => {
+        callback();
+        setImmediate(async () => {
+          const result = await invoke(handler);
+          process.stdout.write("HEALTH_SENTINEL_RESULT=" + JSON.stringify(result) + "\n");
+          process.exit(0);
+        });
+        return server;
+      };
+      return server;
+    };
+    require(${JSON.stringify(path.join(__dirname, "..", "src", "server.js"))});
+  `;
+  const health = spawnSync(process.execPath, ["-e", healthScript], {
+    cwd: directory,
+    env: {
+      ...process.env,
+      AI_MEET_HOME: directory,
+      OPENCLAW_GATEWAY_TOKEN: class2,
+      WS_SHARED_TOKEN: class3,
+      PORT: "5005",
+      WAKE_CALIBRATE_ENABLED: "",
+    },
+    encoding: "utf8",
+    timeout: 10_000,
+  });
+  assert.equal(health.status, 0, health.stderr);
+  const healthMatch = health.stdout.match(/HEALTH_SENTINEL_RESULT=(\{.*\})/);
+  assert.ok(healthMatch, health.stdout);
+  const healthResult = JSON.parse(healthMatch[1]);
+  assert.equal(healthResult.status, 200, healthResult.body);
+  exits.push(["health", healthResult.body]);
+
+  exits.push(["generated files (AGENTS.md)", fs.readFileSync(agentsPath, "utf8")]);
+  for (const template of ["config.json.example", ".env.example", "src/agents-template.md"]) {
+    exits.push([`templates (${template})`, fs.readFileSync(path.join(__dirname, "..", template), "utf8")]);
+  }
+  logs.push(generated.stdout, generated.stderr, health.stdout, health.stderr);
+  exits.push(["logs", logs.join("\n")]);
+
+  // Contract §12 exits: API, UI, export/import, presets, health, errors, logs,
+  // connection-test responses, templates, and generated files (AGENTS.md).
   for (const [name, output] of exits) {
     for (const sentinel of sentinels) assert.equal(output.includes(sentinel), false, `${name} leaked ${sentinel}`);
   }
