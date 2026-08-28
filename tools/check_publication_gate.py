@@ -839,6 +839,116 @@ def selftest_shipped_denylist():
         == ["denylist: enc.txt:1 contains windows-user-path (decoded view)"],
         "shipped windows-user-path decoded scan finding",
     )
+    wsl_rules = tuple(
+        rule for rule in load_denylist(root) if rule[0] == "wsl-drvfs-user-path"
+    )
+    _selftest_check(len(wsl_rules) == 1, "shipped wsl-drvfs-user-path rule")
+    wsl_user_path = wsl_rules[0][1]
+    wsl_lowercase_leak = "/mn" + "t/c/users/alice/meetmate/.env"
+    wsl_uppercase_leak = "/MN" + "T/C/USERS/BOB/notes.md"
+    wsl_drive_d_leak = "/mn" + "t/d/users/carol/secrets.txt"
+    wsl_cjk_leak = "/mn" + "t/c/users/翔太郎/meetmate/.env"
+    wsl_env_leak = "export HOME=/mn" + "t/c/users/alice"
+    wsl_file_url_leak = "file:///mn" + "t/c/users/carol/meetmate/.env"
+    wsl_json_escaped_leak = "\\/mn" + "t\\/c\\/users\\/alice"
+    _selftest_check(
+        all(
+            wsl_user_path.search(leak) is not None
+            for leak in (
+                wsl_lowercase_leak,
+                wsl_uppercase_leak,
+                wsl_drive_d_leak,
+                wsl_cjk_leak,
+                wsl_env_leak,
+                wsl_file_url_leak,
+                wsl_json_escaped_leak,
+            )
+        ),
+        "shipped wsl-drvfs-user-path detects leak shapes",
+    )
+    wsl_unc_leak = "\\\\wsl.localhost\\Ubuntu\\mn" + "t\\c\\users\\alice\\docs"
+    wsl_vscode_remote_leak = (
+        "vscode-remote://wsl+Ubuntu/mn" + "t/c/users/alice/docs"
+    )
+    wsl_ellipsized_leak = ".../mn" + "t/c/users/alice/project/x.ts"
+    wsl_all_backslash_leak = "\\mn" + "t\\c\\users\\alice"
+    _selftest_check(
+        all(
+            wsl_user_path.search(leak) is not None
+            for leak in (
+                wsl_unc_leak,
+                wsl_vscode_remote_leak,
+                wsl_ellipsized_leak,
+                wsl_all_backslash_leak,
+            )
+        ),
+        "shipped wsl-drvfs-user-path detects authority-qualified, UNC and all-backslash shapes",
+    )
+    wsl_dotted_leak = "/mn" + "t/c/users/j.doe/meetmate/.env"
+    wsl_dotted_match = wsl_user_path.search(wsl_dotted_leak)
+    _selftest_check(
+        wsl_dotted_match is not None
+        and wsl_dotted_match.group(0) == "/mn" + "t/c/users/j.doe",
+        "shipped wsl-drvfs-user-path dotted leak",
+    )
+    wsl_hyphenated_leak = "/mn" + "t/c/users/anne-marie/meetmate/.env"
+    wsl_hyphenated_match = wsl_user_path.search(wsl_hyphenated_leak)
+    _selftest_check(
+        wsl_hyphenated_match is not None
+        and wsl_hyphenated_match.group(0) == "/mn" + "t/c/users/anne-marie",
+        "shipped wsl-drvfs-user-path hyphenated leak",
+    )
+    wsl_file_url_match = wsl_user_path.search(wsl_file_url_leak)
+    _selftest_check(
+        wsl_file_url_match is not None
+        and wsl_file_url_match.group(0) == "/mn" + "t/c/users/carol",
+        "shipped wsl-drvfs-user-path file URL span pin",
+    )
+    wsl_safe_paths = (
+        "/mnt/c/users/<user>/meetmate/.env",
+        "/mnt/c/users/{user}/meetmate/.env",
+        "https://api.github.com/users/alice",
+        "mailto:Users/alice",
+        "/opt/c/users/alice",
+        "/mno/c/users/alice",
+        "/mnt/c/Windows/System32",
+        "/mnt/1/users/foo",
+        "/mnt/wsl/users/foo",
+        "/mnt/backup/users/shared",
+    )
+    _selftest_check(
+        all(wsl_user_path.search(path) is None for path in wsl_safe_paths),
+        "shipped wsl-drvfs-user-path permits clean controls",
+    )
+    wsl_failures = []
+    _selftest_check(
+        check_denylist({"wsl.txt": wsl_lowercase_leak}, wsl_rules, wsl_failures)
+        == 1
+        and wsl_failures
+        == ["denylist: wsl.txt:1 contains wsl-drvfs-user-path"],
+        "shipped wsl-drvfs-user-path scan finding",
+    )
+    wsl_decoded_failures = []
+    _selftest_check(
+        check_denylist(
+            {"enc.txt": "%2Fmn" + "t%2Fc%2Fus" + "ers%2Falice"},
+            wsl_rules,
+            wsl_decoded_failures,
+        )
+        == 1
+        and wsl_decoded_failures
+        == ["denylist: enc.txt:1 contains wsl-drvfs-user-path (decoded view)"],
+        "shipped wsl-drvfs-user-path decoded scan finding",
+    )
+    absolute_personal_path = rules[0][1]
+    wsl_exact_case_leak = "/mn" + "t/c/Us" + "ers/alice/meetmate/.env"
+    _selftest_check(
+        absolute_personal_path.search(wsl_exact_case_leak) is not None
+        and absolute_personal_path.search(wsl_lowercase_leak) is None
+        and windows_user_path.search(wsl_lowercase_leak) is None
+        and wsl_user_path.search(wsl_lowercase_leak) is not None,
+        "shipped wsl-drvfs-user-path complements case-sensitive rules",
+    )
 
 
 def selftest_scanners():
