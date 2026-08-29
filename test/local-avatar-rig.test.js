@@ -21,9 +21,17 @@ function shippedScript() {
 function embeddedModel(script) {
   const match = script.match(/\/\* @rig-model-begin \*\/([\s\S]*?)\/\* @rig-model-end \*\//);
   assert.ok(match, "model embed markers must exist");
-  const pieces = [...match[1].matchAll(/"([A-Za-z0-9+/=]*)"/g)].map((item) => item[1]);
+  const base64 = match[1].match(/const RIG_MODEL_BASE64 = ([\s\S]*?);/);
+  assert.ok(base64, "model embed must declare base64 bytes");
+  const pieces = [...base64[1].matchAll(/"([A-Za-z0-9+/=]*)"/g)].map((item) => item[1]);
   assert.ok(pieces.length > 0, "model embed must contain base64 data");
   return Buffer.from(pieces.join(""), "base64");
+}
+
+function embeddedProvenance(script) {
+  const match = script.match(/const RIG_MODEL_PROVENANCE = "(procedural|external)";/);
+  assert.ok(match, "model embed must declare provenance");
+  return match[1];
 }
 
 function initializeImageData() {
@@ -35,6 +43,7 @@ function initializeImageData() {
 
 test("shipped rig embeds a procedural parts PSD with the required layers", () => {
   initializeImageData();
+  assert.equal(embeddedProvenance(shippedScript()), "procedural");
   const psd = agPsd.readPsd(embeddedModel(shippedScript()), { useImageData: true, skipThumbnail: true });
   const names = new Set(psd.children.map((layer) => layer.name));
 

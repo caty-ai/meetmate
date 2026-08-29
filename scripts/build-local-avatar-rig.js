@@ -1,6 +1,19 @@
 #!/usr/bin/env node
 "use strict";
 
+/*
+ * Regenerates the vendored Anime2.5DRig embed and local avatar PSD inside
+ * public/local-avatar/local-avatar.js.
+ *
+ * Default builds embed a deterministic procedural PSD with provenance
+ * "procedural".
+ *
+ * `--model /path/to/model.psd` swaps in a local external PSD for tuning-only
+ * builds. External-model builds are local use only and must never be committed;
+ * the shipped public/local-avatar/local-avatar.js must keep provenance
+ * "procedural" so the test guard stays honest.
+ */
+
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
@@ -26,6 +39,7 @@ function image(width, height, painter) {
   const set = (x, y, color, alpha = 255) => {
     if (x < 0 || x >= width || y < 0 || y >= height) return;
     const offset = (y * width + x) * 4;
+    if (alpha < data[offset + 3]) return;
     data[offset] = color[0];
     data[offset + 1] = color[1];
     data[offset + 2] = color[2];
@@ -90,6 +104,58 @@ function pairedLines(width, height, color, centers, thickness, curve = 0) {
   });
 }
 
+function pointInPolygon(px, py, points) {
+  let inside = false;
+  for (let index = 0, previous = points.length - 1; index < points.length; previous = index, index += 1) {
+    const [x1, y1] = points[index];
+    const [x2, y2] = points[previous];
+    const intersects = (y1 > py) !== (y2 > py)
+      && px < ((x2 - x1) * (py - y1)) / ((y2 - y1) || 1e-6) + x1;
+    if (intersects) inside = !inside;
+  }
+  return inside;
+}
+
+function distanceToSegmentSquared(px, py, ax, ay, bx, by) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  if (!dx && !dy) return (px - ax) ** 2 + (py - ay) ** 2;
+  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)));
+  const cx = ax + t * dx;
+  const cy = ay + t * dy;
+  return (px - cx) ** 2 + (py - cy) ** 2;
+}
+
+function fillPolygon(target, points, color) {
+  const xs = points.map(([x]) => x);
+  const ys = points.map(([, y]) => y);
+  const minX = Math.max(0, Math.floor(Math.min(...xs)));
+  const maxX = Math.min(target.width - 1, Math.ceil(Math.max(...xs)));
+  const minY = Math.max(0, Math.floor(Math.min(...ys)));
+  const maxY = Math.min(target.height - 1, Math.ceil(Math.max(...ys)));
+  for (let y = minY; y <= maxY; y += 1) {
+    for (let x = minX; x <= maxX; x += 1) {
+      const px = x + 0.5;
+      const py = y + 0.5;
+      if (!pointInPolygon(px, py, points)) continue;
+      let minDistance = Infinity;
+      for (let index = 0; index < points.length; index += 1) {
+        const [ax, ay] = points[index];
+        const [bx, by] = points[(index + 1) % points.length];
+        minDistance = Math.min(minDistance, distanceToSegmentSquared(px, py, ax, ay, bx, by));
+      }
+      const alpha = minDistance >= 1.6 ? 255 : Math.max(96, Math.round(255 * Math.sqrt(minDistance) / 1.6));
+      target.set(x, y, color, alpha);
+    }
+  }
+}
+
+function frontHairShape(width, height, color, polygons) {
+  return image(width, height, (target) => {
+    for (const points of polygons) fillPolygon(target, points, color);
+  });
+}
+
 function hairShape(width, height, color, phase) {
   return image(width, height, ({ set }) => {
     const cx = (width - 1) / 2;
@@ -136,10 +202,23 @@ function buildModelPsd() {
     layer("eyebrow", 382, 303, pairedLines(260, 47, hair, [[48, 26, 43], [212, 26, 43]], 5, -5)),
     layer("mouth_open", 454, 510, ellipse(116, 70, [126, 45, 66], 5, 4)),
     layer("mouth_close", 454, 532, pairedLines(116, 28, blush, [[58, 12, 48]], 3, 4)),
-    layer("front hair_1", 294, 102, hairShape(234, 360, hairLight, 1.8)),
-    layer("front hair_2", 496, 98, hairShape(236, 372, hair, 4.2)),
+    layer("front hair_1", 262, 120, frontHairShape(278, 500, hairLight, [
+      [[28, 18], [238, 10], [274, 44], [252, 92], [206, 126], [150, 144], [96, 148], [48, 128], [20, 74]],
+      [[6, 20], [88, 22], [112, 62], [108, 166], [94, 312], [70, 456], [48, 498], [22, 470], [8, 336], [0, 152]],
+    ])),
+    layer("front hair_2", 484, 118, frontHairShape(276, 506, hair, [
+      [[8, 26], [222, 12], [260, 42], [272, 88], [248, 118], [198, 144], [134, 152], [78, 138], [26, 108]],
+      [[158, 18], [270, 12], [275, 174], [266, 346], [246, 472], [214, 504], [186, 480], [170, 336], [162, 186]],
+    ])),
   ];
   return { width: 1024, height: 1024, children };
+}
+
+function initializePsdIO() {
+  agPsd.initializeCanvas(
+    () => { throw new Error("canvas output is unavailable in the rig builder"); },
+    (width, height) => ({ width, height, data: new Uint8ClampedArray(width * height * 4) }),
+  );
 }
 
 function stripComments(source) {
@@ -186,17 +265,53 @@ function buildVendorSection() {
   return `function loadRigVendor(rigVendorRoot) {\n${ag}\n${rigger}\n${generic}\nreturn { agPsd: rigVendorRoot.agPsd, Rigger: rigVendorRoot.Rigger, GenericParts: rigVendorRoot.GenericParts };\n}`;
 }
 
-function buildModelSection() {
-  const bytes = agPsd.writePsdUint8Array(buildModelPsd(), { generateThumbnail: false });
-  const base64 = Buffer.from(bytes).toString("base64").replace(/\/\//g, '/" + "/');
-  return `const RIG_MODEL_BASE64 = "${base64}";`;
+function parseArguments(argv) {
+  const options = { modelPath: null };
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (argument === "--model") {
+      const value = argv[index + 1];
+      if (!value || value.startsWith("--")) throw new Error("--model requires a PSD path");
+      options.modelPath = path.resolve(process.cwd(), value);
+      index += 1;
+      continue;
+    }
+    throw new Error(`unknown option: ${argument}`);
+  }
+  return options;
 }
 
-function build() {
+function loadEmbeddedModel(options = {}) {
+  if (!options.modelPath) return { psd: buildModelPsd(), provenance: "procedural" };
+  let bytes;
+  try {
+    bytes = fs.readFileSync(options.modelPath);
+  } catch (error) {
+    throw new Error(`failed to read --model PSD ${options.modelPath}: ${error.message}`);
+  }
+  try {
+    return {
+      psd: agPsd.readPsd(bytes, { useImageData: true, skipThumbnail: true }),
+      provenance: "external",
+    };
+  } catch (error) {
+    throw new Error(`failed to parse --model PSD ${options.modelPath}: ${error.message}`);
+  }
+}
+
+function buildModelSection(options = {}) {
+  const model = loadEmbeddedModel(options);
+  const bytes = agPsd.writePsdUint8Array(model.psd, { generateThumbnail: false });
+  const base64 = Buffer.from(bytes).toString("base64").replace(/\/\//g, '/" + "/');
+  return `const RIG_MODEL_PROVENANCE = "${model.provenance}";\nconst RIG_MODEL_BASE64 = "${base64}";`;
+}
+
+function build(options = {}) {
+  initializePsdIO();
   verifyVendor();
   let output = fs.readFileSync(TARGET, "utf8");
   output = replaceSection(output, VENDOR_BEGIN, VENDOR_END, buildVendorSection());
-  output = replaceSection(output, MODEL_BEGIN, MODEL_END, buildModelSection());
+  output = replaceSection(output, MODEL_BEGIN, MODEL_END, buildModelSection(options));
   const forbiddenUrl = /\b(?:https?:)?\/\//i.exec(output);
   if (forbiddenUrl) {
     throw new Error(`generated page script contains a forbidden URL-shaped token near ${output.slice(Math.max(0, forbiddenUrl.index - 24), forbiddenUrl.index + 48)}`);
@@ -204,6 +319,6 @@ function build() {
   fs.writeFileSync(TARGET, output.endsWith("\n") ? output : `${output}\n`);
 }
 
-if (require.main === module) build();
+if (require.main === module) build(parseArguments(process.argv.slice(2)));
 
-module.exports = { build, buildModelPsd };
+module.exports = { build, buildModelPsd, parseArguments };
