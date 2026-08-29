@@ -310,7 +310,9 @@ function createSonioxSTT(apiKey, options = {}) {
       if (socket !== ws) return;
       clearKeepAlive();
       console.error("❌  STT(Soniox) error:", err?.message || err);
-      if (!opened) readiness.reportRuntimeFailure("soniox", readiness.classifyRuntimeFailure(err));
+      if (!opened) {
+        readiness.reportRuntimeFailure("soniox", readiness.classifyRuntimeFailure(withHandshakeStatus(err)));
+      }
       emitter.emit("error", err);
     });
 
@@ -382,5 +384,11 @@ function createSonioxSTT(apiKey, options = {}) {
 }
 
 const readiness = require("./settings/readiness");
+
+function withHandshakeStatus(error) {
+  if (readiness.runtimeStatus(error)) return error;
+  const match = /^Unexpected server response:\s*(401|402|403|404|429)\b/.exec(String(error?.message || ""));
+  return match ? { statusCode: Number(match[1]) } : error;
+}
 
 module.exports = { createSonioxSTT };

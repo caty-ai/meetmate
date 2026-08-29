@@ -320,6 +320,16 @@ test("hybrid-local-frames joins only on Fish Audio with a public HTTPS origin", 
   );
 });
 
+test("settled soft readiness failures do not block an ordinary Join", { concurrency: false }, async () => {
+  await withMeetRoutes(async ({ join, leave }) => {
+    const readiness = require("../src/settings/readiness");
+    readiness.setProbeObservation("soniox", { ok: false, code: "UNREACHABLE" });
+    const joined = await join();
+    assert.equal(joined.statusCode, 200, joined.text);
+    await leave();
+  });
+});
+
 test("unknown experiments stay rejected and hybrid-local-l0 payload bytes remain pinned", { concurrency: false }, async () => {
   await withMeetRoutes(async (harness) => {
     const join = await harness.join({ avatarExperiment: "unknown" });
@@ -479,6 +489,9 @@ async function withMeetRoutes(fn, { ttsProvider = "fish-audio", ngrokDomain = "m
   const botRequests = [];
   const readiness = require("../src/settings/readiness");
   readiness.reset();
+  for (const system of readiness.gateSystems()) {
+    readiness.setProbeObservation(system, { ok: true, code: "CONNECTED" });
+  }
   const originalHttpGet = http.get;
   const originalHttpsRequest = https.request;
   const originalRandomUUID = crypto.randomUUID;

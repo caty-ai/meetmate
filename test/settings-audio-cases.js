@@ -13,6 +13,11 @@ const { Readable } = require("node:stream");
 const { cacheKey, createTtsCache } = require("../src/tts-cache");
 const { lookupManagedPcm, projectClipViews } = require("../src/settings/audio");
 const { createSettingsHandler } = require("../src/settings/routes");
+
+const HERMETIC_READINESS = Object.freeze({
+  configure() {},
+  async probeGateSystems() {},
+});
 const { initializeRuntime, resetRuntimeForTest } = require("../src/settings/resolver");
 const { readConfigState, settingsError } = require("../src/settings/store");
 
@@ -142,7 +147,11 @@ function fixture(t, document = baseConfig(), handlerOptions = {}) {
   return {
     directory,
     runtimeStartup,
-    handler: createSettingsHandler({ port: 5005, audio: { spawnFn: fakeSpawn(), ...handlerOptions } }),
+    handler: createSettingsHandler({
+      port: 5005,
+      readinessController: HERMETIC_READINESS,
+      audio: { spawnFn: fakeSpawn(), ...handlerOptions },
+    }),
     revision: readConfigState(runtimeStartup.configPath).revision,
   };
 }
@@ -458,7 +467,11 @@ test("T12-09 resolved-home storage never mutates bundled assets and rejects a ma
   fs.writeFileSync(symlinkSetup.configPath, `${JSON.stringify(baseConfig())}\n`, { mode: 0o600 });
   resetRuntimeForTest();
   initializeRuntime({ state: readConfigState(symlinkSetup.configPath), startup: symlinkSetup });
-  const handler = createSettingsHandler({ port: 5005, audio: { spawnFn: fakeSpawn() } });
+  const handler = createSettingsHandler({
+    port: 5005,
+    readinessController: HERMETIC_READINESS,
+    audio: { spawnFn: fakeSpawn() },
+  });
   const blocked = await upload(handler, { role: "ack", text: "了解です", revision: readConfigState(symlinkSetup.configPath).revision });
   assert.equal(blocked.status, 422, blocked.body);
   assert.deepEqual(fs.readdirSync(external), []);

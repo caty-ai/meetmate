@@ -400,6 +400,14 @@ function createSettingsHandler(options = {}) {
   const previewOptions = options.preview || {};
   const takeConnectionAllowance = createConnectionLimiter(connectionOptions);
   const takePreviewAllowance = createPreviewLimiter(previewOptions);
+  const schedulePostSaveProbes = () => {
+    Promise.resolve().then(() => readinessController.probeGateSystems?.({
+      ...connectionOptions,
+      trigger: "settings-save",
+      allowBilling: true,
+      force: true,
+    })).catch(() => {});
+  };
   return async function handleSettings(req, res) {
     let url;
     try { url = new URL(req.url || "/", "http://localhost"); } catch { return false; }
@@ -435,18 +443,14 @@ function createSettingsHandler(options = {}) {
           revision: mutation.revision,
           fields: prepareMutationFields(mutation.fields, mutation.revision),
         });
-        await readinessController.probeGateSystems({
-          ...connectionOptions,
-          trigger: "settings-save",
-          allowBilling: true,
-          force: true,
-        });
         writeJson(res, 200, buildEnvelope());
+        schedulePostSaveProbes();
         return true;
       }
       if (req.method === "POST" && url.pathname === "/api/settings/migrate-env-class1") {
         requireSameOrigin(req, settingsOptions);
         writeJson(res, 200, await migrateClass1(req, settingsOptions));
+        schedulePostSaveProbes();
         return true;
       }
 
@@ -461,6 +465,7 @@ function createSettingsHandler(options = {}) {
       if (req.method === "POST" && url.pathname === "/api/settings/import") {
         requireSameOrigin(req, settingsOptions);
         writeJson(res, 200, importSettings(await readJson(req, JSON_LIMIT)));
+        schedulePostSaveProbes();
         return true;
       }
 

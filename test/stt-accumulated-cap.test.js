@@ -60,6 +60,8 @@ test("Deepgram STT force-emits when accumulated final text reaches cap", async (
     assert.equal(readiness.inspect("deepgram").code, "AUTH_FAILED");
     connection.emit("open");
     assert.equal(readiness.inspect("deepgram").code, "CONNECTED");
+    connection.emit("error", Object.assign(new Error("Deepgram structured 403"), { statusCode: 403 }));
+    assert.equal(readiness.inspect("deepgram").code, "AUTH_FAILED");
 
     stt.close();
   } finally {

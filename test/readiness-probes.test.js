@@ -36,6 +36,16 @@ test("fetch probe classification covers 402, 404, 429, and 5xx without retaining
   }
 });
 
+test("403 is hard only for Attendee and remains a soft provider error elsewhere", async () => {
+  initialize({
+    stt: { sonioxApiKey: "soniox-key" },
+    attendee: { apiKey: "attendee-key", baseUrl: "app.attendee.dev" },
+  });
+  const forbidden = async () => new Response("forbidden", { status: 403 });
+  assert.equal((await probes.probeSystem("soniox", { fetchFn: forbidden })).code, "PROVIDER_ERROR");
+  assert.equal((await probes.probeSystem("attendee", { fetchFn: forbidden })).code, "AUTH_FAILED");
+});
+
 test("probes use the published credential while restart-required is handled by readiness", async () => {
   initialize({ stt: { provider: "soniox", sonioxApiKey: "boot-key" } });
   resolver.publishState({

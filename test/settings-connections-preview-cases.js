@@ -10,6 +10,7 @@ const { Readable } = require("node:stream");
 
 const { buildEnvelope, initializeRuntime, resetRuntimeForTest } = require("../src/settings/resolver");
 const { createSettingsHandler, _test } = require("../src/settings/routes");
+const { createReadinessController } = require("../src/settings/readiness");
 const { _test: audioTest } = require("../src/settings/audio");
 const { readConfigState, saveFields } = require("../src/settings/store");
 
@@ -183,7 +184,7 @@ test("OS launch credentials win independently for each connection provider", asy
 test("connection failure matrix is finite and vendor bodies and credentials stay value-free", async (t) => {
   const { state } = fixture(t, { stt: { sonioxApiKey: SENTINEL }, tts: { apiKey: SENTINEL } });
   for (const [pathName, expected] of [
-    ["401", "AUTH_FAILED"], ["402", "PAYMENT_REQUIRED"], ["403", "AUTH_FAILED"], ["429", "RATE_LIMITED"],
+    ["401", "AUTH_FAILED"], ["402", "PAYMENT_REQUIRED"], ["403", "PROVIDER_ERROR"], ["429", "RATE_LIMITED"],
     ["404", "PROVIDER_ERROR"], ["408", "PROVIDER_ERROR"], ["504", "PROVIDER_ERROR"], ["503", "PROVIDER_ERROR"],
   ]) {
     const handler = createSettingsHandler({
@@ -296,6 +297,30 @@ test("connection limiter is per-provider and the 4 KiB body limit remains enforc
   const tooLarge = await invoke(handler, "POST", "/api/settings/connections/soniox/test", "x".repeat(4 * 1024 + 1), { raw: true });
   assert.equal(tooLarge.status, 413);
   assert.equal(tooLarge.json.error.code, "SETTINGS_BODY_TOO_LARGE");
+});
+
+test("loopback manual recheck bypasses readiness failure backoff", async (t) => {
+  let calls = 0;
+  const readinessController = createReadinessController({
+    probeFn: async () => {
+      calls += 1;
+      return calls === 1
+        ? { ok: false, code: "AUTH_FAILED" }
+        : { ok: true, code: "CONNECTED" };
+    },
+  });
+  const { state, handler } = fixture(t, {
+    stt: { provider: "soniox", sonioxApiKey: "soniox-key" },
+  }, {
+    readinessController,
+    connections: { minIntervalMs: 0 },
+  });
+
+  const first = await invoke(handler, "POST", "/api/settings/connections/soniox/test", { revision: state.revision });
+  const second = await invoke(handler, "POST", "/api/settings/connections/soniox/test", { revision: state.revision });
+  assert.equal(first.json.code, "AUTH_FAILED");
+  assert.equal(second.json.code, "CONNECTED");
+  assert.equal(calls, 2);
 });
 
 test("TTS preview buffers Fish PCM, strips disabled emotion tags, and returns a valid WAV without mutation", async (t) => {

@@ -18,7 +18,48 @@ function parseJoinErrorText(text) {
   return error.message || String(text || "");
 }
 
-if (typeof module !== "undefined" && module.exports) module.exports = { parseJoinErrorText };
+function settingsPortFromReadiness(readinessState, fallbackPort) {
+  for (const value of [readinessState?.settingsPort, fallbackPort, 5005]) {
+    const port = Number(value);
+    if (Number.isInteger(port) && port >= 1 && port <= 65535) return String(port);
+  }
+  return "5005";
+}
+
+function localSettingsUrlFor(fieldId, readinessState, fallbackPort) {
+  const hash = String(fieldId || "").startsWith("panel-") ? fieldId : `field-${fieldId}`;
+  return `http://127.0.0.1:${settingsPortFromReadiness(readinessState, fallbackPort)}/settings#${hash}`;
+}
+
+function readinessDisplayRows(readinessState) {
+  if (readinessState?.unavailable) {
+    return [{ kind: "warning", text: "接続状態を取得できません" }];
+  }
+  const blockers = Array.isArray(readinessState?.blockers) ? readinessState.blockers : [];
+  const systems = Array.isArray(readinessState?.systems) ? readinessState.systems : [];
+  const rows = blockers.map((blocker) => ({
+    kind: "blocker",
+    text: blocker.message || blocker.code,
+    fieldId: blocker.fieldId,
+  }));
+  for (const system of systems) {
+    if (system.code === "PENDING") {
+      rows.push({ kind: "pending", text: `${system.id}: 確認中…` });
+    } else if (!system.ok && !blockers.some((blocker) => blocker.system === system.id)) {
+      rows.push({ kind: "warning", text: `${system.id}: ${system.code}（一時的な問題の可能性があります。Join はブロックしません）` });
+    } else if (system.stale) {
+      rows.push({ kind: "warning", text: `${system.id}: 前回の接続確認結果が古くなっています` });
+    }
+  }
+  return rows;
+}
+
+if (typeof module !== "undefined" && module.exports) module.exports = {
+  localSettingsUrlFor,
+  parseJoinErrorText,
+  readinessDisplayRows,
+  settingsPortFromReadiness,
+};
 
 if (typeof document !== "undefined") (function () {
   const root = document.documentElement;
@@ -239,9 +280,7 @@ if (typeof document !== "undefined") (function () {
   }
 
   function localSettingsUrl(fieldId) {
-    const port = location.port || "5005";
-    const hash = String(fieldId || "").startsWith("panel-") ? fieldId : `field-${fieldId}`;
-    return `http://127.0.0.1:${port}/settings#${hash}`;
+    return localSettingsUrlFor(fieldId, readinessState, location.port);
   }
 
   function appendReadinessLine(kind, text, fieldId) {
@@ -256,7 +295,8 @@ if (typeof document !== "undefined") (function () {
       line.append(document.createTextNode(text));
       if (kind === "blocker" && fieldId) {
         const url = localSettingsUrl(fieldId);
-        line.append(document.createTextNode(`。同じPCで localhost:${location.port || "5005"}/settings を開いてください`));
+        const port = settingsPortFromReadiness(readinessState, location.port);
+        line.append(document.createTextNode(`。同じPCで localhost:${port}/settings を開いてください`));
         const copy = document.createElement("button");
         copy.type = "button";
         copy.className = "readiness-copy";
@@ -270,17 +310,7 @@ if (typeof document !== "undefined") (function () {
 
   function renderReadiness() {
     readinessLines.replaceChildren();
-    const blockers = Array.isArray(readinessState?.blockers) ? readinessState.blockers : [];
-    const systems = Array.isArray(readinessState?.systems) ? readinessState.systems : [];
-    for (const blocker of blockers) appendReadinessLine("blocker", blocker.message || blocker.code, blocker.fieldId);
-    for (const system of systems) {
-      if (system.code === "PENDING") appendReadinessLine("pending", `${system.id}: 確認中…`);
-      else if (!system.ok && !blockers.some((blocker) => blocker.system === system.id)) {
-        appendReadinessLine("warning", `${system.id}: ${system.code}（一時的な問題の可能性があります。Join はブロックしません）`);
-      } else if (system.stale) {
-        appendReadinessLine("warning", `${system.id}: 前回の接続確認結果が古くなっています`);
-      }
-    }
+    for (const row of readinessDisplayRows(readinessState)) appendReadinessLine(row.kind, row.text, row.fieldId);
     readinessPanel.classList.toggle("is-hidden", readinessLines.children.length === 0);
     readinessRecheck.disabled = readinessChecking;
     updateSubmitButtonState();
@@ -292,7 +322,13 @@ if (typeof document !== "undefined") (function () {
       if (!response.ok) throw new Error("readiness unavailable");
       readinessState = await response.json();
     } catch {
-      readinessState = null;
+      readinessState = {
+        ready: false,
+        systems: [],
+        blockers: [],
+        unavailable: true,
+        settingsPort: readinessState?.settingsPort,
+      };
     }
     renderReadiness();
   }

@@ -408,6 +408,9 @@ async function withMeetRoutes(fn, options = {}) {
     }),
     serverPort: 5005,
   });
+  for (const system of readiness.gateSystems()) {
+    readiness.setProbeObservation(system, { ok: true, code: "CONNECTED" });
+  }
   const isolation = emptyIsolationEvidence();
   const httpsRequests = [];
   const pipelines = [];

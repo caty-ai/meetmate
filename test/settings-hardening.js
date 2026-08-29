@@ -26,6 +26,15 @@ const { settingsMutationSchema } = require("../src/settings/schemas");
 const { readConfigState, saveFields } = require("../src/settings/store");
 const { createSettingsHandler } = require("../src/settings/routes");
 
+const HERMETIC_READINESS = Object.freeze({
+  configure() {},
+  async probeGateSystems() {},
+});
+
+function createHermeticSettingsHandler(options = {}) {
+  return createSettingsHandler({ readinessController: HERMETIC_READINESS, ...options });
+}
+
 function startup(overrides = {}) {
   return Object.freeze({
     preDotenvEnv: Object.freeze({ ...(overrides.preDotenvEnv || {}) }),
@@ -655,7 +664,7 @@ test("T12-04 PUT cannot bypass the boot operational snapshot", async (t) => {
     { provider: "openai-compatible", model: "boot-model", temperature: 0.2, warmup: 1234 },
   );
   const saved = response();
-  await createSettingsHandler({ port: 5005 })(request("PUT", "/api/settings", {
+  await createHermeticSettingsHandler({ port: 5005 })(request("PUT", "/api/settings", {
     host: "localhost:5005", origin: "http://localhost:5005", "sec-fetch-site": "same-origin", "content-type": "application/json",
   }, JSON.stringify({
     schemaVersion: 1,
@@ -918,7 +927,7 @@ test("T12-12 class-1 migration is strict, seed-only, transactional, and value-fr
   resetRuntimeForTest();
   initializeRuntime({ state: before, startup: startup({ configPath, resolvedHome: directory, dotenvSeeds: { SONIOX_API_KEY: "seed-soniox" } }) });
   const res = response();
-  await createSettingsHandler({ port: 5005 })(request("POST", "/api/settings/migrate-env-class1", {
+  await createHermeticSettingsHandler({ port: 5005 })(request("POST", "/api/settings/migrate-env-class1", {
     host: "localhost:5005", origin: "http://localhost:5005", "sec-fetch-site": "same-origin", "content-type": "application/json",
   }, JSON.stringify({ revision: before.revision })), res);
   assert.equal(res.status, 200, res.body);
@@ -932,7 +941,7 @@ test("T12-12 class-1 migration is strict, seed-only, transactional, and value-fr
   assert.equal(fs.readFileSync(envPath, "utf8"), envBytes);
 
   const invalid = response();
-  await createSettingsHandler({ port: 5005 })(request("POST", "/api/settings/migrate-env-class1", {
+  await createHermeticSettingsHandler({ port: 5005 })(request("POST", "/api/settings/migrate-env-class1", {
     host: "localhost:5005", origin: "http://localhost:5005", "content-type": "application/json",
   }, JSON.stringify({ revision: committed.revision, extra: true })), invalid);
   assert.equal(invalid.status, 422);
@@ -942,7 +951,7 @@ test("T12-12 class-1 migration is strict, seed-only, transactional, and value-fr
   fs.renameSync = () => { const error = new Error("private path and value must not escape"); error.code = "EACCES"; throw error; };
   try {
     const failed = response();
-    await createSettingsHandler({ port: 5005 })(request("POST", "/api/settings/migrate-env-class1", {
+    await createHermeticSettingsHandler({ port: 5005 })(request("POST", "/api/settings/migrate-env-class1", {
       host: "localhost:5005", origin: "http://localhost:5005", "content-type": "application/json",
     }, JSON.stringify({ revision: revisionBeforeFailure })), failed);
     assert.equal(failed.status, 500);
@@ -963,7 +972,7 @@ test("T12-12 class-1 migration is strict, seed-only, transactional, and value-fr
     startup: startup({ configPath: bootstrapPath, resolvedHome: bootstrapDirectory, dotenvSeeds: { FISH_AUDIO_API_KEY: "bootstrap-fish" } }),
   });
   const recovered = response();
-  await createSettingsHandler({ port: 5005 })(request("POST", "/api/settings/migrate-env-class1", {
+  await createHermeticSettingsHandler({ port: 5005 })(request("POST", "/api/settings/migrate-env-class1", {
     host: "localhost:5005", origin: "http://localhost:5005", "content-type": "application/json",
   }, JSON.stringify({ revision: "bootstrap" })), recovered);
   assert.equal(recovered.status, 200, recovered.body);
@@ -985,7 +994,7 @@ test("T12-12 protocol mask is never migrated or persisted by the store credentia
     startup: startup({ configPath, resolvedHome: directory, dotenvSeeds: { FISH_AUDIO_API_KEY: MASK } }),
   });
   const res = response();
-  await createSettingsHandler({ port: 5005 })(request("POST", "/api/settings/migrate-env-class1", {
+  await createHermeticSettingsHandler({ port: 5005 })(request("POST", "/api/settings/migrate-env-class1", {
     host: "localhost:5005", origin: "http://localhost:5005", "sec-fetch-site": "same-origin", "content-type": "application/json",
   }, JSON.stringify({ revision: current.revision })), res);
   assert.equal(res.status, 200, res.body);
@@ -1039,7 +1048,7 @@ test("actual child-process lock ownership rejects a second writer", async (t) =>
 test("T12-06/T12-07 settings HTTP negative matrix conceals forwarding and returns generic closed errors", async () => {
   resetRuntimeForTest();
   initializeRuntime({ state: state({}), startup: startup() });
-  const handler = createSettingsHandler({ port: 5005 });
+  const handler = createHermeticSettingsHandler({ port: 5005 });
   const cases = [
     [{ host: "localhost:5005", forwarded: "" }, 404],
     [{ host: "localhost:5005", "x-forwarded-for": "" }, 404],

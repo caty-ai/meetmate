@@ -78,7 +78,7 @@ function result(code, message) {
 
 function classifyStatus(status, options = {}) {
   if (status >= 200 && status < 300) return result("CONNECTED");
-  if (status === 401 || status === 403) return result("AUTH_FAILED");
+  if (status === 401 || (status === 403 && options.system === "attendee")) return result("AUTH_FAILED");
   if (status === 402) return result("PAYMENT_REQUIRED");
   if (status === 429) return result("RATE_LIMITED");
   if (status === 404 && options.system === "llm") {

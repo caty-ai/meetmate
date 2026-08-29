@@ -101,21 +101,18 @@ function messageFor(system, code, message) {
 }
 
 function runtimeStatus(error) {
-  const values = [error?.statusCode, error?.status, error?.error_code, error?.code, error?.message]
-    .map((value) => String(value ?? ""));
-  const joined = values.join(" ");
-  if (/(^|\D)40[13](\D|$)|unauthori[sz]ed|forbidden/i.test(joined)) return 401;
-  if (/(^|\D)402(\D|$)|payment required/i.test(joined)) return 402;
-  if (/(^|\D)404(\D|$)|not found/i.test(joined)) return 404;
-  if (/(^|\D)429(\D|$)|rate.?limit/i.test(joined)) return 429;
+  for (const value of [error?.statusCode, error?.status, error?.error_code, error?.code]) {
+    const normalized = String(value ?? "").trim();
+    if (/^40[1234]$|^429$/.test(normalized)) return Number(normalized);
+  }
   return 0;
 }
 
 function classifyRuntimeFailure(error, options = {}) {
   const status = runtimeStatus(error);
-  if (status === 401) return "AUTH_FAILED";
+  if (status === 401 || status === 403) return "AUTH_FAILED";
   if (status === 402) return "PAYMENT_REQUIRED";
-  if (status === 404) return options.notEnabled404 === false ? "PROVIDER_ERROR" : "NOT_ENABLED";
+  if (status === 404) return options.notEnabled404 === true ? "NOT_ENABLED" : "PROVIDER_ERROR";
   if (status === 429) return "RATE_LIMITED";
   return "PROVIDER_ERROR";
 }
@@ -190,6 +187,9 @@ function createReadinessController(options = {}) {
   }
 
   async function probeOne(system, probeOptions = {}) {
+    if (BILLING_SYSTEMS.has(system) && probeOptions.allowBilling !== true) {
+      return cloneRecord(records.get(system));
+    }
     if (probeOptions.clearRuntime) clearRuntime(system);
     const currentGeneration = generation(system);
     const existing = inflight.get(system);
@@ -208,7 +208,10 @@ function createReadinessController(options = {}) {
       } finally {
         if (!outcome || typeof outcome.code !== "string") outcome = { ok: false, code: "PROVIDER_ERROR" };
         const current = records.get(system);
-        if (generation(system) === startGeneration && !(current?.source === "runtime" && !probeOptions.clearRuntime)) {
+        if (
+          generation(system) === startGeneration
+          && !(current?.source === "runtime" && current.ok === false && !probeOptions.clearRuntime)
+        ) {
           const record = {
             ok: outcome.ok === true,
             code: outcome.ok === true ? "CONNECTED" : outcome.code,
@@ -232,9 +235,11 @@ function createReadinessController(options = {}) {
 
   function staticIssuesBySystem() {
     const grouped = new Map();
+    const active = new Set(gateSystems());
     for (const issue of getStatus().issues || []) {
-      const mapped = FIELD_SYSTEMS[issue.fieldId] || ["settings"];
+      const mapped = FIELD_SYSTEMS[issue.fieldId] || [];
       for (const system of mapped) {
+        if (!active.has(system)) continue;
         const list = grouped.get(system) || [];
         list.push(issue);
         grouped.set(system, list);
@@ -358,7 +363,8 @@ function createReadinessController(options = {}) {
       generation: currentGeneration,
       ...(outcome?.message ? { message: String(outcome.message) } : {}),
     };
-    if (records.get(system)?.source !== "runtime") records.set(system, record);
+    const current = records.get(system);
+    if (!(current?.source === "runtime" && current.ok === false)) records.set(system, record);
     return cloneRecord(records.get(system));
   }
 

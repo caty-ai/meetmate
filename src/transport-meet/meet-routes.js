@@ -894,7 +894,7 @@ function startBotImageLoad() {
 
 /**
  * Preserve the one-shot boot latch used by the existing /info behavior.
- * Readiness probes call refreshNgrokDetection directly for a fresh lookup.
+ * Readiness probes use a non-mutating fresh lookup instead of this latch.
  *
  * Keep this documentation expanded: direct environment reads below are
  * line-pinned by docs/settings-env-inventory.json and its contract test.
@@ -1000,7 +1000,7 @@ async function handleHttp(req, res) {
   }
 
   if (req.method === "GET" && url.pathname === "/readiness") {
-    writeJsonResponse(res, 200, readiness.getReadiness());
+    writeJsonResponse(res, 200, readinessPayload());
     return;
   }
 
@@ -1013,7 +1013,8 @@ async function handleHttp(req, res) {
       }, { "Retry-After": String(allowance.retryAfterSeconds) });
       return;
     }
-    writeJsonResponse(res, 200, await readiness.recheckPublic());
+    await readiness.recheckPublic();
+    writeJsonResponse(res, 200, readinessPayload());
     return;
   }
 
@@ -1206,8 +1207,6 @@ async function handleHttp(req, res) {
           resolvePublicOrigin: (identityOptions) => resolvePublicOrigin({ ...readinessProbeOptions, ...identityOptions }),
         });
       }
-      if (!identity.ok) readiness.setProbeObservation("tunnel", identity);
-
       const readinessState = readiness.getReadiness();
       const identityBlocker = identity.code === "MISMATCH"
         ? {
@@ -1227,6 +1226,21 @@ async function handleHttp(req, res) {
             code: "MEETING_NOT_READY",
             message: "ミーティングを開始する前に接続設定を確認してください",
             blockers,
+            requestId: crypto.randomUUID(),
+          },
+        });
+        return;
+      }
+      if (!readinessState.ready) {
+        const pending = readinessState.systems
+          .filter((system) => system.code === "PENDING")
+          .map((system) => system.id);
+        writeJsonResponse(res, 503, {
+          error: {
+            code: "MEETING_NOT_READY",
+            message: "接続確認中です。数秒後に再試行してください",
+            blockers: [],
+            pending,
             requestId: crypto.randomUUID(),
           },
         });
@@ -1407,21 +1421,24 @@ function readNgrokTunnels(options = {}) {
   });
 }
 
-async function refreshNgrokDetection(options = {}) {
+async function lookupNgrokUrl(options = {}) {
   const configuredDomain = String(getPublishedValue("server_ngrok_domain") || "").trim();
   if (configuredDomain && options.preferConfigured !== false) {
-    detectedNgrokUrl = `wss://${configuredDomain}`;
-    return detectedNgrokUrl;
+    return `wss://${configuredDomain}`;
   }
   try {
     const tunnels = JSON.parse(await readNgrokTunnels(options));
     const httpsTunnel = tunnels.tunnels?.find((tunnel) => {
       try { return new URL(tunnel.public_url).protocol === "https:"; } catch { return false; }
     });
-    detectedNgrokUrl = httpsTunnel ? httpsTunnel.public_url.replace(/^https:/, "wss:") : "";
+    return httpsTunnel ? httpsTunnel.public_url.replace(/^https:/, "wss:") : "";
   } catch {
-    detectedNgrokUrl = "";
+    return "";
   }
+}
+
+async function refreshNgrokDetection(options = {}) {
+  detectedNgrokUrl = await lookupNgrokUrl(options);
   return detectedNgrokUrl;
 }
 
@@ -1431,7 +1448,7 @@ async function resolvePublicOrigin(options = {}) {
   const needsDetectedCandidate = !configuredDomain
     || (options.submittedHost && String(options.submittedHost).toLowerCase() !== configuredHost);
   const freshDetected = needsDetectedCandidate
-    ? await refreshNgrokDetection({ ...options, preferConfigured: false })
+    ? await lookupNgrokUrl({ ...options, preferConfigured: false })
     : "";
   const publicWss = String(getDiagnosticValue("public_wss_url") || "").trim();
   const origins = [
@@ -1667,7 +1684,11 @@ function configureReadinessForTest(probeOptions = {}) {
   });
 }
 
-const { getPublishedValue } = require("../settings/resolver");
+function readinessPayload() {
+  return { ...readiness.getReadiness(), settingsPort: getSettingsRuntime().serverPort };
+}
+
+const { getPublishedValue, getRuntime: getSettingsRuntime } = require("../settings/resolver");
 const readiness = require("../settings/readiness");
 const readinessProbes = require("../settings/probes");
 let readinessInstanceId = "";

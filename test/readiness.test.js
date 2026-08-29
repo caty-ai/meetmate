@@ -99,10 +99,15 @@ test("probe 200 cannot clear runtime PAYMENT_REQUIRED, but loopback manual reche
     probeFn: async () => ({ ok: true, code: "CONNECTED" }),
   });
   controller.reportRuntimeFailure("fish-audio", "PAYMENT_REQUIRED");
-  await controller.probeSystem("fish-audio", { force: true });
+  await controller.probeSystem("fish-audio", { force: true, allowBilling: true });
   assert.equal(controller.inspect("fish-audio").code, "PAYMENT_REQUIRED");
   assert.equal(controller.inspect("fish-audio").source, "runtime");
-  await controller.probeSystem("fish-audio", { force: true, clearRuntime: true, trigger: "loopback-manual" });
+  await controller.probeSystem("fish-audio", {
+    force: true,
+    clearRuntime: true,
+    trigger: "loopback-manual",
+    allowBilling: true,
+  });
   assert.equal(controller.inspect("fish-audio").code, "CONNECTED");
   assert.equal(controller.inspect("fish-audio").source, "probe");
 });
@@ -119,7 +124,7 @@ test("unexpected probe exceptions still settle PROVIDER_ERROR and TTL marks cach
   });
   await controller.probeSystem("soniox", { force: true });
   assert.equal(controller.inspect("soniox").code, "PROVIDER_ERROR");
-  await controller.probeSystem("fish-audio", { force: true });
+  await controller.probeSystem("fish-audio", { force: true, allowBilling: true });
   assert.equal(controller.getReadiness().systems.find((system) => system.id === "fish-audio").stale, false);
   clock += readiness._test.SUCCESS_TTL_MS;
   assert.equal(controller.getReadiness().systems.find((system) => system.id === "fish-audio").stale, true);
@@ -202,4 +207,60 @@ test("bootstrap runs each active gate probe once and skips systems with static i
   });
   await second.bootstrap();
   assert.equal(skipped.includes("attendee"), false);
+});
+
+test("runtime classification uses structured status and reserves NOT_ENABLED for explicit OpenClaw 404", () => {
+  assert.equal(readiness.runtimeStatus({ statusCode: 404, message: "ignored" }), 404);
+  assert.equal(readiness.classifyRuntimeFailure({ statusCode: 403 }), "AUTH_FAILED");
+  assert.equal(readiness.classifyRuntimeFailure({ statusCode: 404 }), "PROVIDER_ERROR");
+  assert.equal(readiness.classifyRuntimeFailure({ statusCode: 404 }, { notEnabled404: true }), "NOT_ENABLED");
+  assert.equal(readiness.runtimeStatus(new Error("language model not found")), 0);
+  assert.equal(readiness.classifyRuntimeFailure(new Error("language model not found")), "PROVIDER_ERROR");
+});
+
+test("a failed probe replaces runtime success while runtime failures remain sticky", async () => {
+  initialize();
+  const controller = readiness.createReadinessController({
+    probeFn: async () => ({ ok: false, code: "AUTH_FAILED" }),
+  });
+  controller.reportRuntimeSuccess("soniox");
+  await controller.probeSystem("soniox", { force: true });
+  assert.deepEqual(
+    { code: controller.inspect("soniox").code, source: controller.inspect("soniox").source },
+    { code: "AUTH_FAILED", source: "probe" },
+  );
+  assert.equal(controller.getReadiness().blockers.some((entry) => entry.system === "soniox"), true);
+});
+
+test("Slack-only static issues stay outside the readiness gate", () => {
+  const withSlackIssue = document();
+  withSlackIssue.slack.notifications.enabled = true;
+  initialize(withSlackIssue);
+  const controller = readiness.createReadinessController();
+  assert.equal(resolver.getStatus().issues.some((issue) => issue.fieldId === "slack_bot_token"), true);
+  for (const system of controller.gateSystems()) {
+    controller.setProbeObservation(system, { ok: true, code: "CONNECTED" });
+  }
+  assert.equal(controller.getReadiness().ready, true);
+  assert.deepEqual(controller.getReadiness().blockers, []);
+});
+
+test("probeOne refuses billing dispatch unless allowBilling is explicitly granted", async () => {
+  initialize();
+  const calls = [];
+  const controller = readiness.createReadinessController({
+    probeFn: async (system) => {
+      calls.push(system);
+      return { ok: true, code: "CONNECTED" };
+    },
+  });
+  assert.equal(await controller.probeSystem("fish-audio", { force: true, trigger: "public-recheck" }), null);
+  assert.equal(await controller.probeSystem("llm", { force: true, trigger: "join" }), null);
+  assert.deepEqual(calls, []);
+  await controller.probeSystem("fish-audio", {
+    force: true,
+    trigger: "settings-save",
+    allowBilling: true,
+  });
+  assert.deepEqual(calls, ["fish-audio"]);
 });

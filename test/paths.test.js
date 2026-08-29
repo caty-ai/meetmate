@@ -10,6 +10,16 @@ const { ENV_DIAGNOSTICS, SETTINGS_REGISTRY, REGISTRY_BY_ID, MASK } = require("..
 const { settingsMutationSchema } = require("../src/settings/schemas");
 const { readConfigState, saveFields } = require("../src/settings/store");
 const { createSettingsHandler } = require("../src/settings/routes");
+const { createReadinessController } = require("../src/settings/readiness");
+
+const HERMETIC_READINESS = Object.freeze({
+  configure() {},
+  async probeGateSystems() {},
+});
+
+function createHermeticSettingsHandler(options = {}) {
+  return createSettingsHandler({ readinessController: HERMETIC_READINESS, ...options });
+}
 const { scanLegacyClass2 } = require("../src/settings/class2-migration");
 const {
   buildEnvelope,
@@ -466,8 +476,11 @@ test("T12-13 conjunctive class-1/2/3 sentinels stay out of every settings exit",
     serverPort: 5005,
   });
   const vendorCalls = [];
+  const connectionReadiness = createReadinessController();
+  connectionReadiness.probeGateSystems = async () => [];
   const handler = createSettingsHandler({
     port: 5005,
+    readinessController: connectionReadiness,
     now: () => new Date("2026-08-28T00:00:00.000Z"),
     connections: {
       minIntervalMs: 0,
@@ -637,7 +650,7 @@ test("T12-06 PUT accepts bootstrap/mask round trips and publishes before success
     revision: initial.revision,
     fields: { soniox_api_key: MASK, agent_greeting: "after" },
   });
-  await createSettingsHandler({ port: 5005 })(settingsRequest("PUT", "/api/settings", {
+  await createHermeticSettingsHandler({ port: 5005 })(settingsRequest("PUT", "/api/settings", {
     host: "localhost:5005",
     origin: "http://localhost:5005",
     "sec-fetch-site": "same-origin",
@@ -676,7 +689,7 @@ test("T12-05 bootstrap PUT materializes registry defaults and captured .env clas
     serverPort: 5005,
   });
   const response = settingsResponse();
-  await createSettingsHandler({ port: 5005 })(settingsRequest("PUT", "/api/settings", {
+  await createHermeticSettingsHandler({ port: 5005 })(settingsRequest("PUT", "/api/settings", {
     host: "localhost:5005",
     origin: "http://localhost:5005",
     "sec-fetch-site": "same-origin",

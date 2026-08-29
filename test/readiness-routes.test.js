@@ -19,6 +19,21 @@ function unavailableNgrokHttpGet() {
   return request;
 }
 
+function availableNgrokHttpGet(publicUrl) {
+  return (_url, callback) => {
+    const request = new EventEmitter();
+    request.setTimeout = () => request;
+    request.destroy = () => {};
+    queueMicrotask(() => {
+      const response = new EventEmitter();
+      callback(response);
+      response.emit("data", JSON.stringify({ tunnels: [{ proto: "https", public_url: publicUrl }] }));
+      response.emit("end");
+    });
+    return request;
+  };
+}
+
 function initialize(options = {}) {
   resolver.resetRuntimeForTest();
   resolver.initializeRuntime({
@@ -33,7 +48,7 @@ function initialize(options = {}) {
         stt: { provider: "soniox", sonioxApiKey: "soniox-secret" },
         tts: { provider: "fish-audio", apiKey: "fish-secret", voiceId: "voice-id" },
         attendee: { apiKey: "attendee-secret", baseUrl: "app.attendee.dev" },
-        server: { ngrokDomain: "meetmate.example" },
+        server: options.ngrokDomain === null ? {} : { ngrokDomain: options.ngrokDomain || "meetmate.example" },
         slack: { notifications: { enabled: false } },
       },
     },
@@ -48,6 +63,7 @@ function initialize(options = {}) {
         openaiApiKey: "",
       }),
     }),
+    serverPort: options.serverPort || 5005,
   });
 }
 
@@ -173,7 +189,7 @@ test("join revalidation probes stale non-billing systems but never stale billing
 });
 
 test("real public route handlers never dispatch billing probes and rate-limited join judges cached blockers", { concurrency: false }, async (t) => {
-  initialize();
+  initialize({ serverPort: 6123 });
   readiness.reset();
   const fetchCalls = [];
   let requestCalls = 0;
@@ -218,6 +234,7 @@ test("real public route handlers never dispatch billing probes and rate-limited 
   const beforeGet = fetchCalls.length;
   const get = await invoke(routes, "GET", "/readiness");
   assert.equal(get.status, 200);
+  assert.equal(get.body.settingsPort, 6123);
   assert.equal(fetchCalls.length, beforeGet, "GET /readiness must be a pure cache read");
   assert.equal(requestCalls, 0, "GET /readiness must not invoke the LLM request seam");
   assert.equal(get.headers["Cache-Control"], "no-store");
@@ -281,7 +298,9 @@ test("real public route handlers never dispatch billing probes and rate-limited 
 test("join route enforces config-derived wsUrl identity and never fetches an outside host", { concurrency: false }, async (t) => {
   initialize({ preDotenvEnv: { PUBLIC_WSS_URL: "wss://candidate.example" } });
   readiness.reset();
-  for (const system of ["soniox", "fish-audio", "attendee", "llm", "tunnel"]) readiness.reportRuntimeSuccess(system);
+  for (const system of ["soniox", "fish-audio", "attendee", "llm", "tunnel"]) {
+    readiness.setProbeObservation(system, { ok: true, code: "CONNECTED" });
+  }
   let fetched = [];
   delete require.cache[routesPath];
   const routes = require(routesPath);
@@ -317,15 +336,89 @@ test("join route enforces config-derived wsUrl identity and never fetches an out
   assert.equal(mismatch.status, 503);
   assert.equal(mismatch.body.error.blockers.some((blocker) => blocker.code === "MISMATCH"), true);
   assert.deepEqual(fetched, ["https://candidate.example/health"]);
+  assert.equal(readiness.inspect("tunnel").code, "CONNECTED", "request identity must not alter canonical readiness");
 
-  readiness.reportRuntimeSuccess("tunnel");
-  readiness.reportRuntimeFailure("fish-audio", "PAYMENT_REQUIRED");
+  readiness.setProbeObservation("tunnel", { ok: false, code: "MISMATCH" });
   const outside = await invoke(routes, "POST", "/join-meeting", {
     meetingUrl: "https://meet.google.com/abc-defg-hij",
     wsUrl: "wss://outside.example/realtime",
     conversationMode: "group",
   }, "198.51.100.2");
   assert.equal(outside.status, 503);
-  assert.equal(outside.body.error.blockers.some((blocker) => blocker.system === "tunnel" && blocker.code === "MISMATCH"), false);
-  assert.deepEqual(fetched, ["https://candidate.example/health"], "outside.example must never become a fetch destination");
+  assert.equal(outside.body.error.blockers.some((blocker) => blocker.system === "tunnel" && blocker.code === "MISMATCH"), true);
+  assert.equal(readiness.inspect("tunnel").code, "MISMATCH", "outside input must not erase a canonical hard result");
+  assert.equal(fetched.includes("https://outside.example/health"), false, "outside.example must never become a fetch destination");
+  assert.deepEqual(fetched, ["https://candidate.example/health", "https://meetmate.example/health"]);
+});
+
+test("fresh readiness lookup cannot clear the boot-time ngrok latch used by /info", { concurrency: false }, async (t) => {
+  initialize({ ngrokDomain: null });
+  readiness.reset();
+  delete require.cache[routesPath];
+  const routes = require(routesPath);
+  await routes.init({
+    detectNgrok: false,
+    loadAvatar: false,
+    instanceId: "this-boot",
+    readinessProbeOptions: {
+      fetchFn: async () => new Response("{}", { status: 200 }),
+      httpGet: unavailableNgrokHttpGet,
+    },
+  });
+  await routes._test.refreshNgrokDetection({
+    httpGet: availableNgrokHttpGet("https://abc123.ngrok.app"),
+  });
+  t.after(() => {
+    delete require.cache[routesPath];
+    readiness.reset();
+    resolver.resetRuntimeForTest();
+  });
+
+  const before = await invoke(routes, "GET", "/info");
+  assert.equal(before.body.publicWsUrl, "wss://abc123.ngrok.app");
+  const recheck = await invoke(routes, "POST", "/readiness/recheck", null, "198.51.100.31");
+  assert.equal(recheck.status, 200);
+  const after = await invoke(routes, "GET", "/info");
+  assert.equal(after.body.publicWsUrl, "wss://abc123.ngrok.app");
+});
+
+test("join rejects PENDING but permits settled soft readiness failures", { concurrency: false }, async (t) => {
+  initialize({ ngrokDomain: null });
+  readiness.reset();
+  delete require.cache[routesPath];
+  const routes = require(routesPath);
+  await routes.init({
+    detectNgrok: false,
+    loadAvatar: false,
+    instanceId: "this-boot",
+    readinessProbeOptions: { httpGet: unavailableNgrokHttpGet },
+  });
+  t.after(() => {
+    delete require.cache[routesPath];
+    readiness.reset();
+    resolver.resetRuntimeForTest();
+  });
+
+  const form = {
+    meetingUrl: "https://meet.google.com/abc-defg-hij",
+    wsUrl: "wss://outside.example/realtime",
+    conversationMode: "group",
+  };
+  const pending = await invoke(routes, "POST", "/join-meeting", form, "198.51.100.41");
+  assert.equal(pending.status, 503);
+  assert.equal(pending.body.error.code, "MEETING_NOT_READY");
+  assert.equal(pending.body.error.message, "接続確認中です。数秒後に再試行してください");
+  assert.deepEqual(pending.body.error.blockers, []);
+  assert.deepEqual(pending.body.error.pending, ["soniox", "fish-audio", "attendee", "llm", "tunnel"]);
+
+  for (const system of ["fish-audio", "attendee", "llm", "tunnel"]) {
+    readiness.setProbeObservation(system, { ok: true, code: "CONNECTED" });
+  }
+  readiness.setProbeObservation("soniox", { ok: false, code: "UNREACHABLE" });
+  const soft = await invoke(routes, "POST", "/join-meeting", {
+    ...form,
+    avatarExperiment: "hybrid-local-frames",
+  }, "198.51.100.42");
+  assert.equal(soft.status, 400);
+  assert.match(soft.text, /公開 HTTPS origin/);
 });

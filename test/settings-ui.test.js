@@ -88,3 +88,26 @@ test("main UI parses both setup and readiness 503 envelopes", () => {
   assert.match(readiness, /Not ready/);
   assert.match(readiness, /Enable chatCompletions/);
 });
+
+test("main UI uses the server-provided settings port for tunnel guidance", () => {
+  const { localSettingsUrlFor, settingsPortFromReadiness } = require("../public/app.js");
+  assert.equal(settingsPortFromReadiness({ settingsPort: 6123 }, "443"), "6123");
+  assert.equal(
+    localSettingsUrlFor("server_ngrok_domain", { settingsPort: 6123 }, "443"),
+    "http://127.0.0.1:6123/settings#field-server_ngrok_domain",
+  );
+  assert.equal(
+    localSettingsUrlFor("panel-connections", { settingsPort: "invalid" }, ""),
+    "http://127.0.0.1:5005/settings#panel-connections",
+  );
+});
+
+test("main UI keeps a visible recheck surface when readiness cannot be loaded", () => {
+  const { readinessDisplayRows } = require("../public/app.js");
+  assert.deepEqual(readinessDisplayRows({
+    ready: false,
+    systems: [],
+    blockers: [],
+    unavailable: true,
+  }), [{ kind: "warning", text: "接続状態を取得できません" }]);
+});
