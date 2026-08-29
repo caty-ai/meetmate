@@ -222,7 +222,15 @@
   }
 
   async function loadFrames() {
-    await Promise.all(FRAME_NAMES.map(loadFrame));
+    // The full frame set can take tens of seconds on a narrow public tunnel,
+    // so fetch the idle frame alone at full bandwidth and paint it the moment
+    // it decodes; talk frames fall back to idle until they arrive.
+    await loadFrame("idle");
+    if (frames.get("idle")) {
+      if (speaking) render();
+      else drawFrame("idle");
+    }
+    await Promise.all(FRAME_NAMES.filter((name) => name !== "idle").map(loadFrame));
     framesLoaded = true;
     if (speaking) render();
     else drawFrame("idle");

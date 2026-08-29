@@ -115,6 +115,34 @@ test("missing or broken frames fail closed to idle and then the diagnostic canva
   assert.ok(missingIdle.drawCalls.some((call) => call[0] === "text" && call[1] === "IDLE"));
 });
 
+test("slow network: idle frame paints as soon as it arrives, before the talk frames finish", async () => {
+  const gate = {};
+  const held = new Set(["talk1", "talk2", "talk3", "blink", "talk_blink"]);
+  const page = await runFramesPage({ holdFrames: held, gate });
+  const contract = page.sandbox.__localAvatarFramesContract;
+
+  assert.equal(contract.getState().currentFrame, "idle", "idle must render while talk frames are still loading");
+  assert.ok(page.drawCalls.some((call) => call[0] === "image"), "idle bitmap must be drawn, not a placeholder");
+  assert.equal(page.drawCalls.some((call) => call[0] === "text"), false, "no IDLE diagnostic flash while loading");
+
+  const marker = {
+    kind: "marker",
+    generation: 1,
+    cancelEpoch: 0,
+    sequence: 2,
+    outputEpoch: 0,
+    sampleIndex: 0,
+    sampleRate: 24_000,
+  };
+  assert.doesNotThrow(() => contract.acceptState(marker, 1_000));
+  assert.equal(contract.getState().currentFrame, "idle", "talk falls back to idle until talk frames arrive");
+
+  gate.release();
+  await settleMicrotasks();
+  assert.doesNotThrow(() => contract.acceptState({ ...marker, sequence: 3, sampleIndex: 960 }, 1_100));
+  assert.match(contract.getState().currentFrame, /^talk/, "lip-sync upgrades once talk frames land");
+});
+
 test("frame assets require the session capability and an exact allowlisted PNG route", { concurrency: false }, async (t) => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-avatar-frames-"));
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
@@ -505,7 +533,10 @@ function setEnv(values) {
   };
 }
 
-async function runFramesPage({ frameFailures = new Set() } = {}) {
+async function runFramesPage({ frameFailures = new Set(), holdFrames = new Set(), gate = {} } = {}) {
+  let releaseHeldFrames;
+  const heldGate = new Promise((resolve) => { releaseHeldFrames = resolve; });
+  gate.release = releaseHeldFrames;
   const script = fs.readFileSync(SCRIPT_FILE, "utf8");
   const drawCalls = [];
   const initial = {
@@ -548,6 +579,7 @@ async function runFramesPage({ frameFailures = new Set() } = {}) {
         return { ok: true, status: 200, json: async () => initial };
       }
       const name = /\/([^/?]+)\.png\?/.exec(url)?.[1] || "";
+      if (holdFrames.has(name)) await heldGate;
       return {
         ok: !frameFailures.has(name),
         status: frameFailures.has(name) ? 404 : 200,
@@ -560,9 +592,14 @@ async function runFramesPage({ frameFailures = new Set() } = {}) {
   };
   vm.createContext(sandbox);
   vm.runInContext(script, sandbox, { filename: SCRIPT_FILE });
-  await new Promise((resolve) => setImmediate(resolve));
-  await new Promise((resolve) => setImmediate(resolve));
+  await settleMicrotasks();
   return { sandbox, drawCalls };
+}
+
+async function settleMicrotasks() {
+  for (let i = 0; i < 4; i += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
 }
 
 async function withFreshUiRoutes(home, fn) {
