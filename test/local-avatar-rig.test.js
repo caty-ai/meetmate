@@ -3,6 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const vm = require("node:vm");
 const { execFileSync } = require("node:child_process");
@@ -276,6 +277,7 @@ test("generated page retains the frozen capability and network surface", () => {
   const shipped = `${fs.readFileSync(HTML_FILE, "utf8")}\n${script}`;
   assert.ok(Buffer.byteLength(script) < 2_500_000, "shipped rig script must stay below 2.5 MB");
   assert.match(script, /Generated from modified pinned Anime2\.5DRig and ag-psd sources/);
+  assert.equal(/GenericParts|genericparts/.test(script), false, "unused GenericParts code must not ship");
   assert.equal(/\b(?:https?:)?\/\//i.test(shipped), false);
   for (const token of [
     "WebSocket",
@@ -299,12 +301,17 @@ test("generated page retains the frozen capability and network surface", () => {
   assert.deepEqual([...script.matchAll(/fetch\(([^,]+)/g)].map((match) => match[1].trim()), ["stateUrl(parameters)"]);
 });
 
-test("rig generator is byte-idempotent", () => {
-  execFileSync(process.execPath, [GENERATOR], { cwd: ROOT });
-  const first = fs.readFileSync(SCRIPT_FILE);
-  execFileSync(process.execPath, [GENERATOR], { cwd: ROOT });
-  const second = fs.readFileSync(SCRIPT_FILE);
-  assert.deepEqual(second, first);
+test("rig generator exactly reproduces the shipped script without mutating it", () => {
+  const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-local-avatar-rig-"));
+  const generatedFile = path.join(temporaryDirectory, "local-avatar.js");
+  const shippedBefore = fs.readFileSync(SCRIPT_FILE);
+  try {
+    execFileSync(process.execPath, [GENERATOR, "--out", generatedFile], { cwd: ROOT });
+    assert.deepEqual(fs.readFileSync(generatedFile), shippedBefore);
+    assert.deepEqual(fs.readFileSync(SCRIPT_FILE), shippedBefore);
+  } finally {
+    fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+  }
 });
 
 function createWebGlStub(uploaded, onDraw, onUniform = () => {}) {

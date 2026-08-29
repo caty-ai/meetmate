@@ -260,9 +260,7 @@ function buildVendorSection() {
     .replace(/g=window/g, "g=rigVendorRoot");
   const rigger = sanitizeVendor("rigger.js")
     .replace(/typeof self !== 'undefined' \? self : this/, "rigVendorRoot");
-  const generic = sanitizeVendor("genericparts.js")
-    .replace(/typeof self!==\'undefined\'\?self:this/, "rigVendorRoot");
-  return `function loadRigVendor(rigVendorRoot) {\n${ag}\n${rigger}\n${generic}\nreturn { agPsd: rigVendorRoot.agPsd, Rigger: rigVendorRoot.Rigger, GenericParts: rigVendorRoot.GenericParts };\n}`;
+  return `function loadRigVendor(rigVendorRoot) {\n${ag}\n${rigger}\nreturn { agPsd: rigVendorRoot.agPsd, Rigger: rigVendorRoot.Rigger };\n}`;
 }
 
 function parseArguments(argv) {
@@ -273,6 +271,13 @@ function parseArguments(argv) {
       const value = argv[index + 1];
       if (!value || value.startsWith("--")) throw new Error("--model requires a PSD path");
       options.modelPath = path.resolve(process.cwd(), value);
+      index += 1;
+      continue;
+    }
+    if (argument === "--out") {
+      const value = argv[index + 1];
+      if (!value || value.startsWith("--")) throw new Error("--out requires a file path");
+      options.outputPath = path.resolve(process.cwd(), value);
       index += 1;
       continue;
     }
@@ -316,7 +321,7 @@ function build(options = {}) {
   if (forbiddenUrl) {
     throw new Error(`generated page script contains a forbidden URL-shaped token near ${output.slice(Math.max(0, forbiddenUrl.index - 24), forbiddenUrl.index + 48)}`);
   }
-  fs.writeFileSync(TARGET, output.endsWith("\n") ? output : `${output}\n`);
+  fs.writeFileSync(options.outputPath || TARGET, output.endsWith("\n") ? output : `${output}\n`);
 }
 
 if (require.main === module) build(parseArguments(process.argv.slice(2)));
