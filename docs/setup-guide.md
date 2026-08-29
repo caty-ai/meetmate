@@ -142,6 +142,8 @@ ngrok の固定ドメイン（無料プランで1つ）を使うと、再起動�
 3. 自動生成されたドメイン（例: `pretty-duckling-abc123.ngrok-free.dev`）をコピー
 4. 設定 UI の **詳細** タブにある「ngrok ドメイン」に貼り付けて保存する（再起動が必要）
 
+> 💡 **ngrok 側で必要なのは「固定 Domain」と「Authtoken」の2つだけ。** Dashboard に「Start Endpoint」等のボタンがあるが、押す必要はない — エンドポイントは手元で `ngrok http ...` を起動した時点で有効になる（次節）。Authtoken は Dashboard 左メニュー「Your Authtoken」からコピーし、`ngrok config add-authtoken <token>` で一度設定すればよい。
+
 > 💡 **無料プランは1ドメインまで。** 2台目以降のエージェントには別の ngrok アカウントを作成するか、有料プラン（$8/月〜）で追加ドメインを取得する。
 > 別の方法として Tailscale + VPS 構成なら ngrok 自体が不要（後述）。
 
