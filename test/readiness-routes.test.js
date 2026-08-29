@@ -74,6 +74,104 @@ async function invoke(routes, method, url, form, address, headers) {
   return output;
 }
 
+async function withCountingReadinessRoutes(options, run) {
+  initialize();
+  readiness.reset();
+  let clock = 1_000_000;
+  const fetchCalls = [];
+  let requestCalls = 0;
+  const fetchFn = async (url) => {
+    const value = String(url);
+    fetchCalls.push(value);
+    const status = options.failSoniox && value.includes("api.soniox.com") ? 401 : 200;
+    return new Response('{"instanceId":"this-boot"}', {
+      status,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+  const requestFn = async () => {
+    requestCalls += 1;
+    return { statusCode: 200, body: '{"choices":[]}' };
+  };
+  readiness.configure({
+    now: () => clock,
+    probeOptions: { fetchFn, requestFn },
+  });
+
+  const billing = ["fish-audio", "llm"];
+  const nonBilling = ["soniox", "attendee", "tunnel"];
+  for (const system of [...billing, ...(options.allStale ? nonBilling : [])]) {
+    readiness.setProbeObservation(system, { ok: true, code: "CONNECTED" });
+  }
+  if (options.billingStale || options.allStale) clock += readiness._test.SUCCESS_TTL_MS + 1;
+  if (!options.allStale) {
+    for (const system of nonBilling) readiness.setProbeObservation(system, { ok: false, code: "UNREACHABLE" });
+  }
+
+  const previousJoinToken = process.env.JOIN_SHARED_TOKEN;
+  process.env.JOIN_SHARED_TOKEN = "join-ok";
+  delete require.cache[routesPath];
+  const routes = require(routesPath);
+  await routes.init({
+    detectNgrok: false,
+    loadAvatar: false,
+    instanceId: "this-boot",
+    readinessProbeOptions: { fetchFn, requestFn, httpGet: unavailableNgrokHttpGet },
+  });
+  try {
+    await run({ routes, fetchCalls, requestCalls: () => requestCalls });
+  } finally {
+    delete require.cache[routesPath];
+    if (previousJoinToken === undefined) delete process.env.JOIN_SHARED_TOKEN;
+    else process.env["JOIN_SHARED_TOKEN"] = previousJoinToken;
+    readiness.reset();
+    resolver.resetRuntimeForTest();
+  }
+}
+
+function assertOnlyNonBillingProbes(fetchCalls, requestCalls) {
+  assert.equal(fetchCalls.some((value) => value.includes("api.soniox.com")), true, "Soniox proves non-billing work ran");
+  assert.equal(fetchCalls.some((value) => value.includes("app.attendee.dev")), true, "Attendee proves non-billing work ran");
+  assert.equal(fetchCalls.some((value) => value.includes("meetmate.example/health")), true, "Tunnel proves non-billing work ran");
+  assert.deepEqual({
+    fishFetches: fetchCalls.filter((value) => value.includes("api.fish.audio")).length,
+    llmRequests: requestCalls(),
+  }, {
+    fishFetches: 0,
+    llmRequests: 0,
+  }, "Fish fetchFn and LLM requestFn must remain unreachable");
+}
+
+test("public recheck cannot probe a healthy billing cache", { concurrency: false }, async () => {
+  await withCountingReadinessRoutes({}, async ({ routes, fetchCalls, requestCalls }) => {
+    const response = await invoke(routes, "POST", "/readiness/recheck", null, "198.51.100.21");
+    assert.equal(response.status, 200);
+    assertOnlyNonBillingProbes(fetchCalls, requestCalls);
+  });
+});
+
+test("public recheck cannot probe a stale billing cache", { concurrency: false }, async () => {
+  await withCountingReadinessRoutes({ billingStale: true }, async ({ routes, fetchCalls, requestCalls }) => {
+    const response = await invoke(routes, "POST", "/readiness/recheck", null, "198.51.100.22");
+    assert.equal(response.status, 200);
+    assertOnlyNonBillingProbes(fetchCalls, requestCalls);
+  });
+});
+
+test("join revalidation probes stale non-billing systems but never stale billing systems", { concurrency: false }, async () => {
+  await withCountingReadinessRoutes({ allStale: true, failSoniox: true }, async ({ routes, fetchCalls, requestCalls }) => {
+    const response = await invoke(routes, "POST", "/join-meeting", {
+      meetingUrl: "https://meet.google.com/abc-defg-hij",
+      wsUrl: "wss://meetmate.example/realtime",
+      conversationMode: "group",
+      joinToken: "join-ok",
+    }, "198.51.100.23", { "x-join-token": "join-ok" });
+    assert.equal(response.status, 503);
+    assert.equal(response.body.error.code, "MEETING_NOT_READY");
+    assertOnlyNonBillingProbes(fetchCalls, requestCalls);
+  });
+});
+
 test("real public route handlers never dispatch billing probes and rate-limited join judges cached blockers", { concurrency: false }, async (t) => {
   initialize();
   readiness.reset();
