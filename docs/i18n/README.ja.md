@@ -94,9 +94,11 @@ Meetmate: [warm] 変更点は2つです——年間割引が15%になったの�
 | OpenClaw Gateway | 対応済み | 現状のメインパス：記憶・スキル・ツール・委譲はすべて既存のエージェント側に残ります。 |
 | OpenAI 互換ベースライン | 対応済み | 任意の互換エンドポイント向けのシンプルな音声エージェントモード。 |
 | OpenAI 互換ゲートウェイ経由の Claude Code | 統合作業中 | 汎用の `openai-compatible` プロバイダーを使用。Claude 専用のプロバイダー分岐はまだありません。実際の Google Meet でのエンドツーエンド検証が済むまでは「対応済み」とは呼びません。 |
-| Hermes api_server | エンドポイントは確認済み、Meetmate 側の配線はまだ | 2026年7月12日時点、issue [#1](https://github.com/caty-ai/meetmate/issues/1) で `POST /v1/chat/completions`・SSE・Bearer 認証・プロフィール/ペルソナ注入を確認済み。残る作業はトークンの受け渡しと Meetmate 側の smoke/E2E テストです。 |
+| Hermes api_server | 対応済み | 2026年8月29日、実際の Google Meet でエンドツーエンド検証済み — 汎用の `openai-compatible` プロバイダー（SSH トンネル・Bearer 認証）経由で、実会議での音声会話が動作しました。対象は音声エージェント経路です。配線の詳細: [LLM providers](https://github.com/caty-ai/meetmate/blob/main/docs/TECHNICAL.md#llm-providers)。 |
 | Codex / Kimi Code | 計画中 | まだ配線されていません。 |
-| 会議グリッド内のアバター | 現状は静止画 | ライブアバターは [#2](https://github.com/caty-ai/meetmate/issues/2) で計画中です。 |
+| 会議グリッド内のアバター | 既定は静止画・ライブアバター実験2種あり | フレーム差し替えリップシンクが v8.4.0 で出荷済み、2.5D リグの PoC も main に入りました。既定は静止画のままで、ライブアバターの作業は [#2](https://github.com/caty-ai/meetmate/issues/2) で継続中です。 |
+
+アバターを動かしたい場合は、すでに2つの実験パスが使えます。発話に合わせて6枚の PNG を差し替えるフレーム式リップシンクアバター（v8.4.0）と、2.5D リグの PoC です。既定は静止画のまま — 試し方は[セットアップガイドのフレーム差し替えアバターの節](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#実験的なフレーム差し替えアバター)にあります。
 
 ## プラットフォームに関する注意
 

@@ -95,9 +95,11 @@ Meetmate: [warm] Two changes — the annual discount moved to 15%, and a new
 | OpenClaw Gateway | Supported | Primary path today: memory, skills, tools, and delegation all stay on your existing agent. |
 | OpenAI-compatible baseline | Supported | Plain voice-agent mode for any compatible endpoint. |
 | Claude Code via OpenAI-compatible gateway | Integration in progress | Uses the generic `openai-compatible` provider. No Claude-specific provider branch. We will only call this supported after a real Google Meet end-to-end pass lands. |
-| Hermes api_server | Endpoint verified, Meetmate wiring still pending | As of July 12, 2026, issue [#1](https://github.com/caty-ai/meetmate/issues/1) confirmed `POST /v1/chat/completions`, SSE, Bearer auth, and profile/persona injection. The remaining work is token handoff plus Meetmate smoke/E2E. |
+| Hermes api_server | Supported | Live Google Meet end-to-end verified on August 29, 2026 — real meetings ran voice conversations through the generic `openai-compatible` provider (SSH tunnel, Bearer auth). Covers the voice-agent path. Wiring notes: [LLM providers](https://github.com/caty-ai/meetmate/blob/main/docs/TECHNICAL.md#llm-providers). |
 | Codex / Kimi Code | Planned | Not wired yet. |
-| Avatar in the meeting grid | Static image today | Live avatar is planned in [#2](https://github.com/caty-ai/meetmate/issues/2). |
+| Avatar in the meeting grid | Static image by default; two live-avatar experiments | Frame-swap lip-sync shipped in v8.4.0 and a 2.5D-rig proof of concept has landed. The static image remains the default; live-avatar work continues in [#2](https://github.com/caty-ai/meetmate/issues/2). |
+
+Want the avatar to move? Two experiments already ship: a frame-swap lip-sync avatar that animates six PNGs in time with speech (v8.4.0), and a 2.5D-rig proof of concept. The static image stays the default — the [frame-swap avatar section of the setup guide](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#実験的なフレーム差し替えアバター) shows how to try it.
 
 ## Platform notes
 
