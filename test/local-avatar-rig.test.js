@@ -272,6 +272,55 @@ test("accepted markers animate the mouth and cancel closes it", () => {
   assert.ok(opacities.every((value) => value === 0 || value === 1));
 });
 
+test("scheduled envelopes drive attack/decay smoothing with the existing 50ms delta clamp", () => {
+  const page = runRigEnvelopePage();
+  const contract = page.sandbox.__localAvatarContract;
+  assert.equal(contract.acceptState(rigMarker({ envelopes: [{ s: 0, v: [1, 0] }] })), true);
+
+  page.frames.shift()(50);
+  const attacked = contract.getState().rigMouth;
+  assert.ok(Math.abs(attacked - (1 - Math.exp(-25 * 0.05))) < 1e-12);
+
+  page.frames.shift()(100);
+  const decayed = contract.getState().rigMouth;
+  assert.ok(Math.abs(decayed - attacked * Math.exp(-8 * 0.05)) < 1e-12);
+  assert.ok(attacked > 1 - Math.exp(-8 * 0.05), "attack coefficient is faster than decay");
+
+  const clamped = runRigEnvelopePage();
+  clamped.sandbox.__localAvatarContract.acceptState(rigMarker({ envelopes: [{ s: 0, v: new Array(20).fill(1) }] }));
+  clamped.frames.shift()(1_000);
+  assert.ok(Math.abs(clamped.sandbox.__localAvatarContract.getState().rigMouth - attacked) < 1e-12);
+
+  const quiet = runRigEnvelopePage();
+  quiet.sandbox.__localAvatarContract.acceptState(rigMarker({ envelopes: [{ s: 0, v: [0] }] }));
+  quiet.frames.shift()(50);
+  assert.equal(quiet.sandbox.__localAvatarContract.getState().rigMouth, 0, "envelope quiet replaces the fresh-marker pseudo-sine");
+});
+
+test("rig envelope markers require a positive safe sample rate and stay in the performance clock domain", () => {
+  const page = runRigEnvelopePage({ dateNow: 9_000_000_000_000 });
+  const contract = page.sandbox.__localAvatarContract;
+  for (const sampleRate of [undefined, 0, 24_000.5]) {
+    assert.equal(contract.acceptState({
+      ...rigMarker({
+        sequence: contract.getState().sequence + 1,
+        envelopes: [{ s: 0, v: [1] }],
+      }),
+      sampleRate,
+    }), false);
+  }
+
+  assert.equal(contract.acceptState(rigMarker({ envelopes: [{ s: 0, v: [1] }] })), true);
+  assert.equal(contract.getState().envelope.playbackStartWall, 0, "Date.now skew cannot affect the rig anchor");
+  page.frames.shift()(50);
+  assert.ok(contract.getState().rigMouth > 0);
+
+  const fallback = runRigEnvelopePage();
+  assert.equal(fallback.sandbox.__localAvatarContract.acceptState({ ...rigMarker(), sampleRate: undefined }), true);
+  fallback.frames.shift()(100);
+  assert.ok(Number.isFinite(fallback.sandbox.__localAvatarContract.getState().rigMouth));
+});
+
 test("generated page retains the frozen capability and network surface", () => {
   const script = shippedScript();
   const shipped = `${fs.readFileSync(HTML_FILE, "utf8")}\n${script}`;
@@ -313,6 +362,59 @@ test("rig generator exactly reproduces the shipped script without mutating it", 
     fs.rmSync(temporaryDirectory, { recursive: true, force: true });
   }
 });
+
+function rigMarker({
+  kind = "marker",
+  generation = 0,
+  cancelEpoch = 0,
+  sequence = 0,
+  outputEpoch = 0,
+  sampleIndex = 0,
+  sampleRate = 24_000,
+  envelopes,
+} = {}) {
+  return {
+    kind,
+    generation,
+    cancelEpoch,
+    sequence,
+    outputEpoch,
+    sampleIndex,
+    sampleRate,
+    ...(envelopes === undefined ? {} : { envelopes }),
+  };
+}
+
+function runRigEnvelopePage({ dateNow = 0 } = {}) {
+  const frames = [];
+  const gl = createWebGlStub([], () => {});
+  const context = {
+    fillRect: () => {},
+    fillText: () => {},
+    drawImage: () => {},
+    set fillStyle(_value) {},
+    set font(_value) {},
+    set textAlign(_value) {},
+  };
+  const sandbox = {
+    URLSearchParams,
+    Date: { now: () => dateNow },
+    location: { pathname: "/local-avatar/index.html", search: "?offset=0", hash: "" },
+    history: { replaceState: () => {} },
+    document: {
+      getElementById: () => ({ width: 1280, height: 720, getContext: () => context }),
+      createElement: () => ({ width: 0, height: 0, getContext: () => gl }),
+    },
+    requestAnimationFrame: (callback) => { frames.push(callback); return frames.length; },
+    fetch: async () => { throw new Error("state request is not expected"); },
+    setTimeout: () => 1,
+    clearTimeout: () => {},
+    performance: { now: () => 0 },
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(shippedScript(), sandbox, { filename: SCRIPT_FILE });
+  return { sandbox, frames };
+}
 
 function createWebGlStub(uploaded, onDraw, onUniform = () => {}) {
   let value = 1;

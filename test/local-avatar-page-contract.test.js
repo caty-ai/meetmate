@@ -5,6 +5,7 @@ const path = require("node:path");
 const vm = require("node:vm");
 const { serveLocalAvatar, _test: uiTest } = require("../src/ui-routes");
 const { createLocalAvatarSession } = require("../src/transport-meet/local-avatar-session");
+const { LEVEL_ONE_THRESHOLD, LEVEL_TWO_THRESHOLD } = require("../src/audio-envelope");
 
 const PUBLIC_DIR = path.join(__dirname, "..", "public", "local-avatar");
 const HTML_FILE = path.join(PUBLIC_DIR, "index.html");
@@ -85,7 +86,12 @@ test("local avatar exact routes use strict CSP and no-store, including auth fail
     assert.ok(initial.generation > 0);
 
     const source = issued.session.beginSource();
-    issued.session.publishMarker({ outputEpoch: 0, firstSampleIndex: 480, sampleRate: 24_000 }, source);
+    issued.session.publishMarker({
+      outputEpoch: 0,
+      firstSampleIndex: 480,
+      sampleRate: 24_000,
+      envelopeSegments: [{ s: 480, v: [0.375] }],
+    }, source);
     const statePath = `/local-avatar/state?after=${initial.sequence}&generation=${initial.generation}&v=${encodeURIComponent(issued.session.visualId)}`;
     const state = await requestRoute("POST", statePath, authHeaders(issued.capability));
     assertLocalHeaders(state, 200);
@@ -97,6 +103,7 @@ test("local avatar exact routes use strict CSP and no-store, including auth fail
       outputEpoch: 0,
       sampleIndex: 480,
       sampleRate: 24_000,
+      envelopes: [{ s: 480, v: [0.375] }],
     });
   } finally {
     issued.session.close();
@@ -161,7 +168,7 @@ test("page rejects stale generation, epoch, sequence, and replay after cancel", 
     sampleIndex: 480,
     sampleRate: 24_000,
   };
-  assert.equal(contract.acceptState(marker), true);
+  assert.equal(contract.acceptState({ ...marker, futureField: { ignored: true } }), true);
   assert.equal(contract.acceptState({ ...marker, generation: 0, sequence: 3 }), false);
   assert.equal(contract.acceptState({ ...marker, sequence: 2, sampleIndex: 960 }), false);
   assert.equal(contract.acceptState({ ...marker, sequence: 3, sampleIndex: 240 }), false);
@@ -173,6 +180,14 @@ test("page rejects stale generation, epoch, sequence, and replay after cancel", 
   assert.equal(contract.acceptState({ ...marker, cancelEpoch: 1, sequence: 4, outputEpoch: 1, sampleIndex: 0 }), true);
   assert.equal(contract.getState().sampleIndex, 0);
   assert.ok(drawCalls.length > 0);
+});
+
+test("frame threshold literals match the server mapping and both pages share the schedule core", () => {
+  const framesScript = fs.readFileSync(path.join(PUBLIC_DIR, "frames.js"), "utf8");
+  const rigScript = fs.readFileSync(SCRIPT_FILE, "utf8");
+  assert.match(framesScript, new RegExp(`LEVEL_ONE_THRESHOLD = ${LEVEL_ONE_THRESHOLD}`));
+  assert.match(framesScript, new RegExp(`LEVEL_TWO_THRESHOLD = ${LEVEL_TWO_THRESHOLD}`));
+  assert.equal(extractScheduleCore(framesScript, "\n\n  let framesLoaded"), extractScheduleCore(rigScript, "\n\n  function closeRigMouth"));
 });
 
 function authHeaders(capability, origin = "https://meetmate.example") {
@@ -214,4 +229,12 @@ function requestRoute(method, requestPath, headers = {}) {
       reject(err);
     }
   });
+}
+
+function extractScheduleCore(source, endMarker) {
+  const start = source.indexOf("  function createEnvelopeSchedule(now) {");
+  assert.notEqual(start, -1);
+  const end = source.indexOf(endMarker, start);
+  assert.notEqual(end, -1);
+  return source.slice(start, end);
 }
