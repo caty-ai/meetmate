@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "extractionCommand": "grep -rhoE 'process\\.env\\.[A-Z0-9_]+' src/ bin/ | sort -u",
-  "baselineUniqueDirectCount": 89,
+  "baselineUniqueDirectCount": 91,
   "classificationEnums": {
     "ux": [
       "basic",
@@ -127,7 +127,7 @@
     {
       "name": "BARGE_IN_CONFIDENCE_MIN",
       "references": [
-        "src/pipeline.js:43"
+        "src/pipeline.js:47"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -137,7 +137,7 @@
     {
       "name": "BARGE_IN_MIN_CHARS",
       "references": [
-        "src/pipeline.js:42"
+        "src/pipeline.js:46"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -163,7 +163,7 @@
     {
       "name": "CLAUSE_PAUSE_MS",
       "references": [
-        "src/pipeline.js:29"
+        "src/pipeline.js:30"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -173,7 +173,7 @@
     {
       "name": "COMFORT_NOISE_AMPLITUDE",
       "references": [
-        "src/pipeline.js:36"
+        "src/pipeline.js:37"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -212,7 +212,7 @@
     {
       "name": "ENABLE_BARGE_IN",
       "references": [
-        "src/pipeline.js:44"
+        "src/pipeline.js:48"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -222,7 +222,7 @@
     {
       "name": "ENABLE_IMMEDIATE_ACK",
       "references": [
-        "src/pipeline.js:45"
+        "src/pipeline.js:49"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -232,7 +232,7 @@
     {
       "name": "ENABLE_MEETING_CONTEXT_INJECTION",
       "references": [
-        "src/pipeline.js:57"
+        "src/pipeline.js:61"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -242,7 +242,7 @@
     {
       "name": "ENABLE_PROGRESS_GUARD",
       "references": [
-        "src/pipeline.js:46"
+        "src/pipeline.js:50"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -252,7 +252,7 @@
     {
       "name": "FIRST_CHUNK_MIN_CHARS",
       "references": [
-        "src/pipeline.js:24"
+        "src/pipeline.js:25"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -385,7 +385,7 @@
     {
       "name": "MEETING_CONTEXT_RAW_CHARS",
       "references": [
-        "src/pipeline.js:52"
+        "src/pipeline.js:56"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -395,7 +395,7 @@
     {
       "name": "MEETING_CONTEXT_RAW_UTTERANCES",
       "references": [
-        "src/pipeline.js:51"
+        "src/pipeline.js:55"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -426,7 +426,7 @@
     {
       "name": "MIN_CLAUSE_LEN",
       "references": [
-        "src/pipeline.js:22"
+        "src/pipeline.js:23"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -436,7 +436,27 @@
     {
       "name": "MIN_CLAUSE_PREFIX",
       "references": [
-        "src/pipeline.js:23"
+        "src/pipeline.js:24"
+      ],
+      "ux": "deployment-readonly",
+      "credentialClass": "none",
+      "handling": "env-only-readonly-diagnostic",
+      "remainingDirectReads": 1
+    },
+    {
+      "name": "LOCAL_AVATAR_ENVELOPE",
+      "references": [
+        "src/pipeline.js:38"
+      ],
+      "ux": "deployment-readonly",
+      "credentialClass": "none",
+      "handling": "env-only-readonly-diagnostic",
+      "remainingDirectReads": 1
+    },
+    {
+      "name": "LOCAL_AVATAR_ENVELOPE_SLACK_MS",
+      "references": [
+        "src/pipeline.js:40"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -488,7 +508,7 @@
     {
       "name": "PENDING_QUEUE_MAX",
       "references": [
-        "src/pipeline.js:50"
+        "src/pipeline.js:54"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -506,7 +526,7 @@
     {
       "name": "POST_UTTERANCE_BUFFER_MS",
       "references": [
-        "src/pipeline.js:39"
+        "src/pipeline.js:43"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -516,7 +536,7 @@
     {
       "name": "PROGRESS_PING_INTERVAL_MS",
       "references": [
-        "src/pipeline.js:40"
+        "src/pipeline.js:44"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -526,7 +546,7 @@
     {
       "name": "PROGRESS_PING_MAX",
       "references": [
-        "src/pipeline.js:41"
+        "src/pipeline.js:45"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -536,8 +556,8 @@
     {
       "name": "PUBLIC_WSS_URL",
       "references": [
-        "src/transport-meet/meet-routes.js:979",
-        "src/transport-meet/meet-routes.js:980"
+        "src/transport-meet/meet-routes.js:985",
+        "src/transport-meet/meet-routes.js:986"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -547,7 +567,7 @@
     {
       "name": "SENTENCE_PAUSE_MS",
       "references": [
-        "src/pipeline.js:28"
+        "src/pipeline.js:29"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -720,7 +740,7 @@
     {
       "name": "TRANSCRIPT_BUFFER_MAX",
       "references": [
-        "src/pipeline.js:49"
+        "src/pipeline.js:53"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -757,7 +777,7 @@
     {
       "name": "TTS_GAP_MS",
       "references": [
-        "src/pipeline.js:34"
+        "src/pipeline.js:35"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -767,7 +787,7 @@
     {
       "name": "TTS_LEAD_MS",
       "references": [
-        "src/pipeline.js:35"
+        "src/pipeline.js:36"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -897,8 +917,8 @@
       "expression": "runtime.startup.{preDotenvEnv,dotenvSeeds}[name]",
       "helper": "per-agent Slack token compatibility lookup",
       "references": [
-        "src/settings/resolver.js:346",
-        "src/settings/resolver.js:348"
+        "src/settings/resolver.js:348",
+        "src/settings/resolver.js:350"
       ],
       "pattern": "^[A-Z0-9_-]+_SLACK_BOT_TOKEN$",
       "names": [],

@@ -138,6 +138,7 @@ function credentialView(entry, value, source) {
 }
 
 const EXACT_TRUE_DIAGNOSTICS = new Set(["echo_gate_closed_bypass", "meeting_context_injection_enabled"]);
+const OFF_DISABLED_DIAGNOSTICS = new Set(["local_avatar_envelope_enabled"]);
 const INTEGER_DIAGNOSTICS = new Set([
   "mcp_join_timeout_ms", "attendee_retry_attempts", "attendee_retry_base_ms", "attendee_timeout_ms",
   "barge_in_min_chars", "body_limit_bytes", "clause_pause_ms", "echo_loop_cooldown_ms",
@@ -182,6 +183,7 @@ function parseDiagnosticValue(diagnostic, raw, startup) {
     if (diagnostic.id === "metrics_disabled") return ["1", "true", "yes"].includes(value);
     if (diagnostic.id === "wake_calibrate_enabled") return value === "1";
     if (EXACT_TRUE_DIAGNOSTICS.has(diagnostic.id)) return value === "true";
+    if (OFF_DISABLED_DIAGNOSTICS.has(diagnostic.id)) return value !== "off";
     return value !== "false";
   }
   if (["metrics-path", "tts-path", "home-path"].includes(diagnostic.type)) {

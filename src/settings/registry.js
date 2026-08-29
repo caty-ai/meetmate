@@ -170,6 +170,8 @@ const ENV_DIAGNOSTICS = Object.freeze([
   ["fish_audio_retry_max", "FISH_AUDIO_RETRY_MAX", "number", 2],
   ["gateway_events_agent_id", "GATEWAY_EVENTS_AGENT_ID", "string", "main"],
   ["llm_response_timeout_ms", "LLM_RESPONSE_TIMEOUT_MS", "number", 35000],
+  ["local_avatar_envelope_enabled", "LOCAL_AVATAR_ENVELOPE", "boolean", true],
+  ["local_avatar_envelope_slack_ms", "LOCAL_AVATAR_ENVELOPE_SLACK_MS", "number", 2000],
   ["meeting_context_raw_chars", "MEETING_CONTEXT_RAW_CHARS", "number", 1800],
   ["meeting_context_raw_utterances", "MEETING_CONTEXT_RAW_UTTERANCES", "number", 10],
   ["metrics_disabled", "METRICS_DISABLED", "boolean", false],
