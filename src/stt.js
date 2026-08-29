@@ -27,6 +27,19 @@ function buildKeyterms(extraKeyterms = []) {
   return [...new Set([...baseTerms, ...extraTerms, ...dynamicTerms])];
 }
 
+const readiness = require("./settings/readiness");
+
+function withDeepgramStatus(value) {
+  if (readiness.runtimeStatus(value)) return value;
+  for (const message of [value?.message, value?.error?.message]) {
+    const text = String(message || "");
+    const match = /^Unexpected server response:\s*(401|402|403|404|429)\b/.exec(text)
+      || /\(Status:\s*(401|402|403|404|429)(?:,|\))/.exec(text);
+    if (match) return { statusCode: Number(match[1]) };
+  }
+  return value;
+}
+
 // Legacy: build keywords for Nova-2 fallback (with intensifier)
 function buildWakeKeywords(keyterms = []) {
   return keyterms.map((w) => `${w}:5`);
@@ -102,6 +115,7 @@ function createSTT(dgKey, options = {}) {
 
     connection.on(LiveTranscriptionEvents.Open, () => {
       opened = true;
+      readiness.reportRuntimeSuccess("deepgram");
       console.log(`🎤  STT: 接続完了 ${keytermLabel}`);
       emitter.emit("open");
     });
@@ -145,6 +159,7 @@ function createSTT(dgKey, options = {}) {
     });
 
     connection.on(LiveTranscriptionEvents.Error, (err) => {
+      readiness.reportRuntimeFailure("deepgram", readiness.classifyRuntimeFailure(withDeepgramStatus(err)));
       // Recovery path: if handshake fails before open with keywords,
       // retry once without keywords (some DG setups reject keywords param).
       const hasKeyterms = Object.keys(keytermConfig).length > 0;
@@ -171,7 +186,11 @@ function createSTT(dgKey, options = {}) {
       emitter.emit("error", err);
     });
 
-    connection.on(LiveTranscriptionEvents.Close, () => {
+    connection.on(LiveTranscriptionEvents.Close, (event) => {
+      const runtimeEvent = withDeepgramStatus(event);
+      if (readiness.runtimeStatus(runtimeEvent)) {
+        readiness.reportRuntimeFailure("deepgram", readiness.classifyRuntimeFailure(runtimeEvent));
+      }
       console.log("🔴  STT: 切断");
       emitter.emit("close");
     });

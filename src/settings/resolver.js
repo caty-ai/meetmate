@@ -291,12 +291,12 @@ function ensureRuntime() {
   const { readConfigState } = require("./store");
   return initializeRuntime({ state: readConfigState(startup.configPath), startup });
 }
-
 function publishState(state) {
   const previous = ensureRuntime();
   currentRuntime = createRuntime({ state, startup: previous.startup, serverPort: previous.serverPort, bootSnapshot: previous.boot });
+  const changedFieldIds = SETTINGS_REGISTRY.filter((entry) => entry.path && !typedEqual(readPath(previous.published.raw, entry.path), readPath(currentRuntime.published.raw, entry.path))).map((entry) => entry.id);
   for (const invalidate of CACHE_INVALIDATORS) {
-    try { invalidate(); } catch { /* cache invalidation is best effort */ }
+    try { invalidate(changedFieldIds); } catch { /* cache invalidation is best effort */ }
   }
   return currentRuntime;
 }
@@ -348,6 +348,14 @@ function resolveDynamicSlackToken(runtime = ensureRuntime()) {
   const seed = normalize(runtime.startup.dotenvSeeds[name]);
   if (meaningful(seed)) return seed;
   return getEffectiveValue("slack_bot_token") || "";
+}
+
+// Probe-only accessor: restart-required values come from the latest published
+// snapshot; readiness separately blocks when that differs from the boot value.
+function getPublishedValue(id) {
+  const runtime = ensureRuntime();
+  const entry = REGISTRY_BY_ID[id];
+  return entry ? runtime.published.resolved.values[id] : undefined;
 }
 
 function getRawConfig() {
@@ -444,6 +452,7 @@ module.exports = {
   getEffectiveValue,
   getEffectiveSource,
   getRawConfig,
+  getPublishedValue,
   getRuntime: ensureRuntime,
   getStatus,
   initializeRuntime,

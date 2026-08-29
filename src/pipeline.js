@@ -55,6 +55,17 @@ const MEETING_CONTEXT_RAW_CHARS = positiveInt(process.env.MEETING_CONTEXT_RAW_CH
 // (current main behavior preserved). Set to "true" to enable T3a's full
 // unaddressed-context experiment; effective only in wake/group meetings.
 const ENABLE_MEETING_CONTEXT_INJECTION = String(process.env.ENABLE_MEETING_CONTEXT_INJECTION || "false").toLowerCase() === "true";
+const readiness = require("./settings/readiness");
+
+function withLlmResponseStatus(error, openclaw) {
+  if (readiness.runtimeStatus(error)) return error;
+  const pattern = openclaw
+    ? /^OpenClaw Gateway error \((401|402|404)\):/
+    : /^OpenAI-compatible error \((401|402|404)\):/;
+  const match = pattern.exec(String(error?.message || ""));
+  return match ? { statusCode: Number(match[1]) } : error;
+}
+
 // Cancel word detection: strict boundary match to avoid false positives
 // (e.g. "ストップウォッチ", "キャンセルポリシー" should NOT trigger)
 const CANCEL_RE = new RegExp(DEFAULT_MESSAGES.regex.cancelPattern, DEFAULT_MESSAGES.regex.cancelFlags);
@@ -1963,6 +1974,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
 
         if (!firstChunkSeen) {
           firstChunkSeen = true;
+          readiness.reportRuntimeSuccess("llm");
           stopFirstResponseTimers();
           console.log(`📥  [diag] firstChunk transition: false→true, chunk="${chunk.slice(0, 40)}"`);
           recordParentFirstTokenSuccess();
@@ -2104,6 +2116,13 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         return;
       }
       const errMsg = String(err?.message || err || "");
+      const runtimeError = withLlmResponseStatus(err, isOpenclawProvider);
+      const llmStatus = readiness.runtimeStatus(runtimeError);
+      if ([401, 402, 404].includes(llmStatus)) {
+        readiness.reportRuntimeFailure("llm", readiness.classifyRuntimeFailure(runtimeError, {
+          notEnabled404: isOpenclawProvider,
+        }));
+      }
       const isGatewayFailure = /ECONNREFUSED|ENOTFOUND|EHOSTUNREACH|ETIMEDOUT|timeout|socket hang up|network/i.test(errMsg);
       if (
         isGatewayFailure &&

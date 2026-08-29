@@ -10,6 +10,7 @@ const { Readable } = require("node:stream");
 
 const { buildEnvelope, initializeRuntime, resetRuntimeForTest } = require("../src/settings/resolver");
 const { createSettingsHandler, _test } = require("../src/settings/routes");
+const { createReadinessController } = require("../src/settings/readiness");
 const { _test: audioTest } = require("../src/settings/audio");
 const { readConfigState, saveFields } = require("../src/settings/store");
 
@@ -126,7 +127,7 @@ test("Soniox and Fish tests use effective credentials and return exact value-fre
   assert.equal(calls.length, 2);
 });
 
-test("connection tests keep boot-effective provider credentials after saved restart edits", async (t) => {
+test("connection probes use published credentials after saved restart edits", async (t) => {
   const boot = { soniox: "boot-soniox-33", fish: "boot-fish-33" };
   const saved = { soniox: "saved-soniox-33", fish: "saved-fish-33" };
   const authorization = [];
@@ -151,11 +152,11 @@ test("connection tests keep boot-effective provider credentials after saved rest
     const res = await invoke(handler, "POST", `/api/settings/connections/${provider}/test`, { revision: committed.revision });
     assert.equal(res.json.code, "CONNECTED");
   }
-  assert.deepEqual(authorization, [`Bearer ${boot.soniox}`, `Bearer ${boot.fish}`]);
+  assert.deepEqual(authorization, [`Bearer ${saved.soniox}`, `Bearer ${saved.fish}`]);
   assert.deepEqual(buildEnvelope().restartRequired.filter((id) => id.endsWith("_api_key")), [
     "fish_audio_api_key", "soniox_api_key",
   ]);
-  assert.equal(authorization.some((value) => value.includes("saved-")), false);
+  assert.equal(authorization.some((value) => value.includes("boot-")), false);
 });
 
 test("OS launch credentials win independently for each connection provider", async (t) => {
@@ -183,8 +184,8 @@ test("OS launch credentials win independently for each connection provider", asy
 test("connection failure matrix is finite and vendor bodies and credentials stay value-free", async (t) => {
   const { state } = fixture(t, { stt: { sonioxApiKey: SENTINEL }, tts: { apiKey: SENTINEL } });
   for (const [pathName, expected] of [
-    ["401", "AUTH_FAILED"], ["429", "RATE_LIMITED"],
-    ["403", "PROVIDER_ERROR"], ["408", "PROVIDER_ERROR"], ["504", "PROVIDER_ERROR"], ["503", "PROVIDER_ERROR"],
+    ["401", "AUTH_FAILED"], ["402", "PAYMENT_REQUIRED"], ["403", "PROVIDER_ERROR"], ["429", "RATE_LIMITED"],
+    ["404", "PROVIDER_ERROR"], ["408", "PROVIDER_ERROR"], ["504", "PROVIDER_ERROR"], ["503", "PROVIDER_ERROR"],
   ]) {
     const handler = createSettingsHandler({
       port: 5005,
@@ -233,7 +234,7 @@ test("connection failure matrix is finite and vendor bodies and credentials stay
   assert.equal(lateReset.code, "PROVIDER_ERROR");
 });
 
-test("unset keys avoid vendor calls and optional providers remain exact 501", async (t) => {
+test("unset keys avoid vendor calls and only non-gate Slack remains exact 501", async (t) => {
   let calls = 0;
   const { handler, state } = fixture(t, {}, {
     connections: { fetchFn: async () => { calls += 1; throw new Error("must not call"); }, minIntervalMs: 0 },
@@ -245,19 +246,24 @@ test("unset keys avoid vendor calls and optional providers remain exact 501", as
     });
   }
   assert.equal(calls, 0);
-  for (const provider of ["deepgram", "attendee", "slack"]) {
+  for (const provider of ["deepgram", "attendee", "llm", "tunnel"]) {
     const invalid = await invoke(handler, "POST", `/api/settings/connections/${provider}/test`, { revision: "not-a-revision" });
     assert.equal(invalid.status, 422);
     assert.equal(invalid.json.error.code, "SETTINGS_VALIDATION_FAILED");
 
     const res = await invoke(handler, "POST", `/api/settings/connections/${provider}/test`, { revision: state.revision });
-    assert.equal(res.status, 501);
-    assert.equal(res.json.error.code, "TEST_NOT_IMPLEMENTED");
-    assert.equal(res.json.error.message, "Settings feature is not implemented");
+    assert.equal(res.status, 200);
+    assert.equal(res.json.code, "NOT_CONFIGURED");
 
     const stale = await invoke(handler, "POST", `/api/settings/connections/${provider}/test`, { revision: "a".repeat(64) });
+    assert.equal(stale.status, 409);
+  }
+  for (const provider of ["slack"]) {
+    const res = await invoke(handler, "POST", `/api/settings/connections/${provider}/test`, { revision: state.revision });
+    assert.equal(res.status, 501);
+    assert.equal(res.json.error.code, "TEST_NOT_IMPLEMENTED");
+    const stale = await invoke(handler, "POST", `/api/settings/connections/${provider}/test`, { revision: "a".repeat(64) });
     assert.equal(stale.status, 501);
-    assert.equal(stale.json.error.code, "TEST_NOT_IMPLEMENTED");
   }
 });
 
@@ -291,6 +297,30 @@ test("connection limiter is per-provider and the 4 KiB body limit remains enforc
   const tooLarge = await invoke(handler, "POST", "/api/settings/connections/soniox/test", "x".repeat(4 * 1024 + 1), { raw: true });
   assert.equal(tooLarge.status, 413);
   assert.equal(tooLarge.json.error.code, "SETTINGS_BODY_TOO_LARGE");
+});
+
+test("loopback manual recheck bypasses readiness failure backoff", async (t) => {
+  let calls = 0;
+  const readinessController = createReadinessController({
+    probeFn: async () => {
+      calls += 1;
+      return calls === 1
+        ? { ok: false, code: "AUTH_FAILED" }
+        : { ok: true, code: "CONNECTED" };
+    },
+  });
+  const { state, handler } = fixture(t, {
+    stt: { provider: "soniox", sonioxApiKey: "soniox-key" },
+  }, {
+    readinessController,
+    connections: { minIntervalMs: 0 },
+  });
+
+  const first = await invoke(handler, "POST", "/api/settings/connections/soniox/test", { revision: state.revision });
+  const second = await invoke(handler, "POST", "/api/settings/connections/soniox/test", { revision: state.revision });
+  assert.equal(first.json.code, "AUTH_FAILED");
+  assert.equal(second.json.code, "CONNECTED");
+  assert.equal(calls, 2);
 });
 
 test("TTS preview buffers Fish PCM, strips disabled emotion tags, and returns a valid WAV without mutation", async (t) => {

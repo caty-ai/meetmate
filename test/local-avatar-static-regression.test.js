@@ -13,6 +13,14 @@ const { stringify } = require("node:querystring");
 const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "local-avatar-timeline.json"), "utf8"));
 const FIXED_SESSION_ID = "00000000-0000-4000-8000-000000000173";
 
+function unavailableNgrokHttpGet() {
+  const request = new EventEmitter();
+  request.setTimeout = () => request;
+  request.destroy = () => {};
+  queueMicrotask(() => request.emit("error", Object.assign(new Error("ngrok unavailable in test"), { code: "ECONNREFUSED" })));
+  return request;
+}
+
 test("static join payload and Fish bot_output bytes match the frozen fixture", { concurrency: false }, async () => {
   await withMeetRoutes(async (harness) => {
     const join = await harness.join();
@@ -334,6 +342,7 @@ function emptyIsolationEvidence() {
 
 async function withMeetRoutes(fn, options = {}) {
   const settingsResolver = require("../src/settings/resolver");
+  const readiness = require("../src/settings/readiness");
   const routesPath = require.resolve("../src/transport-meet/meet-routes");
   const src = path.join(__dirname, "..", "src");
   const mockPaths = [
@@ -368,6 +377,7 @@ async function withMeetRoutes(fn, options = {}) {
     ...(options.env || {}),
   });
   settingsResolver.resetRuntimeForTest();
+  readiness.reset();
   settingsResolver.initializeRuntime({
     state: {
       exists: true,
@@ -398,6 +408,9 @@ async function withMeetRoutes(fn, options = {}) {
     }),
     serverPort: 5005,
   });
+  for (const system of readiness.gateSystems()) {
+    readiness.setProbeObservation(system, { ok: true, code: "CONNECTED" });
+  }
   const isolation = emptyIsolationEvidence();
   const httpsRequests = [];
   const pipelines = [];
@@ -609,6 +622,11 @@ async function withMeetRoutes(fn, options = {}) {
   const clients = [];
   try {
     routes = require(routesPath);
+    routes._test.configureReadinessForTest({
+      fetchFn: async () => { throw Object.assign(new Error("network unavailable in test"), { code: "ENETUNREACH" }); },
+      httpGet: unavailableNgrokHttpGet,
+      requestFn: async () => { throw Object.assign(new Error("network unavailable in test"), { code: "ENETUNREACH" }); },
+    });
     const harness = {
       isolation,
       httpsRequests,
@@ -665,6 +683,7 @@ async function withMeetRoutes(fn, options = {}) {
     global.setInterval = originalSetInterval;
     Object.assign(console, originalConsole);
     restoreEnv();
+    readiness.reset();
     settingsResolver.resetRuntimeForTest();
     for (const file of cachePaths) {
       const resolved = require.resolve(file);

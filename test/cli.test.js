@@ -499,7 +499,21 @@ test("AI_MEET_HOME is shared by init and start, and the bound settings URL is pr
     const Module = require("node:module");
     const EventEmitter = require("node:events");
     const realHttp = require("node:http");
+    const realHttps = require("node:https");
     const fakeHttp = { ...realHttp };
+    const blockedNetwork = () => {
+      const request = new EventEmitter();
+      request.setTimeout = () => request;
+      request.destroy = () => {};
+      request.write = () => {};
+      request.end = () => {};
+      queueMicrotask(() => request.emit("error", Object.assign(new Error("network unavailable in test"), { code: "ENETUNREACH" })));
+      return request;
+    };
+    fakeHttp.get = blockedNetwork;
+    fakeHttp.request = blockedNetwork;
+    const fakeHttps = { ...realHttps, get: blockedNetwork, request: blockedNetwork };
+    global.fetch = async () => { throw Object.assign(new Error("network unavailable in test"), { code: "ENETUNREACH" }); };
     fakeHttp.createServer = () => {
       const server = new EventEmitter();
       server.address = () => ({ address: "0.0.0.0", family: "IPv4", port: 43123 });
@@ -512,6 +526,7 @@ test("AI_MEET_HOME is shared by init and start, and the bound settings URL is pr
     const originalLoad = Module._load;
     Module._load = function(request, parent, isMain) {
       if (request === "node:http" || request === "http") return fakeHttp;
+      if (request === "node:https" || request === "https") return fakeHttps;
       return originalLoad.call(this, request, parent, isMain);
     };
   `);
@@ -543,7 +558,21 @@ test("start treats an empty PORT environment value as unset", (t) => {
     const Module = require("node:module");
     const EventEmitter = require("node:events");
     const realHttp = require("node:http");
+    const realHttps = require("node:https");
     const fakeHttp = { ...realHttp };
+    const blockedNetwork = () => {
+      const request = new EventEmitter();
+      request.setTimeout = () => request;
+      request.destroy = () => {};
+      request.write = () => {};
+      request.end = () => {};
+      queueMicrotask(() => request.emit("error", Object.assign(new Error("network unavailable in test"), { code: "ENETUNREACH" })));
+      return request;
+    };
+    fakeHttp.get = blockedNetwork;
+    fakeHttp.request = blockedNetwork;
+    const fakeHttps = { ...realHttps, get: blockedNetwork, request: blockedNetwork };
+    global.fetch = async () => { throw Object.assign(new Error("network unavailable in test"), { code: "ENETUNREACH" }); };
     fakeHttp.createServer = () => {
       const server = new EventEmitter();
       let listenedPort;
@@ -558,6 +587,7 @@ test("start treats an empty PORT environment value as unset", (t) => {
     const originalLoad = Module._load;
     Module._load = function(request, parent, isMain) {
       if (request === "node:http" || request === "http") return fakeHttp;
+      if (request === "node:https" || request === "https") return fakeHttps;
       return originalLoad.call(this, request, parent, isMain);
     };
   `);

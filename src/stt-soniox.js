@@ -87,6 +87,7 @@ function createSonioxSTT(apiKey, options = {}) {
 
   let accumulated = "";
   let opened = false;
+  let runtimeHealthyReported = false;
   let closedByUser = false;
   let ws = null;
   let keepAlive = null;
@@ -203,13 +204,21 @@ function createSonioxSTT(apiKey, options = {}) {
     }
 
     if (res.error_code) {
+      const providerError = new Error(
+        `Soniox ${res.error_code} ${res.error_type || ""}: ${res.error_message || "unknown"}`,
+      );
+      providerError.error_code = res.error_code;
+      readiness.reportRuntimeFailure("soniox", readiness.classifyRuntimeFailure(providerError));
       emitter.emit(
         "error",
-        new Error(
-          `Soniox ${res.error_code} ${res.error_type || ""}: ${res.error_message || "unknown"}`,
-        ),
+        providerError,
       );
       return false;
+    }
+
+    if (!runtimeHealthyReported) {
+      runtimeHealthyReported = true;
+      readiness.reportRuntimeSuccess("soniox");
     }
 
     const tokens = Array.isArray(res.tokens) ? res.tokens : [];
@@ -263,6 +272,7 @@ function createSonioxSTT(apiKey, options = {}) {
   function connect() {
     if (closedByUser) return;
     opened = false;
+    runtimeHealthyReported = false;
     const socket = new WebSocketCtor(wsUrl);
     ws = socket;
 
@@ -300,6 +310,9 @@ function createSonioxSTT(apiKey, options = {}) {
       if (socket !== ws) return;
       clearKeepAlive();
       console.error("❌  STT(Soniox) error:", err?.message || err);
+      if (!opened) {
+        readiness.reportRuntimeFailure("soniox", readiness.classifyRuntimeFailure(withHandshakeStatus(err)));
+      }
       emitter.emit("error", err);
     });
 
@@ -368,6 +381,14 @@ function createSonioxSTT(apiKey, options = {}) {
   };
 
   return emitter;
+}
+
+const readiness = require("./settings/readiness");
+
+function withHandshakeStatus(error) {
+  if (readiness.runtimeStatus(error)) return error;
+  const match = /^Unexpected server response:\s*(401|402|403|404|429)\b/.exec(String(error?.message || ""));
+  return match ? { statusCode: Number(match[1]) } : error;
 }
 
 module.exports = { createSonioxSTT };

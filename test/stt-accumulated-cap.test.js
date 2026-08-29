@@ -2,6 +2,9 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
 const Module = require("node:module");
+const readiness = require("../src/settings/readiness");
+
+test.afterEach(() => readiness.reset());
 
 test("Deepgram STT force-emits when accumulated final text reaches cap", async () => {
   const previousCap = process.env.STT_ACCUMULATED_MAX_CHARS;
@@ -37,11 +40,13 @@ test("Deepgram STT force-emits when accumulated final text reaches cap", async (
     return originalLoad.call(this, request, parent, isMain);
   };
 
+  let stt;
   try {
     const { createSTT } = require("../src/stt");
-    const stt = createSTT("test-key", { model: "nova-3", language: "ja", sampleRate: 16000 });
+    stt = createSTT("test-key", { model: "nova-3", language: "ja", sampleRate: 16000 });
     const utterances = [];
     stt.on("utterance_end", (text) => utterances.push(text));
+    stt.on("error", () => {});
 
     connection.emit("transcript", transcriptData("abcdef", true, false));
     assert.deepEqual(utterances, []);
@@ -52,8 +57,18 @@ test("Deepgram STT force-emits when accumulated final text reaches cap", async (
     connection.emit("transcript", transcriptData("zz", true, true));
     assert.deepEqual(utterances, ["abcdefghijkl", "zz"]);
 
-    stt.close();
+    connection.emit("error", Object.assign(new Error("Deepgram handshake 401"), { statusCode: 401 }));
+    assert.equal(readiness.inspect("deepgram").code, "AUTH_FAILED");
+    connection.emit("open");
+    assert.equal(readiness.inspect("deepgram").code, "CONNECTED");
+    connection.emit("error", Object.assign(new Error("Deepgram structured 403"), { statusCode: 403 }));
+    assert.equal(readiness.inspect("deepgram").code, "PROVIDER_ERROR");
+    connection.emit("error", new Error("WebSocket connection error (Status: 401, Ready State: CONNECTING)"));
+    assert.equal(readiness.inspect("deepgram").code, "AUTH_FAILED");
+    connection.emit("close", { message: "WebSocket connection error (Status: 402, Ready State: CLOSED)" });
+    assert.equal(readiness.inspect("deepgram").code, "PAYMENT_REQUIRED");
   } finally {
+    stt?.close();
     Module._load = originalLoad;
     delete require.cache[sttPath];
     if (previousStt) require.cache[sttPath] = previousStt;

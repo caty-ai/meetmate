@@ -32,6 +32,7 @@ function _resolveRetryMax(raw) {
 const RETRY_MAX = process.env.FISH_AUDIO_RETRY_MAX != null
   ? _resolveRetryMax(process.env.FISH_AUDIO_RETRY_MAX)
   : 2;
+const readiness = require("./settings/readiness");
 const RETRY_BASE_MS = 100;
 const RETRY_AFTER_MAX_MS = 1500;
 
@@ -82,8 +83,12 @@ async function synthesize(text, options = {}) {
   while (true) {
     try {
       await _synthesizeOnce(text, options);
+      readiness.reportRuntimeSuccess("fish-audio");
       return;
     } catch (err) {
+      if (err.statusCode === 401 || err.statusCode === 402) {
+        readiness.reportRuntimeFailure("fish-audio", readiness.classifyRuntimeFailure(err));
+      }
       if (options.signal?.aborted) throw err;
       const sc = err.statusCode;
       const retryable = sc === 429 || (sc >= 500 && sc <= 599);

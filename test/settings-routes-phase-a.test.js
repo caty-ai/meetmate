@@ -17,10 +17,16 @@ const { createSettingsHandler, _test } = require("../src/settings/routes");
 const { exportDocumentSchema } = require("../src/settings/schemas");
 const { readConfigState } = require("../src/settings/store");
 
-function startup(directory) {
+const HERMETIC_READINESS = Object.freeze({
+  configure() {},
+  async probeGateSystems() {},
+  async probeSystem() { return { ok: false, code: "NOT_CONFIGURED" }; },
+});
+
+function startup(directory, dotenvSeeds = {}) {
   return Object.freeze({
     preDotenvEnv: Object.freeze({}),
-    dotenvSeeds: Object.freeze({}),
+    dotenvSeeds: Object.freeze({ ...dotenvSeeds }),
     resolvedHome: directory,
     configPath: path.join(directory, "config.json"),
     connection: Object.freeze({
@@ -31,13 +37,16 @@ function startup(directory) {
   });
 }
 
-function response() {
+function response(onEnd) {
   return {
     status: null,
     headers: null,
     body: "",
     writeHead(status, headers) { this.status = status; this.headers = headers; },
-    end(chunk = "") { this.body += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk); },
+    end(chunk = "") {
+      this.body += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
+      onEnd?.();
+    },
   };
 }
 
@@ -61,19 +70,116 @@ function request(method, url, body, headers = {}) {
   return req;
 }
 
-function fixture(t, document) {
+function fixture(t, document, handlerOptions = {}, startupOptions = {}) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-routes-phase-a-"));
   t.after(() => {
     resetRuntimeForTest();
     fs.rmSync(directory, { recursive: true, force: true });
   });
-  const runtimeStartup = startup(directory);
+  const runtimeStartup = startup(directory, startupOptions.dotenvSeeds);
   fs.writeFileSync(runtimeStartup.configPath, `${JSON.stringify(document)}\n`, { mode: 0o600 });
   const configState = readConfigState(runtimeStartup.configPath);
   resetRuntimeForTest();
   initializeRuntime({ state: configState, startup: runtimeStartup });
-  return { directory, runtimeStartup, configState, handler: createSettingsHandler({ port: 5005 }) };
+  return {
+    directory,
+    runtimeStartup,
+    configState,
+    handler: createSettingsHandler({
+      port: 5005,
+      readinessController: HERMETIC_READINESS,
+      ...handlerOptions,
+    }),
+  };
 }
+
+test("settings save automatically probes all gate systems with billing explicitly allowed", async (t) => {
+  const calls = [];
+  const readinessController = {
+    configure() {},
+    async probeGateSystems(options) { calls.push(options); },
+  };
+  const { handler, configState } = fixture(t, { agent: { greeting: "before" } }, { readinessController });
+  const res = response();
+  await handler(request("PUT", "/api/settings", {
+    schemaVersion: 1,
+    revision: configState.revision,
+    fields: { agent_greeting: "after" },
+  }), res);
+  assert.equal(res.status, 200, res.body);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].trigger, "settings-save");
+  assert.equal(calls[0].allowBilling, true);
+  assert.equal(calls[0].force, true);
+});
+
+test("settings mutations respond before scheduling their shared post-save probe", async (t) => {
+  const events = [];
+  const readinessController = {
+    configure() {},
+    probeGateSystems(options) {
+      events.push({ type: "probe", options });
+      return new Promise(() => {});
+    },
+  };
+  const { handler, configState } = fixture(t, { agent: { greeting: "before" } }, { readinessController });
+  const res = response(() => events.push({ type: "response" }));
+  await handler(request("PUT", "/api/settings", {
+    schemaVersion: 1,
+    revision: configState.revision,
+    fields: { agent_greeting: "after" },
+  }), res);
+
+  assert.equal(res.status, 200, res.body);
+  assert.deepEqual(events.map((event) => event.type), ["response", "probe"]);
+  assert.deepEqual(events[1].options, {
+    trigger: "settings-save",
+    allowBilling: true,
+    force: true,
+  });
+});
+
+test("settings import and class-1 migration schedule the same post-save gate probe", async (t) => {
+  const calls = [];
+  const readinessController = {
+    configure() {},
+    async probeGateSystems(options) { calls.push(options); },
+  };
+  const imported = fixture(t, { agent: { greeting: "before" } }, { readinessController });
+  const importResponse = response();
+  await imported.handler(request("POST", "/api/settings/import", {
+    revision: imported.configState.revision,
+    document: {
+      format: "meetmate-settings",
+      version: 1,
+      exportedAt: "2026-08-27T01:02:03.000Z",
+      settings: { agent_greeting: "after" },
+    },
+  }), importResponse);
+  assert.equal(importResponse.status, 200, importResponse.body);
+
+  const migrated = fixture(
+    t,
+    {},
+    { readinessController },
+    { dotenvSeeds: { SONIOX_API_KEY: "seed-soniox" } },
+  );
+  const migrationResponse = response();
+  await migrated.handler(request("POST", "/api/settings/migrate-env-class1", {
+    revision: migrated.configState.revision,
+  }), migrationResponse);
+  assert.equal(migrationResponse.status, 200, migrationResponse.body);
+  assert.deepEqual(JSON.parse(migrationResponse.body).imported, ["soniox_api_key"]);
+
+  assert.equal(calls.length, 2);
+  for (const options of calls) {
+    assert.deepEqual(options, {
+      trigger: "settings-save",
+      allowBilling: true,
+      force: true,
+    });
+  }
+});
 
 test("Phase A export is an attachment containing only validated stored noncredentials", async (t) => {
   const { handler } = fixture(t, {
@@ -291,7 +397,13 @@ test("connection routes retain all providers and require a SHA-256 revision", as
       ok: false, provider, code: "NOT_CONFIGURED", message: "Connection is not configured", durationMs: 0,
     });
   }
-  for (const provider of ["deepgram", "attendee", "slack"]) {
+  for (const provider of ["deepgram", "attendee", "llm", "tunnel"]) {
+    const res = response();
+    await handler(request("POST", `/api/settings/connections/${provider}/test`, { revision: configState.revision }), res);
+    assert.equal(res.status, 200, `${provider} ${res.body}`);
+    assert.equal(JSON.parse(res.body).code, "NOT_CONFIGURED");
+  }
+  for (const provider of ["slack"]) {
     const res = response();
     await handler(request("POST", `/api/settings/connections/${provider}/test`, { revision: configState.revision }), res);
     assert.equal(res.status, 501, `${provider} ${res.body}`);

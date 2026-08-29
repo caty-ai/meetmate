@@ -9,6 +9,8 @@ const { MASK, SETTINGS_REGISTRY } = require("./registry");
 const { buildEnvelope, getBootstrapSeedFields, getRawConfig, getRuntime, meaningful, readPath } = require("./resolver");
 const { readConfigState, saveFields, settingsError } = require("./store");
 const { deleteAudio, previewTts, uploadAudio } = require("./audio");
+const probes = require("./probes");
+const readiness = require("./readiness");
 const {
   exportDocumentSchema,
   importRequestSchema,
@@ -23,12 +25,8 @@ const CONNECTION_JSON_LIMIT = 4 * 1024;
 const CONNECTION_TIMEOUT_MS = 5_000;
 const CONNECTION_MIN_INTERVAL_MS = 1_000;
 const PREVIEW_MIN_INTERVAL_MS = 2_000;
-const PROVIDERS = new Set(["soniox", "deepgram", "fish-audio", "attendee", "slack"]);
-const IMPLEMENTED_PROVIDERS = new Set(["soniox", "fish-audio"]);
-const CONNECTION_ENDPOINTS = Object.freeze({
-  soniox: "https://api.soniox.com/v1/models",
-  "fish-audio": "https://api.fish.audio/model?page_size=1&page_number=1&self=true",
-});
+const PROVIDERS = new Set(["soniox", "deepgram", "fish-audio", "attendee", "llm", "tunnel", "slack"]);
+const IMPLEMENTED_PROVIDERS = new Set(["soniox", "deepgram", "fish-audio", "attendee", "llm", "tunnel"]);
 const PUBLIC_DIR = path.join(__dirname, "..", "..", "public");
 const SETTINGS_ASSETS = new Map([
   ["/settings", { filename: "settings.html", contentType: "text/html; charset=utf-8" }],
@@ -230,6 +228,10 @@ function connectionResult(provider, code, durationMs) {
     CONNECTED: "Connection succeeded",
     NOT_CONFIGURED: "Connection is not configured",
     AUTH_FAILED: "Authentication failed",
+    PAYMENT_REQUIRED: "Provider payment is required",
+    NOT_ENABLED: "Provider endpoint is not enabled",
+    MISMATCH: "Public endpoint points to another instance",
+    RESTART_REQUIRED: "Restart is required",
     UNREACHABLE: "Provider is unreachable",
     TIMEOUT: "Connection timed out",
     RATE_LIMITED: "Provider rate limit exceeded",
@@ -244,58 +246,14 @@ function connectionResult(provider, code, durationMs) {
   };
 }
 
-function networkCode(error) {
-  let current = error;
-  for (let depth = 0; current && depth < 5; depth += 1, current = current.cause) {
-    if (["ECONNREFUSED", "ENETUNREACH", "EHOSTUNREACH", "ENOTFOUND", "EAI_AGAIN"].includes(current.code)) {
-      return "UNREACHABLE";
-    }
-  }
-  return "PROVIDER_ERROR";
-}
-
-function isAbortError(error) {
-  return error?.name === "AbortError"
-    || error?.code === "ABORT_ERR"
-    || String(error?.message || "").toLowerCase() === "aborted";
-}
-
 async function testConnection(provider, options = {}) {
-  const credentialId = provider === "soniox" ? "soniox_api_key" : "fish_audio_api_key";
-  const credential = require("./resolver").getEffectiveValue(credentialId);
   const now = options.now || Date.now;
   const startedAt = now();
-  if (typeof credential !== "string" || credential.trim() === "") {
-    return connectionResult(provider, "NOT_CONFIGURED", 0);
-  }
-  const controller = new AbortController();
-  const timeoutAbort = new Error("Connection timeout");
-  const timer = setTimeout(() => {
-    controller.abort(timeoutAbort);
-  }, options.timeoutMs ?? CONNECTION_TIMEOUT_MS);
-  timer.unref?.();
-  try {
-    const response = await (options.fetchFn || globalThis.fetch)(
-      options.endpoints?.[provider] || CONNECTION_ENDPOINTS[provider],
-      {
-        method: "GET",
-        headers: { Accept: "application/json", Authorization: `Bearer ${credential}` },
-        redirect: "error",
-        signal: controller.signal,
-      },
-    );
-    try { await response.body?.cancel(); } catch { /* vendor bodies are never retained */ }
-    let code = "PROVIDER_ERROR";
-    if (response.ok) code = "CONNECTED";
-    else if (response.status === 401) code = "AUTH_FAILED";
-    else if (response.status === 429) code = "RATE_LIMITED";
-    return connectionResult(provider, code, now() - startedAt);
-  } catch (error) {
-    const timedOut = error === timeoutAbort || (controller.signal.reason === timeoutAbort && isAbortError(error));
-    return connectionResult(provider, timedOut ? "TIMEOUT" : networkCode(error), now() - startedAt);
-  } finally {
-    clearTimeout(timer);
-  }
+  const outcome = await probes.probeSystem(provider, {
+    ...options,
+    timeoutMs: options.timeoutMs ?? CONNECTION_TIMEOUT_MS,
+  });
+  return connectionResult(provider, outcome.code, now() - startedAt);
 }
 
 function createConnectionLimiter(options = {}) {
@@ -437,9 +395,19 @@ async function migrateClass1(req, options) {
 function createSettingsHandler(options = {}) {
   const settingsOptions = { port: options.port || 5005 };
   const connectionOptions = options.connections || {};
+  const readinessController = options.readinessController || readiness;
+  readinessController.configure?.({ probeOptions: connectionOptions });
   const previewOptions = options.preview || {};
   const takeConnectionAllowance = createConnectionLimiter(connectionOptions);
   const takePreviewAllowance = createPreviewLimiter(previewOptions);
+  const schedulePostSaveProbes = () => {
+    Promise.resolve().then(() => readinessController.probeGateSystems?.({
+      ...connectionOptions,
+      trigger: "settings-save",
+      allowBilling: true,
+      force: true,
+    })).catch(() => {});
+  };
   return async function handleSettings(req, res) {
     let url;
     try { url = new URL(req.url || "/", "http://localhost"); } catch { return false; }
@@ -476,11 +444,13 @@ function createSettingsHandler(options = {}) {
           fields: prepareMutationFields(mutation.fields, mutation.revision),
         });
         writeJson(res, 200, buildEnvelope());
+        schedulePostSaveProbes();
         return true;
       }
       if (req.method === "POST" && url.pathname === "/api/settings/migrate-env-class1") {
         requireSameOrigin(req, settingsOptions);
         writeJson(res, 200, await migrateClass1(req, settingsOptions));
+        schedulePostSaveProbes();
         return true;
       }
 
@@ -495,6 +465,7 @@ function createSettingsHandler(options = {}) {
       if (req.method === "POST" && url.pathname === "/api/settings/import") {
         requireSameOrigin(req, settingsOptions);
         writeJson(res, 200, importSettings(await readJson(req, JSON_LIMIT)));
+        schedulePostSaveProbes();
         return true;
       }
 
@@ -526,7 +497,16 @@ function createSettingsHandler(options = {}) {
         if (!takeConnectionAllowance(provider)) {
           throw settingsError("SETTINGS_CONNECTION_RATE_LIMITED", "Connection tests are rate limited", 429);
         }
-        writeJson(res, 200, await testConnection(provider, connectionOptions));
+        const startedAt = (connectionOptions.now || Date.now)();
+        const record = await readinessController.probeSystem(provider, {
+          ...connectionOptions,
+          trigger: "loopback-manual",
+          allowBilling: true,
+          clearRuntime: true,
+          force: true,
+          timeoutMs: connectionOptions.timeoutMs ?? CONNECTION_TIMEOUT_MS,
+        });
+        writeJson(res, 200, connectionResult(provider, record?.code || "PROVIDER_ERROR", (connectionOptions.now || Date.now)() - startedAt));
         return true;
       }
 

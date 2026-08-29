@@ -74,3 +74,54 @@ test("client field sets deep-match registry UI metadata", () => {
       .map((entry) => entry.id).sort());
   }
 });
+
+test("main UI parses both setup and readiness 503 envelopes", () => {
+  const { parseJoinErrorText } = require("../public/app.js");
+  const setup = parseJoinErrorText(JSON.stringify({
+    error: { code: "MEETING_SETUP_REQUIRED", message: "Meeting setup is incomplete", issues: [{ fieldId: "agent_id", code: "VALUE_REQUIRED" }] },
+  }));
+  assert.match(setup, /Meeting setup is incomplete/);
+  assert.match(setup, /agent_id/);
+  const readiness = parseJoinErrorText(JSON.stringify({
+    error: { code: "MEETING_NOT_READY", message: "Not ready", blockers: [{ system: "llm", code: "NOT_ENABLED", message: "Enable chatCompletions" }] },
+  }));
+  assert.match(readiness, /Not ready/);
+  assert.match(readiness, /Enable chatCompletions/);
+});
+
+test("main UI uses the server-provided settings port for tunnel guidance", () => {
+  const { localSettingsUrlFor, settingsPortFromReadiness } = require("../public/app.js");
+  assert.equal(settingsPortFromReadiness({ settingsPort: 6123 }, "443"), "6123");
+  assert.equal(
+    localSettingsUrlFor("server_ngrok_domain", { settingsPort: 6123 }, "443"),
+    "http://127.0.0.1:6123/settings#field-server_ngrok_domain",
+  );
+  assert.equal(
+    localSettingsUrlFor("panel-connections", { settingsPort: "invalid" }, ""),
+    "http://127.0.0.1:5005/settings#panel-connections",
+  );
+});
+
+test("main UI keeps a visible recheck surface when readiness cannot be loaded", () => {
+  const { readinessDisplayRows } = require("../public/app.js");
+  assert.deepEqual(readinessDisplayRows({
+    ready: false,
+    systems: [],
+    blockers: [],
+    unavailable: true,
+  }), [{ kind: "warning", text: "接続状態を取得できません" }]);
+});
+
+test("main UI shows setup-required guidance without manufacturing a blocker", () => {
+  const { readinessDisplayRows } = require("../public/app.js");
+  assert.deepEqual(readinessDisplayRows({
+    ready: false,
+    setupRequired: true,
+    systems: [],
+    blockers: [],
+  }), [{
+    kind: "setup",
+    text: "初期設定が未完了です。設定画面で必須項目を保存してください",
+    fieldId: "panel-connections",
+  }]);
+});
