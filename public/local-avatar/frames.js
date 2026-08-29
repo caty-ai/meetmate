@@ -42,6 +42,14 @@
     return minimum + (Math.random() * (maximum - minimum));
   }
 
+  let framesLoaded = false;
+
+  function drawBlank() {
+    context.fillStyle = "#08111f";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    currentFrame = "blank";
+  }
+
   function drawDiagnostic() {
     context.fillStyle = "#08111f";
     context.fillRect(0, 0, canvas.width, canvas.height);
@@ -53,10 +61,14 @@
   }
 
   function drawFrame(name) {
-    const selected = frames.get(name) ? name : (frames.get("idle") ? "idle" : "diagnostic");
+    const selected = frames.get(name) ? name : (frames.get("idle") ? "idle" : (framesLoaded ? "diagnostic" : "blank"));
     if (selected === currentFrame) return;
     if (selected === "diagnostic") {
       drawDiagnostic();
+      return;
+    }
+    if (selected === "blank") {
+      drawBlank();
       return;
     }
     context.fillStyle = "#08111f";
@@ -211,6 +223,7 @@
 
   async function loadFrames() {
     await Promise.all(FRAME_NAMES.map(loadFrame));
+    framesLoaded = true;
     if (speaking) render();
     else drawFrame("idle");
   }
@@ -294,10 +307,13 @@
     writable: false,
   });
 
-  drawDiagnostic();
-  scheduleRender();
   if (/^[A-Za-z0-9_-]{16,64}$/.test(visualId) && capability) {
+    drawBlank();
+    scheduleRender();
     loadFrames();
     connect();
+  } else {
+    drawDiagnostic();
+    scheduleRender();
   }
 })();
