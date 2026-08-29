@@ -12,6 +12,10 @@ const DEFAULT_QUEUE_LIMIT = 8;
 const MAX_QUEUE_LIMIT = 64;
 const DEFAULT_RETRY_LIMIT = 3;
 const MAX_RETRY_LIMIT = 8;
+const MAX_ENVELOPE_PUSH_VALUES = 150;
+const MAX_ENVELOPE_VALUES = 256;
+const ENVELOPE_WINDOW_MS = 100;
+const ENVELOPE_HISTORY_MS = 20_000;
 
 const sessions = new Map();
 
@@ -65,6 +69,8 @@ class LocalAvatarSession {
     this._lastSampleIndex = -1;
     this._lastCancelledOutputEpoch = -1;
     this._dropped = 0;
+    this._envelopeLog = [];
+    this._envelopeDropped = 0;
   }
 
   verifyCapability(candidate) {
@@ -86,6 +92,7 @@ class LocalAvatarSession {
     this._queue.length = 0;
     this._lastDelivery = null;
     this._lastSampleIndex = -1;
+    this._envelopeLog.length = 0;
     const state = this._state("idle", {
       outputEpoch: this._outputEpoch,
       sampleIndex: null,
@@ -109,10 +116,12 @@ class LocalAvatarSession {
       this._lastSampleIndex = -1;
       this._queue.length = 0;
       this._lastDelivery = null;
+      this._envelopeLog.length = 0;
     }
     if (sampleIndex <= this._lastSampleIndex) return false;
 
     this._lastSampleIndex = sampleIndex;
+    this._appendEnvelopeSegments(metadata?.envelopeSegments, sampleRate);
     return this._enqueue(this._state("marker", { outputEpoch, sampleIndex, sampleRate }));
   }
 
@@ -130,6 +139,7 @@ class LocalAvatarSession {
     this._cancelEpoch += 1;
     this._queue.length = 0;
     this._lastDelivery = null;
+    this._envelopeLog.length = 0;
     return this._enqueue(this._state("cancel", {
       outputEpoch,
       sampleIndex: null,
@@ -146,6 +156,7 @@ class LocalAvatarSession {
     this._cancelEpoch += 1;
     this._queue.length = 0;
     this._lastDelivery = null;
+    this._envelopeLog.length = 0;
     if (this._generation > 0) {
       this._enqueue(this._state("idle", {
         outputEpoch: this._outputEpoch,
@@ -210,12 +221,13 @@ class LocalAvatarSession {
       queueLimit: this._queueLimit,
       retryLimit: this._retryLimit,
       dropped: this._dropped,
+      envelopeDropped: this._envelopeDropped,
     };
   }
 
   _state(kind, values) {
     this._sequence += 1;
-    return {
+    const state = {
       kind,
       generation: this._generation,
       cancelEpoch: this._cancelEpoch,
@@ -224,15 +236,108 @@ class LocalAvatarSession {
       sampleIndex: values.sampleIndex,
       sampleRate: values.sampleRate,
     };
+    if (kind === "marker") {
+      state.envelopes = this._envelopeLog.map((segment) => ({
+        s: segment.s,
+        v: segment.v.slice(),
+      }));
+    }
+    return state;
   }
 
   _enqueue(state) {
+    if (state.kind === "marker") {
+      const markerIndex = this._queue.findIndex((queued) => (
+        queued.kind === "marker" && queued.outputEpoch === state.outputEpoch
+      ));
+      if (markerIndex !== -1) {
+        this._queue[markerIndex] = state;
+        return true;
+      }
+    }
     if (this._queue.length >= this._queueLimit) {
       this._dropped += 1;
       return false;
     }
     this._queue.push(state);
     return true;
+  }
+
+  _appendEnvelopeSegments(input, sampleRate) {
+    if (!Array.isArray(input)) return;
+    let pushedValues = 0;
+    for (const segment of input) {
+      if (segment && Array.isArray(segment.v)) pushedValues += segment.v.length;
+      if (pushedValues > MAX_ENVELOPE_PUSH_VALUES) return;
+    }
+
+    const windowSamples = Math.round(sampleRate * ENVELOPE_WINDOW_MS / 1000);
+    const accepted = [];
+    for (const segment of input) {
+      if (
+        !segment
+        || !Number.isSafeInteger(segment.s)
+        || segment.s < 0
+        || !Array.isArray(segment.v)
+        || segment.v.length === 0
+        || segment.v.some((value) => typeof value !== "number" || !Number.isFinite(value))
+      ) {
+        continue;
+      }
+      accepted.push({
+        s: segment.s,
+        v: segment.v.map((value) => Math.max(0, Math.min(1, value))),
+      });
+    }
+
+    for (const segment of accepted) {
+      const previous = this._envelopeLog.at(-1);
+      if (previous && segment.s === previous.s + previous.v.length * windowSamples) {
+        previous.v.push(...segment.v);
+      } else {
+        this._envelopeLog.push({ s: segment.s, v: segment.v.slice() });
+      }
+    }
+    if (accepted.length === 0) return;
+
+    const newestEnd = this._envelopeLog.reduce(
+      (latest, segment) => Math.max(latest, segment.s + segment.v.length * windowSamples),
+      0,
+    );
+    const historyStart = newestEnd - (sampleRate * ENVELOPE_HISTORY_MS / 1000);
+    this._trimEnvelopePrefix(windowSamples, (segment) => {
+      if (segment.s >= historyStart) return 0;
+      return Math.min(segment.v.length, Math.floor((historyStart - segment.s) / windowSamples));
+    });
+
+    const totalValues = this._envelopeLog.reduce((total, segment) => total + segment.v.length, 0);
+    if (totalValues > MAX_ENVELOPE_VALUES) {
+      let excess = totalValues - MAX_ENVELOPE_VALUES;
+      this._trimEnvelopePrefix(windowSamples, (segment) => {
+        const dropped = Math.min(excess, segment.v.length);
+        excess -= dropped;
+        return dropped;
+      });
+    }
+  }
+
+  _trimEnvelopePrefix(windowSamples, countForSegment) {
+    for (let index = 0; index < this._envelopeLog.length;) {
+      const segment = this._envelopeLog[index];
+      const dropCount = countForSegment(segment);
+      if (dropCount <= 0) {
+        index += 1;
+        continue;
+      }
+      this._envelopeDropped += dropCount;
+      if (dropCount >= segment.v.length) {
+        this._envelopeLog.splice(index, 1);
+        continue;
+      }
+      segment.s += dropCount * windowSamples;
+      segment.v.splice(0, dropCount);
+      index += 1;
+    }
   }
 
   _safeLog(message, fields) {
@@ -322,6 +427,9 @@ module.exports = {
     DEFAULT_QUEUE_LIMIT,
     DEFAULT_RETRY_LIMIT,
     MAX_TTL_MS,
+    MAX_ENVELOPE_PUSH_VALUES,
+    MAX_ENVELOPE_VALUES,
+    ENVELOPE_HISTORY_MS,
     sessions,
   },
 };
