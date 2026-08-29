@@ -9,6 +9,7 @@
   const MAX_BACKOFF_MS = 4000;
   const POLL_MS = 100;
   const RENDER_MS = 40;
+  const IDLE_GRACE_MS = 15000;
   const MARKER_FRESH_MS = 600;
   const BLINK_DURATION_MS = 150;
   const canvas = document.getElementById("avatar");
@@ -61,7 +62,10 @@
   }
 
   function drawFrame(name) {
-    const selected = frames.get(name) ? name : (frames.get("idle") ? "idle" : (framesLoaded ? "diagnostic" : "blank"));
+    // Pre-load fallback keeps whatever is on screen (startup blank, or the
+    // grace diagnostic) so a marker can never repaint a latched diagnostic
+    // back to blank while frames are still in flight.
+    const selected = frames.get(name) ? name : (frames.get("idle") ? "idle" : (framesLoaded ? "diagnostic" : currentFrame));
     if (selected === currentFrame) return;
     if (selected === "diagnostic") {
       drawDiagnostic();
@@ -224,11 +228,19 @@
   async function loadFrames() {
     // The full frame set can take tens of seconds on a narrow public tunnel,
     // so fetch the idle frame alone at full bandwidth and paint it the moment
-    // it decodes; talk frames fall back to idle until they arrive.
+    // it decodes; talk frames fall back to idle until they arrive. If the
+    // idle fetch stalls past the grace window, show the diagnostic instead of
+    // an unbounded blank tile — loading continues and a late idle replaces it.
+    const grace = setTimeout(() => {
+      if (!frames.get("idle") && !framesLoaded && currentFrame === "blank") drawDiagnostic();
+    }, IDLE_GRACE_MS);
     await loadFrame("idle");
+    clearTimeout(grace);
     if (frames.get("idle")) {
       if (speaking) render();
       else drawFrame("idle");
+    } else if (currentFrame === "blank") {
+      drawDiagnostic();
     }
     await Promise.all(FRAME_NAMES.filter((name) => name !== "idle").map(loadFrame));
     framesLoaded = true;

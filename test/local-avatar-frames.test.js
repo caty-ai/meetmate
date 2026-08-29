@@ -141,6 +141,43 @@ test("slow network: idle frame paints as soon as it arrives, before the talk fra
   await settleMicrotasks();
   assert.doesNotThrow(() => contract.acceptState({ ...marker, sequence: 3, sampleIndex: 960 }, 1_100));
   assert.match(contract.getState().currentFrame, /^talk/, "lip-sync upgrades once talk frames land");
+
+  const idleDraw = page.drawCalls.find((call) => call[0] === "image");
+  assert.deepEqual(idleDraw.slice(2), [280, 0, 720, 720], "contain-fit letterboxes a square frame on the 16:9 canvas");
+  assert.ok(page.timers.some((timer) => timer.ms === 40), "the 40ms render loop is scheduled at startup");
+});
+
+test("stalled idle fetch latches the diagnostic after the grace window and a late idle replaces it", async () => {
+  const gate = {};
+  const page = await runFramesPage({
+    holdFrames: new Set(["idle", "talk1", "talk2", "talk3", "blink", "talk_blink"]),
+    gate,
+  });
+  const contract = page.sandbox.__localAvatarFramesContract;
+  assert.equal(contract.getState().currentFrame, "blank", "blank while inside the grace window");
+
+  const grace = page.timers.find((timer) => timer.ms === 15_000);
+  assert.ok(grace && !grace.cleared, "an idle grace timer is armed");
+  grace.fn();
+  assert.equal(contract.getState().currentFrame, "diagnostic", "grace window expiry paints the diagnostic");
+  assert.ok(page.drawCalls.some((call) => call[0] === "text" && call[1] === "IDLE"));
+
+  const marker = {
+    kind: "marker",
+    generation: 1,
+    cancelEpoch: 0,
+    sequence: 2,
+    outputEpoch: 0,
+    sampleIndex: 0,
+    sampleRate: 24_000,
+  };
+  assert.doesNotThrow(() => contract.acceptState(marker, 1_000));
+  assert.equal(contract.getState().currentFrame, "diagnostic", "markers cannot repaint the latched diagnostic to blank");
+
+  gate.release();
+  await settleMicrotasks();
+  assert.equal(contract.acceptState({ ...marker, kind: "idle", sequence: 3, sampleIndex: null, sampleRate: null }, 1_100), true);
+  assert.equal(contract.getState().currentFrame, "idle", "a late idle frame replaces the diagnostic");
 });
 
 test("frame assets require the session capability and an exact allowlisted PNG route", { concurrency: false }, async (t) => {
@@ -537,6 +574,7 @@ async function runFramesPage({ frameFailures = new Set(), holdFrames = new Set()
   let releaseHeldFrames;
   const heldGate = new Promise((resolve) => { releaseHeldFrames = resolve; });
   gate.release = releaseHeldFrames;
+  const timers = [];
   const script = fs.readFileSync(SCRIPT_FILE, "utf8");
   const drawCalls = [];
   const initial = {
@@ -586,14 +624,14 @@ async function runFramesPage({ frameFailures = new Set(), holdFrames = new Set()
         blob: async () => ({ name }),
       };
     },
-    createImageBitmap: async (blob) => ({ frame: blob.name }),
-    setTimeout: () => 1,
-    clearTimeout: () => {},
+    createImageBitmap: async (blob) => ({ frame: blob.name, width: 640, height: 640 }),
+    setTimeout: (fn, ms) => timers.push({ fn, ms, cleared: false }),
+    clearTimeout: (id) => { if (timers[id - 1]) timers[id - 1].cleared = true; },
   };
   vm.createContext(sandbox);
   vm.runInContext(script, sandbox, { filename: SCRIPT_FILE });
   await settleMicrotasks();
-  return { sandbox, drawCalls };
+  return { sandbox, drawCalls, timers };
 }
 
 async function settleMicrotasks() {
