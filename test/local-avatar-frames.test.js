@@ -5,6 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 const vm = require("node:vm");
 const crypto = require("node:crypto");
+const http = require("node:http");
 const https = require("node:https");
 const { EventEmitter } = require("node:events");
 const { stringify } = require("node:querystring");
@@ -16,6 +17,29 @@ const {
 const PUBLIC_DIR = path.join(__dirname, "..", "public", "local-avatar");
 const HTML_FILE = path.join(PUBLIC_DIR, "frames.html");
 const SCRIPT_FILE = path.join(PUBLIC_DIR, "frames.js");
+
+function unavailableNgrokHttpGet() {
+  const request = new EventEmitter();
+  request.setTimeout = () => request;
+  request.destroy = () => {};
+  queueMicrotask(() => request.emit("error", Object.assign(new Error("ngrok unavailable in test"), { code: "ECONNREFUSED" })));
+  return request;
+}
+
+function liveNgrokHttpGet(_url, callback) {
+  const request = new EventEmitter();
+  request.setTimeout = () => request;
+  request.destroy = () => {};
+  queueMicrotask(() => {
+    const response = new EventEmitter();
+    callback(response);
+    queueMicrotask(() => {
+      response.emit("data", '{"tunnels":[{"proto":"https","public_url":"https://example.ngrok.app"}]}');
+      response.emit("end");
+    });
+  });
+  return request;
+}
 
 test("frame avatar page is an isolated dependency-free 1280x720 Canvas surface", () => {
   const html = fs.readFileSync(HTML_FILE, "utf8");
@@ -285,7 +309,9 @@ test("hybrid-local-frames joins only on Fish Audio with a public HTTPS origin", 
       assert.equal(join.statusCode, 400);
       assert.equal(harness.botRequests.length, 0);
       originErrors[experiment] = join.text;
-    }, { ngrokDomain: "" });
+      assert.equal(harness.hostHttpGetCalls(), 0);
+      assert.equal(harness.probeHttpGetCalls(), 1);
+    }, { ngrokDomain: "", hostHttpGet: liveNgrokHttpGet });
   }
   assert.equal(originErrors["hybrid-local-l0"], "hybrid-local-l0 には公開 HTTPS origin が必要です。");
   assert.equal(
@@ -301,6 +327,14 @@ test("unknown experiments stay rejected and hybrid-local-l0 payload bytes remain
     assert.equal(join.text, "avatarExperiment が不正です。");
     assert.equal(harness.botRequests.length, 0);
   });
+
+  await withMeetRoutes(async (harness) => {
+    const join = await harness.join({ avatarExperiment: "hybrid-local-l0" });
+    assert.equal(join.statusCode, 400);
+    assert.equal(join.text, "hybrid-local-l0 には公開 HTTPS origin が必要です。");
+    assert.equal(harness.hostHttpGetCalls(), 0);
+    assert.equal(harness.probeHttpGetCalls(), 1);
+  }, { ngrokDomain: "", hostHttpGet: liveNgrokHttpGet });
 
   let staticBody;
   await withMeetRoutes(async (harness) => {
@@ -319,7 +353,7 @@ test("unknown experiments stay rejected and hybrid-local-l0 payload bytes remain
   });
 });
 
-async function withMeetRoutes(fn, { ttsProvider = "fish-audio", ngrokDomain = "meetmate.example" } = {}) {
+async function withMeetRoutes(fn, { ttsProvider = "fish-audio", ngrokDomain = "meetmate.example", hostHttpGet = null } = {}) {
   const settingsResolver = require("../src/settings/resolver");
   const routesPath = require.resolve("../src/transport-meet/meet-routes");
   const src = path.join(__dirname, "..", "src");
@@ -443,11 +477,21 @@ async function withMeetRoutes(fn, { ttsProvider = "fish-audio", ngrokDomain = "m
   });
 
   const botRequests = [];
+  const readiness = require("../src/settings/readiness");
+  readiness.reset();
+  const originalHttpGet = http.get;
   const originalHttpsRequest = https.request;
   const originalRandomUUID = crypto.randomUUID;
   const originalRandomBytes = crypto.randomBytes;
   crypto.randomUUID = () => "00000000-0000-4000-8000-000000000058";
   crypto.randomBytes = (size) => Buffer.alloc(size, 0x58);
+  let hostHttpGetCallCount = 0;
+  if (hostHttpGet) {
+    http.get = (...args) => {
+      hostHttpGetCallCount += 1;
+      return hostHttpGet(...args);
+    };
+  }
   https.request = (options, callback) => {
     const record = { options, body: "" };
     if (options.path === "/api/v1/bots") botRequests.push(record);
@@ -469,8 +513,19 @@ async function withMeetRoutes(fn, { ttsProvider = "fish-audio", ngrokDomain = "m
 
   try {
     const routes = require(routesPath);
+    let probeHttpGetCallCount = 0;
+    routes._test.configureReadinessForTest({
+      fetchFn: async () => { throw Object.assign(new Error("network unavailable in test"), { code: "ENETUNREACH" }); },
+      httpGet: (...args) => {
+        probeHttpGetCallCount += 1;
+        return unavailableNgrokHttpGet(...args);
+      },
+      requestFn: async () => { throw Object.assign(new Error("network unavailable in test"), { code: "ENETUNREACH" }); },
+    });
     const harness = {
       botRequests,
+      hostHttpGetCalls: () => hostHttpGetCallCount,
+      probeHttpGetCalls: () => probeHttpGetCallCount,
       join: (overrides = {}) => requestMeetRoute(routes, "POST", "/join-meeting", {
         meetingUrl: "https://meet.google.com/abc-defg-hij",
         wsUrl: "wss://meetmate.example/realtime?mode=frames",
@@ -486,6 +541,8 @@ async function withMeetRoutes(fn, { ttsProvider = "fish-audio", ngrokDomain = "m
     for (const session of [...require("../src/transport-meet/local-avatar-session")._test.sessions.values()]) {
       session.close("test_cleanup");
     }
+    readiness.reset();
+    http.get = originalHttpGet;
     https.request = originalHttpsRequest;
     crypto.randomUUID = originalRandomUUID;
     crypto.randomBytes = originalRandomBytes;

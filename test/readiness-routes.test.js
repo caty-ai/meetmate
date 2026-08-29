@@ -1,6 +1,7 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const { EventEmitter } = require("node:events");
 const { Readable } = require("node:stream");
 const { stringify } = require("node:querystring");
 const test = require("node:test");
@@ -9,6 +10,14 @@ const resolver = require("../src/settings/resolver");
 const readiness = require("../src/settings/readiness");
 
 const routesPath = require.resolve("../src/transport-meet/meet-routes");
+
+function unavailableNgrokHttpGet() {
+  const request = new EventEmitter();
+  request.setTimeout = () => request;
+  request.destroy = () => {};
+  queueMicrotask(() => request.emit("error", Object.assign(new Error("ngrok unavailable in test"), { code: "ECONNREFUSED" })));
+  return request;
+}
 
 function initialize(options = {}) {
   resolver.resetRuntimeForTest();
@@ -98,7 +107,7 @@ test("real public route handlers never dispatch billing probes and rate-limited 
     detectNgrok: false,
     loadAvatar: false,
     instanceId: "this-boot",
-    readinessProbeOptions: { fetchFn, requestFn },
+    readinessProbeOptions: { fetchFn, requestFn, httpGet: unavailableNgrokHttpGet },
   });
   t.after(() => {
     delete require.cache[routesPath];
@@ -188,7 +197,7 @@ test("join route enforces config-derived wsUrl identity and never fetches an out
         return new Response('{"instanceId":"other-boot"}', { status: 200, headers: { "Content-Type": "application/json" } });
       },
       httpGet: () => {
-        const request = new (require("node:events").EventEmitter)();
+        const request = new EventEmitter();
         queueMicrotask(() => request.emit("error", new Error("ngrok absent")));
         request.setTimeout = () => request;
         request.destroy = () => {};

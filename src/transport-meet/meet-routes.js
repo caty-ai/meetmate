@@ -1656,6 +1656,17 @@ function handleWsConnection(client, req) {
   });
 }
 
+function configureReadinessForTest(probeOptions = {}) {
+  readinessProbeOptions = { ...readinessProbeOptions, ...probeOptions };
+  readiness.configure({
+    probeOptions: {
+      ...readinessProbeOptions,
+      instanceId: readinessInstanceId,
+      resolvePublicOrigin: () => resolvePublicOrigin(readinessProbeOptions),
+    },
+  });
+}
+
 const { getPublishedValue } = require("../settings/resolver");
 const readiness = require("../settings/readiness");
 const readinessProbes = require("../settings/probes");
@@ -1672,6 +1683,7 @@ module.exports = {
     appendToMemory,
     buildConfiguredDelegationResultsSection,
     configuredSummaryPrompt: () => _resolvedMessages.prompts.summary,
+    configureReadinessForTest,
     runtimeDiagnostics,
     refreshNgrokDetection,
     resolvePublicOrigin,

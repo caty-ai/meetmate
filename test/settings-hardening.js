@@ -1101,6 +1101,21 @@ test("T12-07 empty-home server bootstrap stays alive and serves health plus setu
     const { EventEmitter } = require("node:events");
     const { Readable } = require("node:stream");
     const http = require("node:http");
+    const https = require("node:https");
+    const blockedNetwork = () => {
+      const request = new EventEmitter();
+      request.setTimeout = () => request;
+      request.destroy = () => {};
+      request.write = () => {};
+      request.end = () => {};
+      queueMicrotask(() => request.emit("error", Object.assign(new Error("network unavailable in test"), { code: "ENETUNREACH" })));
+      return request;
+    };
+    http.get = blockedNetwork;
+    http.request = blockedNetwork;
+    https.get = blockedNetwork;
+    https.request = blockedNetwork;
+    global.fetch = async () => { throw Object.assign(new Error("network unavailable in test"), { code: "ENETUNREACH" }); };
     function run(handler, method, url, host = "localhost:5005") {
       return new Promise((resolve) => {
         const req = Readable.from([]);
@@ -1175,6 +1190,21 @@ test("T12-07 unreadable and symlink-rejected startup configs stay in non-bootstr
       const { EventEmitter } = require("node:events");
       const { Readable } = require("node:stream");
       const http = require("node:http");
+      const https = require("node:https");
+      const blockedNetwork = () => {
+        const request = new EventEmitter();
+        request.setTimeout = () => request;
+        request.destroy = () => {};
+        request.write = () => {};
+        request.end = () => {};
+        queueMicrotask(() => request.emit("error", Object.assign(new Error("network unavailable in test"), { code: "ENETUNREACH" })));
+        return request;
+      };
+      http.get = blockedNetwork;
+      http.request = blockedNetwork;
+      https.get = blockedNetwork;
+      https.request = blockedNetwork;
+      global.fetch = async () => { throw Object.assign(new Error("network unavailable in test"), { code: "ENETUNREACH" }); };
       if (process.argv[1] === "eacces") {
         const store = require(${JSON.stringify(require.resolve("../src/settings/store"))});
         store.readConfigState = () => { const error = new Error("denied"); error.code = "EACCES"; throw error; };
