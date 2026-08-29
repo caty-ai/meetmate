@@ -61,7 +61,15 @@
     }
     context.fillStyle = "#08111f";
     context.fillRect(0, 0, canvas.width, canvas.height);
-    context.drawImage(frames.get(selected), 0, 0, canvas.width, canvas.height);
+    // Contain-fit: preserve the frame's aspect ratio, centered with letterboxing,
+    // so square/portrait character art is never stretched across the 16:9 tile.
+    const image = frames.get(selected);
+    const sourceWidth = image.width || canvas.width;
+    const sourceHeight = image.height || canvas.height;
+    const scale = Math.min(canvas.width / sourceWidth, canvas.height / sourceHeight);
+    const drawWidth = sourceWidth * scale;
+    const drawHeight = sourceHeight * scale;
+    context.drawImage(image, (canvas.width - drawWidth) / 2, (canvas.height - drawHeight) / 2, drawWidth, drawHeight);
     currentFrame = selected;
   }
 
