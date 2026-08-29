@@ -94,11 +94,11 @@ Meetmate: [warm] 有两处变化——年度折扣改成了 15%，还新增了�
 | OpenClaw Gateway | 已支持 | 目前的主路径：记忆、技能、工具和委派都留在你现有的智能体上。 |
 | OpenAI 兼容基线 | 已支持 | 面向任意兼容端点的纯语音智能体模式。 |
 | 通过 OpenAI 兼容网关接入 Claude Code | 集成进行中 | 使用通用的 `openai-compatible` 提供方。没有 Claude 专属的提供方分支。在真实 Google Meet 端到端验证通过之前,我们不会称其为"已支持"。 |
-| Hermes api_server | 已支持 | 2026 年 8 月 29 日已在真实 Google Meet 中完成端到端验证——通过通用的 `openai-compatible` 提供方（SSH 隧道、Bearer 认证),真实会议中的语音对话运行正常。此项覆盖语音智能体路径。接线细节: [LLM providers](https://github.com/caty-ai/meetmate/blob/main/docs/TECHNICAL.md#llm-providers)。 |
+| Hermes api_server | 已支持 | 2026 年 8 月 29 日已在真实 Google Meet 中完成端到端验证（[#76](https://github.com/caty-ai/meetmate/issues/76)）——通过通用的 `openai-compatible` 提供方（SSH 隧道、Bearer 认证），真实会议中的语音对话运行正常。此项覆盖语音智能体路径。接线细节: [LLM providers](https://github.com/caty-ai/meetmate/blob/main/docs/TECHNICAL.md#llm-providers)。 |
 | Codex / Kimi Code | 计划中 | 尚未接入。 |
 | 会议网格中的头像 | 默认是静态图片;另有两种动态头像实验 | 逐帧口型同步已随 v8.4.0 发布,2.5D 骨骼(rig)概念验证也已合入主干。默认仍是静态图片;动态头像的工作在 [#2](https://github.com/caty-ai/meetmate/issues/2) 中继续。 |
 
-想让头像动起来?已经有两条实验路径可用:随语音切换 6 张 PNG 的逐帧口型同步头像(v8.4.0),以及 2.5D 骨骼概念验证。默认仍是静态图片——试用方法见[安装指南的逐帧头像章节](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#実験的なフレーム差し替えアバター)。
+想让头像动起来?已经发布了两项实验:随语音切换 6 张 PNG 的逐帧口型同步头像(v8.4.0),以及 2.5D 骨骼概念验证。默认仍是静态图片——逐帧头像的试用方法见[安装指南的逐帧头像章节](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#実験的なフレーム差し替えアバター)(需要 Fish Audio TTS 和公开的 HTTPS origin);骨骼概念验证暂无用户文档。
 
 ## 平台说明
 
