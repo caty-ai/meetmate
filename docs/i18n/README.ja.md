@@ -22,7 +22,7 @@ Meetmate がやることはひとつだけ。**あなたの**エージェント�
 
 ## クイックスタート
 
-**必要なもの:** Node.js ≥ 26 ・ [Attendee](https://attendee.dev/) アカウント ・ 音声認識用の [Soniox](https://soniox.com/)（または [Deepgram](https://deepgram.com/)） ・ 声を作る [Fish Audio](https://fish.audio/)（ボイスIDを含む） ・ LLM エンドポイント（OpenClaw Gateway または任意の OpenAI 互換） ・ 通常は [ngrok](https://ngrok.com/) か [Tailscale](https://tailscale.com/) ・ そして Google Meet はボットの入室許可を求めてきます。サードパーティサービスは有料の場合があります。
+**必要なもの:** [Node.js](https://nodejs.org/) ≥ 26 ・ [Attendee](https://attendee.dev/) アカウント ・ 音声認識用の [Soniox](https://soniox.com/)（または [Deepgram](https://deepgram.com/)） ・ 声を作る [Fish Audio](https://fish.audio/)（ボイスIDを含む） ・ LLM エンドポイント（[OpenClaw Gateway](https://openclaw.ai/) または任意の OpenAI 互換） ・ 通常は [ngrok](https://ngrok.com/) か [Tailscale](https://tailscale.com/) ・ そして Google Meet はボットの入室許可を求めてきます。サードパーティサービスは有料の場合があります。
 
 空のフォルダーで:
 
@@ -112,12 +112,12 @@ Meetmate: [warm] 変更点は2つです——年間割引が15%になったの�
 
 | 項目 | 目的 | 設定名 | 必要なタイミング | 備考 |
 |---|---|---|---|---|
-| Node.js 26+ | サーバーを実行 | `node`, `npm` | 常に | 必須。 |
+| [Node.js](https://nodejs.org/) 26+ | サーバーを実行 | `node`, `npm` | 常に | 必須。 |
 | [Attendee](https://attendee.dev/) アカウント + API キー | 会議ボットの参加/退出 + 音声入出力 | `ATTENDEE_API_KEY` | 常に | ホスティングサービス。現在の無料/有料プランの提供状況を確認してください。 |
 | [Soniox](https://console.soniox.com/) アカウント + API キー | デフォルトの音声認識 | `STT_PROVIDER=soniox`, `SONIOX_API_KEY` | 通常 | デフォルトの経路。料金・トライアル条件は変わることがあります。 |
 | [Deepgram](https://console.deepgram.com/signup) アカウント + API キー | 代替の音声認識（任意） | `STT_PROVIDER=deepgram`, `DEEPGRAM_API_KEY` | 任意 | Soniox から切り替える場合のみ。 |
 | [Fish Audio](https://fish.audio/) アカウント + ボイス | 音声合成の声 | `FISH_AUDIO_API_KEY`, `FISH_AUDIO_VOICE_ID`, `TTS_PROVIDER=fish-audio` | 常に | ボイスIDはボイスページの URL から取得します。料金・トライアル条件は変わることがあります。 |
-| OpenClaw Gateway または他の OpenAI 互換 LLM ゲートウェイ | 実際の音声ブレイン | `LLM_PROVIDER`, `OPENCLAW_GATEWAY_URL`, `OPENCLAW_GATEWAY_TOKEN`、または `OPENAI_COMPATIBLE_BASE_URL`, `OPENAI_COMPATIBLE_API_KEY` | 常に | OpenClaw がメインの経路です。ステートフルな OpenAI 互換ゲートウェイについてはセットアップガイドに記載しています。 |
+| [OpenClaw Gateway](https://openclaw.ai/) または他の OpenAI 互換 LLM ゲートウェイ | 実際の音声ブレイン | `LLM_PROVIDER`, `OPENCLAW_GATEWAY_URL`, `OPENCLAW_GATEWAY_TOKEN`、または `OPENAI_COMPATIBLE_BASE_URL`, `OPENAI_COMPATIBLE_API_KEY` | 常に | OpenClaw がメインの経路です。ステートフルな OpenAI 互換ゲートウェイについてはセットアップガイドに記載しています。 |
 | [ngrok](https://ngrok.com/) または [Tailscale](https://tailscale.com/) | ボットの WebSocket を外部から到達可能にする | ngrok の場合は `server.ngrokDomain` | 条件付き | `ngrok` が一般的な経路です。ネットワークと Attendee のデプロイ構成が許せば Tailscale も選べます。料金・無料プランの詳細は変わることがあります。 |
 | ボットの入室を許可する Google Meet の権限 | ボットを会議に入れる | Meet UI の「参加をリクエスト」承認 | Google Meet | Meet 側で参加リクエストを承認する必要があります。 |
 | [Zoom Marketplace](https://marketplace.zoom.us/) アプリ/管理者設定 | Zoom ボットの権限モデル | Attendee/Zoom 側のアプリ設定 | Zoom のみ | 条件付き。外部主催の会議や管理された OAuth への対応はうたっていません。 |
@@ -207,7 +207,7 @@ Issue・PR 歓迎です — [CONTRIBUTING.md](https://github.com/caty-ai/meetmat
 
 ## 謝辞
 
-Meetmate は優れたサービスと OSS の上に成り立っています: [Attendee](https://attendee.dev/)（会議ボット基盤）・[Soniox](https://soniox.com/)（リアルタイム音声認識）・[Fish Audio](https://fish.audio/)（表現力のある音声合成）・OpenClaw Gateway（エージェント基盤 — SOUL / 記憶 / スキル / ツール）、そして OpenAI 互換 LLM エコシステム。
+Meetmate は優れたサービスと OSS の上に成り立っています: [Attendee](https://attendee.dev/)（会議ボット基盤）・[Soniox](https://soniox.com/)（リアルタイム音声認識）・[Fish Audio](https://fish.audio/)（表現力のある音声合成）・[OpenClaw Gateway](https://openclaw.ai/)（エージェント基盤 — SOUL / 記憶 / スキル / ツール）、そして OpenAI 互換 LLM エコシステム。
 
 ## ライセンス
 

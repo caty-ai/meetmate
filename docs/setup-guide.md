@@ -14,7 +14,7 @@
 
 | サービス | 取得先 | 用途 | 必須度 | 費用メモ |
 |---------|--------|------|--------|---------|
-| OpenClaw Gateway | 同一マシンで稼働 | 既定 LLM（SOUL/memory/tools/skills連携） | 条件付き（既定） | 自前運用前提 |
+| OpenClaw Gateway | https://openclaw.ai/ （同一マシンで稼働） | 既定 LLM（SOUL/memory/tools/skills連携） | 条件付き（既定） | 自前運用前提 |
 | OpenAI互換 LLM / Gateway | 利用する endpoint に応じる | `openai-compatible` 選択時の voice brain | 条件付き | 利用先ごとに異なる |
 | Soniox | https://console.soniox.com/ | STT（音声認識・既定プロバイダ） | ✅ | 現在の free / paid は公式で確認 |
 | Deepgram | https://console.deepgram.com/signup | STT（`deepgram` 切替時のみ） | 任意 | 現在の free / paid は公式で確認 |

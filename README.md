@@ -23,7 +23,7 @@ Meetmate does exactly one thing: it gives *your* AI agent a seat in your meeting
 
 ## Quick start
 
-**What you need:** Node.js ≥ 26 · an [Attendee](https://attendee.dev/) account · [Soniox](https://soniox.com/) (or [Deepgram](https://deepgram.com/)) for speech-to-text · [Fish Audio](https://fish.audio/) for the voice (including a voice ID) · an LLM endpoint (OpenClaw Gateway or any OpenAI-compatible) · usually [ngrok](https://ngrok.com/) or [Tailscale](https://tailscale.com/) · and Google Meet will ask you to admit the bot. The third-party services may cost money.
+**What you need:** [Node.js](https://nodejs.org/) ≥ 26 · an [Attendee](https://attendee.dev/) account · [Soniox](https://soniox.com/) (or [Deepgram](https://deepgram.com/)) for speech-to-text · [Fish Audio](https://fish.audio/) for the voice (including a voice ID) · an LLM endpoint ([OpenClaw Gateway](https://openclaw.ai/) or any OpenAI-compatible) · usually [ngrok](https://ngrok.com/) or [Tailscale](https://tailscale.com/) · and Google Meet will ask you to admit the bot. The third-party services may cost money.
 
 In an empty folder:
 
@@ -113,12 +113,12 @@ The `init` wizard collects the API keys, the voice ID, and the LLM endpoint for 
 
 | Item | Purpose | Setting names | When needed | Notes |
 |---|---|---|---|---|
-| Node.js 26+ | Run the server | `node`, `npm` | Always | Required. |
+| [Node.js](https://nodejs.org/) 26+ | Run the server | `node`, `npm` | Always | Required. |
 | [Attendee](https://attendee.dev/) account + API key | Meeting bot join/leave + audio I/O | `ATTENDEE_API_KEY` | Always | Hosted service; check current free/paid availability. |
 | [Soniox](https://console.soniox.com/) account + API key | Default speech-to-text | `STT_PROVIDER=soniox`, `SONIOX_API_KEY` | Usually | Default path. Pricing/trial terms vary. |
 | [Deepgram](https://console.deepgram.com/signup) account + API key | Optional alternate speech-to-text | `STT_PROVIDER=deepgram`, `DEEPGRAM_API_KEY` | Optional | Only if you switch away from Soniox. |
 | [Fish Audio](https://fish.audio/) account + voice | Text-to-speech voice | `FISH_AUDIO_API_KEY`, `FISH_AUDIO_VOICE_ID`, `TTS_PROVIDER=fish-audio` | Always | Voice ID comes from the voice page URL. Pricing/trial terms vary. |
-| OpenClaw Gateway or another OpenAI-compatible LLM gateway | The actual voice brain | `LLM_PROVIDER`, `OPENCLAW_GATEWAY_URL`, `OPENCLAW_GATEWAY_TOKEN`, or `OPENAI_COMPATIBLE_BASE_URL`, `OPENAI_COMPATIBLE_API_KEY` | Always | OpenClaw is the mainline path; stateful OpenAI-compatible gateways are documented in the setup guide. |
+| [OpenClaw Gateway](https://openclaw.ai/) or another OpenAI-compatible LLM gateway | The actual voice brain | `LLM_PROVIDER`, `OPENCLAW_GATEWAY_URL`, `OPENCLAW_GATEWAY_TOKEN`, or `OPENAI_COMPATIBLE_BASE_URL`, `OPENAI_COMPATIBLE_API_KEY` | Always | OpenClaw is the mainline path; stateful OpenAI-compatible gateways are documented in the setup guide. |
 | [ngrok](https://ngrok.com/) or [Tailscale](https://tailscale.com/) | Public/reachable bot WebSocket path | `server.ngrokDomain` for ngrok | Conditional | `ngrok` is the common path. Tailscale is an alternative when your network and Attendee deployment allow it. Pricing/free-plan details vary. |
 | Google Meet permission to admit the bot | Let the bot enter the meeting | Meet UI “Ask to join” approval | Google Meet | You must approve the join request in Meet. |
 | [Zoom Marketplace](https://marketplace.zoom.us/) app/admin setup | Zoom bot permission model | Attendee/Zoom-side app settings | Zoom only | Conditional. External-hosted meetings and managed OAuth are not claimed as supported. |
@@ -210,7 +210,7 @@ Issues and PRs welcome — see [CONTRIBUTING.md](https://github.com/caty-ai/meet
 
 ## Acknowledgments
 
-Meetmate stands on excellent services and OSS: [Attendee](https://attendee.dev/) (meeting bot infrastructure), [Soniox](https://soniox.com/) (real-time STT), [Fish Audio](https://fish.audio/) (expressive TTS), OpenClaw Gateway (agent infrastructure — SOUL / memory / skills / tools), and the OpenAI-compatible LLM ecosystem.
+Meetmate stands on excellent services and OSS: [Attendee](https://attendee.dev/) (meeting bot infrastructure), [Soniox](https://soniox.com/) (real-time STT), [Fish Audio](https://fish.audio/) (expressive TTS), [OpenClaw Gateway](https://openclaw.ai/) (agent infrastructure — SOUL / memory / skills / tools), and the OpenAI-compatible LLM ecosystem.
 
 ## License
 
