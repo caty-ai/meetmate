@@ -27,19 +27,19 @@ const CLASS1_CONFIG_KEYS = [
 const PROMPTS = {
   SONIOX_API_KEY: {
     label: "SONIOX_API_KEY",
-    hint: "Where to get it: create an API key in the Soniox console (https://console.soniox.com/).",
+    hint: "Where to get it: create an API key in the Soniox console (https://console.soniox.com/). Typical format: a long token (~150 chars) starting with snx — an sk-... key belongs to Fish Audio, not here.",
   },
   FISH_AUDIO_API_KEY: {
     label: "FISH_AUDIO_API_KEY",
-    hint: "Where to get it: create an API key in the Fish Audio dashboard (https://fish.audio/).",
+    hint: "Where to get it: create an API key in the Fish Audio dashboard (https://fish.audio/). Typical format: ~50 chars starting with sk-.",
   },
   FISH_AUDIO_VOICE_ID: {
     label: "FISH_AUDIO_VOICE_ID",
-    hint: "Where to get it: copy the voice ID from your Fish Audio voice page (https://fish.audio/).",
+    hint: "Where to get it: copy the voice ID from your Fish Audio voice page (https://fish.audio/) — it is a separate value from the API key. Typical format: 32 hex chars, visible in the voice page URL.",
   },
   ATTENDEE_API_KEY: {
     label: "ATTENDEE_API_KEY",
-    hint: "Where to get it: create an API key in the Attendee dashboard (https://attendee.dev/).",
+    hint: "Where to get it: create an API key in the Attendee dashboard (https://attendee.dev/). Typical format: a 32-char alphanumeric token (no sk-/snx prefix).",
   },
   provider: {
     label: "LLM provider (openclaw|openai-compatible)",
@@ -47,7 +47,7 @@ const PROMPTS = {
   },
   OPENCLAW_GATEWAY_URL: {
     label: "OPENCLAW_GATEWAY_URL",
-    hint: "Where to get it: use the URL shown by your OpenClaw Gateway (https://openclaw.ai/; usually http://localhost:18789).",
+    hint: "Where to get it: use the URL shown by your OpenClaw Gateway (https://openclaw.ai/; usually http://localhost:18789). Note: the Gateway config must have gateway.http.endpoints.chatCompletions.enabled: true, or Meetmate's chat requests will 404.",
   },
   OPENCLAW_GATEWAY_TOKEN: {
     label: "OPENCLAW_GATEWAY_TOKEN",
@@ -171,9 +171,28 @@ function readProviderFromEnvFile(envDestination) {
   return parseExistingProvider(match?.[1]);
 }
 
+function printChecklist({ writeConfig, writeEnv, existingProvider }) {
+  console.log("Before you start, have these ready:");
+  if (writeConfig) {
+    console.log("- Soniox API key (speech-to-text)");
+    console.log("- Fish Audio API key (text-to-speech)");
+    console.log("- Fish Audio Voice ID — a separate value from the Fish Audio API key");
+    console.log("- Attendee API key (meeting bot)");
+  }
+  const providerKnown = !writeEnv && Boolean(existingProvider);
+  if (!providerKnown) {
+    console.log("- Your LLM provider choice (openclaw or openai-compatible) and its connection values (URL/token, or base URL/API key/model)");
+  } else if (existingProvider === "openai-compatible" && writeConfig) {
+    console.log("- Your OpenAI-compatible endpoint's base URL and model ID (provider is already set in .env)");
+  }
+  console.log("- Later, after init: an ngrok fixed domain + authtoken (or Tailscale) for the tunnel");
+  console.log("");
+}
+
 async function askWizard({ writeConfig, writeEnv, existingProvider }) {
   const reader = createLineReader();
   const answers = {};
+  printChecklist({ writeConfig, writeEnv, existingProvider });
 
   try {
     if (writeConfig) {
@@ -378,6 +397,7 @@ async function init(force) {
   if (created.length > 0) console.log(`Created: ${created.join(", ")}.`);
   else console.log("Nothing to create; existing files were left unchanged.");
   console.log("Remaining manual steps: configure ngrok (https://ngrok.com/) or Tailscale (https://tailscale.com/), then admit Meetmate to Google Meet.");
+  console.log("ngrok tip: a fixed domain plus your authtoken is all you need — the dashboard's Start Endpoint button is not required (the endpoint goes live when you run ngrok locally).");
 }
 
 function start() {
