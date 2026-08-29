@@ -19,6 +19,14 @@ function unavailableNgrokHttpGet() {
   return request;
 }
 
+async function unavailableFetch() {
+  throw Object.assign(new Error("network unavailable in test"), { code: "ENETUNREACH" });
+}
+
+async function unavailableRequest() {
+  throw Object.assign(new Error("network unavailable in test"), { code: "ENETUNREACH" });
+}
+
 function availableNgrokHttpGet(publicUrl) {
   return (_url, callback) => {
     const request = new EventEmitter();
@@ -313,6 +321,7 @@ test("join route enforces config-derived wsUrl identity and never fetches an out
         fetched.push(String(url));
         return new Response('{"instanceId":"other-boot"}', { status: 200, headers: { "Content-Type": "application/json" } });
       },
+      requestFn: unavailableRequest,
       httpGet: () => {
         const request = new EventEmitter();
         queueMicrotask(() => request.emit("error", new Error("ngrok absent")));
@@ -362,6 +371,7 @@ test("fresh readiness lookup cannot clear the boot-time ngrok latch used by /inf
     instanceId: "this-boot",
     readinessProbeOptions: {
       fetchFn: async () => new Response("{}", { status: 200 }),
+      requestFn: unavailableRequest,
       httpGet: unavailableNgrokHttpGet,
     },
   });
@@ -391,7 +401,11 @@ test("join rejects PENDING but permits settled soft readiness failures", { concu
     detectNgrok: false,
     loadAvatar: false,
     instanceId: "this-boot",
-    readinessProbeOptions: { httpGet: unavailableNgrokHttpGet },
+    readinessProbeOptions: {
+      fetchFn: unavailableFetch,
+      requestFn: unavailableRequest,
+      httpGet: unavailableNgrokHttpGet,
+    },
   });
   t.after(() => {
     delete require.cache[routesPath];
