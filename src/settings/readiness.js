@@ -110,7 +110,7 @@ function runtimeStatus(error) {
 
 function classifyRuntimeFailure(error, options = {}) {
   const status = runtimeStatus(error);
-  if (status === 401 || status === 403) return "AUTH_FAILED";
+  if (status === 401) return "AUTH_FAILED";
   if (status === 402) return "PAYMENT_REQUIRED";
   if (status === 404) return options.notEnabled404 === true ? "NOT_ENABLED" : "PROVIDER_ERROR";
   if (status === 429) return "RATE_LIMITED";
@@ -324,7 +324,13 @@ function createReadinessController(options = {}) {
       });
     }
     const settled = systems.every((system) => system.code !== "PENDING");
-    return { ready: settled && blockers.length === 0, systems, blockers };
+    const meetingReady = getStatus().meetingReady;
+    return {
+      ready: settled && blockers.length === 0 && meetingReady,
+      setupRequired: !meetingReady,
+      systems,
+      blockers,
+    };
   }
 
   async function recheckPublic() {

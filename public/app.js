@@ -37,11 +37,19 @@ function readinessDisplayRows(readinessState) {
   }
   const blockers = Array.isArray(readinessState?.blockers) ? readinessState.blockers : [];
   const systems = Array.isArray(readinessState?.systems) ? readinessState.systems : [];
-  const rows = blockers.map((blocker) => ({
+  const rows = [];
+  if (readinessState?.setupRequired && blockers.length === 0) {
+    rows.push({
+      kind: "setup",
+      text: "初期設定が未完了です。設定画面で必須項目を保存してください",
+      fieldId: "panel-connections",
+    });
+  }
+  rows.push(...blockers.map((blocker) => ({
     kind: "blocker",
     text: blocker.message || blocker.code,
     fieldId: blocker.fieldId,
-  }));
+  })));
   for (const system of systems) {
     if (system.code === "PENDING") {
       rows.push({ kind: "pending", text: `${system.id}: 確認中…` });
@@ -286,14 +294,15 @@ if (typeof document !== "undefined") (function () {
   function appendReadinessLine(kind, text, fieldId) {
     const line = document.createElement("p");
     line.className = `readiness-line ${kind}`;
-    if (kind === "blocker" && fieldId && isLoopbackView()) {
+    const linksToSettings = ["blocker", "setup"].includes(kind) && fieldId;
+    if (linksToSettings && isLoopbackView()) {
       const link = document.createElement("a");
       link.href = localSettingsUrl(fieldId);
       link.textContent = text;
       line.append(link);
     } else {
       line.append(document.createTextNode(text));
-      if (kind === "blocker" && fieldId) {
+      if (linksToSettings) {
         const url = localSettingsUrl(fieldId);
         const port = settingsPortFromReadiness(readinessState, location.port);
         line.append(document.createTextNode(`。同じPCで localhost:${port}/settings を開いてください`));

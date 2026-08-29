@@ -57,7 +57,7 @@ function initialize(options = {}) {
         tts: { provider: "fish-audio", apiKey: "fish-secret", voiceId: "voice-id" },
         attendee: { apiKey: "attendee-secret", baseUrl: "app.attendee.dev" },
         server: options.ngrokDomain === null ? {} : { ngrokDomain: options.ngrokDomain || "meetmate.example" },
-        slack: { notifications: { enabled: false } },
+        slack: { notifications: { enabled: options.slackEnabled === true } },
       },
     },
     startup: Object.freeze({
@@ -180,6 +180,42 @@ test("public recheck cannot probe a stale billing cache", { concurrency: false }
     assert.equal(response.status, 200);
     assertOnlyNonBillingProbes(fetchCalls, requestCalls);
   });
+});
+
+test("readiness payload reports setupRequired without turning legacy setup issues into blockers", { concurrency: false }, async (t) => {
+  initialize({ slackEnabled: true });
+  readiness.reset();
+  for (const system of readiness.gateSystems()) {
+    readiness.setProbeObservation(system, { ok: true, code: "CONNECTED" });
+  }
+  delete require.cache[routesPath];
+  const routes = require(routesPath);
+  await routes.init({
+    detectNgrok: false,
+    loadAvatar: false,
+    readinessProbeOptions: {
+      fetchFn: unavailableFetch,
+      requestFn: unavailableRequest,
+      httpGet: unavailableNgrokHttpGet,
+    },
+  });
+  t.after(() => {
+    delete require.cache[routesPath];
+    readiness.reset();
+    resolver.resetRuntimeForTest();
+  });
+
+  const setupRequired = await invoke(routes, "GET", "/readiness");
+  assert.equal(setupRequired.status, 200);
+  assert.equal(setupRequired.body.ready, false);
+  assert.equal(setupRequired.body.setupRequired, true);
+  assert.deepEqual(setupRequired.body.blockers, []);
+
+  initialize();
+  const complete = await invoke(routes, "GET", "/readiness");
+  assert.equal(complete.body.ready, true);
+  assert.equal(complete.body.setupRequired, false);
+  assert.deepEqual(complete.body.blockers, []);
 });
 
 test("join revalidation probes stale non-billing systems but never stale billing systems", { concurrency: false }, async () => {

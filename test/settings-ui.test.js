@@ -111,3 +111,17 @@ test("main UI keeps a visible recheck surface when readiness cannot be loaded", 
     unavailable: true,
   }), [{ kind: "warning", text: "接続状態を取得できません" }]);
 });
+
+test("main UI shows setup-required guidance without manufacturing a blocker", () => {
+  const { readinessDisplayRows } = require("../public/app.js");
+  assert.deepEqual(readinessDisplayRows({
+    ready: false,
+    setupRequired: true,
+    systems: [],
+    blockers: [],
+  }), [{
+    kind: "setup",
+    text: "初期設定が未完了です。設定画面で必須項目を保存してください",
+    fieldId: "panel-connections",
+  }]);
+});

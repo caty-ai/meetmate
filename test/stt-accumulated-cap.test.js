@@ -40,9 +40,10 @@ test("Deepgram STT force-emits when accumulated final text reaches cap", async (
     return originalLoad.call(this, request, parent, isMain);
   };
 
+  let stt;
   try {
     const { createSTT } = require("../src/stt");
-    const stt = createSTT("test-key", { model: "nova-3", language: "ja", sampleRate: 16000 });
+    stt = createSTT("test-key", { model: "nova-3", language: "ja", sampleRate: 16000 });
     const utterances = [];
     stt.on("utterance_end", (text) => utterances.push(text));
     stt.on("error", () => {});
@@ -61,10 +62,13 @@ test("Deepgram STT force-emits when accumulated final text reaches cap", async (
     connection.emit("open");
     assert.equal(readiness.inspect("deepgram").code, "CONNECTED");
     connection.emit("error", Object.assign(new Error("Deepgram structured 403"), { statusCode: 403 }));
+    assert.equal(readiness.inspect("deepgram").code, "PROVIDER_ERROR");
+    connection.emit("error", new Error("WebSocket connection error (Status: 401, Ready State: CONNECTING)"));
     assert.equal(readiness.inspect("deepgram").code, "AUTH_FAILED");
-
-    stt.close();
+    connection.emit("close", { message: "WebSocket connection error (Status: 402, Ready State: CLOSED)" });
+    assert.equal(readiness.inspect("deepgram").code, "PAYMENT_REQUIRED");
   } finally {
+    stt?.close();
     Module._load = originalLoad;
     delete require.cache[sttPath];
     if (previousStt) require.cache[sttPath] = previousStt;

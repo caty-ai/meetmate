@@ -211,7 +211,8 @@ test("bootstrap runs each active gate probe once and skips systems with static i
 
 test("runtime classification uses structured status and reserves NOT_ENABLED for explicit OpenClaw 404", () => {
   assert.equal(readiness.runtimeStatus({ statusCode: 404, message: "ignored" }), 404);
-  assert.equal(readiness.classifyRuntimeFailure({ statusCode: 403 }), "AUTH_FAILED");
+  assert.equal(readiness.classifyRuntimeFailure({ statusCode: 401 }), "AUTH_FAILED");
+  assert.equal(readiness.classifyRuntimeFailure({ statusCode: 403 }), "PROVIDER_ERROR");
   assert.equal(readiness.classifyRuntimeFailure({ statusCode: 404 }), "PROVIDER_ERROR");
   assert.equal(readiness.classifyRuntimeFailure({ statusCode: 404 }, { notEnabled404: true }), "NOT_ENABLED");
   assert.equal(readiness.runtimeStatus(new Error("language model not found")), 0);
@@ -232,7 +233,7 @@ test("a failed probe replaces runtime success while runtime failures remain stic
   assert.equal(controller.getReadiness().blockers.some((entry) => entry.system === "soniox"), true);
 });
 
-test("Slack-only static issues stay outside the readiness gate", () => {
+test("Slack-only setup issues keep blockers empty while readiness honestly reports setup required", () => {
   const withSlackIssue = document();
   withSlackIssue.slack.notifications.enabled = true;
   initialize(withSlackIssue);
@@ -241,8 +242,13 @@ test("Slack-only static issues stay outside the readiness gate", () => {
   for (const system of controller.gateSystems()) {
     controller.setProbeObservation(system, { ok: true, code: "CONNECTED" });
   }
-  assert.equal(controller.getReadiness().ready, true);
+  assert.equal(controller.getReadiness().ready, false);
+  assert.equal(controller.getReadiness().setupRequired, true);
   assert.deepEqual(controller.getReadiness().blockers, []);
+
+  initialize();
+  assert.equal(controller.getReadiness().ready, true);
+  assert.equal(controller.getReadiness().setupRequired, false);
 });
 
 test("probeOne refuses billing dispatch unless allowBilling is explicitly granted", async () => {
