@@ -19,7 +19,7 @@ Implementation issues: #3 (packaging/CLI/paths), #15 (README), #16 (AI files).
 
 Commands (no renames; no new *required* flags):
 
-<!-- Amended by EPIC #29 child 0 (#30), pending CP#1 owner approval: start prints the guarded /settings UI URL; / remains the existing dashboard. -->
+<!-- Amended by EPIC #29 child 0 (#30), CP#1 owner approval recorded 2026-08-29 (https://github.com/caty-ai/meetmate/issues/29#issuecomment-5460738835): start prints the guarded /settings UI URL; / remains the existing dashboard. -->
 | Command | Behavior |
 |---|---|
 | `meetmate init [--force]` | Interactive wizard, then writes `config.json`, `.env`, `AGENTS.md` into the **resolved home** (§3 — same tier logic as `start`; the current cwd-only behavior in `bin/ai-meet.js:77-78` is a confirmed gap). Per-file overwrite rules in §5. |
@@ -30,7 +30,7 @@ Commands (no renames; no new *required* flags):
 Wizard scope (kickoff decision ②) — the **frozen prompt sequence**, one stdin line per
 prompt, each with a one-line "where to get it" hint (review fix, Grok F2):
 
-<!-- Amended by EPIC #29 child 0 (#30), pending CP#1 owner approval -->
+<!-- Amended by EPIC #29 child 0 (#30), CP#1 owner approval recorded 2026-08-29 (https://github.com/caty-ai/meetmate/issues/29#issuecomment-5460738835) -->
 <!-- 4th amendment approved by owner 2026-08-25: FISH_AUDIO_VOICE_ID remains prompt 3 and is stored at tts.voiceId. -->
 | # | Prompt | Written to |
 |---|---|---|
@@ -51,7 +51,7 @@ pre-dotenv launch `LLM_PROVIDER` beats `config.json` `llm.provider`; config beat
 resolved-home `.env` seed; and `llm.model` has no environment alias. This is the four-tier
 precedence in §3 / `docs/settings-contract.md`, not the former blanket “env beats config” rule.
 
-<!-- Amended by EPIC #29 child 0 (#30), pending CP#1 owner approval -->
+<!-- Amended by EPIC #29 child 0 (#30), CP#1 owner approval recorded 2026-08-29 (https://github.com/caty-ai/meetmate/issues/29#issuecomment-5460738835) -->
 | Choice | `.env` (required) | `config.json` (required) |
 |---|---|---|
 | `openclaw` | `LLM_PROVIDER=openclaw`, `OPENCLAW_GATEWAY_URL`, `OPENCLAW_GATEWAY_TOKEN` | `llm.provider="openclaw"` (the example default may stay) |
@@ -96,7 +96,7 @@ For `config.json` / `.env`, in order:
 3. **XDG fallback: NO** for this launch (settled upstream at delta review). Adding XDG
    later is a new contract change with its own lane.
 
-<!-- Amended by EPIC #29 child 0 (#30), pending CP#1 owner approval -->
+<!-- Amended by EPIC #29 child 0 (#30), CP#1 owner approval recorded 2026-08-29 (https://github.com/caty-ai/meetmate/issues/29#issuecomment-5460738835) -->
 For an individual editable main-registry setting with `writeSurface:"settings"`, filesystem resolution above is followed by the four-tier
 value precedence in `docs/settings-contract.md`: meaningful pre-dotenv OS/shell env →
 `config.json` store → resolved-home `.env` init/legacy seed → code default. The startup
@@ -183,7 +183,7 @@ it to per-file):
    each file that is missing. With `--force`: overwrite both (atomic tmp+rename, `.env`
    mode 0600 — kept). An interrupted run therefore resumes by re-running `init`, which
    completes only the missing files.
-   <!-- Amended by EPIC #29 child 0 (#30), pending CP#1 owner approval -->
+   <!-- Amended by EPIC #29 child 0 (#30), CP#1 owner approval recorded 2026-08-29 (https://github.com/caty-ai/meetmate/issues/29#issuecomment-5460738835) -->
    Class 1 vendor credentials collected by init are written to their allowlisted
    `config.json` settings paths, not `.env`; class 2/3 values remain environment-only.
 2. **`AGENTS.md`**: absent → generate, even when config/.env already exist (upgrade
@@ -197,7 +197,7 @@ Template guarantees (all testable, tests live in #16):
 
 - Static file shipped in the tarball (`src/agents-template.md`); **no interpolation of
   user or config values** into the generated output.
-<!-- Amended by EPIC #29 child 0 (#30), pending CP#1 owner approval -->
+<!-- Amended by EPIC #29 child 0 (#30), CP#1 owner approval recorded 2026-08-29 (https://github.com/caty-ai/meetmate/issues/29#issuecomment-5460738835) -->
 - Contains configuration key **names only, never values** (test: sentinel values written
   to **both `.env` and `config.json`** must not appear in the generated file; no
   `KEY=value` lines — class 1 values may live in `config.json`, while class 2/3 values

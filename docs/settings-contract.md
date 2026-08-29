@@ -1,6 +1,6 @@
 # Settings, admin-plane, and migration contract (Epic #29 child #30)
 
-Status: **proposed — pending CP#1 owner approval**. This v1.2.1 contract augments the existing Node `http` server and vanilla-JavaScript dashboard on `localhost:5005`. It does not authorize another application, UI framework, persistence store, or port. `config.json` in the resolved home remains the only settings store. The settings UI, admin API, import/export, connection tests, TTS preview, and audio ingest form one allowlisted admin plane; meeting transport remains a separate data plane.
+Status: **approved — CP#1 owner approval recorded 2026-08-29 ([#29 comment](https://github.com/caty-ai/meetmate/issues/29#issuecomment-5460738835))**. This v1.2.1 contract augments the existing Node `http` server and vanilla-JavaScript dashboard on `localhost:5005`. It does not authorize another application, UI framework, persistence store, or port. `config.json` in the resolved home remains the only settings store. The settings UI, admin API, import/export, connection tests, TTS preview, and audio ingest form one allowlisted admin plane; meeting transport remains a separate data plane.
 
 The credential classes used below are fixed:
 
