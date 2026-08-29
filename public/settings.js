@@ -52,6 +52,17 @@ const TEXTAREA_FIELDS = new Set([
   "agent_greeting", "agent_ack_variants", "agent_progress_pings", "agent_exit_farewell",
   "agent_cancel_ack", "agent_timeout_fallback", "llm_system_prompt",
 ]);
+const AVATAR_FIELDS = new Set(["avatar_experiment"]);
+const VOICE_FIELDS = new Set([
+  "agent_emotion_tags", "agent_greeting", "agent_ack_variants", "agent_progress_pings",
+  "agent_exit_farewell", "agent_cancel_ack", "agent_timeout_fallback",
+]);
+
+function fieldContainerId(entry) {
+  if (AVATAR_FIELDS.has(entry.id)) return "avatarFields";
+  if (VOICE_FIELDS.has(entry.id)) return "voiceFields";
+  return entry.ux === "basic" ? "basicFields" : "detailFields";
+}
 
 function shownValue(entry, nextEnvelope) {
   if (Object.prototype.hasOwnProperty.call(nextEnvelope.fields || {}, entry.id)) return nextEnvelope.fields[entry.id];
@@ -89,10 +100,11 @@ function readinessSummary(data) {
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     CLIENT_FIELD_SETS: {
-      OPENAI_FIELDS, SONIOX_FIELDS, DEEPGRAM_FIELDS, NULLABLE_NUMBER_FIELDS, TEXTAREA_FIELDS,
+      OPENAI_FIELDS, SONIOX_FIELDS, DEEPGRAM_FIELDS, NULLABLE_NUMBER_FIELDS, TEXTAREA_FIELDS, AVATAR_FIELDS,
     },
     clipMatchesCurrentText,
     diffFields,
+    fieldContainerId,
     pendingChangesForValues,
     prefillValues,
     readinessSummary,
@@ -103,10 +115,6 @@ if (typeof module !== "undefined" && module.exports) {
 if (typeof document !== "undefined") {
   (function initializeSettingsUi() {
     const MASK = "••••••••";
-    const VOICE_FIELDS = new Set([
-      "agent_emotion_tags", "agent_greeting", "agent_ack_variants", "agent_progress_pings",
-      "agent_exit_farewell", "agent_cancel_ack", "agent_timeout_fallback",
-    ]);
     const LABELS = {
       agent_id: "エージェント ID", agent_name: "エージェント名", agent_display_name: "表示名",
       agent_language: "言語", agent_greeting: "あいさつ", agent_emotion_tags: "感情タグ",
@@ -114,7 +122,8 @@ if (typeof document !== "undefined") {
       agent_stt_wake_variants: "Wake Word の認識候補", agent_ack_variants: "応答確認",
       agent_progress_pings: "進捗 Ping", agent_exit_farewell: "退出あいさつ",
       agent_cancel_ack: "キャンセル確認", agent_timeout_fallback: "タイムアウト",
-      agent_avatar_url: "アイコン URL", llm_provider: "LLM プロバイダー", llm_model: "LLM モデル",
+      agent_avatar_url: "アイコン URL", avatar_experiment: "アバター表示",
+      llm_provider: "LLM プロバイダー", llm_model: "LLM モデル",
       llm_temperature: "Temperature", llm_max_tokens: "最大トークン数",
       llm_history_max_turns: "会話履歴の最大ターン数", llm_system_prompt: "システムプロンプト",
       openai_base_url: "OpenAI-compatible Base URL", openai_empty_response_retry: "空レスポンスを再試行",
@@ -145,6 +154,7 @@ if (typeof document !== "undefined") {
       agent_ack_variants: "ランダムに使う文言を1行に1件入力します。",
       agent_progress_pings: "処理中に使う文言を1行に1件入力します。",
       agent_emotion_tags: "Fish Audio の固定タグをプロンプトへ含めます。",
+      avatar_experiment: "次回の会議参加から反映されます",
       task_extraction_enabled: "会議終了時に TODO を抽出します。",
       streaming_equivalent_enabled: "OpenAI-compatible の互換ストリーミング動作を使います。",
     };
@@ -173,6 +183,15 @@ if (typeof document !== "undefined") {
     const AUDIO_ROLE_LABELS = {
       ack: "応答確認", progress: "進捗", greeting: "あいさつ", farewell: "退出", timeout: "タイムアウト",
     };
+    const AVATAR_OPTION_LABELS = {
+      "": "標準（静止画）",
+      "hybrid-local-l0": "2.5Dリグ",
+      "hybrid-local-frames": "フレームセット",
+    };
+    const AVATAR_SOURCE_LABELS = {
+      uploaded: "アップロード済み", "url-cache": "URL キャッシュ", bundled: "既定",
+    };
+    const AVATAR_FRAME_NAMES = ["idle", "talk1", "talk2", "talk3", "blink", "talk_blink"];
 
     const form = document.getElementById("settingsForm");
     const toast = document.getElementById("settingsToast");
@@ -187,6 +206,9 @@ if (typeof document !== "undefined") {
     const ttsPreviewText = document.getElementById("ttsPreviewText");
     const playTtsPreviewButton = document.getElementById("playTtsPreview");
     const ttsPreviewPlayer = document.getElementById("ttsPreviewPlayer");
+    const avatarStaticFile = document.getElementById("avatarStaticFile");
+    const uploadStaticAvatarButton = document.getElementById("uploadStaticAvatar");
+    const avatarStaticPreview = document.getElementById("avatarStaticPreview");
     let manifest = [];
     let envelope = null;
     let loadedValues = {};
@@ -232,6 +254,10 @@ if (typeof document !== "undefined") {
         return { value: String(option.value), label: String(option.labelJa || option.label || option.value) };
       }
       return { value: String(option), label: String(option) };
+    }
+
+    function optionLabel(entry, value, fallback) {
+      return entry.id === "avatar_experiment" ? AVATAR_OPTION_LABELS[value] : fallback;
     }
 
     function sourceElement(entry) {
@@ -391,7 +417,7 @@ if (typeof document !== "undefined") {
             const optionData = optionParts(rawOption);
             const option = document.createElement("option");
             option.value = optionData.value;
-            option.textContent = optionData.label;
+            option.textContent = optionLabel(entry, optionData.value, optionData.label);
             input.append(option);
           }
           if (![...input.options].some((option) => option.value === String(value ?? ""))) {
@@ -429,15 +455,13 @@ if (typeof document !== "undefined") {
     }
 
     function renderFields() {
-      for (const id of ["basicFields", "voiceFields", "detailFields"]) document.getElementById(id).replaceChildren();
+      for (const id of ["basicFields", "avatarFields", "voiceFields", "detailFields"]) document.getElementById(id).replaceChildren();
       loadedValues = {};
       credentialChanges = {};
       for (const entry of manifest) {
         const value = shownValue(entry, envelope);
         loadedValues[entry.id] = value;
-        const target = VOICE_FIELDS.has(entry.id)
-          ? document.getElementById("voiceFields")
-          : document.getElementById(entry.ux === "basic" ? "basicFields" : "detailFields");
+        const target = document.getElementById(fieldContainerId(entry));
         target.append(createField(entry, value));
       }
       renderEmotionHelp();
@@ -664,6 +688,9 @@ if (typeof document !== "undefined") {
       if (code === "SETTINGS_CONNECTION_RATE_LIMITED") return "接続テストの間隔が短すぎます。少し待ってから再試行してください。";
       if (code === "SETTINGS_PREVIEW_RATE_LIMITED") return "音声プレビューの間隔が短すぎます。少し待ってから再試行してください。";
       if (code === "SETTINGS_PREVIEW_TIMEOUT") return "音声プレビューがタイムアウトしました。";
+      if (code === "SETTINGS_AVATAR_RATE_LIMITED") return "アップロードの間隔が短すぎます。少し待ってから再試行してください。";
+      if (code === "SETTINGS_AVATAR_FILE_TOO_LARGE") return "画像のファイルサイズが上限を超えています。";
+      if (code === "SETTINGS_AVATAR_TOTAL_LIMIT") return "アバター素材の合計 64 MiB 上限を超えています。";
       if (code === "SETTINGS_REVISION_CONFLICT") return "設定が別の操作で更新されました。";
       const details = Array.isArray(body?.error?.details)
         ? body.error.details.map((detail) => detail.path).filter(Boolean).join(", ") : "";
@@ -681,6 +708,7 @@ if (typeof document !== "undefined") {
         renderFields();
         renderState();
         renderDiagnostics();
+        await loadAvatarAssets();
         applyHashDeepLink();
         loadStatus.textContent = envelope.setupMode ? "セットアップ中" : "読み込み済み";
         loadStatus.className = `status-badge ${envelope.setupMode ? "pending" : "match"}`;
@@ -727,6 +755,187 @@ if (typeof document !== "undefined") {
         throw failure;
       }
       return body;
+    }
+
+    async function assetRequest(url, options) {
+      const response = await fetch(url, { ...options, headers: { Accept: "application/json", ...(options.headers || {}) } });
+      const body = await responseJson(response);
+      if (!response.ok) {
+        const failure = new Error(errorMessage(body, "アバター素材の操作に失敗しました。"));
+        failure.status = response.status;
+        throw failure;
+      }
+      return body;
+    }
+
+    function formatBytes(value) {
+      const bytes = Number(value);
+      if (!Number.isFinite(bytes) || bytes < 0) return "—";
+      if (bytes < 1024) return `${bytes} B`;
+      if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
+      return `${(bytes / (1024 * 1024)).toFixed(2)} MiB`;
+    }
+
+    function avatarFileProblem(file, maxBytes) {
+      if (!file) return "PNG ファイルを選択してください。";
+      if (!file.name.toLowerCase().endsWith(".png")) return ".png ファイルを選択してください。";
+      if (file.size > maxBytes) return `PNG は ${maxBytes / (1024 * 1024)} MiB 以下にしてください。`;
+      return "";
+    }
+
+    function setObjectPreview(image, file) {
+      const url = URL.createObjectURL(file);
+      image.src = url;
+      image.onload = () => URL.revokeObjectURL(url);
+    }
+
+    async function uploadAvatarFile(url, file, result, button) {
+      button.disabled = true;
+      const previous = button.textContent;
+      button.textContent = "アップロード中…";
+      result.textContent = "PNG を検証しています…";
+      try {
+        const formData = new FormData();
+        formData.append("image", new Blob([file], { type: "image/png" }), file.name);
+        await assetRequest(url, { method: "POST", body: formData });
+        result.textContent = "PNG を登録しました。次回の会議参加から使用されます。";
+        await loadAvatarAssets();
+      } catch (error) {
+        result.textContent = error.message;
+      } finally {
+        button.textContent = previous;
+        button.disabled = false;
+      }
+    }
+
+    function renderAvatarFrames(assets) {
+      const list = document.getElementById("avatarFrameList");
+      const result = document.getElementById("avatarFrameResult");
+      const byName = new Map((assets.frames || []).map((frame) => [frame.name, frame]));
+      list.replaceChildren();
+      for (const name of AVATAR_FRAME_NAMES) {
+        const frame = byName.get(name) || { name, present: false };
+        const row = document.createElement("div");
+        row.className = "avatar-frame-row";
+        const preview = document.createElement("img");
+        preview.className = `avatar-frame-preview${frame.present ? "" : " empty"}`;
+        if (frame.present) {
+          preview.alt = `${name} のプレビュー`;
+          preview.src = `${frame.previewUrl}?sha=${encodeURIComponent(frame.sha256)}`;
+        } else {
+          preview.alt = `${name} は未登録`;
+        }
+        const copy = document.createElement("div");
+        const title = document.createElement("strong");
+        title.textContent = name;
+        const detail = document.createElement("small");
+        detail.textContent = frame.present ? `${frame.width}×${frame.height} · ${formatBytes(frame.bytes)}` : "PNG を登録してください";
+        copy.append(title, detail);
+        const badge = document.createElement("span");
+        badge.className = `status-badge ${frame.present ? "match" : "pending"}`;
+        badge.textContent = frame.present ? "登録済み" : "未登録";
+        const picker = document.createElement("label");
+        picker.className = "file-picker compact";
+        const pickerText = document.createElement("span");
+        pickerText.textContent = "PNG を選択";
+        const input = document.createElement("input");
+        input.type = "file";
+        input.accept = "image/png,.png";
+        const uploadButton = document.createElement("button");
+        uploadButton.type = "button";
+        uploadButton.className = "btn-secondary";
+        uploadButton.textContent = "登録";
+        uploadButton.disabled = true;
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "btn-text danger-text";
+        remove.textContent = "削除";
+        remove.disabled = !frame.present;
+        input.addEventListener("change", () => {
+          const file = input.files?.[0];
+          const problem = avatarFileProblem(file, 10 * 1024 * 1024);
+          uploadButton.disabled = Boolean(problem);
+          if (problem) result.textContent = problem;
+          else setObjectPreview(preview, file);
+        });
+        uploadButton.addEventListener("click", async () => {
+          const file = input.files?.[0];
+          const problem = avatarFileProblem(file, 10 * 1024 * 1024);
+          if (problem) { result.textContent = problem; return; }
+          await uploadAvatarFile(`/api/settings/avatar/frames/${encodeURIComponent(name)}`, file, result, uploadButton);
+        });
+        remove.addEventListener("click", async () => {
+          remove.disabled = true;
+          try {
+            await jsonRequest(`/api/settings/avatar/frames/${encodeURIComponent(name)}`, { method: "DELETE" });
+            result.textContent = `${name} を削除しました。`;
+            await loadAvatarAssets();
+          } catch (error) { result.textContent = error.message; }
+          finally { remove.disabled = false; }
+        });
+        picker.append(pickerText, input);
+        row.append(preview, copy, badge, picker, uploadButton, remove);
+        list.append(row);
+      }
+    }
+
+    function renderAvatarAssets(assets) {
+      const source = document.getElementById("avatarStaticSource");
+      source.className = `status-badge ${assets.static?.source === "bundled" ? "pending" : "match"}`;
+      source.textContent = AVATAR_SOURCE_LABELS[assets.static?.source] || "不明";
+      avatarStaticPreview.src = `${assets.static.previewUrl}?sha=${encodeURIComponent(assets.static.sha256 || "bundled")}`;
+      document.getElementById("avatarStaticUrlNotice").classList.toggle(
+        "is-hidden",
+        !String(currentSavedFields().agent_avatar_url || "").trim(),
+      );
+      const rig = assets.rig || {};
+      document.getElementById("avatarRigProvenance").textContent = rig.provenance || "unknown";
+      document.getElementById("avatarRigBytes").textContent = formatBytes(rig.scriptBytes);
+      const rigStatus = document.getElementById("avatarRigStatus");
+      rigStatus.className = `status-badge ${rig.scriptBytes > 0 ? "match" : "mismatch"}`;
+      rigStatus.textContent = rig.scriptBytes > 0 ? "利用可能" : "利用不可";
+      renderAvatarFrames(assets);
+    }
+
+    async function loadAvatarAssets() {
+      try {
+        const response = await fetch("/api/settings/avatar", { headers: { Accept: "application/json" } });
+        const body = await responseJson(response);
+        if (!response.ok || !body) throw new Error(errorMessage(body, "アバター素材を読み込めませんでした。"));
+        renderAvatarAssets(body);
+      } catch (error) {
+        document.getElementById("avatarStaticResult").textContent = error.message;
+      }
+    }
+
+    async function uploadStaticAvatar() {
+      const result = document.getElementById("avatarStaticResult");
+      const file = avatarStaticFile.files?.[0];
+      const problem = avatarFileProblem(file, 5 * 1024 * 1024);
+      if (problem) { result.textContent = problem; return; }
+      await uploadAvatarFile("/api/settings/avatar/static", file, result, uploadStaticAvatarButton);
+      avatarStaticFile.value = "";
+      uploadStaticAvatarButton.disabled = true;
+    }
+
+    async function deleteStaticAvatar() {
+      if (!window.confirm("アップロードした静止画を削除しますか？")) return;
+      const result = document.getElementById("avatarStaticResult");
+      try {
+        await jsonRequest("/api/settings/avatar/static", { method: "DELETE" });
+        result.textContent = "静止画を削除しました。次回の会議参加では既定画像を使用します。";
+        await loadAvatarAssets();
+      } catch (error) { result.textContent = error.message; }
+    }
+
+    async function deleteAllAvatarFrames() {
+      if (!window.confirm("登録済みのフレームをすべて削除しますか？")) return;
+      const result = document.getElementById("avatarFrameResult");
+      try {
+        await jsonRequest("/api/settings/avatar/frames", { method: "DELETE" });
+        result.textContent = "フレームセットを削除しました。";
+        await loadAvatarAssets();
+      } catch (error) { result.textContent = error.message; }
     }
 
     async function uploadAudioClip() {
@@ -1009,9 +1218,20 @@ if (typeof document !== "undefined") {
     importFile.addEventListener("change", () => { document.getElementById("importSettings").disabled = !importFile.files?.length; });
     audioText.addEventListener("input", updateAudioUploadState);
     audioFile.addEventListener("change", updateAudioUploadState);
+    avatarStaticFile.addEventListener("change", () => {
+      const file = avatarStaticFile.files?.[0];
+      const problem = avatarFileProblem(file, 5 * 1024 * 1024);
+      uploadStaticAvatarButton.disabled = Boolean(problem);
+      const result = document.getElementById("avatarStaticResult");
+      result.textContent = problem;
+      if (!problem) setObjectPreview(avatarStaticPreview, file);
+    });
     ttsPreviewText.addEventListener("input", updateTtsPreviewState);
     playTtsPreviewButton.addEventListener("click", playTtsPreview);
     uploadAudioButton.addEventListener("click", uploadAudioClip);
+    uploadStaticAvatarButton.addEventListener("click", uploadStaticAvatar);
+    document.getElementById("deleteStaticAvatar").addEventListener("click", deleteStaticAvatar);
+    document.getElementById("deleteAvatarFrames").addEventListener("click", deleteAllAvatarFrames);
     document.getElementById("exportSettings").addEventListener("click", exportSettings);
     document.getElementById("importSettings").addEventListener("click", importSettings);
     document.getElementById("migrateVendorSettings").addEventListener("click", migrateVendorSettings);

@@ -73,6 +73,26 @@ test("client field sets deep-match registry UI metadata", () => {
       .filter((entry) => JSON.stringify(entry.visibleWhen) === JSON.stringify(condition))
       .map((entry) => entry.id).sort());
   }
+  assert.deepEqual(ids(CLIENT_FIELD_SETS.AVATAR_FIELDS), ["avatar_experiment"]);
+  assert.equal(SETTINGS_REGISTRY.some((entry) => entry.id === "avatar_experiment"), true);
+});
+
+test("avatar_experiment mounts exactly once in panel-avatar with pinned labels and next-join help", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const { fieldContainerId } = require("../public/settings.js");
+  const { _test } = require("../src/settings/routes");
+  const entry = _test.buildSettingsUiManifest().fields.find((field) => field.id === "avatar_experiment");
+  assert.equal(fieldContainerId(entry), "avatarFields");
+  assert.equal([entry].filter((field) => fieldContainerId(field) === "avatarFields").length, 1);
+  const html = fs.readFileSync(path.join(__dirname, "..", "public", "settings.html"), "utf8");
+  const js = fs.readFileSync(path.join(__dirname, "..", "public", "settings.js"), "utf8");
+  const panel = html.match(/<section id="panel-avatar"[\s\S]*?<\/section>\s*<\/section>/)?.[0] || "";
+  assert.equal((panel.match(/id="avatarFields"/g) || []).length, 1);
+  assert.match(js, /"": "標準（静止画）"/);
+  assert.match(js, /"hybrid-local-l0": "2\.5Dリグ"/);
+  assert.match(js, /"hybrid-local-frames": "フレームセット"/);
+  assert.match(js, /avatar_experiment: "次回の会議参加から反映されます"/);
 });
 
 test("main UI parses both setup and readiness 503 envelopes", () => {
@@ -87,6 +107,23 @@ test("main UI parses both setup and readiness 503 envelopes", () => {
   }));
   assert.match(readiness, /Not ready/);
   assert.match(readiness, /Enable chatCompletions/);
+});
+
+test("dashboard avatar encoder omits follow-settings and preserves all three explicit values", () => {
+  const { appendAvatarExperiment, avatarExperimentLabel } = require("../public/app.js");
+  let body = appendAvatarExperiment(new URLSearchParams({ meetingUrl: "https://meet.google.com/abc-defg-hij" }), "follow-settings");
+  assert.equal(body.has("avatarExperiment"), false);
+  body = appendAvatarExperiment(new URLSearchParams(), "");
+  assert.equal(body.has("avatarExperiment"), true);
+  assert.equal(body.get("avatarExperiment"), "");
+  for (const value of ["hybrid-local-l0", "hybrid-local-frames"]) {
+    body = appendAvatarExperiment(new URLSearchParams(), value);
+    assert.equal(body.get("avatarExperiment"), value);
+  }
+  assert.equal(avatarExperimentLabel("hybrid-local-l0"), "2.5Dリグ");
+  const html = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "public", "index.html"), "utf8");
+  assert.match(html, /id="avatarExperiment"/);
+  assert.doesNotMatch(html, /id="avatarExperiment"[^>]*\bname=/);
 });
 
 test("main UI uses the server-provided settings port for tunnel guidance", () => {
