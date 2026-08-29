@@ -4,16 +4,15 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
-const { TextDecoder } = require("node:util");
 const { validators } = require("./registry");
 const { audioMetadataSchema, parseStrict } = require("./schemas");
 const { readConfigState, saveAudioClips, settingsError } = require("./store");
+const { parseMultipart: parseSharedMultipart } = require("./multipart");
 
 const SOURCE_LIMIT = 10 * 1024 * 1024;
 const TOTAL_LIMIT = 128 * 1024 * 1024;
 const CLIP_LIMIT = 32;
 const DURATION_LIMIT_MS = 30_000;
-const HEADER_LIMIT = 16 * 1024;
 const METADATA_LIMIT = 24 * 1024;
 const FFMPEG_TIMEOUT_MS = 35_000;
 const ROLES = ["ack", "progress", "greeting", "farewell", "timeout"];
@@ -169,210 +168,34 @@ function unlinkBestEffort(filePath) {
   try { fs.unlinkSync(filePath); } catch { /* best effort */ }
 }
 
-function parseContentDisposition(value) {
-  if (typeof value !== "string" || !/^form-data(?:\s*;|$)/i.test(value) || value.includes("\0")) {
-    throw audioError("SETTINGS_AUDIO_MULTIPART_INVALID");
-  }
-  const parameters = new Map();
-  const pattern = /;\s*([^=;\s]+)\s*=\s*(?:"((?:\\.|[^"])*)"|([^;]*))/g;
-  for (const match of value.matchAll(pattern)) {
-    const key = match[1].toLowerCase();
-    if (parameters.has(key)) throw audioError("SETTINGS_AUDIO_MULTIPART_INVALID");
-    const raw = match[2] === undefined ? match[3].trim() : match[2].replace(/\\([\\"])/g, "$1");
-    parameters.set(key, raw);
-  }
-  if (!parameters.has("name")) throw audioError("SETTINGS_AUDIO_MULTIPART_INVALID");
-  return { name: parameters.get("name"), filename: parameters.get("filename") };
-}
-
-function parseHeaders(bytes) {
-  if (bytes.includes(0)) throw audioError("SETTINGS_AUDIO_MULTIPART_INVALID");
-  const headers = new Map();
-  for (const line of bytes.toString("latin1").split("\r\n")) {
-    const separator = line.indexOf(":");
-    if (separator <= 0) throw audioError("SETTINGS_AUDIO_MULTIPART_INVALID");
-    const name = line.slice(0, separator).trim().toLowerCase();
-    const value = line.slice(separator + 1).trim();
-    if (!/^[!#$%&'*+.^_`|~0-9a-z-]+$/.test(name) || headers.has(name)) {
-      throw audioError("SETTINGS_AUDIO_MULTIPART_INVALID");
-    }
-    headers.set(name, value);
-  }
-  return headers;
-}
-
-function validateFilename(filename) {
-  if (typeof filename !== "string" || filename === "" || filename.includes("\0")
-      || filename.includes("/") || filename.includes("\\") || filename.includes("..")
-      || /%(?:00|2e|2f|5c)/i.test(filename) || !filename.endsWith(".mp3")) {
-    throw audioError("SETTINGS_AUDIO_FILENAME_REJECTED");
-  }
-}
-
-function multipartBoundary(contentType) {
-  const match = /^multipart\/form-data\s*;\s*boundary=(?:"([^"]+)"|([^;\s]+))\s*$/i.exec(String(contentType || ""));
-  const value = match?.[1] || match?.[2] || "";
-  if (!value || value.length > 70 || /[\x00-\x20\x7f]/.test(value)) {
-    throw settingsError("SETTINGS_MEDIA_TYPE_UNSUPPORTED", "Content type not supported", 415);
-  }
-  return value;
-}
-
 async function parseMultipart(req, directory) {
-  const boundary = multipartBoundary(req.headers["content-type"]);
-  const opening = Buffer.from(`--${boundary}\r\n`, "ascii");
-  const marker = Buffer.from(`\r\n--${boundary}`, "ascii");
-  let buffer = Buffer.alloc(0);
-  let phase = "opening";
-  let current = null;
-  let source = null;
-  let metadataBytes = Buffer.alloc(0);
-  let metadataSeen = false;
-  let audioSeen = false;
-
-  function closeSource() {
-    if (!source || source.closed) return;
-    fs.fsyncSync(source.descriptor);
-    fs.closeSync(source.descriptor);
-    source.closed = true;
-  }
-
-  function startPart(headerBytes) {
-    const headers = parseHeaders(headerBytes);
-    const disposition = parseContentDisposition(headers.get("content-disposition"));
-    if (disposition.name === "audio") {
-      if (audioSeen || disposition.filename === undefined) throw audioError("SETTINGS_AUDIO_MULTIPART_INVALID");
-      validateFilename(disposition.filename);
-      if (String(headers.get("content-type") || "").split(";", 1)[0].trim().toLowerCase() !== "audio/mpeg") {
-        throw settingsError("SETTINGS_MEDIA_TYPE_UNSUPPORTED", "Content type not supported", 415);
+  const multipart = await parseSharedMultipart(req, directory, {
+    filePartName: "audio",
+    metadataPartName: "metadata",
+    contentTypes: ["audio/mpeg"],
+    extensions: [".mp3"],
+    maxFileBytes: SOURCE_LIMIT,
+    maxMetadataBytes: METADATA_LIMIT,
+    errorFactory(reason, status) {
+      if (reason === "MEDIA_TYPE_UNSUPPORTED") {
+        return settingsError("SETTINGS_MEDIA_TYPE_UNSUPPORTED", "Content type not supported", 415);
       }
-      source = { ...randomTemp(directory, "audio-upload"), bytes: 0, hash: crypto.createHash("sha256"), closed: false };
-      audioSeen = true;
-      current = "audio";
-      return;
-    }
-    if (disposition.name === "metadata") {
-      if (metadataSeen || disposition.filename !== undefined) throw audioError("SETTINGS_AUDIO_MULTIPART_INVALID");
-      const rawType = String(headers.get("content-type") || "").toLowerCase();
-      if (rawType) {
-        const [mediaType, ...parameters] = rawType.split(";").map((item) => item.trim());
-        if (mediaType !== "application/json"
-            || parameters.some((item) => !/^[^=;\s]+=(?:"[^"]*"|[^;\s]+)$/.test(item))) {
-          throw settingsError("SETTINGS_MEDIA_TYPE_UNSUPPORTED", "Content type not supported", 415);
-        }
-      }
-      metadataSeen = true;
-      current = "metadata";
-      return;
-    }
-    throw audioError("SETTINGS_AUDIO_MULTIPART_INVALID");
-  }
-
-  function consume(bytes) {
-    if (bytes.length === 0) return;
-    if (current === "audio") {
-      source.bytes += bytes.length;
-      if (source.bytes > SOURCE_LIMIT) throw audioError("SETTINGS_AUDIO_SOURCE_TOO_LARGE", 413);
-      fs.writeSync(source.descriptor, bytes);
-      source.hash.update(bytes);
-      return;
-    }
-    if (current === "metadata") {
-      if (metadataBytes.length + bytes.length > METADATA_LIMIT) throw audioError("SETTINGS_AUDIO_METADATA_TOO_LARGE", 413);
-      metadataBytes = Buffer.concat([metadataBytes, bytes]);
-      return;
-    }
-    throw audioError("SETTINGS_AUDIO_MULTIPART_INVALID");
-  }
-
-  function finishPart() {
-    if (current === "audio") closeSource();
-    current = null;
-  }
-
-  try {
-    for await (const chunk of req) {
-      buffer = buffer.length === 0 ? Buffer.from(chunk) : Buffer.concat([buffer, chunk]);
-      for (;;) {
-        if (phase === "opening") {
-          if (buffer.length < opening.length) break;
-          if (!buffer.subarray(0, opening.length).equals(opening)) throw audioError("SETTINGS_AUDIO_MULTIPART_INVALID");
-          buffer = buffer.subarray(opening.length);
-          phase = "headers";
-          continue;
-        }
-        if (phase === "headers") {
-          const index = buffer.indexOf("\r\n\r\n");
-          if (index < 0) {
-            if (buffer.length > HEADER_LIMIT) throw audioError("SETTINGS_AUDIO_MULTIPART_INVALID");
-            break;
-          }
-          startPart(buffer.subarray(0, index));
-          buffer = buffer.subarray(index + 4);
-          phase = "body";
-          continue;
-        }
-        if (phase === "body") {
-          const index = buffer.indexOf(marker);
-          if (index < 0) {
-            const safeLength = Math.max(0, buffer.length - marker.length + 1);
-            consume(buffer.subarray(0, safeLength));
-            buffer = buffer.subarray(safeLength);
-            break;
-          }
-          consume(buffer.subarray(0, index));
-          finishPart();
-          buffer = buffer.subarray(index + marker.length);
-          phase = "suffix";
-          continue;
-        }
-        if (phase === "suffix") {
-          if (buffer.length < 2) break;
-          const suffix = buffer.subarray(0, 2).toString("ascii");
-          if (suffix === "\r\n") {
-            buffer = buffer.subarray(2);
-            phase = "headers";
-            continue;
-          }
-          if (suffix === "--") {
-            buffer = buffer.subarray(2);
-            phase = "closed";
-            continue;
-          }
-          throw audioError("SETTINGS_AUDIO_MULTIPART_INVALID");
-        }
-        if (phase === "closed") {
-          if (buffer.length === 0) break;
-          if (buffer.length === 1 && buffer[0] === 13) break;
-          if (buffer.equals(Buffer.from("\r\n"))) {
-            buffer = Buffer.alloc(0);
-            break;
-          }
-          throw audioError("SETTINGS_AUDIO_MULTIPART_INVALID");
-        }
-      }
-    }
-    if (phase !== "closed" || buffer.length !== 0 || !audioSeen || !metadataSeen || !source) {
-      throw audioError("SETTINGS_AUDIO_MULTIPART_INVALID");
-    }
-    closeSource();
-    let metadataText;
-    try { metadataText = new TextDecoder("utf-8", { fatal: true }).decode(metadataBytes); } catch {
-      throw audioError("SETTINGS_AUDIO_METADATA_INVALID");
-    }
-    let metadata;
-    try { metadata = JSON.parse(metadataText); } catch { throw audioError("SETTINGS_AUDIO_METADATA_INVALID"); }
-    return {
-      metadata: parseStrict(audioMetadataSchema, metadata),
-      sourcePath: source.path,
-      sourceBytes: source.bytes,
-      sourceSha256: source.hash.digest("hex"),
-    };
-  } catch (error) {
-    try { closeSource(); } catch { /* cleanup below */ }
-    unlinkBestEffort(source?.path);
-    throw error;
-  }
+      const codes = {
+        MULTIPART_INVALID: "SETTINGS_AUDIO_MULTIPART_INVALID",
+        FILENAME_REJECTED: "SETTINGS_AUDIO_FILENAME_REJECTED",
+        FILE_TOO_LARGE: "SETTINGS_AUDIO_SOURCE_TOO_LARGE",
+        METADATA_TOO_LARGE: "SETTINGS_AUDIO_METADATA_TOO_LARGE",
+        METADATA_INVALID: "SETTINGS_AUDIO_METADATA_INVALID",
+      };
+      return audioError(codes[reason] || "SETTINGS_AUDIO_MULTIPART_INVALID", status);
+    },
+  });
+  return {
+    metadata: parseStrict(audioMetadataSchema, multipart.metadata),
+    sourcePath: multipart.filePath,
+    sourceBytes: multipart.fileBytes,
+    sourceSha256: multipart.fileSha256,
+  };
 }
 
 function validMp3Signature(filePath) {

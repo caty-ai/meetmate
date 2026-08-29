@@ -50,6 +50,7 @@ The allowlist below is complete. The compact type notation is directly translata
 | `agent_cancel_ack` | `agent.cancelAck` | `text(4096)` | detail | none | live | none |
 | `agent_timeout_fallback` | `agent.timeoutFallback` | `text(4096)` | detail | none | live | none |
 | `agent_avatar_url` | `agent.avatarUrl` | `url-or-empty` | detail | none | restart-required | `BOT_IMAGE_URL` |
+| `avatar_experiment` | `avatar.experiment` | `enum(,hybrid-local-l0,hybrid-local-frames)` / empty | basic | none | live | none |
 | `llm_provider` | `llm.provider` | `enum(openclaw,openai-compatible)` / `openclaw` | basic | none | restart-required | `LLM_PROVIDER` |
 | `llm_model` | `llm.model` | `str(256)` | basic | none | restart-required | none |
 | `llm_temperature` | `llm.temperature` | `num(0,2)` / `0.5` | detail | none | restart-required | `AGENT_TEMPERATURE` |
@@ -468,6 +469,29 @@ Audio-upload success is exactly:
 `POST /api/settings/tts-preview` accepts only `{"revision":Sha256Revision,"text":string}`; normalized text is 1–500 UTF-8 characters. It uses the current effective Fish Audio class-1 credential, voice, model, sample rate, speed, and latency. This is the operator's own vendor key and account: the UI states that preview requests incur the operator's Fish Audio usage/billing; Meetmate supplies no platform key or subsidy.
 
 One 30-second wall-clock `AbortController` covers all retries and synthesis. The server buffers the complete result, rejects output beyond 15 seconds or `effectiveSampleRate * 2 * 15 + 44` bytes, wraps mono PCM S16LE in a WAV header, and only then sends `200 Content-Type: audio/wav`, `Content-Length`, and `Cache-Control: no-store`; partial audio is never returned. Timeout aborts upstream and returns `504 SETTINGS_PREVIEW_TIMEOUT`. The endpoint does not save config/cache/audio metadata. Logs and metrics contain only request ID, duration, byte count, and stable outcome code—never preview text, credential, authorization header, request/response body, vendor body, or audio bytes.
+
+## 9A. Avatar visual assets
+
+Avatar administration remains inside the loopback settings plane. The subrouter has exactly these six asset routes plus two preview GETs:
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/settings/avatar` | Inspect local static/frame/rig state without network access |
+| `POST` | `/api/settings/avatar/static` | Upload or replace `assets/avatar.png` |
+| `DELETE` | `/api/settings/avatar/static` | Remove the home static image and provenance marker |
+| `POST` | `/api/settings/avatar/frames/:name` | Upload or replace one allowlisted frame |
+| `DELETE` | `/api/settings/avatar/frames/:name` | Remove one allowlisted frame |
+| `DELETE` | `/api/settings/avatar/frames` | Remove all six allowlisted frames |
+| `GET` | `/api/settings/avatar/static/preview` | Read the effective static PNG |
+| `GET` | `/api/settings/avatar/frames/:name/preview` | Read one managed frame PNG |
+
+Every non-GET beneath `/api/settings/avatar` crosses one structural same-origin check before route dispatch. The two POST routes share their own handler-local rate limiter and never consume connection-test or TTS-preview allowance. Upload is one multipart `image` file part with `image/png` and a `.png` filename; the validated filename is discarded. Destinations are only the server-chosen `assets/avatar.png` or `assets/avatar-frames/<allowlisted-name>.png`. Frame names are exactly `idle|talk1|talk2|talk3|blink|talk_blink`; raw `%`, NUL, slash, backslash, decode errors, and every value outside that set return the same 404 shape.
+
+Static images are capped at 5 MiB, frames at 10 MiB each, and all managed static/frame bytes together at 64 MiB. After staging, validation requires the PNG signature, an `IHDR` chunk at bytes 12–15, positive dimensions no larger than 4096×4096 or 16,777,216 pixels, structurally bounded chunks, and the exact terminal zero-length `IEND` chunk. This is a dimension/shape sanity check, not a full PNG decode. Managed directories are mode `0700`; installed images and `.avatar-source` are mode `0600`; every read/write uses lstat, containment, realpath re-verification, staging rename, and rollback discipline. Bundled package assets are never mutated.
+
+The sidecar `assets/.avatar-source` contains only `uploaded` or `url-cache`. Inspection reports `static.source` as `uploaded`, `url-cache`, or `bundled`; a legacy home file without a marker is `url-cache` when `agent_avatar_url` is configured and `uploaded` otherwise. Preview responses use `Content-Type: image/png`, `Cache-Control: no-store`, and `X-Content-Type-Options: nosniff`; missing and unsafe managed paths share one 404 response. Upload responses include the stored bytes' SHA-256 and asset metadata. Asset mutations have no config revision because the files live outside `config.json` and promotion is atomic.
+
+The meet plane reads the home `avatar.png` afresh on every Join, with the same managed-path checks and a 5 MiB bound, then falls back to the bundled PNG without network access. Boot-time URL fetching is cache-fill only and runs once when the home image is absent. After the download completes it rechecks both the home path and sidecar before writing `url-cache`, so a concurrent settings upload marked `uploaded` cannot be clobbered. Deleting a URL cache uses bundled bytes for subsequent joins in the same process; a later process restart may cache the still-configured URL again.
 
 ## 10. Canonical structured emotion tags
 

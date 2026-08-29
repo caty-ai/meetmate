@@ -6,9 +6,27 @@ const path = require("node:path");
 const { URL } = require("node:url");
 const { EMOTION_TAGS } = require("../messages");
 const { MASK, SETTINGS_REGISTRY } = require("./registry");
-const { buildEnvelope, getBootstrapSeedFields, getRawConfig, getRuntime, meaningful, readPath } = require("./resolver");
+const {
+  buildEnvelope,
+  getBootstrapSeedFields,
+  getEffectiveValue,
+  getRawConfig,
+  getRuntime,
+  meaningful,
+  readPath,
+} = require("./resolver");
 const { readConfigState, saveFields, settingsError } = require("./store");
 const { deleteAudio, previewTts, uploadAudio } = require("./audio");
+const {
+  deleteFrame,
+  deleteFrames,
+  deleteStatic,
+  inspectAssets,
+  parseFrameName,
+  readFrame,
+  readStaticPreview,
+  uploadAsset,
+} = require("./avatar-assets");
 const probes = require("./probes");
 const readiness = require("./readiness");
 const {
@@ -25,6 +43,7 @@ const CONNECTION_JSON_LIMIT = 4 * 1024;
 const CONNECTION_TIMEOUT_MS = 5_000;
 const CONNECTION_MIN_INTERVAL_MS = 1_000;
 const PREVIEW_MIN_INTERVAL_MS = 2_000;
+const AVATAR_UPLOAD_MIN_INTERVAL_MS = 1_000;
 const PROVIDERS = new Set(["soniox", "deepgram", "fish-audio", "attendee", "llm", "tunnel", "slack"]);
 const IMPLEMENTED_PROVIDERS = new Set(["soniox", "deepgram", "fish-audio", "attendee", "llm", "tunnel"]);
 const PUBLIC_DIR = path.join(__dirname, "..", "..", "public");
@@ -50,6 +69,16 @@ function writeWav(res, bytes) {
     "Content-Type": "audio/wav",
     "Content-Length": bytes.length,
     "Cache-Control": "no-store",
+  });
+  res.end(bytes);
+}
+
+function writePng(res, bytes) {
+  res.writeHead(200, {
+    "Content-Type": "image/png",
+    "Content-Length": bytes.length,
+    "Cache-Control": "no-store",
+    "X-Content-Type-Options": "nosniff",
   });
   res.end(bytes);
 }
@@ -133,6 +162,8 @@ function writeError(res, error, requestId) {
     SETTINGS_VALIDATION_FAILED: 422,
     SETTINGS_MULTI_PROCESS_UNSUPPORTED: 503,
     SETTINGS_AUDIO_NOT_FOUND: 404,
+    SETTINGS_AVATAR_NOT_FOUND: 404,
+    SETTINGS_AVATAR_RATE_LIMITED: 429,
     SETTINGS_CONNECTION_RATE_LIMITED: 429,
     SETTINGS_PREVIEW_RATE_LIMITED: 429,
     SETTINGS_PREVIEW_TIMEOUT: 504,
@@ -157,6 +188,10 @@ function writeError(res, error, requestId) {
     SETTINGS_AUDIO_CLIP_LIMIT: "Managed audio clip limit exceeded",
     SETTINGS_AUDIO_CONVERSION_TIMEOUT: "Audio conversion timed out",
     SETTINGS_AUDIO_CLEANUP_FAILED: "Audio cleanup failed",
+    SETTINGS_AVATAR_NOT_FOUND: "Avatar asset was not found",
+    SETTINGS_AVATAR_FILE_TOO_LARGE: "Avatar image is too large",
+    SETTINGS_AVATAR_TOTAL_LIMIT: "Managed avatar limit exceeded",
+    SETTINGS_AVATAR_RATE_LIMITED: "Avatar uploads are rate limited",
     SETTINGS_CONNECTION_RATE_LIMITED: "Connection tests are rate limited",
     SETTINGS_PREVIEW_RATE_LIMITED: "TTS previews are rate limited",
     SETTINGS_PREVIEW_NOT_CONFIGURED: "TTS preview is not configured",
@@ -285,6 +320,18 @@ function createPreviewLimiter(options = {}) {
   };
 }
 
+function createAvatarUploadLimiter(options = {}) {
+  let lastAttempt;
+  const now = options.now || Date.now;
+  const minIntervalMs = options.minIntervalMs ?? AVATAR_UPLOAD_MIN_INTERVAL_MS;
+  return function take() {
+    const current = now();
+    if (lastAttempt !== undefined && current - lastAttempt < minIntervalMs) return false;
+    lastAttempt = current;
+    return true;
+  };
+}
+
 function logPreview(logger, record) {
   const write = typeof logger?.info === "function" ? logger.info.bind(logger) : console.info;
   write(JSON.stringify(record));
@@ -398,8 +445,10 @@ function createSettingsHandler(options = {}) {
   const readinessController = options.readinessController || readiness;
   readinessController.configure?.({ probeOptions: connectionOptions });
   const previewOptions = options.preview || {};
+  const avatarOptions = options.avatar || {};
   const takeConnectionAllowance = createConnectionLimiter(connectionOptions);
   const takePreviewAllowance = createPreviewLimiter(previewOptions);
+  const takeAvatarUploadAllowance = createAvatarUploadLimiter(avatarOptions);
   const schedulePostSaveProbes = () => {
     Promise.resolve().then(() => readinessController.probeGateSystems?.({
       ...connectionOptions,
@@ -425,6 +474,10 @@ function createSettingsHandler(options = {}) {
     }
 
     try {
+      const isAvatarPath = url.pathname === "/api/settings/avatar"
+        || url.pathname.startsWith("/api/settings/avatar/");
+      if (isAvatarPath && req.method !== "GET") requireSameOrigin(req, settingsOptions);
+
       const staticAsset = SETTINGS_ASSETS.get(url.pathname);
       if (req.method === "GET" && staticAsset) {
         writeStaticAsset(res, staticAsset);
@@ -466,6 +519,58 @@ function createSettingsHandler(options = {}) {
         requireSameOrigin(req, settingsOptions);
         writeJson(res, 200, importSettings(await readJson(req, JSON_LIMIT)));
         schedulePostSaveProbes();
+        return true;
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/settings/avatar") {
+        const avatarUrl = String(getEffectiveValue("agent_avatar_url") || "").trim();
+        writeJson(res, 200, inspectAssets(getRuntime().startup.resolvedHome, Boolean(avatarUrl)));
+        return true;
+      }
+      if (req.method === "GET" && url.pathname === "/api/settings/avatar/static/preview") {
+        try { writePng(res, readStaticPreview(getRuntime().startup.resolvedHome)); } catch {
+          throw settingsError("SETTINGS_AVATAR_NOT_FOUND", "Avatar asset was not found", 404);
+        }
+        return true;
+      }
+      const framePreview = /^\/api\/settings\/avatar\/frames\/[^/]+\/preview$/.test(url.pathname);
+      if (req.method === "GET" && framePreview) {
+        try {
+          const name = parseFrameName(req.url);
+          writePng(res, readFrame(getRuntime().startup.resolvedHome, name));
+        } catch {
+          throw settingsError("SETTINGS_AVATAR_NOT_FOUND", "Avatar asset was not found", 404);
+        }
+        return true;
+      }
+      if (req.method === "POST" && url.pathname === "/api/settings/avatar/static") {
+        if (!takeAvatarUploadAllowance()) {
+          throw settingsError("SETTINGS_AVATAR_RATE_LIMITED", "Avatar uploads are rate limited", 429);
+        }
+        const stored = await uploadAsset(req, { resolvedHome: getRuntime().startup.resolvedHome });
+        writeJson(res, 200, { static: stored, sha256: stored.sha256 });
+        return true;
+      }
+      const frameAsset = /^\/api\/settings\/avatar\/frames\/[^/]+$/.test(url.pathname);
+      if (req.method === "POST" && frameAsset) {
+        const name = parseFrameName(req.url);
+        if (!takeAvatarUploadAllowance()) {
+          throw settingsError("SETTINGS_AVATAR_RATE_LIMITED", "Avatar uploads are rate limited", 429);
+        }
+        const stored = await uploadAsset(req, { resolvedHome: getRuntime().startup.resolvedHome, name });
+        writeJson(res, 200, { frame: stored, sha256: stored.sha256 });
+        return true;
+      }
+      if (req.method === "DELETE" && url.pathname === "/api/settings/avatar/static") {
+        writeJson(res, 200, deleteStatic(getRuntime().startup.resolvedHome));
+        return true;
+      }
+      if (req.method === "DELETE" && url.pathname === "/api/settings/avatar/frames") {
+        writeJson(res, 200, deleteFrames(getRuntime().startup.resolvedHome));
+        return true;
+      }
+      if (req.method === "DELETE" && frameAsset) {
+        writeJson(res, 200, deleteFrame(getRuntime().startup.resolvedHome, parseFrameName(req.url)));
         return true;
       }
 
@@ -553,6 +658,7 @@ module.exports = {
   _test: {
     buildExportDocument,
     buildSettingsUiManifest,
+    createAvatarUploadLimiter,
     CONNECTION_TIMEOUT_MS,
     createConnectionLimiter,
     createPreviewLimiter,

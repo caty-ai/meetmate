@@ -29,6 +29,11 @@ const { createGatewaySessionTracker } = require("../gateway-session-tracker");
 const { servePublicAsset, serveLocalAvatar, sendMetricsSummary } = require("../ui-routes");
 const { logsDir, avatarCachePath, bundledAssetPath, bundledPublicDir } = require("../paths");
 const {
+  AVATAR_FILE_LIMIT,
+  installUrlCacheAvatar,
+  readManagedAvatar,
+} = require("../settings/avatar-assets");
+const {
   getDiagnosticValue,
   getEffectiveValue,
   getRawConfig,
@@ -91,22 +96,11 @@ registerCacheInvalidator(() => {
   meetSlackNotifier = null;
 });
 
-function getBotImageConfig() {
+function getBotImageUrl() {
   const profile = currentAgentProfile();
-  if (profile) {
-    const localPath = profile.avatarPath || bundledAssetPath("avatar.png");
-    return {
-      path: localPath,
-      url: profile.avatarUrl || FALLBACK_BOT_IMAGE_URL,
-    };
-  }
-  return {
-    path: bundledAssetPath("avatar.png"),
-    url: FALLBACK_BOT_IMAGE_URL,
-  };
+  return profile?.avatarUrl || FALLBACK_BOT_IMAGE_URL;
 }
 
-let botImageData = null;
 let detectedNgrokUrl = "";
 let initialized = false;
 let ngrokDetectionStarted = false;
@@ -849,43 +843,58 @@ function writePlainResponse(res, status, text) {
   res.end(text);
 }
 
+function readEffectiveBotImage() {
+  let data;
+  try {
+    data = readManagedAvatar(getSettingsRuntime().startup.resolvedHome);
+  } catch {
+    try {
+      const bundled = bundledAssetPath("avatar.png");
+      data = fs.readFileSync(bundled);
+      if (data.length > AVATAR_FILE_LIMIT) return null;
+    } catch {
+      return null;
+    }
+  }
+  return { type: "image/png", data: data.toString("base64") };
+}
+
 function startBotImageLoad() {
   if (botImageLoadStarted) return;
   botImageLoadStarted = true;
 
-  const imgConfig = getBotImageConfig();
+  const avatarUrl = getBotImageUrl();
+  const avatarCache = avatarCachePath();
 
   (async () => {
     try {
-      if (fs.existsSync(imgConfig.path)) {
-        const data = fs.readFileSync(imgConfig.path);
-        botImageData = { type: "image/png", data: data.toString("base64") };
-        console.log(`🖼️  Bot avatar loaded (local): ${path.basename(imgConfig.path)}`);
-        return;
-      }
+      if (fs.existsSync(avatarCache) || !avatarUrl) return;
     } catch {
-      // fall through
+      return;
     }
 
     try {
       const data = await new Promise((resolve, reject) => {
-        https.get(imgConfig.url, (res) => {
+        https.get(avatarUrl, (res) => {
           if (res.statusCode !== 200) {
             reject(new Error(`HTTP ${res.statusCode}`));
             return;
           }
           const chunks = [];
-          res.on("data", (c) => chunks.push(c));
-          res.on("end", () => resolve(Buffer.concat(chunks)));
+          let total = 0;
+          let tooLarge = false;
+          res.on("data", (c) => {
+            total += c.length;
+            if (total > AVATAR_FILE_LIMIT) tooLarge = true;
+            else chunks.push(c);
+          });
+          res.on("end", () => tooLarge ? reject(new Error("Avatar exceeds 5 MiB")) : resolve(Buffer.concat(chunks)));
           res.on("error", reject);
         }).on("error", reject);
       });
-      botImageData = { type: "image/png", data: data.toString("base64") };
-      const avatarCache = avatarCachePath();
-      const assetsDir = path.dirname(avatarCache);
-      if (!fs.existsSync(assetsDir)) fs.mkdirSync(assetsDir, { recursive: true });
-      fs.writeFileSync(avatarCache, data);
-      console.log(`🖼️  Bot avatar downloaded and cached: ${path.basename(imgConfig.path)}`);
+      if (installUrlCacheAvatar(data, getSettingsRuntime().startup.resolvedHome)) {
+        console.log(`🖼️  Bot avatar downloaded and cached: ${path.basename(avatarCache)}`);
+      }
     } catch (err) {
       console.warn("⚠️  Bot avatar load failed:", err.message);
     }
@@ -1145,7 +1154,14 @@ async function handleHttp(req, res) {
       const wsUrl = toSafeString(formData.wsUrl);
       const conversationMode = toSafeString(formData.conversationMode) || "one_to_one";
       const briefing = toSafeString(formData.briefing) || null;
-      const avatarExperiment = toSafeString(formData.avatarExperiment);
+      const hasAvatarExperiment = Object.hasOwn(formData, "avatarExperiment");
+      if (hasAvatarExperiment && typeof formData.avatarExperiment !== "string") {
+        writePlainResponse(res, 400, "avatarExperiment が不正です。");
+        return;
+      }
+      const avatarExperiment = hasAvatarExperiment
+        ? toSafeString(formData.avatarExperiment)
+        : getEffectiveValue("avatar_experiment");
       const isLocalAvatarExperiment = LOCAL_AVATAR_EXPERIMENTS.has(avatarExperiment);
       const profile = currentAgentProfile();
 
@@ -1344,9 +1360,8 @@ async function handleHttp(req, res) {
         },
       };
 
-      if (botImageData) {
-        botPayload.bot_image = botImageData;
-      }
+      const botImage = readEffectiveBotImage();
+      if (botImage) botPayload.bot_image = botImage;
 
       if (localAvatarLaunchUrl) {
         botPayload.voice_agent_settings = { url: localAvatarLaunchUrl };
@@ -1709,6 +1724,7 @@ module.exports = {
     refreshNgrokDetection,
     resolvePublicOrigin,
     readiness,
+    readEffectiveBotImage,
     checkWsUrlIdentity: readinessProbes.checkWsUrlIdentity,
     taskExtractionEnabledAtBoot,
   },

@@ -95,6 +95,7 @@ const SETTINGS_REGISTRY = Object.freeze([
   d("agent_cancel_ack", "agent.cancelAck", text(4096), { apply: "live", multiline: true }),
   d("agent_timeout_fallback", "agent.timeoutFallback", text(4096), { apply: "live", multiline: true }),
   d("agent_avatar_url", "agent.avatarUrl", exactUrl(["http:", "https:"], true), { envAlias: "BOT_IMAGE_URL" }),
+  d("avatar_experiment", "avatar.experiment", z.enum(["", "hybrid-local-l0", "hybrid-local-frames"]), { ux: "basic", apply: "live", defaultValue: "" }),
   d("llm_provider", "llm.provider", z.enum(["openclaw", "openai-compatible"]), { ux: "basic", envAlias: "LLM_PROVIDER", defaultValue: "openclaw" }),
   d("llm_model", "llm.model", trimmedString(256), { ux: "basic" }),
   d("llm_temperature", "llm.temperature", number(0, 2), { envAlias: "AGENT_TEMPERATURE", defaultValue: 0.5 }),

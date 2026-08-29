@@ -1,6 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const http = require("node:http");
 const https = require("node:https");
@@ -9,9 +10,43 @@ const Module = require("node:module");
 const util = require("node:util");
 const { EventEmitter } = require("node:events");
 const { stringify } = require("node:querystring");
+const { Readable } = require("node:stream");
+const { createSettingsHandler } = require("../src/settings/routes");
 
 const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "local-avatar-timeline.json"), "utf8"));
 const FIXED_SESSION_ID = "00000000-0000-4000-8000-000000000173";
+
+function avatarPng(seed) {
+  const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const ihdr = Buffer.alloc(25);
+  ihdr.writeUInt32BE(13, 0);
+  ihdr.write("IHDR", 4, "ascii");
+  ihdr.writeUInt32BE(1, 8);
+  ihdr.writeUInt32BE(1, 12);
+  ihdr[16] = 8;
+  ihdr[17] = 6;
+  ihdr[20] = seed;
+  return Buffer.concat([signature, ihdr, Buffer.from([0, 0, 0, 0, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82])]);
+}
+
+function staticSettings(overrides = {}) {
+  const base = {
+    agent: { id: "caty", displayName: "Caty", wakeWords: ["ケイティ"] },
+    avatar: { experiment: "" },
+    stt: { provider: "soniox", sonioxApiKey: "soniox-test-key" },
+    tts: { apiKey: "fish-test-key", voiceId: "fish-test-voice" },
+    attendee: { apiKey: "test-key" },
+    server: { ngrokDomain: "meetmate.example" },
+    slack: { notifications: { enabled: false } },
+    llm: { provider: "openclaw", model: "test" },
+  };
+  return {
+    ...base,
+    ...overrides,
+    agent: { ...base.agent, ...(overrides.agent || {}) },
+    avatar: { ...base.avatar, ...(overrides.avatar || {}) },
+  };
+}
 
 function unavailableNgrokHttpGet() {
   const request = new EventEmitter();
@@ -33,7 +68,7 @@ test("static join payload and Fish bot_output bytes match the frozen fixture", {
     assert.equal(Buffer.byteLength(createRequest.body), fixture.staticAttendee.utf8ByteLength);
     assert.equal(Buffer.from(createRequest.body).toString("hex"), fixture.staticAttendee.serializedHex);
     assert.equal(createRequest.options.headers["Content-Length"], fixture.staticAttendee.utf8ByteLength);
-    assert.deepEqual(Object.keys(JSON.parse(createRequest.body)).sort(), ["bot_name", "meeting_url", "websocket_settings"]);
+    assert.deepEqual(Object.keys(JSON.parse(createRequest.body)).sort(), ["bot_image", "bot_name", "meeting_url", "websocket_settings"]);
     assert.equal("voice_agent_settings" in JSON.parse(createRequest.body), false);
 
     const client = harness.connect();
@@ -68,6 +103,109 @@ test("initialized static payload pins bot_image and omits voice_agent_settings",
     assert.equal("voice_agent_settings" in JSON.parse(createRequest.body), false);
     assertStaticIsolation(harness.isolation);
   });
+});
+
+test("static avatar re-reads uploaded bytes and DELETE falls back to bundled bytes without a second init", { concurrency: false }, async () => {
+  await withMeetRoutes(async (harness) => {
+    await harness.init();
+    const uploaded = avatarPng(1);
+    const assets = path.join(harness.home, "assets");
+    fs.mkdirSync(path.join(assets, "avatar-frames"), { recursive: true });
+    fs.writeFileSync(path.join(assets, "avatar.png"), uploaded, { mode: 0o600 });
+    fs.writeFileSync(path.join(assets, ".avatar-source"), "uploaded\n", { mode: 0o600 });
+
+    assert.equal((await harness.join()).statusCode, 200);
+    let createRequest = harness.httpsRequests.filter((request) => request.options.path === "/api/v1/bots").at(-1);
+    assert.deepEqual(Buffer.from(JSON.parse(createRequest.body).bot_image.data, "base64"), uploaded);
+    assert.equal((await harness.leave()).statusCode, 200);
+
+    assert.equal((await harness.deleteAvatar()).statusCode, 200);
+    assert.equal((await harness.join()).statusCode, 200);
+    createRequest = harness.httpsRequests.filter((request) => request.options.path === "/api/v1/bots").at(-1);
+    assert.deepEqual(Buffer.from(JSON.parse(createRequest.body).bot_image.data, "base64"), Buffer.from([1, 2, 3, 4]));
+    assert.equal(harness.initCalls, 1);
+  });
+});
+
+test("URL cache is join-visible, then DELETE stays bundled for the running process", { concurrency: false }, async () => {
+  await withMeetRoutes(async (harness) => {
+    const cached = avatarPng(2);
+    const assets = path.join(harness.home, "assets");
+    fs.mkdirSync(path.join(assets, "avatar-frames"), { recursive: true });
+    fs.writeFileSync(path.join(assets, "avatar.png"), cached, { mode: 0o600 });
+    fs.writeFileSync(path.join(assets, ".avatar-source"), "url-cache\n", { mode: 0o600 });
+    await harness.init();
+
+    assert.equal((await harness.join()).statusCode, 200);
+    let createRequest = harness.httpsRequests.filter((request) => request.options.path === "/api/v1/bots").at(-1);
+    assert.deepEqual(Buffer.from(JSON.parse(createRequest.body).bot_image.data, "base64"), cached);
+    assert.equal((await harness.leave()).statusCode, 200);
+    assert.equal((await harness.deleteAvatar()).statusCode, 200);
+    assert.equal((await harness.join()).statusCode, 200);
+    createRequest = harness.httpsRequests.filter((request) => request.options.path === "/api/v1/bots").at(-1);
+    assert.deepEqual(Buffer.from(JSON.parse(createRequest.body).bot_image.data, "base64"), Buffer.from([1, 2, 3, 4]));
+    assert.equal(harness.initCalls, 1);
+  }, { settingsParsed: staticSettings({ agent: { avatarUrl: "https://avatar.example/cache.png" } }) });
+});
+
+test("an in-flight boot URL fetch cannot clobber a settings upload or its uploaded provenance", { concurrency: false }, async () => {
+  let releaseDownload;
+  const avatarHttpsGet = (_url, callback) => {
+    const request = new EventEmitter();
+    releaseDownload = () => {
+      const response = new EventEmitter();
+      response.statusCode = 200;
+      callback(response);
+      queueMicrotask(() => {
+        response.emit("data", avatarPng(3));
+        response.emit("end");
+      });
+    };
+    return request;
+  };
+  await withMeetRoutes(async (harness) => {
+    await harness.init();
+    assert.equal(typeof releaseDownload, "function");
+    const uploaded = avatarPng(4);
+    const upload = await harness.uploadAvatar(uploaded);
+    assert.equal(upload.statusCode, 200, upload.body.toString());
+    releaseDownload();
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const inspected = await harness.inspectAvatar();
+    assert.equal(inspected.statusCode, 200);
+    assert.equal(JSON.parse(inspected.body).static.source, "uploaded");
+    assert.equal((await harness.join()).statusCode, 200);
+    const createRequest = harness.httpsRequests.filter((request) => request.options.path === "/api/v1/bots").at(-1);
+    assert.deepEqual(Buffer.from(JSON.parse(createRequest.body).bot_image.data, "base64"), uploaded);
+    assert.equal(harness.initCalls, 1);
+  }, {
+    settingsParsed: staticSettings({ agent: { avatarUrl: "https://avatar.example/race.png" } }),
+    avatarHttpsGet,
+  });
+});
+
+test("avatarExperiment uses configured default, explicit empty overrides it, and duplicate keys fail closed", { concurrency: false }, async () => {
+  const configured = staticSettings({ avatar: { experiment: "hybrid-local-frames" } });
+  await withMeetRoutes(async (harness) => {
+    const join = await harness.join({}, { host: "meetmate.example", "x-forwarded-proto": "https" });
+    assert.equal(join.statusCode, 200);
+    const createRequest = harness.httpsRequests.find((request) => request.options.path === "/api/v1/bots");
+    assert.equal(new URL(JSON.parse(createRequest.body).voice_agent_settings.url).pathname, "/local-avatar/frames.html");
+  }, { settingsParsed: configured });
+  await withMeetRoutes(async (harness) => {
+    const join = await harness.join({ avatarExperiment: "" });
+    assert.equal(join.statusCode, 200);
+    const createRequest = harness.httpsRequests.find((request) => request.options.path === "/api/v1/bots");
+    assert.equal(Object.hasOwn(JSON.parse(createRequest.body), "voice_agent_settings"), false);
+  }, { settingsParsed: configured });
+  await withMeetRoutes(async (harness) => {
+    const join = await harness.join({ avatarExperiment: ["", "hybrid-local-l0"] });
+    assert.equal(join.statusCode, 400);
+    assert.equal(join.text, "avatarExperiment が不正です。");
+    assert.equal(harness.httpsRequests.some((request) => request.options.path === "/api/v1/bots"), false);
+  }, { settingsParsed: configured });
 });
 
 test("Attendee success logging excludes an echoed WebSocket token", { concurrency: false }, async () => {
@@ -363,6 +501,7 @@ async function withMeetRoutes(fn, options = {}) {
   ].map((file) => path.join(src, file));
   const localAvatarPath = path.join(src, "transport-meet", "local-avatar-session.js");
   const cachePaths = [routesPath, localAvatarPath, ...mockPaths];
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-static-avatar-"));
   const previousCache = new Map(cachePaths.map((file) => [require.resolve(file), require.cache[require.resolve(file)]]));
   for (const file of cachePaths) delete require.cache[require.resolve(file)];
 
@@ -384,21 +523,13 @@ async function withMeetRoutes(fn, options = {}) {
       valid: true,
       revision: "a".repeat(64),
       fingerprint: "local-avatar-regression",
-      parsed: options.settingsParsed || {
-        agent: { id: "caty", displayName: "Caty", wakeWords: ["ケイティ"] },
-        stt: { provider: "soniox", sonioxApiKey: "soniox-test-key" },
-        tts: { apiKey: "fish-test-key", voiceId: "fish-test-voice" },
-        attendee: { apiKey: "test-key" },
-        server: { ngrokDomain: "meetmate.example" },
-        slack: { notifications: { enabled: false } },
-        llm: { provider: "openclaw", model: "test" },
-      },
+      parsed: options.settingsParsed || staticSettings(),
     },
     startup: Object.freeze({
       preDotenvEnv: Object.freeze({}),
       dotenvSeeds: Object.freeze({}),
-      resolvedHome: "/tmp/meetmate-m0-home",
-      configPath: "/tmp/meetmate-m0-home/config.json",
+      resolvedHome: tempHome,
+      configPath: path.join(tempHome, "config.json"),
       connection: Object.freeze({
         provider: "openclaw",
         openclawUrl: "http://gateway.invalid",
@@ -528,7 +659,7 @@ async function withMeetRoutes(fn, options = {}) {
   });
   installMock(path.join(src, "paths.js"), {
     logsDir: () => "/tmp/meetmate-m0-logs",
-    avatarCachePath: () => "/tmp/meetmate-m0-avatar.png",
+    avatarCachePath: () => path.join(tempHome, "assets", "avatar.png"),
     bundledAssetPath: (name) => `/tmp/${name}`,
     bundledPublicDir: () => "/tmp/meetmate-m0-public",
   });
@@ -606,7 +737,7 @@ async function withMeetRoutes(fn, options = {}) {
   };
   https.get = (...args) => {
     isolation.networkRequests.push(String(args[0]));
-    return originalHttpsGet(...args);
+    return options.avatarHttpsGet ? options.avatarHttpsGet(...args) : originalHttpsGet(...args);
   };
   global.fetch = async (...args) => {
     isolation.networkRequests.push(String(args[0]));
@@ -620,6 +751,7 @@ async function withMeetRoutes(fn, options = {}) {
 
   let routes;
   const clients = [];
+  let initCalls = 0;
   try {
     routes = require(routesPath);
     routes._test.configureReadinessForTest({
@@ -627,7 +759,13 @@ async function withMeetRoutes(fn, options = {}) {
       httpGet: unavailableNgrokHttpGet,
       requestFn: async () => { throw Object.assign(new Error("network unavailable in test"), { code: "ENETUNREACH" }); },
     });
+    const settingsHandler = createSettingsHandler({
+      port: 5005,
+      readinessController: { configure() {}, async probeGateSystems() {} },
+      avatar: { minIntervalMs: 0 },
+    });
     const harness = {
+      home: tempHome,
       isolation,
       httpsRequests,
       pipelines,
@@ -635,8 +773,10 @@ async function withMeetRoutes(fn, options = {}) {
       slackNotifiers,
       consoleOutput,
       init() {
+        initCalls += 1;
         return routes.init({ detectNgrok: false, loadAvatar: true });
       },
+      get initCalls() { return initCalls; },
       async join(overrides = {}, headers = {}) {
         return requestHttp(routes, "POST", "/join-meeting", {
           meetingUrl: fixture.staticAttendee.normalized.meeting_url,
@@ -659,6 +799,15 @@ async function withMeetRoutes(fn, options = {}) {
       },
       activeSession() {
         return requestHttp(routes, "GET", "/active-session");
+      },
+      deleteAvatar() {
+        return requestSettings(settingsHandler, "DELETE", "/api/settings/avatar/static");
+      },
+      inspectAvatar() {
+        return requestSettings(settingsHandler, "GET", "/api/settings/avatar");
+      },
+      uploadAvatar(bytes) {
+        return requestSettingsAvatarUpload(settingsHandler, bytes);
       },
     };
     await fn(harness);
@@ -685,6 +834,7 @@ async function withMeetRoutes(fn, options = {}) {
     restoreEnv();
     readiness.reset();
     settingsResolver.resetRuntimeForTest();
+    fs.rmSync(tempHome, { recursive: true, force: true });
     for (const file of cachePaths) {
       const resolved = require.resolve(file);
       delete require.cache[resolved];
@@ -764,6 +914,44 @@ async function requestHttp(routes, method, url, formData = null, headers = {}) {
   req.emit("end");
   await pending;
   return result;
+}
+
+async function requestSettings(handler, method, url, body = Buffer.alloc(0), headers = {}) {
+  const req = Readable.from(body.length ? [body] : []);
+  Object.assign(req, {
+    method,
+    url,
+    headers: {
+      host: "localhost:5005",
+      ...(method === "GET" ? {} : { origin: "http://localhost:5005", "sec-fetch-site": "same-origin" }),
+      ...headers,
+    },
+    socket: { localAddress: "127.0.0.1", localPort: 5005 },
+  });
+  const result = { statusCode: null, headers: null, body: Buffer.alloc(0) };
+  const res = {
+    writeHead(statusCode, responseHeaders) {
+      result.statusCode = statusCode;
+      result.headers = responseHeaders;
+    },
+    end(chunk = Buffer.alloc(0)) {
+      result.body = Buffer.concat([result.body, Buffer.from(chunk)]);
+    },
+  };
+  await handler(req, res);
+  return result;
+}
+
+function requestSettingsAvatarUpload(handler, bytes) {
+  const boundary = "meetmate-static-freshness";
+  const body = Buffer.concat([
+    Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="image"; filename="avatar.png"\r\nContent-Type: image/png\r\n\r\n`),
+    bytes,
+    Buffer.from(`\r\n--${boundary}--\r\n`),
+  ]);
+  return requestSettings(handler, "POST", "/api/settings/avatar/static", body, {
+    "content-type": `multipart/form-data; boundary=${boundary}`,
+  });
 }
 
 function splitPcmBySamples(buffer, sampleCounts) {

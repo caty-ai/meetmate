@@ -191,7 +191,7 @@
     {
       "name": "ECHO_GATE_CLOSED_BYPASS",
       "references": [
-        "src/transport-meet/meet-routes.js:45"
+        "src/transport-meet/meet-routes.js:50"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -202,7 +202,7 @@
       "name": "ECHO_LOOP_COOLDOWN_MS",
       "references": [
         "src/config.js:52",
-        "src/transport-meet/meet-routes.js:44"
+        "src/transport-meet/meet-routes.js:49"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -341,7 +341,7 @@
     {
       "name": "JOIN_SHARED_TOKEN",
       "references": [
-        "src/transport-meet/meet-routes.js:46"
+        "src/transport-meet/meet-routes.js:51"
       ],
       "ux": "hidden",
       "credentialClass": "class-3-internal-control",
@@ -478,7 +478,7 @@
     {
       "name": "OPENCLAW_WORKSPACE",
       "references": [
-        "src/transport-meet/meet-routes.js:577"
+        "src/transport-meet/meet-routes.js:571"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -536,8 +536,8 @@
     {
       "name": "PUBLIC_WSS_URL",
       "references": [
-        "src/transport-meet/meet-routes.js:971",
-        "src/transport-meet/meet-routes.js:972"
+        "src/transport-meet/meet-routes.js:980",
+        "src/transport-meet/meet-routes.js:981"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -557,7 +557,7 @@
     {
       "name": "SESSION_GRACE_CLOSE_MS",
       "references": [
-        "src/transport-meet/meet-routes.js:43"
+        "src/transport-meet/meet-routes.js:48"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -811,7 +811,7 @@
     {
       "name": "WS_SHARED_TOKEN",
       "references": [
-        "src/transport-meet/meet-routes.js:47"
+        "src/transport-meet/meet-routes.js:52"
       ],
       "ux": "hidden",
       "credentialClass": "class-3-internal-control",
@@ -823,8 +823,8 @@
     {
       "name": "FFMPEG",
       "references": [
-        "src/settings/audio.js:537",
-        "src/settings/audio.js:538"
+        "src/settings/audio.js:360",
+        "src/settings/audio.js:361"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
