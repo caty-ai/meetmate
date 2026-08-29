@@ -11,12 +11,12 @@
       },
       "bot_image": {
         "type": "image/png",
-        "data": "AQIDBA=="
+        "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
       }
     },
-    "serialized": "{\"meeting_url\":\"https://meet.google.com/abc-defg-hij\",\"bot_name\":\"Caty (AI)\",\"websocket_settings\":{\"audio\":{\"url\":\"wss://meetmate.example/realtime?mode=static&sid=00000000-0000-4000-8000-000000000173\",\"sample_rate\":16000}},\"bot_image\":{\"type\":\"image/png\",\"data\":\"AQIDBA==\"}}",
-    "utf8ByteLength": 274,
-    "serializedHex": "7b226d656574696e675f75726c223a2268747470733a2f2f6d6565742e676f6f676c652e636f6d2f6162632d646566672d68696a222c22626f745f6e616d65223a22436174792028414929222c22776562736f636b65745f73657474696e6773223a7b22617564696f223a7b2275726c223a227773733a2f2f6d6565746d6174652e6578616d706c652f7265616c74696d653f6d6f64653d737461746963267369643d30303030303030302d303030302d343030302d383030302d303030303030303030313733222c2273616d706c655f72617465223a31363030307d7d2c22626f745f696d616765223a7b2274797065223a22696d6167652f706e67222c2264617461223a224151494442413d3d227d7d"
+    "serialized": "{\"meeting_url\":\"https://meet.google.com/abc-defg-hij\",\"bot_name\":\"Caty (AI)\",\"websocket_settings\":{\"audio\":{\"url\":\"wss://meetmate.example/realtime?mode=static&sid=00000000-0000-4000-8000-000000000173\",\"sample_rate\":16000}},\"bot_image\":{\"type\":\"image/png\",\"data\":\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=\"}}",
+    "utf8ByteLength": 358,
+    "serializedHex": "7b226d656574696e675f75726c223a2268747470733a2f2f6d6565742e676f6f676c652e636f6d2f6162632d646566672d68696a222c22626f745f6e616d65223a22436174792028414929222c22776562736f636b65745f73657474696e6773223a7b22617564696f223a7b2275726c223a227773733a2f2f6d6565746d6174652e6578616d706c652f7265616c74696d653f6d6f64653d737461746963267369643d30303030303030302d303030302d343030302d383030302d303030303030303030313733222c2273616d706c655f72617465223a31363030307d7d2c22626f745f696d616765223a7b2274797065223a22696d6167652f706e67222c2264617461223a226956424f5277304b47676f414141414e535568455567414141414541414141424341514141414331484177434141414143306c4551565234326d4e6b2b413841415155424153635934325941414141415355564f524b35435949493d227d7d"
   },
   "staticAttendeeWithImage": {
     "normalized": {
@@ -30,11 +30,11 @@
       },
       "bot_image": {
         "type": "image/png",
-        "data": "AQIDBA=="
+        "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
       }
     },
-    "serialized": "{\"meeting_url\":\"https://meet.google.com/abc-defg-hij\",\"bot_name\":\"Caty (AI)\",\"websocket_settings\":{\"audio\":{\"url\":\"wss://meetmate.example/realtime?mode=static&sid=00000000-0000-4000-8000-000000000173\",\"sample_rate\":16000}},\"bot_image\":{\"type\":\"image/png\",\"data\":\"AQIDBA==\"}}",
-    "utf8ByteLength": 274
+    "serialized": "{\"meeting_url\":\"https://meet.google.com/abc-defg-hij\",\"bot_name\":\"Caty (AI)\",\"websocket_settings\":{\"audio\":{\"url\":\"wss://meetmate.example/realtime?mode=static&sid=00000000-0000-4000-8000-000000000173\",\"sample_rate\":16000}},\"bot_image\":{\"type\":\"image/png\",\"data\":\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=\"}}",
+    "utf8ByteLength": 358
   },
   "pcm": {
     "sampleRate": 24000,

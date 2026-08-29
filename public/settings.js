@@ -100,7 +100,7 @@ function readinessSummary(data) {
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     CLIENT_FIELD_SETS: {
-      OPENAI_FIELDS, SONIOX_FIELDS, DEEPGRAM_FIELDS, NULLABLE_NUMBER_FIELDS, TEXTAREA_FIELDS, AVATAR_FIELDS,
+      OPENAI_FIELDS, SONIOX_FIELDS, DEEPGRAM_FIELDS, NULLABLE_NUMBER_FIELDS, TEXTAREA_FIELDS, AVATAR_FIELDS, VOICE_FIELDS,
     },
     clipMatchesCurrentText,
     diffFields,

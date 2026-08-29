@@ -15,6 +15,7 @@ const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0
 const PNG_IEND = Buffer.from([0, 0, 0, 0, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82]);
 const BUNDLED_ASSETS = path.join(__dirname, "..", "..", "assets");
 const RIG_SCRIPT = path.join(__dirname, "..", "..", "public", "local-avatar", "local-avatar.js");
+let urlCacheInstallVetoed = false;
 
 function avatarError(code, status = 422) {
   return settingsError(code, "Avatar request failed", status);
@@ -324,6 +325,7 @@ async function uploadAsset(req, { resolvedHome, name = null }) {
       metadataPartName: null,
       contentTypes: ["image/png"],
       extensions: [".png"],
+      encodedRejectPattern: /%[0-9a-f]{2}/i,
       maxFileBytes: isFrame ? FRAME_FILE_LIMIT : AVATAR_FILE_LIMIT,
       maxMetadataBytes: 0,
       errorFactory: multipartErrorFactory,
@@ -353,6 +355,7 @@ async function uploadAsset(req, { resolvedHome, name = null }) {
 }
 
 function deleteStatic(resolvedHome) {
+  urlCacheInstallVetoed = true;
   let managed;
   try { managed = managedDirectories(resolvedHome, false); } catch (error) {
     if (error.code === "ENOENT") return { deleted: true };
@@ -396,8 +399,8 @@ function deleteFrames(resolvedHome) {
   return { deleted: true, names: [...FRAME_NAMES] };
 }
 
-function parseFrameName(requestUrl) {
-  const rawPath = String(requestUrl || "").split(/[?#]/, 1)[0];
+function parseFrameName(pathname) {
+  const rawPath = String(pathname || "");
   const match = /^\/api\/settings\/avatar\/frames\/([^/]+?)(?:\/preview)?$/.exec(rawPath);
   const raw = match?.[1] || "";
   if (!raw || raw.includes("%") || raw.includes("\0") || raw.includes("/") || raw.includes("\\")) {
@@ -465,6 +468,7 @@ function readStaticPreview(resolvedHome) {
 }
 
 function installUrlCacheAvatar(bytes, resolvedHome) {
+  if (urlCacheInstallVetoed) return false;
   if (!Buffer.isBuffer(bytes) || bytes.length > AVATAR_FILE_LIMIT) return false;
   try { validatePngBytes(bytes); } catch { return false; }
   const managed = managedDirectories(resolvedHome, true);
@@ -475,8 +479,12 @@ function installUrlCacheAvatar(bytes, resolvedHome) {
   const staged = path.join(workDirectory, "avatar.png");
   try {
     fs.writeFileSync(staged, bytes, { mode: 0o600, flag: "wx" });
+    if (urlCacheInstallVetoed) return false;
     try { lstatNotSymlink(managed.avatar); return false; } catch (error) { if (error.code !== "ENOENT") return false; }
     try { if (readSourceMarker(managed) === "uploaded") return false; } catch { return false; }
+    const total = existingManagedBytes(managed);
+    const replacedBytes = existingTargetBytes(managed.avatar, managed.realAssets);
+    if (total - replacedBytes + bytes.length > AVATAR_TOTAL_LIMIT) return false;
     promoteFile(staged, managed.avatar, managed.realAssets, () => writeSourceMarker(managed, "url-cache"));
     return true;
   } finally {
@@ -497,6 +505,7 @@ module.exports = {
   installUrlCacheAvatar,
   parseFrameName,
   readFrame,
+  readBundledAvatar,
   readManagedAvatar,
   readStaticPreview,
   uploadAsset,

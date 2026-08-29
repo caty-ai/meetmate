@@ -141,6 +141,7 @@ function parserOptions(overrides = {}) {
     metadataPartName: null,
     contentTypes: ["image/png"],
     extensions: [".png"],
+    encodedRejectPattern: /%[0-9a-f]{2}/i,
     maxFileBytes: 64,
     maxMetadataBytes: 0,
     errorFactory(reason, status) {
@@ -161,12 +162,14 @@ async function directParse(directory, body, options = parserOptions(), chunkSize
 
 test("avatar multipart requires its complete explicit option tuple", async () => {
   await assert.rejects(() => parseMultipart({ headers: {} }, "/tmp", {}), TypeError);
+  const missingPattern = parserOptions();
+  delete missingPattern.encodedRejectPattern;
+  await assert.rejects(() => parseMultipart({ headers: {} }, "/tmp", missingPattern), TypeError);
 });
 
 test("avatar multipart direct parser locks boundary, header, filename, part, MIME, cap, and trailing-byte rejections", async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-avatar-multipart-"));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
-  const valid = imageMultipart(Buffer.from([1, 2, 3]));
   const parsed = await directParse(directory, imageMultipart(Buffer.from([1, 2, 3]), { contentType: "ImAgE/PnG" }));
   assert.equal(parsed.fileBytes, 3);
   fs.unlinkSync(parsed.filePath);
@@ -181,9 +184,23 @@ test("avatar multipart direct parser locks boundary, header, filename, part, MIM
 
   const longHeader = imageMultipart(Buffer.from([1]), { extraHeaders: [`X-Fill: ${"x".repeat(16 * 1024)}`] });
   await assert.rejects(() => directParse(directory, longHeader), (error) => error.status === 422);
-  for (const filename of ["bad\0.png", "../bad.png", "bad/name.png", "bad\\name.png", "bad%2ename.png", "bad%252ename.png"]) {
+  for (const filename of ["bad\0.png", "../bad.png", "bad/name.png", "bad\\name.png", "bad%2ename.png", "bad%41name.png", "bad%252ename.png"]) {
     await assert.rejects(() => directParse(directory, imageMultipart(Buffer.from([1]), { filename })), (error) => error.status === 422);
   }
+  const audioEncoded = multipart([
+    { headers: ['Content-Disposition: form-data; name="metadata"', "Content-Type: application/json"], body: Buffer.from("{}") },
+    { headers: ['Content-Disposition: form-data; name="audio"; filename="my%20clip.mp3"', "Content-Type: audio/mpeg"], body: Buffer.from([1, 2]) },
+  ]);
+  const audioParsed = await directParse(directory, audioEncoded, parserOptions({
+    filePartName: "audio",
+    metadataPartName: "metadata",
+    contentTypes: ["audio/mpeg"],
+    extensions: [".mp3"],
+    encodedRejectPattern: /%(?:00|2e|2f|5c)/i,
+    maxMetadataBytes: 16,
+  }));
+  assert.equal(audioParsed.fileBytes, 2);
+  fs.unlinkSync(audioParsed.filePath);
   await assert.rejects(() => directParse(directory, imageMultipart(Buffer.from([1]), { partName: "file" })), (error) => error.status === 422);
   await assert.rejects(() => directParse(directory, imageMultipart(Buffer.from([1]), {
     extraParts: [{ headers: ['Content-Disposition: form-data; name="image"; filename="two.png"', "Content-Type: image/png"], body: Buffer.from([2]) }],
@@ -200,7 +217,6 @@ test("avatar multipart direct parser locks boundary, header, filename, part, MIM
   ]);
   await assert.rejects(() => directParse(directory, withMetadata, metadataOptions), (error) => error.reason === "METADATA_TOO_LARGE");
   assert.deepEqual(fs.readdirSync(directory), []);
-  assert.equal(valid.bytes.length > 0, true);
 });
 
 test("avatar routes upload fixed destinations, expose offline provenance, harden previews, and delete", async (t) => {

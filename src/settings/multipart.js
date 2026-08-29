@@ -10,7 +10,7 @@ const HEADER_LIMIT = 16 * 1024;
 function requireOptions(options) {
   const names = [
     "filePartName", "metadataPartName", "contentTypes", "extensions",
-    "maxFileBytes", "maxMetadataBytes", "errorFactory",
+    "encodedRejectPattern", "maxFileBytes", "maxMetadataBytes", "errorFactory",
   ];
   if (!options || names.some((name) => !Object.hasOwn(options, name))) {
     throw new TypeError("Multipart parser options are required");
@@ -19,6 +19,8 @@ function requireOptions(options) {
       || !(options.metadataPartName === null || (typeof options.metadataPartName === "string" && options.metadataPartName))
       || !Array.isArray(options.contentTypes) || options.contentTypes.length === 0
       || !Array.isArray(options.extensions) || options.extensions.length === 0
+      || !(options.encodedRejectPattern instanceof RegExp)
+      || options.encodedRejectPattern.global || options.encodedRejectPattern.sticky
       || !Number.isSafeInteger(options.maxFileBytes) || options.maxFileBytes < 0
       || !Number.isSafeInteger(options.maxMetadataBytes) || options.maxMetadataBytes < 0
       || typeof options.errorFactory !== "function") {
@@ -88,7 +90,7 @@ function parseHeaders(bytes, options) {
 function validateFilename(filename, options) {
   if (typeof filename !== "string" || filename === "" || filename.includes("\0")
       || filename.includes("/") || filename.includes("\\") || filename.includes("..")
-      || /%[0-9a-f]{2}/i.test(filename)
+      || options.encodedRejectPattern.test(filename)
       || !options.extensions.some((extension) => filename.endsWith(extension))) {
     fail(options, "FILENAME_REJECTED", 422);
   }

@@ -536,7 +536,7 @@ function createSettingsHandler(options = {}) {
       const framePreview = /^\/api\/settings\/avatar\/frames\/[^/]+\/preview$/.test(url.pathname);
       if (req.method === "GET" && framePreview) {
         try {
-          const name = parseFrameName(req.url);
+          const name = parseFrameName(url.pathname);
           writePng(res, readFrame(getRuntime().startup.resolvedHome, name));
         } catch {
           throw settingsError("SETTINGS_AVATAR_NOT_FOUND", "Avatar asset was not found", 404);
@@ -553,7 +553,7 @@ function createSettingsHandler(options = {}) {
       }
       const frameAsset = /^\/api\/settings\/avatar\/frames\/[^/]+$/.test(url.pathname);
       if (req.method === "POST" && frameAsset) {
-        const name = parseFrameName(req.url);
+        const name = parseFrameName(url.pathname);
         if (!takeAvatarUploadAllowance()) {
           throw settingsError("SETTINGS_AVATAR_RATE_LIMITED", "Avatar uploads are rate limited", 429);
         }
@@ -570,7 +570,7 @@ function createSettingsHandler(options = {}) {
         return true;
       }
       if (req.method === "DELETE" && frameAsset) {
-        writeJson(res, 200, deleteFrame(getRuntime().startup.resolvedHome, parseFrameName(req.url)));
+        writeJson(res, 200, deleteFrame(getRuntime().startup.resolvedHome, parseFrameName(url.pathname)));
         return true;
       }
 

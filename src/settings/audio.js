@@ -174,6 +174,7 @@ async function parseMultipart(req, directory) {
     metadataPartName: "metadata",
     contentTypes: ["audio/mpeg"],
     extensions: [".mp3"],
+    encodedRejectPattern: /%(?:00|2e|2f|5c)/i,
     maxFileBytes: SOURCE_LIMIT,
     maxMetadataBytes: METADATA_LIMIT,
     errorFactory(reason, status) {

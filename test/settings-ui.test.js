@@ -73,18 +73,33 @@ test("client field sets deep-match registry UI metadata", () => {
       .filter((entry) => JSON.stringify(entry.visibleWhen) === JSON.stringify(condition))
       .map((entry) => entry.id).sort());
   }
-  assert.deepEqual(ids(CLIENT_FIELD_SETS.AVATAR_FIELDS), ["avatar_experiment"]);
-  assert.equal(SETTINGS_REGISTRY.some((entry) => entry.id === "avatar_experiment"), true);
+  assert.deepEqual(ids(CLIENT_FIELD_SETS.AVATAR_FIELDS), SETTINGS_REGISTRY
+    .filter((entry) => entry.path?.startsWith("avatar."))
+    .map((entry) => entry.id).sort());
 });
 
 test("avatar_experiment mounts exactly once in panel-avatar with pinned labels and next-join help", () => {
   const fs = require("node:fs");
   const path = require("node:path");
-  const { fieldContainerId } = require("../public/settings.js");
+  const { CLIENT_FIELD_SETS, fieldContainerId } = require("../public/settings.js");
   const { _test } = require("../src/settings/routes");
-  const entry = _test.buildSettingsUiManifest().fields.find((field) => field.id === "avatar_experiment");
+  const manifest = _test.buildSettingsUiManifest().fields;
+  const { AVATAR_FIELDS, VOICE_FIELDS } = CLIENT_FIELD_SETS;
+  for (const id of AVATAR_FIELDS) assert.equal(VOICE_FIELDS.has(id), false, `${id} is routed by two field sets`);
+  for (const field of manifest) {
+    const eligibleContainers = [
+      AVATAR_FIELDS.has(field.id) ? "avatarFields" : null,
+      !AVATAR_FIELDS.has(field.id) && VOICE_FIELDS.has(field.id) ? "voiceFields" : null,
+      !AVATAR_FIELDS.has(field.id) && !VOICE_FIELDS.has(field.id) && field.ux === "basic" ? "basicFields" : null,
+      !AVATAR_FIELDS.has(field.id) && !VOICE_FIELDS.has(field.id) && field.ux !== "basic" ? "detailFields" : null,
+    ].filter(Boolean);
+    assert.deepEqual(eligibleContainers, [fieldContainerId(field)], `${field.id} must route to exactly one container`);
+  }
+  const avatarEntries = manifest.filter((field) => AVATAR_FIELDS.has(field.id));
+  assert.equal(avatarEntries.some((field) => field.id === "avatar_experiment"), true);
+  assert.equal(avatarEntries.every((field) => fieldContainerId(field) === "avatarFields"), true);
+  const entry = avatarEntries.find((field) => field.id === "avatar_experiment");
   assert.equal(fieldContainerId(entry), "avatarFields");
-  assert.equal([entry].filter((field) => fieldContainerId(field) === "avatarFields").length, 1);
   const html = fs.readFileSync(path.join(__dirname, "..", "public", "settings.html"), "utf8");
   const js = fs.readFileSync(path.join(__dirname, "..", "public", "settings.js"), "utf8");
   const panel = html.match(/<section id="panel-avatar"[\s\S]*?<\/section>\s*<\/section>/)?.[0] || "";

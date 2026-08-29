@@ -31,6 +31,7 @@ const { logsDir, avatarCachePath, bundledAssetPath, bundledPublicDir } = require
 const {
   AVATAR_FILE_LIMIT,
   installUrlCacheAvatar,
+  readBundledAvatar,
   readManagedAvatar,
 } = require("../settings/avatar-assets");
 const {
@@ -849,9 +850,7 @@ function readEffectiveBotImage() {
     data = readManagedAvatar(getSettingsRuntime().startup.resolvedHome);
   } catch {
     try {
-      const bundled = bundledAssetPath("avatar.png");
-      data = fs.readFileSync(bundled);
-      if (data.length > AVATAR_FILE_LIMIT) return null;
+      data = readBundledAvatar();
     } catch {
       return null;
     }

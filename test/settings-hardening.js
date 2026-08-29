@@ -308,7 +308,7 @@ test("T12-02 syntax-consuming environment inventory locks direct, computed, and 
   assert.equal(inventoryByName.size, 89);
   assert.deepEqual(inventory.startupSnapshotReferences, [{
     name: "FFMPEG",
-    references: ["src/settings/audio.js:360", "src/settings/audio.js:361"],
+    references: ["src/settings/audio.js:361", "src/settings/audio.js:362"],
     ux: "deployment-readonly",
     credentialClass: "none",
     handling: "startup-snapshot-consumed-binary-override",
