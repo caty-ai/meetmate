@@ -1,8 +1,11 @@
 const crypto = require("crypto");
 
 const HTML_ROUTE = "/local-avatar/index.html";
+const FRAMES_HTML_ROUTE = "/local-avatar/frames.html";
 const SCRIPT_ROUTE = "/local-avatar/local-avatar.js";
+const FRAMES_SCRIPT_ROUTE = "/local-avatar/frames.js";
 const STATE_ROUTE = "/local-avatar/state";
+const HTML_ROUTES = new Set([HTML_ROUTE, FRAMES_HTML_ROUTE]);
 const DEFAULT_TTL_MS = 5 * 60 * 1000;
 const MAX_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_QUEUE_LIMIT = 8;
@@ -17,6 +20,8 @@ function createLocalAvatarSession(options = {}) {
   const visualId = toBase64Url(randomBytes(16));
   const capability = toBase64Url(randomBytes(32));
   const publicOrigin = normalizePublicOrigin(options.publicOrigin);
+  const htmlRoute = options.htmlRoute || HTML_ROUTE;
+  if (!HTML_ROUTES.has(htmlRoute)) throw new Error("invalid local avatar HTML route");
   const session = new LocalAvatarSession({
     visualId,
     capability,
@@ -34,7 +39,7 @@ function createLocalAvatarSession(options = {}) {
   return {
     session,
     capability,
-    launchUrl: `${publicOrigin}${HTML_ROUTE}?v=${encodeURIComponent(visualId)}#cap=${encodeURIComponent(capability)}`,
+    launchUrl: `${publicOrigin}${htmlRoute}?v=${encodeURIComponent(visualId)}#cap=${encodeURIComponent(capability)}`,
   };
 }
 
@@ -305,7 +310,9 @@ function toPositiveInteger(value) {
 
 module.exports = {
   HTML_ROUTE,
+  FRAMES_HTML_ROUTE,
   SCRIPT_ROUTE,
+  FRAMES_SCRIPT_ROUTE,
   STATE_ROUTE,
   createLocalAvatarSession,
   getLocalAvatarSession,

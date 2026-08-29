@@ -1,6 +1,6 @@
 const fs = require("fs");
 const path = require("path");
-const { bundledPublicDir, metricsLogDir } = require("./paths");
+const { bundledPublicDir, metricsLogDir, resolveHome } = require("./paths");
 
 const PUBLIC_DIR = bundledPublicDir();
 const METRICS_TAIL_BYTES = 5 * 1024 * 1024;
@@ -21,6 +21,17 @@ const LOCAL_AVATAR_CSP = [
 const LOCAL_AVATAR_ASSETS = new Map([
   ["/local-avatar/index.html", { filename: "local-avatar/index.html", contentType: "text/html; charset=utf-8" }],
   ["/local-avatar/local-avatar.js", { filename: "local-avatar/local-avatar.js", contentType: "application/javascript; charset=utf-8" }],
+  ["/local-avatar/frames.html", { filename: "local-avatar/frames.html", contentType: "text/html; charset=utf-8" }],
+  ["/local-avatar/frames.js", { filename: "local-avatar/frames.js", contentType: "application/javascript; charset=utf-8" }],
+]);
+
+const LOCAL_AVATAR_FRAME_ASSETS = new Map([
+  ["/local-avatar/frames/idle.png", "idle.png"],
+  ["/local-avatar/frames/talk1.png", "talk1.png"],
+  ["/local-avatar/frames/talk2.png", "talk2.png"],
+  ["/local-avatar/frames/talk3.png", "talk3.png"],
+  ["/local-avatar/frames/blink.png", "blink.png"],
+  ["/local-avatar/frames/talk_blink.png", "talk_blink.png"],
 ]);
 
 const PUBLIC_ASSETS = new Map([
@@ -82,7 +93,7 @@ function serveLocalAvatar(req, res, url = new URL(req.url || "/", "http://localh
       return true;
     }
     const { getLocalAvatarSession, hasLocalAvatarSessions } = require("./transport-meet/local-avatar-session");
-    const allowedQuery = url.pathname === "/local-avatar/index.html"
+    const allowedQuery = url.pathname.endsWith(".html")
       ? hasExactQueryKeys(url, ["v"]) && Boolean(getLocalAvatarSession(url.searchParams.get("v")))
       : !url.search && hasLocalAvatarSessions();
     if (!allowedQuery) {
@@ -96,6 +107,34 @@ function serveLocalAvatar(req, res, url = new URL(req.url || "/", "http://localh
       }
       res.writeHead(200, localAvatarHeaders({
         "Content-Type": asset.contentType,
+        "Content-Length": data.length,
+      }));
+      res.end(data);
+    });
+    return true;
+  }
+
+  const frameFilename = LOCAL_AVATAR_FRAME_ASSETS.get(url.pathname);
+  if (frameFilename) {
+    if (req.method !== "GET" || !hasExactQueryKeys(url, ["v"])) {
+      writeLocalAvatarPlain(res, 404, "Not Found");
+      return true;
+    }
+    const visualId = url.searchParams.get("v") || "";
+    const capability = readBearerCapability(req.headers?.authorization);
+    const { getLocalAvatarSession } = require("./transport-meet/local-avatar-session");
+    const session = getLocalAvatarSession(visualId);
+    if (!session || !capability || !session.verifyCapability(capability)) {
+      writeLocalAvatarPlain(res, 404, "Not Found");
+      return true;
+    }
+    fs.readFile(path.join(resolveHome(), "assets", "avatar-frames", frameFilename), (err, data) => {
+      if (err) {
+        writeLocalAvatarPlain(res, 404, "Not Found");
+        return;
+      }
+      res.writeHead(200, localAvatarHeaders({
+        "Content-Type": "image/png",
         "Content-Length": data.length,
       }));
       res.end(data);
