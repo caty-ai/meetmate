@@ -111,6 +111,23 @@ file <home>/assets/avatar.png
 sips -s format png -z 256 256 <home>/assets/avatar.png --out <home>/assets/avatar.png
 ```
 
+### 実験的なフレーム差し替えアバター
+
+Fish Audio 構成では、発話マーカーに合わせて PNG を差し替える実験パスを利用できる。画像はパッケージに含まれないため、home 配下に次の6ファイルを自分で配置する。
+
+```text
+<home>/assets/avatar-frames/idle.png
+<home>/assets/avatar-frames/talk1.png
+<home>/assets/avatar-frames/talk2.png
+<home>/assets/avatar-frames/talk3.png
+<home>/assets/avatar-frames/blink.png
+<home>/assets/avatar-frames/talk_blink.png
+```
+
+各画像は 1280x720 の PNG を推奨する。`/join-meeting` のフォームデータへ `avatarExperiment=hybrid-local-frames` を追加すると、このページが選ばれる。Fish Audio 以外の TTS 構成、または公開 HTTPS origin が無い構成では参加リクエストは拒否される。
+
+画像ルートは参加セッションごとの capability で保護され、保存・キャッシュされない。個別の発話・瞬きフレームが無い、壊れている、または読めない場合は `idle.png` へ戻り、`idle.png` も利用できない場合は暗い診断用キャンバスへ戻る。壊れた画像アイコンやスクリプトエラーを会議画面へ出さない fail-closed 動作である。
+
 ---
 
 ## ngrok / Tailscale トンネル（外部接続用）

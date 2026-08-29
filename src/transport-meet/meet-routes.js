@@ -46,6 +46,8 @@ const ECHO_GATE_CLOSED_BYPASS = String(process.env.ECHO_GATE_CLOSED_BYPASS || "f
 const JOIN_SHARED_TOKEN = process.env.JOIN_SHARED_TOKEN || "";
 const WS_SHARED_TOKEN = process.env.WS_SHARED_TOKEN || "";
 const LOCAL_AVATAR_EXPERIMENT = "hybrid-local-l0";
+const LOCAL_AVATAR_FRAMES_EXPERIMENT = "hybrid-local-frames";
+const LOCAL_AVATAR_EXPERIMENTS = new Set([LOCAL_AVATAR_EXPERIMENT, LOCAL_AVATAR_FRAMES_EXPERIMENT]);
 
 const MEETING_URL_RE = /^https:\/\/(meet\.google\.com\/[a-z0-9-]+|[\w.-]*zoom\.us\/(j|my)\/[a-zA-Z0-9?=&._%-]+)(?:\?.*)?$/i;
 const CONVERSATION_MODES = new Set(["one_to_one", "group"]);
@@ -1125,14 +1127,15 @@ async function handleHttp(req, res) {
       const conversationMode = toSafeString(formData.conversationMode) || "one_to_one";
       const briefing = toSafeString(formData.briefing) || null;
       const avatarExperiment = toSafeString(formData.avatarExperiment);
+      const isLocalAvatarExperiment = LOCAL_AVATAR_EXPERIMENTS.has(avatarExperiment);
       const profile = currentAgentProfile();
 
-      if (avatarExperiment && avatarExperiment !== LOCAL_AVATAR_EXPERIMENT) {
+      if (avatarExperiment && !isLocalAvatarExperiment) {
         writePlainResponse(res, 400, "avatarExperiment が不正です。");
         return;
       }
-      if (avatarExperiment === LOCAL_AVATAR_EXPERIMENT && TTS_PROVIDER !== "fish-audio") {
-        writePlainResponse(res, 400, "hybrid-local-l0 は Fish Audio 構成でのみ利用できます。");
+      if (isLocalAvatarExperiment && TTS_PROVIDER !== "fish-audio") {
+        writePlainResponse(res, 400, `${avatarExperiment} は Fish Audio 構成でのみ利用できます。`);
         return;
       }
 
@@ -1201,14 +1204,17 @@ async function handleHttp(req, res) {
       };
 
       let localAvatarLaunchUrl = null;
-      if (avatarExperiment === LOCAL_AVATAR_EXPERIMENT) {
+      if (isLocalAvatarExperiment) {
         const publicOrigin = resolveLocalAvatarPublicOrigin();
         if (!publicOrigin) {
-          writePlainResponse(res, 400, "hybrid-local-l0 には公開 HTTPS origin が必要です。");
+          writePlainResponse(res, 400, `${avatarExperiment} には公開 HTTPS origin が必要です。`);
           return;
         }
-        const { createLocalAvatarSession } = require("./local-avatar-session");
-        const issued = createLocalAvatarSession({ publicOrigin });
+        const { createLocalAvatarSession, FRAMES_HTML_ROUTE } = require("./local-avatar-session");
+        const issued = createLocalAvatarSession({
+          publicOrigin,
+          htmlRoute: avatarExperiment === LOCAL_AVATAR_FRAMES_EXPERIMENT ? FRAMES_HTML_ROUTE : undefined,
+        });
         localAvatarSession = issued.session;
         localAvatarLaunchUrl = issued.launchUrl;
         session.localAvatarSession = localAvatarSession;
