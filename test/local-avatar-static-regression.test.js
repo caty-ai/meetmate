@@ -160,6 +160,46 @@ test("URL cache is join-visible, then DELETE stays bundled for the running proce
   }, { settingsParsed: staticSettings({ agent: { avatarUrl: "https://avatar.example/cache.png" } }) });
 });
 
+test("boot URL cache fill installs valid bytes and provenance before the next join", { concurrency: false }, async () => {
+  const downloaded = Buffer.from(BUNDLED_TEST_AVATAR);
+  let releaseDownload;
+  const avatarHttpsGet = (_url, callback) => {
+    const request = new EventEmitter();
+    releaseDownload = () => {
+      const response = new EventEmitter();
+      response.statusCode = 200;
+      callback(response);
+      queueMicrotask(() => {
+        response.emit("data", downloaded);
+        response.emit("end");
+      });
+    };
+    return request;
+  };
+  await withMeetRoutes(async (harness) => {
+    await harness.init();
+    assert.equal(typeof releaseDownload, "function");
+    releaseDownload();
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const assets = path.join(harness.home, "assets");
+    assert.deepEqual(fs.readFileSync(path.join(assets, "avatar.png")), downloaded);
+    assert.equal(fs.readFileSync(path.join(assets, ".avatar-source"), "utf8"), "url-cache\n");
+    assert.equal(harness.consoleOutput.some((line) => line.includes("Bot avatar downloaded and cached")), true);
+    assert.equal((await harness.join()).statusCode, 200);
+    const createRequest = harness.httpsRequests.filter((request) => request.options.path === "/api/v1/bots").at(-1);
+    assert.deepEqual(Buffer.from(JSON.parse(createRequest.body).bot_image.data, "base64"), downloaded);
+    const inspected = await harness.inspectAvatar();
+    assert.equal(inspected.statusCode, 200);
+    assert.equal(JSON.parse(inspected.body).static.source, "url-cache");
+    assert.equal(harness.initCalls, 1);
+  }, {
+    settingsParsed: staticSettings({ agent: { avatarUrl: "https://avatar.example/happy.png" } }),
+    avatarHttpsGet,
+  });
+});
+
 test("an in-flight boot URL fetch cannot clobber a settings upload or its uploaded provenance", { concurrency: false }, async () => {
   let releaseDownload;
   const avatarHttpsGet = (_url, callback) => {
