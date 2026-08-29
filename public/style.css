@@ -162,6 +162,26 @@
     flex-wrap: wrap;
     min-width: 0;
   }
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .settings-link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    padding: 0 14px;
+    border: 1px solid var(--hairline);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--ink-secondary);
+    font-size: 12px;
+    font-weight: 600;
+    text-decoration: none;
+  }
+  .settings-link:hover { border-color: var(--hairline-strong); color: var(--ink); }
+  .settings-link:focus-visible { outline: 3px solid var(--accent-ring); outline-offset: 2px; }
   .eyebrow {
     display: block;
     font-size: 11px;

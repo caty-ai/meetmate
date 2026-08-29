@@ -1,6 +1,14 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
+function resetSettings() {
+  require("../src/settings/bootstrap").resetStartupForTest();
+  require("../src/settings/resolver").resetRuntimeForTest();
+}
+
+test.beforeEach(resetSettings);
+test.afterEach(resetSettings);
+
 test("gateway warm-up skips non-OpenClaw providers before making a request", async () => {
   const originalProvider = process.env.LLM_PROVIDER;
   const originalLog = console.log;

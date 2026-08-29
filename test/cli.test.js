@@ -97,11 +97,8 @@ function openaiInput(prefix = "test") {
 
 function openaiEnvOnlyInput(prefix = "test") {
   return [
-    `${prefix}-soniox`,
-    `${prefix}-fish`,
-    `${prefix}-voice`,
-    `${prefix}-attendee`,
     "openai-compatible",
+    `${prefix}-openai-key`,
   ].join("\n") + "\n";
 }
 
@@ -119,15 +116,17 @@ test("init creates the openclaw write-set, protects files, and rotates tokens wi
   const configPath = path.join(directory, "config.json");
   const envPath = path.join(directory, ".env");
   const agentsPath = path.join(directory, "AGENTS.md");
-  assert.deepEqual(fs.readFileSync(configPath), fs.readFileSync(configTemplatePath));
+  const initialConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  assert.equal(initialConfig.stt.sonioxApiKey, "initial-soniox");
+  assert.equal(initialConfig.tts.apiKey, "initial-fish");
+  assert.equal(initialConfig.tts.voiceId, "initial-voice");
+  assert.equal(initialConfig.attendee.apiKey, "initial-attendee");
   assert.deepEqual(fs.readFileSync(agentsPath), fs.readFileSync(agentsTemplatePath));
   if (process.platform !== "win32") assert.equal(fs.statSync(envPath).mode & 0o777, 0o600);
 
   const initialEnv = fs.readFileSync(envPath, "utf8");
-  assert.equal(envValue(initialEnv, "SONIOX_API_KEY"), "initial-soniox");
-  assert.equal(envValue(initialEnv, "FISH_AUDIO_API_KEY"), "initial-fish");
-  assert.equal(envValue(initialEnv, "FISH_AUDIO_VOICE_ID"), "initial-voice");
-  assert.equal(envValue(initialEnv, "ATTENDEE_API_KEY"), "initial-attendee");
+  assert.equal(initialEnv.includes("initial-soniox"), false);
+  assert.equal(initialEnv.includes("initial-fish"), false);
   assert.equal(envValue(initialEnv, "LLM_PROVIDER"), "openclaw");
   assert.equal(envValue(initialEnv, "OPENCLAW_GATEWAY_URL"), "http://localhost:18789");
   assert.equal(envValue(initialEnv, "OPENCLAW_GATEWAY_TOKEN"), "initial-gateway-token");
@@ -147,12 +146,12 @@ test("init creates the openclaw write-set, protects files, and rotates tokens wi
   const forced = runCli(["init", "--force"], directory, openclawInput("forced"));
   assert.equal(forced.status, 0, forced.stderr);
   const forcedEnv = fs.readFileSync(envPath, "utf8");
-  assert.equal(envValue(forcedEnv, "SONIOX_API_KEY"), "forced-soniox");
+  assert.equal(JSON.parse(fs.readFileSync(configPath, "utf8")).stt.sonioxApiKey, "forced-soniox");
   assert.notEqual(envValue(forcedEnv, "JOIN_SHARED_TOKEN"), envValue(initialEnv, "JOIN_SHARED_TOKEN"));
   assert.notEqual(envValue(forcedEnv, "WS_SHARED_TOKEN"), envValue(initialEnv, "WS_SHARED_TOKEN"));
 });
 
-test("init writes the exact openai-compatible branch and keeps its apiKey out of .env", (t) => {
+test("T12-08 init writes class 1 to config and keeps class 2 in .env", (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-cli-"));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
 
@@ -167,8 +166,9 @@ test("init writes the exact openai-compatible branch and keeps its apiKey out of
   assert.equal(config.llm.provider, "openai-compatible");
   assert.equal(config.llm.model, "branch-model");
   assert.equal(config.llm.openaiCompatible.baseUrl, "http://localhost:4000/v1");
-  assert.equal(config.llm.openaiCompatible.apiKey, "branch-openai-key");
-  assert.equal(envContents.includes("branch-openai-key"), false);
+  assert.equal(Object.hasOwn(config.llm.openaiCompatible, "apiKey"), false);
+  assert.equal(envValue(envContents, "OPENAI_COMPATIBLE_API_KEY"), "branch-openai-key");
+  assert.equal(config.stt.sonioxApiKey, "branch-soniox");
   assert.match(envValue(envContents, "JOIN_SHARED_TOKEN"), /^[a-f0-9]{64}$/);
   assert.match(envValue(envContents, "WS_SHARED_TOKEN"), /^[a-f0-9]{64}$/);
 
@@ -188,7 +188,6 @@ test("openai-compatible resume writes only .env when existing config is complete
   config.llm.provider = "openai-compatible";
   config.llm.model = "existing-model";
   config.llm.openaiCompatible.baseUrl = "http://localhost:4555/v1";
-  config.llm.openaiCompatible.apiKey = "existing-key";
   const originalConfig = `${JSON.stringify(config, null, 2)}\n`;
   fs.writeFileSync(configPath, originalConfig);
   fs.copyFileSync(agentsTemplatePath, path.join(directory, "AGENTS.md"));
@@ -196,9 +195,11 @@ test("openai-compatible resume writes only .env when existing config is complete
   const result = runCli(["init"], directory, openaiEnvOnlyInput("resume"));
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Created: \.env\./);
-  assert.doesNotMatch(result.stdout, /baseUrl:|apiKey:|llm\.model:/);
+  assert.doesNotMatch(result.stdout, /baseUrl:|llm\.model:/);
+  assert.match(result.stdout, /apiKey:/);
   assert.equal(fs.readFileSync(configPath, "utf8"), originalConfig);
   assert.equal(envValue(fs.readFileSync(path.join(directory, ".env"), "utf8"), "LLM_PROVIDER"), "openai-compatible");
+  assert.equal(envValue(fs.readFileSync(path.join(directory, ".env"), "utf8"), "OPENAI_COMPATIBLE_API_KEY"), "resume-openai-key");
 });
 
 test("openai-compatible resume fails before writing .env when existing config is incomplete", (t) => {
@@ -210,7 +211,7 @@ test("openai-compatible resume fails before writing .env when existing config is
     llm: {
       provider: "openai-compatible",
       model: "",
-      openaiCompatible: { baseUrl: "", apiKey: "" },
+      openaiCompatible: { baseUrl: "" },
     },
   }, null, 2)}\n`;
   fs.writeFileSync(configPath, invalidConfig);
@@ -218,12 +219,11 @@ test("openai-compatible resume fails before writing .env when existing config is
 
   const result = runCli(["init"], directory, openaiEnvOnlyInput("invalid-resume"));
   assert.equal(result.status, 1);
-  assert.equal(result.stdout.trim().split(/\r?\n/).filter(Boolean).at(-1), "LLM provider (openclaw|openai-compatible):");
+  assert.equal(result.stdout.trim().split(/\r?\n/).filter(Boolean).at(-1), "apiKey:");
   const errorLines = result.stderr.trim().split(/\r?\n/);
   assert.equal(errorLines.length, 1, result.stderr);
   assert.match(errorLines[0], /llm\.model/);
   assert.match(errorLines[0], /llm\.openaiCompatible\.baseUrl/);
-  assert.match(errorLines[0], /llm\.openaiCompatible\.apiKey/);
   assert.match(errorLines[0], /--force/);
   assert.match(errorLines[0], /manually/);
   assert.doesNotMatch(errorLines[0], / at |Error:/);
@@ -243,28 +243,28 @@ test("init treats config.json and .env independently and prompts only for the mi
 
   const configSentinel = "{\"preserveConfig\":true}\n";
   fs.writeFileSync(path.join(configExists, "config.json"), configSentinel);
-  const completesEnv = runCli(["init"], configExists, openclawInput("missing-env"));
+  const completesEnv = runCli(["init"], configExists, "openclaw\nhttp://localhost:18789\nmissing-env-gateway\n");
   assert.equal(completesEnv.status, 0, completesEnv.stderr);
   assert.equal(fs.readFileSync(path.join(configExists, "config.json"), "utf8"), configSentinel);
-  assert.equal(envValue(fs.readFileSync(path.join(configExists, ".env"), "utf8"), "SONIOX_API_KEY"), "missing-env-soniox");
+  assert.equal(envValue(fs.readFileSync(path.join(configExists, ".env"), "utf8"), "OPENCLAW_GATEWAY_TOKEN"), "missing-env-gateway");
 
   const envSentinel = "PRESERVE_ENV=yes\n";
   fs.writeFileSync(path.join(envExists, ".env"), envSentinel, { mode: 0o600 });
   const completesConfig = runCli(
     ["init"],
     envExists,
-    "openai-compatible\nhttp://localhost:4444/v1\nconfig-only-key\nconfig-only-model\n",
+    "config-soniox\nconfig-fish\nconfig-voice\nconfig-attendee\nopenai-compatible\nhttp://localhost:4444/v1\nconfig-only-model\n",
   );
   assert.equal(completesConfig.status, 0, completesConfig.stderr);
-  assert.doesNotMatch(completesConfig.stdout, /SONIOX_API_KEY:/);
+  assert.match(completesConfig.stdout, /SONIOX_API_KEY:/);
   assert.equal(fs.readFileSync(path.join(envExists, ".env"), "utf8"), envSentinel);
   const config = JSON.parse(fs.readFileSync(path.join(envExists, "config.json"), "utf8"));
   assert.equal(config.llm.provider, "openai-compatible");
   assert.equal(config.llm.model, "config-only-model");
-  assert.equal(config.llm.openaiCompatible.apiKey, "config-only-key");
+  assert.equal(Object.hasOwn(config.llm.openaiCompatible, "apiKey"), false);
 
   fs.writeFileSync(path.join(configFromOpenclawEnv, ".env"), "LLM_PROVIDER=openclaw\n", { mode: 0o600 });
-  const derivesOpenclawProvider = runCli(["init"], configFromOpenclawEnv);
+  const derivesOpenclawProvider = runCli(["init"], configFromOpenclawEnv, "oc-soniox\noc-fish\noc-voice\noc-attendee\n");
   assert.equal(derivesOpenclawProvider.status, 0, derivesOpenclawProvider.stderr);
   assert.doesNotMatch(derivesOpenclawProvider.stdout, /LLM provider|baseUrl|apiKey|llm\.model/);
   const openclawConfig = JSON.parse(fs.readFileSync(path.join(configFromOpenclawEnv, "config.json"), "utf8"));
@@ -275,17 +275,17 @@ test("init treats config.json and .env independently and prompts only for the mi
   const derivesOpenaiProvider = runCli(
     ["init"],
     configFromOpenaiEnv,
-    "http://localhost:4555/v1\nopenai-env-key\nopenai-env-model\n",
+    "oa-soniox\noa-fish\noa-voice\noa-attendee\nhttp://localhost:4555/v1\nopenai-env-model\n",
   );
   assert.equal(derivesOpenaiProvider.status, 0, derivesOpenaiProvider.stderr);
   assert.doesNotMatch(derivesOpenaiProvider.stdout, /LLM provider/);
   assert.match(derivesOpenaiProvider.stdout, /baseUrl:/);
-  assert.match(derivesOpenaiProvider.stdout, /apiKey:/);
+  assert.doesNotMatch(derivesOpenaiProvider.stdout, /apiKey:/);
   assert.match(derivesOpenaiProvider.stdout, /llm\.model:/);
   const openaiConfig = JSON.parse(fs.readFileSync(path.join(configFromOpenaiEnv, "config.json"), "utf8"));
   assert.equal(openaiConfig.llm.provider, "openai-compatible");
   assert.equal(openaiConfig.llm.openaiCompatible.baseUrl, "http://localhost:4555/v1");
-  assert.equal(openaiConfig.llm.openaiCompatible.apiKey, "openai-env-key");
+  assert.equal(Object.hasOwn(openaiConfig.llm.openaiCompatible, "apiKey"), false);
   assert.equal(openaiConfig.llm.model, "openai-env-model");
 });
 
@@ -340,9 +340,9 @@ test("interrupted init leaves no partial file and rerun completes only missing f
   fs.writeFileSync(path.join(directory, "config.json"), preservedConfig);
 
   const running = spawnCli(["init"], directory);
-  await waitForOutput(running, /SONIOX_API_KEY:/);
-  running.child.stdin.write("interrupted-soniox\n");
-  await waitForOutput(running, /FISH_AUDIO_API_KEY:/);
+  await waitForOutput(running, /LLM provider \(openclaw\|openai-compatible\):/);
+  running.child.stdin.write("openclaw\n");
+  await waitForOutput(running, /OPENCLAW_GATEWAY_URL:/);
   running.child.kill("SIGTERM");
   await running.exited;
 
@@ -351,10 +351,10 @@ test("interrupted init leaves no partial file and rerun completes only missing f
   assert.equal(fs.existsSync(path.join(directory, "AGENTS.md")), false);
   assert.deepEqual(fs.readdirSync(directory).sort(), ["config.json"]);
 
-  const resumed = runCli(["init"], directory, openclawInput("resumed"));
+  const resumed = runCli(["init"], directory, "openclaw\nhttp://localhost:18789\nresumed-gateway\n");
   assert.equal(resumed.status, 0, resumed.stderr);
   assert.equal(fs.readFileSync(path.join(directory, "config.json"), "utf8"), preservedConfig);
-  assert.equal(envValue(fs.readFileSync(path.join(directory, ".env"), "utf8"), "SONIOX_API_KEY"), "resumed-soniox");
+  assert.equal(envValue(fs.readFileSync(path.join(directory, ".env"), "utf8"), "OPENCLAW_GATEWAY_TOKEN"), "resumed-gateway");
   assert.equal(fs.existsSync(path.join(directory, "AGENTS.md")), true);
 });
 
@@ -378,7 +378,7 @@ test("init writes special replacement characters in answers literally", (t) => {
   const input = [tricky, "fish", "voice", "attendee", "openclaw", "http://localhost:18789", "gateway"].join("\n") + "\n";
   const result = runCli(["init"], directory, input);
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(envValue(fs.readFileSync(path.join(directory, ".env"), "utf8"), "SONIOX_API_KEY"), tricky);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(directory, "config.json"), "utf8")).stt.sonioxApiKey, tricky);
 });
 
 test("init fails cleanly when a destination is a directory", (t) => {

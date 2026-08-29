@@ -8,6 +8,8 @@
 //   - Both are in addition to the HTTP-level 30s connect timeout
 
 const https = require("https");
+const { stripCanonicalEmotionTags } = require("./messages");
+const { getEffectiveValue } = require("./settings/resolver");
 
 // Max audio duration per sentence: 15 seconds at any sample rate
 // (a single sentence should never produce more than this)
@@ -100,7 +102,10 @@ async function synthesize(text, options = {}) {
 async function _synthesizeOnce(text, options = {}) {
   const apiKey = options.apiKey;
   if (!apiKey) throw new Error("FISH_AUDIO_API_KEY is required for TTS");
-  if (!text || !text.trim()) return;
+  const requestText = getEffectiveValue("agent_emotion_tags") === false
+    ? stripCanonicalEmotionTags(text)
+    : String(text || "").trim();
+  if (!requestText) return;
 
   const sampleRate = options.sampleRate || 24_000;
   const latency = options.latency || "balanced";
@@ -112,7 +117,7 @@ async function _synthesizeOnce(text, options = {}) {
   const maxBytes = Math.floor((sampleRate * MAX_AUDIO_DURATION_MS) / 1000) * 2;
 
   const requestBody = {
-    text: text.trim(),
+    text: requestText,
     format: "pcm",
     sample_rate: sampleRate,
     latency,
@@ -130,7 +135,9 @@ async function _synthesizeOnce(text, options = {}) {
   // valid finite number in [0.5, 2.0]. Older Fish models that don't recognize
   // the field will ignore unknown keys, so this stays safe to send.
   if (Number.isFinite(options.speed) && options.speed > 0) {
-    requestBody.speed = Math.min(2.0, Math.max(0.5, options.speed));
+    const speed = Math.min(2.0, Math.max(0.5, options.speed));
+    requestBody.speed = speed;
+    requestBody.prosody = { speed };
   }
 
   const body = JSON.stringify(requestBody);
@@ -179,7 +186,7 @@ async function _synthesizeOnce(text, options = {}) {
           // after live A/B vs s1), "s1" (older, fallback for emergency rollback).
           // env is kept as an escape hatch only — change the default below for
           // permanent moves so there is one source of truth.
-          model: process.env.FISH_AUDIO_MODEL || "s2-pro",
+          model: getEffectiveValue("fish_audio_model"),
         },
       },
       (res) => {
@@ -236,7 +243,7 @@ async function _synthesizeOnce(text, options = {}) {
               }
               totalBytesReceived = maxBytes;
               console.warn(
-                `⚠️  TTS duration cap hit: ${MAX_AUDIO_DURATION_MS}ms (${maxBytes} bytes) for text: "${text.slice(0, 60)}…" — truncating`
+                `⚠️  TTS duration cap hit: ${MAX_AUDIO_DURATION_MS}ms (${maxBytes} bytes) for text: "${requestText.slice(0, 60)}…" — truncating`
               );
               // Destroy request to stop receiving more data
               res.destroy();

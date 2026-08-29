@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#ffffff">
+  <title>設定 · Meetmate</title>
+  <link rel="stylesheet" href="/settings-assets/settings.css">
+  <script type="application/json" id="settingsUiManifest">__SETTINGS_UI_MANIFEST__</script>
+  <script type="application/json" id="emotionTagsData">__MEETMATE_EMOTION_TAGS__</script>
+  <script src="/settings-assets/settings.js" defer></script>
+</head>
+<body>
+  <main class="page">
+    <header class="settings-header">
+      <div>
+        <span class="eyebrow">Local admin</span>
+        <h1>設定</h1>
+        <p>Meetmate の設定を確認・編集します。資格情報の値は、この画面には表示されません。</p>
+      </div>
+      <div class="header-actions">
+        <span class="status-badge loading" id="loadStatus">読み込み中</span>
+        <a class="home-link" href="/">← ホームへ戻る</a>
+      </div>
+    </header>
+
+    <div class="settings-state-stack" id="settingsState" aria-live="polite"></div>
+
+    <nav class="tabs" role="tablist" aria-label="設定カテゴリー">
+      <button id="tab-basic" role="tab" type="button" aria-selected="true" aria-controls="panel-basic" tabindex="0">基本</button>
+      <button id="tab-voice" role="tab" type="button" aria-selected="false" aria-controls="panel-voice" tabindex="-1">音声プリセット</button>
+      <button id="tab-details" role="tab" type="button" aria-selected="false" aria-controls="panel-details" tabindex="-1">詳細</button>
+      <button id="tab-deploy" role="tab" type="button" aria-selected="false" aria-controls="panel-deploy" tabindex="-1">デプロイ</button>
+      <button id="tab-connections" role="tab" type="button" aria-selected="false" aria-controls="panel-connections" tabindex="-1">接続テスト</button>
+      <button id="tab-transfer" role="tab" type="button" aria-selected="false" aria-controls="panel-transfer" tabindex="-1">エクスポート・インポート</button>
+    </nav>
+
+    <form class="settings-form" id="settingsForm">
+      <section id="panel-basic" class="tab-panel" role="tabpanel" aria-labelledby="tab-basic" tabindex="0">
+        <section class="settings-panel" aria-labelledby="basicSettingsTitle">
+          <div class="panel-heading">
+            <div><h2 id="basicSettingsTitle">基本設定</h2><p>日常的に使う設定です。</p></div>
+          </div>
+          <div class="field-grid" id="basicFields"></div>
+        </section>
+      </section>
+
+      <section id="panel-voice" class="tab-panel" role="tabpanel" aria-labelledby="tab-voice" tabindex="0" hidden>
+        <section class="settings-panel" aria-labelledby="voicePresetsTitle">
+          <div class="panel-heading">
+            <div><h2 id="voicePresetsTitle">音声プリセット</h2><p>会話中の定型文と感情表現を設定します。</p></div>
+            <span class="apply-badge live">ライブ設定</span>
+          </div>
+          <div class="preset-grid" id="voiceFields"></div>
+          <div class="emotion-help is-hidden" id="emotionHelp" aria-labelledby="emotionTagsTitle">
+            <strong id="emotionTagsTitle">固定の感情タグ（読み取り専用）</strong>
+            <ul id="emotionTagsList"></ul>
+          </div>
+          <div class="tts-preview" aria-labelledby="ttsPreviewTitle">
+            <div class="audio-manager-heading">
+              <div><strong id="ttsPreviewTitle">Fish Audio プレビュー</strong><span>現在このプロセスが使用している音声設定で試聴します。</span></div>
+            </div>
+            <p class="billing-notice">プレビューは、オペレーター自身の Fish Audio キー／アカウントの利用となり、Fish Audio の利用量・料金が発生します。Meetmate の共通キーや料金補助はありません。</p>
+            <div class="tts-preview-controls">
+              <label class="field"><span class="field-label">プレビュー文</span><textarea id="ttsPreviewText" rows="3" maxlength="500" placeholder="1〜500文字で入力"></textarea></label>
+              <button class="btn-secondary" id="playTtsPreview" type="button" disabled>プレビューを再生</button>
+            </div>
+            <audio id="ttsPreviewPlayer" controls preload="none"></audio>
+            <div class="action-result" id="ttsPreviewResult" role="status" aria-live="polite"></div>
+          </div>
+          <div class="audio-manager" aria-labelledby="audioManagerTitle">
+            <div class="audio-manager-heading">
+              <div><strong id="audioManagerTitle">事前録音 MP3</strong><span>定型文に合わせた MP3 を登録すると、現在の音声設定と一致する場合だけ自動再生します。</span></div>
+              <span class="status-badge match">利用可能</span>
+            </div>
+            <div class="audio-upload-grid">
+              <label class="field"><span class="field-label">役割</span><select id="audioRole">
+                <option value="ack">応答確認</option><option value="progress">進捗</option>
+                <option value="greeting">あいさつ</option><option value="farewell">退出</option>
+                <option value="timeout">タイムアウト</option>
+              </select></label>
+              <label class="field span-2"><span class="field-label">クリップの文言</span><textarea id="audioText" rows="3" maxlength="4096"></textarea></label>
+              <label class="file-picker audio-file-picker"><span>MP3 を選択</span><input id="audioFile" type="file" accept="audio/mpeg,.mp3"></label>
+              <button class="btn-secondary" id="uploadAudio" type="button" disabled>アップロード</button>
+            </div>
+            <div class="action-result" id="audioResult" role="status" aria-live="polite"></div>
+            <div class="audio-list" id="audioClipList" aria-live="polite"></div>
+          </div>
+        </section>
+      </section>
+
+      <section id="panel-details" class="tab-panel" role="tabpanel" aria-labelledby="tab-details" tabindex="0" hidden>
+        <section class="settings-panel" aria-labelledby="detailsTitle">
+          <div class="panel-heading"><div><h2 id="detailsTitle">詳細設定</h2><p>プロバイダーや動作の詳細を設定します。</p></div></div>
+          <div class="field-grid" id="detailFields"></div>
+        </section>
+      </section>
+
+      <section id="panel-deploy" class="tab-panel" role="tabpanel" aria-labelledby="tab-deploy" tabindex="0" hidden>
+        <section class="settings-panel" aria-labelledby="deployTitle">
+          <div class="panel-heading"><div><h2 id="deployTitle">デプロイ診断（読み取り専用）</h2><p>現在の実行環境から取得した値です。ここでは変更できません。</p></div></div>
+          <div class="readonly-list" id="diagnosticsList"></div>
+        </section>
+      </section>
+
+      <section id="panel-connections" class="tab-panel" role="tabpanel" aria-labelledby="tab-connections" tabindex="0" hidden>
+        <section class="settings-panel" aria-labelledby="connectionTestsTitle">
+          <div class="panel-heading"><div><h2 id="connectionTestsTitle">接続テスト</h2><p>保存済みの接続情報で各サービスへの接続を確認します。</p></div></div>
+          <div class="connection-grid" id="connectionTests"></div>
+          <div class="action-result" id="connectionResult" role="status" aria-live="polite"></div>
+        </section>
+      </section>
+
+      <section id="panel-transfer" class="tab-panel" role="tabpanel" aria-labelledby="tab-transfer" tabindex="0" hidden>
+        <section class="settings-panel" aria-labelledby="transferTitle">
+          <div class="panel-heading"><div><h2 id="transferTitle">エクスポート / インポート</h2><p>資格情報と音声ファイルを含まない設定ファイルを扱います。</p></div></div>
+          <div class="transfer-grid">
+            <div class="transfer-card">
+              <strong>エクスポート</strong>
+              <p>現在の編集可能な非機密設定を JSON でダウンロードします。</p>
+              <button class="btn-secondary" id="exportSettings" type="button">設定をエクスポート</button>
+            </div>
+            <div class="transfer-card">
+              <strong>インポート</strong>
+              <p>Meetmate settings version 1 の JSON ファイルを選択します。</p>
+              <label class="file-picker"><span>ファイルを選択</span><input id="importFile" type="file" accept="application/json,.json"></label>
+              <button class="btn-secondary" id="importSettings" type="button" disabled>設定をインポート</button>
+            </div>
+            <div class="transfer-card span-2">
+              <strong>従来の `.env` ベンダー値を移行</strong>
+              <p>保存先が未設定のベンダー値だけを設定ファイルへ移します。Meetmate は `.env` を編集・削除しません。再起動を確認した後、不要な従来行はオペレーターが手動で削除してください。</p>
+              <button class="btn-secondary" id="migrateVendorSettings" type="button">ベンダー値を移行</button>
+            </div>
+          </div>
+          <div class="action-result" id="transferResult" role="status" aria-live="polite"></div>
+        </section>
+      </section>
+
+      <div class="settings-actions">
+        <p id="dirtyStatus">設定を読み込んでいます。</p>
+        <button class="settings-save" id="saveSettings" type="submit" disabled><span>変更を保存</span></button>
+      </div>
+    </form>
+  </main>
+  <div class="settings-toast" id="settingsToast" role="status" aria-live="polite"></div>
+</body>
+</html>

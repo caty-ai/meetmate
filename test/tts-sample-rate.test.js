@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
 const { EventEmitter } = require("node:events");
+const https = require("node:https");
 
 test("getPipelineConfig keeps STT at 16k and defaults TTS to 24k", () => {
   withEnv({ TTS_SAMPLE_RATE: undefined }, () => {
@@ -121,7 +122,72 @@ test("sentence-boundary silence uses the TTS sample rate", async () => {
   );
 });
 
+test("Fish TTS strips only canonical emotion tags when the live toggle is OFF", async (t) => {
+  const resolver = require("../src/settings/resolver");
+  const { EMOTION_TAGS } = require("../src/messages");
+  const originalRequest = https.request;
+  const bodies = [];
+  https.request = (_options, callback) => {
+    const req = new EventEmitter();
+    let body = "";
+    req.write = (chunk) => { body += String(chunk); };
+    req.setTimeout = () => req;
+    req.destroy = (error) => error && req.emit("error", error);
+    req.end = () => process.nextTick(() => {
+      bodies.push(body);
+      const response = new EventEmitter();
+      response.statusCode = 200;
+      response.headers = {};
+      response.destroy = () => {};
+      callback(response);
+      response.emit("data", Buffer.from([0, 0]));
+      response.emit("end");
+    });
+    return req;
+  };
+  t.after(() => {
+    https.request = originalRequest;
+    resolver.resetRuntimeForTest();
+  });
+
+  const setEmotionTags = (enabled) => {
+    resolver.resetRuntimeForTest();
+    resolver.initializeRuntime({
+      state: {
+        exists: true,
+        valid: true,
+        parsed: { agent: { emotionTags: enabled } },
+        revision: "a".repeat(64),
+        fingerprint: "tts-emotion-test",
+      },
+      startup: Object.freeze({
+        preDotenvEnv: Object.freeze({}),
+        dotenvSeeds: Object.freeze({}),
+        resolvedHome: "/tmp/meetmate-tts-emotion-test",
+        configPath: "/tmp/meetmate-tts-emotion-test/config.json",
+        connection: Object.freeze({ openclawUrl: "", openclawToken: "", openaiApiKey: "" }),
+      }),
+    });
+  };
+  const taggedText = `${EMOTION_TAGS[0].tag} hello ${EMOTION_TAGS[1].tag}`;
+  const { synthesize } = require("../src/tts-fish");
+  const options = { apiKey: "key", referenceId: "voice-33", sampleRate: 8_000, latency: "low", speed: 1.25, onAudio: () => {} };
+
+  setEmotionTags(false);
+  await synthesize(taggedText, options);
+  setEmotionTags(true);
+  await synthesize(taggedText, options);
+
+  assert.equal(bodies[0], '{"text":"hello","format":"pcm","sample_rate":8000,"latency":"low",'
+    + '"temperature":0.7,"top_p":0.7,"chunk_length":300,"normalize":true,'
+    + '"reference_id":"voice-33","speed":1.25,"prosody":{"speed":1.25}}');
+  assert.equal(JSON.parse(bodies[1]).text, taggedText);
+  assert.deepEqual(JSON.parse(bodies[1]).prosody, { speed: 1.25 });
+});
+
 function freshConfig() {
+  require("../src/settings/bootstrap").resetStartupForTest();
+  require("../src/settings/resolver").resetRuntimeForTest();
   const configPath = path.join(__dirname, "..", "src", "config.js");
   delete require.cache[require.resolve(configPath)];
   return require(configPath);

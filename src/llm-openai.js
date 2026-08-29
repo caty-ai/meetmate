@@ -163,6 +163,22 @@ function complete(messages, options = {}) {
 
 async function* streamChat(messages, options = {}) {
   if (options.signal?.aborted) throw new Error("LLM request aborted");
+  if (options.streamingEquivalentEnabled === false) {
+    const response = await complete(messages, options);
+    if (response.statusCode !== 200) {
+      throw new Error(`OpenAI-compatible error (${response.statusCode}): ${response.text.slice(0, 200)}`);
+    }
+    let payload;
+    try {
+      payload = JSON.parse(response.text);
+    } catch {
+      throw new Error("OpenAI-compatible completion returned invalid JSON");
+    }
+    const content = payload?.choices?.[0]?.message?.content;
+    if (typeof content !== "string") return;
+    yield* filterSilentRepliesStream((async function* completeChunk() { yield content; })());
+    return;
+  }
   let chunkCount = 0;
   for await (const chunk of streamOpenAI(messages, options)) {
     chunkCount += 1;

@@ -4,6 +4,14 @@ const assert = require("node:assert/strict");
 const { createLlmProvider } = require("../src/llm-provider");
 const openclaw = require("../src/llm-openclaw");
 
+function resetSettings() {
+  require("../src/settings/bootstrap").resetStartupForTest();
+  require("../src/settings/resolver").resetRuntimeForTest();
+}
+
+test.beforeEach(resetSettings);
+test.afterEach(resetSettings);
+
 test("default provider is openclaw", () => {
   const previous = process.env.LLM_PROVIDER;
   delete process.env.LLM_PROVIDER;
@@ -60,16 +68,16 @@ test("LLM_PROVIDER selects a provider and options.provider takes precedence", ()
     assert.equal(calls.length, 0);
 
     process.env.LLM_PROVIDER = "bogus";
+    resetSettings();
     const fallback = createLlmProvider();
     assert.equal(fallback.name, "openclaw");
     assert.strictEqual(fallback.streamChat, openclaw.streamChat);
-    assert.equal(calls.length, 1);
-    assert.ok(calls[0].join(" ").includes("bogus"));
+    assert.equal(calls.length, 0);
 
     const overridden = createLlmProvider({ provider: "openclaw" });
     assert.equal(overridden.name, "openclaw");
     assert.strictEqual(overridden.streamChat, openclaw.streamChat);
-    assert.equal(calls.length, 1);
+    assert.equal(calls.length, 0);
   } finally {
     console.error = originalError;
     if (previous === undefined) delete process.env.LLM_PROVIDER;

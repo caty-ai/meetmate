@@ -74,6 +74,7 @@ test("streamChat parses OpenAI SSE chunks and sends the configured request", asy
       temperature: 0.4,
       maxTokens: 123,
       sessionUser: "meet-1",
+      streamingEquivalentEnabled: true,
     },
   ));
 
@@ -90,6 +91,38 @@ test("streamChat parses OpenAI SSE chunks and sends the configured request", asy
     user: "meet-1",
   });
   assert.equal(captured.options.headers["X-Caty-Agent-Trust"], undefined);
+});
+
+test("streamChat adapts nonstreaming completion as one filtered chunk when streaming-equivalent is disabled", async (t) => {
+  const captured = [];
+  installMockServer(t, async (request) => {
+    captured.push(request);
+    return { chunks: ['{"choices":[{"message":{"content":"complete reply"}}]}'] };
+  });
+
+  const chunks = await collect(openai.streamChat(
+    [{ role: "user", content: "hello" }],
+    { baseUrl: "http://mock.test", apiKey: "key", model: "model", streamingEquivalentEnabled: false },
+  ));
+
+  assert.deepEqual(chunks, ["complete reply"]);
+  assert.equal(captured.length, 1);
+  assert.equal(captured[0].body.stream, false);
+});
+
+test("disabled streaming-equivalent still applies complete-reply suppression", async (t) => {
+  installMockServer(t, async () => ({
+    chunks: ['{"choices":[{"message":{"content":"NO_REPLY"}}]}'],
+  }));
+
+  const chunks = await collect(openai.streamChat([], {
+    baseUrl: "http://mock.test",
+    apiKey: "key",
+    model: "model",
+    streamingEquivalentEnabled: false,
+  }));
+
+  assert.deepEqual(chunks, []);
 });
 
 test("complete returns status and text using a base-path-aware endpoint", async (t) => {

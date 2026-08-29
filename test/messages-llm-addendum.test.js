@@ -1,11 +1,16 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
+const fs = require("node:fs");
+const path = require("node:path");
 
 const {
   DEFAULT_MESSAGES,
+  EMOTION_TAGS,
+  buildGatewayBriefingSystem,
   buildVoiceAddendumFromMessages,
   resolveMessages,
+  stripCanonicalEmotionTags,
 } = require("../src/messages");
 
 const ORIGINAL_OPENCLAW_ADDENDUM = `あなたは音声通話中です。
@@ -76,4 +81,48 @@ test("voice addendum template and rendered addendum overrides retain precedence"
   });
   assert.equal(renderedMessages.prompts.voiceSystemAddendum, "fully rendered override");
   assert.equal(DEFAULT_MESSAGES.prompts.voiceSystemAddendum, undefined);
+});
+
+test("canonical emotion data composes voice and gateway prompts with a tag-free OFF branch", () => {
+  assert.equal(Object.isFrozen(EMOTION_TAGS), true);
+  assert.deepEqual(EMOTION_TAGS.map(({ tag, labelJa, fallback }) => ({ tag, labelJa, ...(fallback ? { fallback } : {}) })), [
+    { tag: "[soft voice]", labelJa: "デフォルト・優しい声", fallback: true },
+    { tag: "[warm]", labelJa: "温かみ" },
+    { tag: "[friendly, warm]", labelJa: "親しみ＋温かみ" },
+    { tag: "[empathetic, unhurried]", labelJa: "謝罪・落ち着き" },
+    { tag: "[thoughtful]", labelJa: "考え深く" },
+  ]);
+
+  const enabledVoice = buildVoiceAddendumFromMessages(resolveMessages(), { emotionTags: true });
+  const disabledVoice = buildVoiceAddendumFromMessages(resolveMessages(), { emotionTags: false });
+  const enabledGateway = buildGatewayBriefingSystem({ emotionTags: true });
+  const disabledGateway = buildGatewayBriefingSystem({ emotionTags: false });
+  for (const { tag } of EMOTION_TAGS) {
+    assert.equal(enabledVoice.includes(tag) || enabledGateway.includes(tag), true);
+    assert.equal(disabledVoice.includes(tag), false);
+    assert.equal(disabledGateway.includes(tag), false);
+  }
+  assert.equal(stripCanonicalEmotionTags(`${EMOTION_TAGS[0].tag} hello ${EMOTION_TAGS[1].tag}`), "hello");
+});
+
+test("canonical emotion literals occur only in the structured source across src and public", () => {
+  const root = path.join(__dirname, "..");
+  const files = ["src", "public"].flatMap((directory) => fs.readdirSync(path.join(root, directory), { recursive: true })
+    .filter((entry) => fs.statSync(path.join(root, directory, entry)).isFile())
+    .map((entry) => path.join(root, directory, entry)));
+  const source = files.map((file) => fs.readFileSync(file, "utf8")).join("\n");
+  const messagesSource = fs.readFileSync(path.join(root, "src", "messages.js"), "utf8");
+
+  for (const { tag } of EMOTION_TAGS) {
+    assert.equal(source.split(tag).length - 1, 1, `${tag} must have one production literal`);
+    assert.match(messagesSource, new RegExp(`tag: ${JSON.stringify(tag).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+  }
+
+  const examples = fs.readdirSync(root).filter((name) => name.endsWith(".example"));
+  const enumeratedTags = new RegExp(EMOTION_TAGS
+    .map(({ tag }) => tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("[^\\n]{0,240}"));
+  for (const example of examples) {
+    assert.doesNotMatch(fs.readFileSync(path.join(root, example), "utf8"), enumeratedTags, example);
+  }
 });

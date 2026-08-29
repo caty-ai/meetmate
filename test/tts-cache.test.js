@@ -23,6 +23,130 @@ test("cache key changes with content inputs and ignores streaming-only inputs", 
   });
 });
 
+test("live emotion toggles use distinct effective text for cache, managed lookup, and synthesis", async (t) => {
+  const resolver = require("../src/settings/resolver");
+  const directory = tempDir();
+  t.after(() => {
+    resolver.resetRuntimeForTest();
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+  const startup = Object.freeze({
+    preDotenvEnv: Object.freeze({}),
+    dotenvSeeds: Object.freeze({}),
+    resolvedHome: directory,
+    configPath: path.join(directory, "config.json"),
+    connection: Object.freeze({ openclawUrl: "", openclawToken: "", openaiApiKey: "" }),
+  });
+  const state = (enabled, revision) => ({
+    exists: true,
+    valid: true,
+    parsed: { agent: { emotionTags: enabled }, tts: { cache: { enabled: true } } },
+    revision,
+    fingerprint: `bytes:${revision}`,
+  });
+  resolver.resetRuntimeForTest();
+  resolver.initializeRuntime({ state: state(true, "a".repeat(64)), startup });
+
+  const texts = [];
+  const cache = createTtsCache({
+    dir: path.join(directory, "cache"),
+    synthesizeFn: async (text, options) => {
+      texts.push(text);
+      options.onAudio(Buffer.from([texts.length, texts.length]));
+    },
+  });
+  const phrase = "[soft voice] 了解です";
+  const options = { sampleRate: 24_000, speed: 1, onAudio: () => {} };
+  const taggedFile = cache.fileFor(_test.effectiveSynthesisText(phrase), options);
+  await cache.synthesize(phrase, options);
+
+  resolver.publishState(state(false, "b".repeat(64)));
+  const plainFile = cache.fileFor(_test.effectiveSynthesisText(phrase), options);
+  await cache.synthesize(phrase, options);
+  assert.notEqual(taggedFile, plainFile);
+  assert.deepEqual(texts, [phrase, "了解です"]);
+
+  resolver.publishState(state(true, "c".repeat(64)));
+  await cache.synthesize(phrase, options);
+  assert.deepEqual(texts, [phrase, "了解です"], "OFF then ON reuses only the matching tagged cache");
+});
+
+test("effective text is fixed once when a live publish lands during synthesis lookup", async (t) => {
+  const resolver = require("../src/settings/resolver");
+  const audio = require("../src/settings/audio");
+  const directory = tempDir();
+  const startup = Object.freeze({
+    preDotenvEnv: Object.freeze({}),
+    dotenvSeeds: Object.freeze({}),
+    resolvedHome: directory,
+    configPath: path.join(directory, "config.json"),
+    connection: Object.freeze({ openclawUrl: "", openclawToken: "", openaiApiKey: "" }),
+  });
+  const state = (enabled, revision) => ({
+    exists: true,
+    valid: true,
+    parsed: { agent: { emotionTags: enabled }, tts: { cache: { enabled: true } } },
+    revision,
+    fingerprint: `bytes:${revision}`,
+  });
+  resolver.resetRuntimeForTest();
+  resolver.initializeRuntime({ state: state(true, "d".repeat(64)), startup });
+  const originalLookup = audio.lookupManagedPcm;
+  audio.lookupManagedPcm = () => {
+    resolver.publishState(state(false, "e".repeat(64)));
+    return null;
+  };
+  t.after(() => {
+    audio.lookupManagedPcm = originalLookup;
+    resolver.resetRuntimeForTest();
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+
+  const phrase = "[soft voice] fixed once";
+  const synthesized = [];
+  const options = { sampleRate: 24_000, speed: 1, onAudio: () => {} };
+  const cache = createTtsCache({
+    dir: path.join(directory, "cache"),
+    synthesizeFn: async (text, delegateOptions) => {
+      synthesized.push(text);
+      delegateOptions.onAudio(Buffer.from([1, 2]));
+    },
+  });
+  await cache.synthesize(phrase, options);
+
+  assert.deepEqual(synthesized, [phrase]);
+  assert.equal(fs.existsSync(cache.fileFor(phrase, options)), true);
+  assert.equal(fs.existsSync(cache.fileFor("fixed once", options)), false);
+});
+
+test("tag-free whitespace keeps the existing ON cache identity when emotion tags are OFF", (t) => {
+  const resolver = require("../src/settings/resolver");
+  const directory = tempDir();
+  const startup = Object.freeze({
+    preDotenvEnv: Object.freeze({}), dotenvSeeds: Object.freeze({}), resolvedHome: directory,
+    configPath: path.join(directory, "config.json"),
+    connection: Object.freeze({ openclawUrl: "", openclawToken: "", openaiApiKey: "" }),
+  });
+  const state = (enabled, revision) => ({
+    exists: true, valid: true, parsed: { agent: { emotionTags: enabled } }, revision, fingerprint: `bytes:${revision}`,
+  });
+  resolver.resetRuntimeForTest();
+  resolver.initializeRuntime({ state: state(true, "f".repeat(64)), startup });
+  t.after(() => {
+    resolver.resetRuntimeForTest();
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+
+  const phrase = "keep  internal   spaces";
+  const onText = _test.effectiveSynthesisText(phrase);
+  resolver.publishState(state(false, "0".repeat(64)));
+  const offText = _test.effectiveSynthesisText(phrase);
+  assert.equal(onText, phrase);
+  assert.equal(offText, phrase);
+  assert.equal(_test.cacheKey(onText), _test.cacheKey(offText));
+  assert.equal(_test.effectiveSynthesisText("left  [warm]   right"), "left right");
+});
+
 test("miss calls synthesize, forwards chunks, and writes emitted PCM", async () => {
   const dir = tempDir();
   const chunks = [Buffer.from([1, 2]), Buffer.from([3, 4, 5, 6])];
@@ -412,19 +536,27 @@ function tempDir() {
 
 function withEnv(values, fn) {
   const previous = setEnv(values);
+  require("../src/settings/bootstrap").resetStartupForTest();
+  require("../src/settings/resolver").resetRuntimeForTest();
   try {
     return fn();
   } finally {
     restoreEnv(previous);
+    require("../src/settings/bootstrap").resetStartupForTest();
+    require("../src/settings/resolver").resetRuntimeForTest();
   }
 }
 
 async function withEnvAsync(values, fn) {
   const previous = setEnv(values);
+  require("../src/settings/bootstrap").resetStartupForTest();
+  require("../src/settings/resolver").resetRuntimeForTest();
   try {
     return await fn();
   } finally {
     restoreEnv(previous);
+    require("../src/settings/bootstrap").resetStartupForTest();
+    require("../src/settings/resolver").resetRuntimeForTest();
   }
 }
 

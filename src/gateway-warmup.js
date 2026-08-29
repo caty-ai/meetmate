@@ -3,6 +3,7 @@
 
 const { URL } = require("url");
 const { DEFAULT_MESSAGES } = require("./messages");
+const { getEffectiveValue } = require("./settings/resolver");
 
 const DEFAULT_WARMUP_TIMEOUT_MS = 8_000;
 
@@ -11,11 +12,10 @@ const DEFAULT_WARMUP_TIMEOUT_MS = 8_000;
  * @returns {Promise<{status: string, purposeStatement: string|null}>}
  */
 function warmUpGatewaySession(sessionId, config, briefing = null) {
-  // Allow per-agent timeout via config (gateway.warmupTimeoutMs) or env var
-  const WARMUP_REQUEST_TIMEOUT_MS =
-    Number(config?.warmupTimeoutMs) ||
-    Number(process.env.GATEWAY_WARMUP_TIMEOUT_MS) ||
-    DEFAULT_WARMUP_TIMEOUT_MS;
+  const configuredTimeout = getEffectiveValue("gateway_warmup_timeout_ms");
+  const WARMUP_REQUEST_TIMEOUT_MS = configuredTimeout === undefined
+    ? DEFAULT_WARMUP_TIMEOUT_MS
+    : Number(configuredTimeout);
   return new Promise((resolve) => {
     let settled = false;
     const done = (status, purposeStatement = null) => {
@@ -25,7 +25,7 @@ function warmUpGatewaySession(sessionId, config, briefing = null) {
     };
 
     const sessionUser = String(sessionId || "").trim();
-    const configuredProvider = String(config?.llm?.provider || process.env.LLM_PROVIDER || "openclaw").toLowerCase();
+    const configuredProvider = String(config?.llm?.provider || getEffectiveValue("llm_provider") || "openclaw").toLowerCase();
     const provider = configuredProvider === "openai-compatible" ? configuredProvider : "openclaw";
     if (provider !== "openclaw") {
       console.log(`⏭️  Gateway warm-up skipped (provider=${provider}, session=${sessionUser})`);
@@ -51,8 +51,11 @@ function warmUpGatewaySession(sessionId, config, briefing = null) {
     let gatewayUrl;
     try {
       gatewayUrl = new URL(openclawUrl);
+      if (!["http:", "https:"].includes(gatewayUrl.protocol)
+          || gatewayUrl.username || gatewayUrl.password || gatewayUrl.hash
+          || openclawUrl !== openclawUrl.trim()) throw new Error("invalid");
     } catch {
-      console.log(`⏭️  Gateway warm-up skipped (invalid gateway url: ${openclawUrl})`);
+      console.log("⏭️  Gateway warm-up skipped (invalid gateway url)");
       done("skipped_invalid_gateway_url");
       return;
     }
@@ -116,8 +119,8 @@ function warmUpGatewaySession(sessionId, config, briefing = null) {
             if (purposeStatement) {
               console.log(`✅  Purpose statement generated: "${purposeStatement}"`);
             }
-          } catch (err) {
-            console.error(`⚠️  Purpose statement parse error: ${err.message}`);
+          } catch {
+            console.error("⚠️  Purpose statement parse error");
           }
         }
 
@@ -129,13 +132,13 @@ function warmUpGatewaySession(sessionId, config, briefing = null) {
           done("timeout");
           return;
         }
-        console.error(`❌  Gateway warm-up request error (session=${sessionUser}):`, err.message || err.code || err);
+        console.error(`❌  Gateway warm-up request error (session=${sessionUser})`);
         done("request_error");
       });
 
       console.log(`🔥  Gateway warm-up started (session=${sessionUser}, briefing=${briefingText ? "yes" : "no"})`);
-    } catch (err) {
-      console.error(`❌  Gateway warm-up setup error (session=${sessionUser}):`, err.message);
+    } catch {
+      console.error(`❌  Gateway warm-up setup error (session=${sessionUser})`);
       done("setup_error");
     }
   });
@@ -151,19 +154,18 @@ function warmUpMultipleAgents(sessionId, agents, selectedAgentIds, baseConfig, b
 
     const agentConfig = {
       ...baseConfig,
-      openclawUrl: agent.gatewayUrl || baseConfig?.openclawUrl || null,
-      openclawToken: agent.gatewayToken || baseConfig?.openclawToken || null,
+      openclawUrl: baseConfig?.openclawUrl || null,
+      openclawToken: baseConfig?.openclawToken || null,
       llm: {
         ...(baseConfig?.llm || {}),
         model: agent.model || baseConfig?.llm?.model,
       },
     };
-
     return warmUpGatewaySession(`meet-${sessionId}-${agentId}`, agentConfig, briefing);
   });
 
-  Promise.all(promises).catch((err) => {
-    console.error("⚠️  Multi-agent warm-up partial failure:", err.message);
+  Promise.all(promises).catch(() => {
+    console.error("⚠️  Multi-agent warm-up partial failure");
   });
 }
 
