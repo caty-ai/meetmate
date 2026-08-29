@@ -176,8 +176,7 @@ test("stalled idle fetch latches the diagnostic after the grace window and a lat
 
   gate.release();
   await settleMicrotasks();
-  assert.equal(contract.acceptState({ ...marker, kind: "idle", sequence: 3, sampleIndex: null, sampleRate: null }, 1_100), true);
-  assert.equal(contract.getState().currentFrame, "idle", "a late idle frame replaces the diagnostic");
+  assert.equal(contract.getState().currentFrame, "idle", "a decoded idle replaces the diagnostic without any state event");
 });
 
 test("frame assets require the session capability and an exact allowlisted PNG route", { concurrency: false }, async (t) => {
