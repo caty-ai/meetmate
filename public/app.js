@@ -1,4 +1,26 @@
-(function () {
+function parseJoinErrorText(text) {
+  let payload;
+  try { payload = JSON.parse(String(text || "")); } catch { return String(text || ""); }
+  const error = payload?.error;
+  if (!error || typeof error !== "object") return String(text || "");
+  if (error.code === "MEETING_NOT_READY") {
+    const causes = Array.isArray(error.blockers)
+      ? error.blockers.map((blocker) => blocker?.message || blocker?.code).filter(Boolean)
+      : [];
+    return [error.message || "ミーティングの接続設定を確認してください", ...causes].join(" / ");
+  }
+  if (error.code === "MEETING_SETUP_REQUIRED") {
+    const issues = Array.isArray(error.issues)
+      ? error.issues.map((issue) => issue?.fieldId || issue?.code).filter(Boolean)
+      : [];
+    return [error.message || "ミーティング設定が未完了です", ...issues].join(" / ");
+  }
+  return error.message || String(text || "");
+}
+
+if (typeof module !== "undefined" && module.exports) module.exports = { parseJoinErrorText };
+
+if (typeof document !== "undefined") (function () {
   const root = document.documentElement;
   const form = document.getElementById("joinForm");
   const statusEl = document.getElementById("status");
@@ -30,6 +52,9 @@
   const installMessage = document.getElementById("installMessage");
   const installButton = document.getElementById("installButton");
   const installDismiss = document.getElementById("installDismiss");
+  const readinessPanel = document.getElementById("readinessPanel");
+  const readinessLines = document.getElementById("readinessLines");
+  const readinessRecheck = document.getElementById("readinessRecheck");
 
   const INSTALL_DISMISSED_KEY = "aiMeetParticipantInstallDismissed";
 
@@ -48,6 +73,8 @@
   let endedShownUntilMs = 0;
   let pollEpoch = 0;
   let deferredInstallPrompt = null;
+  let readinessState = null;
+  let readinessChecking = false;
 
   function getStoredTheme() {
     try {
@@ -196,7 +223,7 @@
   }
 
   function updateSubmitButtonState() {
-    const canSubmit = Boolean(extractedMeetingUrl) && !isSubmitting && !hasActiveSession;
+    const canSubmit = Boolean(extractedMeetingUrl) && readinessState?.ready === true && !isSubmitting && !hasActiveSession;
     submitBtn.disabled = !canSubmit;
     if (hasActiveSession) {
       submitLabel.textContent = "通話中（退出してから再参加）";
@@ -204,6 +231,85 @@
       submitLabel.textContent = "起動中...";
     } else {
       submitLabel.textContent = "Meet に参加させる";
+    }
+  }
+
+  function isLoopbackView() {
+    return ["localhost", "127.0.0.1", "::1", "[::1]"].includes(location.hostname);
+  }
+
+  function localSettingsUrl(fieldId) {
+    const port = location.port || "5005";
+    const hash = String(fieldId || "").startsWith("panel-") ? fieldId : `field-${fieldId}`;
+    return `http://127.0.0.1:${port}/settings#${hash}`;
+  }
+
+  function appendReadinessLine(kind, text, fieldId) {
+    const line = document.createElement("p");
+    line.className = `readiness-line ${kind}`;
+    if (kind === "blocker" && fieldId && isLoopbackView()) {
+      const link = document.createElement("a");
+      link.href = localSettingsUrl(fieldId);
+      link.textContent = text;
+      line.append(link);
+    } else {
+      line.append(document.createTextNode(text));
+      if (kind === "blocker" && fieldId) {
+        const url = localSettingsUrl(fieldId);
+        line.append(document.createTextNode(`。同じPCで localhost:${location.port || "5005"}/settings を開いてください`));
+        const copy = document.createElement("button");
+        copy.type = "button";
+        copy.className = "readiness-copy";
+        copy.textContent = "URLをコピー";
+        copy.addEventListener("click", () => navigator.clipboard?.writeText(url));
+        line.append(copy);
+      }
+    }
+    readinessLines.append(line);
+  }
+
+  function renderReadiness() {
+    readinessLines.replaceChildren();
+    const blockers = Array.isArray(readinessState?.blockers) ? readinessState.blockers : [];
+    const systems = Array.isArray(readinessState?.systems) ? readinessState.systems : [];
+    for (const blocker of blockers) appendReadinessLine("blocker", blocker.message || blocker.code, blocker.fieldId);
+    for (const system of systems) {
+      if (system.code === "PENDING") appendReadinessLine("pending", `${system.id}: 確認中…`);
+      else if (!system.ok && !blockers.some((blocker) => blocker.system === system.id)) {
+        appendReadinessLine("warning", `${system.id}: ${system.code}（一時的な問題の可能性があります。Join はブロックしません）`);
+      } else if (system.stale) {
+        appendReadinessLine("warning", `${system.id}: 前回の接続確認結果が古くなっています`);
+      }
+    }
+    readinessPanel.classList.toggle("is-hidden", readinessLines.children.length === 0);
+    readinessRecheck.disabled = readinessChecking;
+    updateSubmitButtonState();
+  }
+
+  async function loadReadiness() {
+    try {
+      const response = await fetch("/readiness", { headers: { Accept: "application/json" } });
+      if (!response.ok) throw new Error("readiness unavailable");
+      readinessState = await response.json();
+    } catch {
+      readinessState = null;
+    }
+    renderReadiness();
+  }
+
+  async function recheckReadiness() {
+    if (readinessChecking) return;
+    readinessChecking = true;
+    renderReadiness();
+    try {
+      const response = await fetch("/readiness/recheck", { method: "POST", headers: { Accept: "application/json" } });
+      if (response.ok) readinessState = await response.json();
+      else if (response.status === 429) setStatus("loading", `再チェックは制限中です。${response.headers.get("Retry-After") || "数"}秒後にお試しください。`);
+    } catch {
+      // Keep the last cache snapshot visible.
+    } finally {
+      readinessChecking = false;
+      await loadReadiness();
     }
   }
 
@@ -318,6 +424,7 @@
     } catch {
       // ignore polling errors
     }
+    await loadReadiness();
   }
 
   function startPolling() {
@@ -563,11 +670,13 @@
     event.preventDefault();
 
     updateMeetingUrlStatus();
-    if (!extractedMeetingUrl || isSubmitting || hasActiveSession) {
+    if (!extractedMeetingUrl || readinessState?.ready !== true || isSubmitting || hasActiveSession) {
       if (hasActiveSession) {
         setStatus("error", "既にアクティブなセッションがあります。退出してから再参加してください。");
       } else if (!extractedMeetingUrl) {
         setStatus("error", "Meet / Zoom URLが見つかりません");
+      } else if (readinessState?.ready !== true) {
+        setStatus("error", "接続確認が完了するまでお待ちください。設定が必要な項目は上の案内を確認してください。");
       }
       return;
     }
@@ -602,7 +711,7 @@
         setStatus("success", `参加リクエストを送信しました。ミーティング画面でBotの参加を確認してください。${text ? ` ${text}` : ""}`);
         setTimeout(pollActiveSession, 500);
       } else {
-        setStatus("error", text);
+        setStatus("error", parseJoinErrorText(text));
       }
     } catch (err) {
       setStatus("error", `接続エラー: ${err.message}`);
@@ -620,6 +729,10 @@
     setTimeout(updateMeetingUrlStatus, 0);
   });
   leaveBtn.addEventListener("click", leaveMeeting);
+  readinessRecheck.addEventListener("click", recheckReadiness);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") loadReadiness();
+  });
   window.addEventListener("beforeunload", () => {
     stopPolling();
     stopElapsedTimer();
@@ -631,6 +744,7 @@
   loadAgentsFromServer();
   loadCalibrateStatus();
   loadMetrics();
+  loadReadiness();
   updateMeetingUrlStatus();
   startPolling();
 

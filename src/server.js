@@ -42,6 +42,7 @@ const pkg = (() => {
     return { version: "unknown" };
   }
 })();
+const INSTANCE_ID = crypto.randomUUID();
 
 function writeJson(res, status, body) {
   const json = JSON.stringify(body);
@@ -53,7 +54,7 @@ function writeJson(res, status, body) {
 }
 
 async function bootstrap() {
-  await meetRoutes.init({ detectNgrok: true, loadAvatar: true });
+  await meetRoutes.init({ detectNgrok: true, loadAvatar: true, instanceId: INSTANCE_ID });
 
   let server;
   const handleSettings = createSettingsHandler({ port: () => server?.address()?.port || PORT });
@@ -76,6 +77,7 @@ async function bootstrap() {
         service: config?.agent?.id || "ai-meet-participant",
         agentId,
         version: pkg.version,
+        instanceId: INSTANCE_ID,
         uptime: process.uptime(),
         setupMode: settingsStatus.setupMode,
         meetingReady: settingsStatus.meetingReady,
@@ -137,6 +139,7 @@ async function bootstrap() {
     const address = server.address();
     setServerPort(address.port);
     console.log(`Settings UI: http://localhost:${address.port}/settings`);
+    meetRoutes.startReadinessBootstrap();
   });
 }
 

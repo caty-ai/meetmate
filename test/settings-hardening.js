@@ -1149,8 +1149,9 @@ test("T12-07 empty-home server bootstrap stays alive and serves health plus setu
   assert.equal(health.setupMode, true);
   assert.equal(health.meetingReady, false);
   assert.equal(Array.isArray(health.settingsIssues), true);
+  assert.equal(typeof health.instanceId, "string");
   assert.deepEqual(Object.keys(health).filter((key) => !["ok", "service", "agentId", "version", "uptime"].includes(key)).sort(), [
-    "meetingReady", "settingsIssues", "setupMode",
+    "instanceId", "meetingReady", "settingsIssues", "setupMode",
   ]);
   assert.equal(result.join.status, 503);
   assert.equal(JSON.parse(result.join.body).error.code, "MEETING_SETUP_REQUIRED");
@@ -1469,7 +1470,7 @@ test("settings UI keeps six accessible tabs and uses injected registry data with
   assert.match(js, /fetch\("\/api\/settings"/);
   assert.match(js, /method: "PUT"/);
   assert.match(js, /NULLABLE_NUMBER_FIELDS\.has\(entry\.id\) \? null : ""/);
-  assert.match(js, /these fields take effect at next boot/);
+  assert.match(js, /保存 → 再起動 → Join/);
   for (const fixture of ["meeting-assistant", "U012MOCK345", "meetmate-demo.ngrok.app", "greeting-friendly.mp3"]) {
     assert.doesNotMatch(`${html}\n${js}`, new RegExp(fixture.replaceAll(".", "\\.")));
   }

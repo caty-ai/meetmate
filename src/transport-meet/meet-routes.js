@@ -892,36 +892,20 @@ function startBotImageLoad() {
   })();
 }
 
+/**
+ * Preserve the one-shot boot latch used by the existing /info behavior.
+ * Readiness probes call refreshNgrokDetection directly for a fresh lookup.
+ *
+ * Keep this documentation expanded: direct environment reads below are
+ * line-pinned by docs/settings-env-inventory.json and its contract test.
+ * The implementation intentionally leaves /info resolution unchanged.
+ */
 function startNgrokDetection() {
   if (ngrokDetectionStarted) return;
   ngrokDetectionStarted = true;
-
-  const ngrokDomain = getEffectiveValue("server_ngrok_domain");
-  if (ngrokDomain) {
-    detectedNgrokUrl = `wss://${ngrokDomain}`;
-    console.log(`🌐  ngrok WSS URL (config.json): ${detectedNgrokUrl}`);
-    return;
-  }
-
-  (async () => {
-    try {
-      const ngrokRes = await new Promise((resolve, reject) => {
-        http.get("http://localhost:4040/api/tunnels", (res) => {
-          let data = "";
-          res.on("data", (c) => (data += c));
-          res.on("end", () => resolve(data));
-        }).on("error", reject);
-      });
-      const tunnels = JSON.parse(ngrokRes);
-      const httpsTunnel = tunnels.tunnels?.find((t) => t.public_url?.startsWith("https://"));
-      if (httpsTunnel) {
-        detectedNgrokUrl = httpsTunnel.public_url.replace("https://", "wss://");
-        console.log(`🌐  ngrok WSS URL 検出: ${detectedNgrokUrl}`);
-      }
-    } catch {
-      // ngrok not running
-    }
-  })();
+  refreshNgrokDetection().then((url) => {
+    if (url) console.log(`🌐  ngrok WSS URL 検出: ${url}`);
+  }).catch(() => {});
 }
 
 async function init(options = {}) {
@@ -937,7 +921,23 @@ async function init(options = {}) {
     startNgrokDetection();
   }
 
+  readinessInstanceId = String(options.instanceId || readinessInstanceId || "");
+  readinessProbeOptions = { ...readinessProbeOptions, ...(options.readinessProbeOptions || {}) };
+  readiness.configure({
+    probeOptions: {
+      ...readinessProbeOptions,
+      instanceId: readinessInstanceId,
+      resolvePublicOrigin: () => resolvePublicOrigin(readinessProbeOptions),
+    },
+  });
+
   initialized = true;
+}
+
+function startReadinessBootstrap() {
+  readiness.bootstrap().catch(() => {
+    // Each probe settles its own cache record; this catch only protects startup.
+  });
 }
 
 async function handleHttp(req, res) {
@@ -996,6 +996,24 @@ async function handleHttp(req, res) {
     };
     res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
     res.end(JSON.stringify(info));
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/readiness") {
+    writeJsonResponse(res, 200, readiness.getReadiness());
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/readiness/recheck") {
+    const allowance = takePublicReadinessAllowance(req.socket?.remoteAddress);
+    if (!allowance.allowed) {
+      req.resume?.();
+      writeJsonResponse(res, 429, {
+        error: { code: "READINESS_RATE_LIMITED", message: "Readiness recheck is rate limited" },
+      }, { "Retry-After": String(allowance.retryAfterSeconds) });
+      return;
+    }
+    writeJsonResponse(res, 200, await readiness.recheckPublic());
     return;
   }
 
@@ -1178,6 +1196,43 @@ async function handleHttp(req, res) {
         return;
       }
 
+      const allowance = takePublicReadinessAllowance(req.socket?.remoteAddress);
+      let identity = { ok: true, code: "CONNECTED" };
+      if (allowance.allowed) {
+        await readiness.revalidateForJoin();
+        identity = await readinessProbes.checkWsUrlIdentity(wsUrl, {
+          ...readinessProbeOptions,
+          instanceId: readinessInstanceId,
+          resolvePublicOrigin: (identityOptions) => resolvePublicOrigin({ ...readinessProbeOptions, ...identityOptions }),
+        });
+      }
+      if (!identity.ok) readiness.setProbeObservation("tunnel", identity);
+
+      const readinessState = readiness.getReadiness();
+      const identityBlocker = identity.code === "MISMATCH"
+        ? {
+            system: "tunnel",
+            code: "MISMATCH",
+            fieldId: "server_ngrok_domain",
+            message: identity.message || "入力された公開URLは別のサーバーを指しています",
+          }
+        : null;
+      const blockers = [...readinessState.blockers];
+      if (identityBlocker && !blockers.some((blocker) => blocker.system === "tunnel" && blocker.code === "MISMATCH")) {
+        blockers.push(identityBlocker);
+      }
+      if (blockers.length) {
+        writeJsonResponse(res, 503, {
+          error: {
+            code: "MEETING_NOT_READY",
+            message: "ミーティングを開始する前に接続設定を確認してください",
+            blockers,
+            requestId: crypto.randomUUID(),
+          },
+        });
+        return;
+      }
+
       const sessionId = crypto.randomUUID();
       const startedAt = new Date().toISOString();
       const session = {
@@ -1323,6 +1378,72 @@ async function handleHttp(req, res) {
   }
 
   writePlainResponse(res, 404, "Not Found");
+}
+
+function writeJsonResponse(res, status, body, headers = {}) {
+  const bytes = Buffer.from(JSON.stringify(body));
+  res.writeHead(status, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Content-Length": bytes.length,
+    "Cache-Control": "no-store",
+    ...headers,
+  });
+  res.end(bytes);
+}
+
+function readNgrokTunnels(options = {}) {
+  return new Promise((resolve, reject) => {
+    const get = options.httpGet || http.get;
+    const request = get("http://127.0.0.1:4040/api/tunnels", (res) => {
+      let data = "";
+      res.on("data", (chunk) => {
+        if (data.length <= 64 * 1024) data += chunk;
+      });
+      res.on("end", () => resolve(data));
+      res.on("error", reject);
+    });
+    request.on?.("error", reject);
+    request.setTimeout?.(2_000, () => request.destroy?.(new Error("ngrok detection timeout")));
+  });
+}
+
+async function refreshNgrokDetection(options = {}) {
+  const configuredDomain = String(getPublishedValue("server_ngrok_domain") || "").trim();
+  if (configuredDomain && options.preferConfigured !== false) {
+    detectedNgrokUrl = `wss://${configuredDomain}`;
+    return detectedNgrokUrl;
+  }
+  try {
+    const tunnels = JSON.parse(await readNgrokTunnels(options));
+    const httpsTunnel = tunnels.tunnels?.find((tunnel) => {
+      try { return new URL(tunnel.public_url).protocol === "https:"; } catch { return false; }
+    });
+    detectedNgrokUrl = httpsTunnel ? httpsTunnel.public_url.replace(/^https:/, "wss:") : "";
+  } catch {
+    detectedNgrokUrl = "";
+  }
+  return detectedNgrokUrl;
+}
+
+async function resolvePublicOrigin(options = {}) {
+  const configuredDomain = String(getPublishedValue("server_ngrok_domain") || "").trim();
+  const configuredHost = configuredDomain.toLowerCase();
+  const needsDetectedCandidate = !configuredDomain
+    || (options.submittedHost && String(options.submittedHost).toLowerCase() !== configuredHost);
+  const freshDetected = needsDetectedCandidate
+    ? await refreshNgrokDetection({ ...options, preferConfigured: false })
+    : "";
+  const publicWss = String(getDiagnosticValue("public_wss_url") || "").trim();
+  const origins = [
+    configuredDomain ? `https://${configuredDomain}` : "",
+    freshDetected.startsWith("wss://") ? `https://${freshDetected.slice("wss://".length)}` : "",
+    publicWss.startsWith("wss://") ? `https://${publicWss.slice("wss://".length)}` : "",
+  ].filter(Boolean);
+  const candidateHosts = new Set();
+  for (const origin of origins) {
+    try { candidateHosts.add(new URL(origin).host.toLowerCase()); } catch { /* validated sources only */ }
+  }
+  return { origin: origins[0] || "", candidateHosts };
 }
 
 function handleWsConnection(client, req) {
@@ -1535,8 +1656,16 @@ function handleWsConnection(client, req) {
   });
 }
 
+const { getPublishedValue } = require("../settings/resolver");
+const readiness = require("../settings/readiness");
+const readinessProbes = require("../settings/probes");
+let readinessInstanceId = "";
+let readinessProbeOptions = {};
+const takePublicReadinessAllowance = readiness.createPublicRateLimiter();
+
 module.exports = {
   init,
+  startReadinessBootstrap,
   handleHttp,
   handleWsConnection,
   _test: {
@@ -1544,6 +1673,10 @@ module.exports = {
     buildConfiguredDelegationResultsSection,
     configuredSummaryPrompt: () => _resolvedMessages.prompts.summary,
     runtimeDiagnostics,
+    refreshNgrokDetection,
+    resolvePublicOrigin,
+    readiness,
+    checkWsUrlIdentity: readinessProbes.checkWsUrlIdentity,
     taskExtractionEnabledAtBoot,
   },
 };

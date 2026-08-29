@@ -61,7 +61,7 @@ function request(method, url, body, headers = {}) {
   return req;
 }
 
-function fixture(t, document) {
+function fixture(t, document, handlerOptions = {}) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-routes-phase-a-"));
   t.after(() => {
     resetRuntimeForTest();
@@ -72,8 +72,28 @@ function fixture(t, document) {
   const configState = readConfigState(runtimeStartup.configPath);
   resetRuntimeForTest();
   initializeRuntime({ state: configState, startup: runtimeStartup });
-  return { directory, runtimeStartup, configState, handler: createSettingsHandler({ port: 5005 }) };
+  return { directory, runtimeStartup, configState, handler: createSettingsHandler({ port: 5005, ...handlerOptions }) };
 }
+
+test("settings save automatically probes all gate systems with billing explicitly allowed", async (t) => {
+  const calls = [];
+  const readinessController = {
+    configure() {},
+    async probeGateSystems(options) { calls.push(options); },
+  };
+  const { handler, configState } = fixture(t, { agent: { greeting: "before" } }, { readinessController });
+  const res = response();
+  await handler(request("PUT", "/api/settings", {
+    schemaVersion: 1,
+    revision: configState.revision,
+    fields: { agent_greeting: "after" },
+  }), res);
+  assert.equal(res.status, 200, res.body);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].trigger, "settings-save");
+  assert.equal(calls[0].allowBilling, true);
+  assert.equal(calls[0].force, true);
+});
 
 test("Phase A export is an attachment containing only validated stored noncredentials", async (t) => {
   const { handler } = fixture(t, {
@@ -291,7 +311,13 @@ test("connection routes retain all providers and require a SHA-256 revision", as
       ok: false, provider, code: "NOT_CONFIGURED", message: "Connection is not configured", durationMs: 0,
     });
   }
-  for (const provider of ["deepgram", "attendee", "slack"]) {
+  for (const provider of ["deepgram", "attendee", "llm", "tunnel"]) {
+    const res = response();
+    await handler(request("POST", `/api/settings/connections/${provider}/test`, { revision: configState.revision }), res);
+    assert.equal(res.status, 200, `${provider} ${res.body}`);
+    assert.equal(JSON.parse(res.body).code, "NOT_CONFIGURED");
+  }
+  for (const provider of ["slack"]) {
     const res = response();
     await handler(request("POST", `/api/settings/connections/${provider}/test`, { revision: configState.revision }), res);
     assert.equal(res.status, 501, `${provider} ${res.body}`);

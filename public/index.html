@@ -53,6 +53,11 @@
             </div>
             <span class="field-hint" id="agentInfoDisplay">Google Meet / Zoom の URL を自動検出します</span>
 
+            <div class="readiness-panel is-hidden" id="readinessPanel" aria-live="polite">
+              <div class="readiness-lines" id="readinessLines"></div>
+              <button class="readiness-recheck" id="readinessRecheck" type="button">再チェック</button>
+            </div>
+
             <button class="btn btn-primary" id="joinBtn" type="submit" disabled>
               <span class="btn-label">Meet に参加させる</span>
             </button>

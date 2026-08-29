@@ -74,3 +74,17 @@ test("client field sets deep-match registry UI metadata", () => {
       .map((entry) => entry.id).sort());
   }
 });
+
+test("main UI parses both setup and readiness 503 envelopes", () => {
+  const { parseJoinErrorText } = require("../public/app.js");
+  const setup = parseJoinErrorText(JSON.stringify({
+    error: { code: "MEETING_SETUP_REQUIRED", message: "Meeting setup is incomplete", issues: [{ fieldId: "agent_id", code: "VALUE_REQUIRED" }] },
+  }));
+  assert.match(setup, /Meeting setup is incomplete/);
+  assert.match(setup, /agent_id/);
+  const readiness = parseJoinErrorText(JSON.stringify({
+    error: { code: "MEETING_NOT_READY", message: "Not ready", blockers: [{ system: "llm", code: "NOT_ENABLED", message: "Enable chatCompletions" }] },
+  }));
+  assert.match(readiness, /Not ready/);
+  assert.match(readiness, /Enable chatCompletions/);
+});

@@ -1,6 +1,44 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
+const readiness = require("../src/settings/readiness");
+
+test.afterEach(() => readiness.reset());
+
+test("Soniox error_code 402 frame records runtime PAYMENT_REQUIRED", async () => {
+  await withFreshSonioxModule({}, async ({ createSonioxSTT }) => {
+    const instances = [];
+    const FakeWebSocket = fakeWebSocketCtor(instances);
+    const stt = createSonioxSTT("test-key", { _wsCtor: FakeWebSocket, _buildKeyterms: () => [] });
+    stt.on("error", () => {});
+    const socket = instances[0];
+    socket.readyState = FakeWebSocket.OPEN;
+    socket.emit("open");
+    socket.emit("message", JSON.stringify({ error_code: 402, error_type: "payment_required", error_message: "quota" }));
+    assert.equal(readiness.inspect("soniox").code, "PAYMENT_REQUIRED");
+    assert.equal(readiness.inspect("soniox").source, "runtime");
+    const system = readiness.getReadiness().systems.find((entry) => entry.id === "soniox");
+    assert.equal(system.ok, false);
+    assert.equal(system.code, "PAYMENT_REQUIRED");
+    stt.close();
+  });
+});
+
+test("Soniox handshake rejection socket error records runtime PAYMENT_REQUIRED", async () => {
+  await withFreshSonioxModule({}, async ({ createSonioxSTT }) => {
+    const instances = [];
+    const FakeWebSocket = fakeWebSocketCtor(instances);
+    const stt = createSonioxSTT("test-key", { _wsCtor: FakeWebSocket, _buildKeyterms: () => [] });
+    stt.on("error", () => {});
+    instances[0].emit("error", new Error("Unexpected server response: 402"));
+    assert.equal(readiness.inspect("soniox").code, "PAYMENT_REQUIRED");
+    assert.equal(readiness.inspect("soniox").source, "runtime");
+    const system = readiness.getReadiness().systems.find((entry) => entry.id === "soniox");
+    assert.equal(system.ok, false);
+    assert.equal(system.code, "PAYMENT_REQUIRED");
+    stt.close();
+  });
+});
 
 test("Soniox STT sends keepalive frames on interval while open", async () => {
   await withFreshSonioxModule(

@@ -3,6 +3,49 @@ const assert = require("node:assert/strict");
 const path = require("node:path");
 const { EventEmitter } = require("node:events");
 const https = require("node:https");
+const readiness = require("../src/settings/readiness");
+
+test("Fish runtime 402 records PAYMENT_REQUIRED through the real synthesize path", async (t) => {
+  const resolver = require("../src/settings/resolver");
+  resolver.resetRuntimeForTest();
+  readiness.reset();
+  resolver.initializeRuntime({
+    state: { exists: true, valid: true, parsed: {}, revision: "a".repeat(64), fingerprint: "a".repeat(64) },
+    startup: Object.freeze({
+      preDotenvEnv: Object.freeze({}), dotenvSeeds: Object.freeze({}),
+      resolvedHome: "/tmp/fish-runtime-hook", configPath: "/tmp/fish-runtime-hook/config.json",
+      connection: Object.freeze({ openclawUrl: "", openclawToken: "", openaiApiKey: "" }),
+    }),
+  });
+  const originalRequest = https.request;
+  https.request = (_options, callback) => {
+    const req = new EventEmitter();
+    req.setTimeout = () => req;
+    req.destroy = () => {};
+    req.write = () => {};
+    req.end = () => {
+      const response = new EventEmitter();
+      response.statusCode = 402;
+      response.headers = {};
+      callback(response);
+      queueMicrotask(() => {
+        response.emit("data", Buffer.from("payment"));
+        response.emit("end");
+      });
+    };
+    return req;
+  };
+  t.after(() => {
+    https.request = originalRequest;
+    readiness.reset();
+    resolver.resetRuntimeForTest();
+  });
+
+  const { synthesize } = require("../src/tts-fish");
+  await assert.rejects(() => synthesize("test", { apiKey: "key", sampleRate: 8_000, onAudio: () => {} }), /402/);
+  assert.equal(readiness.inspect("fish-audio").code, "PAYMENT_REQUIRED");
+  assert.equal(readiness.inspect("fish-audio").source, "runtime");
+});
 
 test("getPipelineConfig keeps STT at 16k and defaults TTS to 24k", () => {
   withEnv({ TTS_SAMPLE_RATE: undefined }, () => {

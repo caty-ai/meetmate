@@ -27,6 +27,8 @@ function buildKeyterms(extraKeyterms = []) {
   return [...new Set([...baseTerms, ...extraTerms, ...dynamicTerms])];
 }
 
+const readiness = require("./settings/readiness");
+
 // Legacy: build keywords for Nova-2 fallback (with intensifier)
 function buildWakeKeywords(keyterms = []) {
   return keyterms.map((w) => `${w}:5`);
@@ -102,6 +104,7 @@ function createSTT(dgKey, options = {}) {
 
     connection.on(LiveTranscriptionEvents.Open, () => {
       opened = true;
+      readiness.reportRuntimeSuccess("deepgram");
       console.log(`🎤  STT: 接続完了 ${keytermLabel}`);
       emitter.emit("open");
     });
@@ -145,6 +148,7 @@ function createSTT(dgKey, options = {}) {
     });
 
     connection.on(LiveTranscriptionEvents.Error, (err) => {
+      readiness.reportRuntimeFailure("deepgram", readiness.classifyRuntimeFailure(err));
       // Recovery path: if handshake fails before open with keywords,
       // retry once without keywords (some DG setups reject keywords param).
       const hasKeyterms = Object.keys(keytermConfig).length > 0;
@@ -171,7 +175,10 @@ function createSTT(dgKey, options = {}) {
       emitter.emit("error", err);
     });
 
-    connection.on(LiveTranscriptionEvents.Close, () => {
+    connection.on(LiveTranscriptionEvents.Close, (event) => {
+      if (readiness.runtimeStatus(event)) {
+        readiness.reportRuntimeFailure("deepgram", readiness.classifyRuntimeFailure(event));
+      }
       console.log("🔴  STT: 切断");
       emitter.emit("close");
     });

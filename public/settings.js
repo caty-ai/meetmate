@@ -81,6 +81,11 @@ function clipMatchesCurrentText(clip, fields = {}) {
   return Array.isArray(values[clip?.role]) && values[clip.role].some((text) => text === clip.text);
 }
 
+function readinessSummary(data) {
+  const systems = Array.isArray(data?.systems) ? data.systems : [];
+  return systems.map((system) => `${system.id}: ${system.code}`).join(" / ");
+}
+
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     CLIENT_FIELD_SETS: {
@@ -90,6 +95,7 @@ if (typeof module !== "undefined" && module.exports) {
     diffFields,
     pendingChangesForValues,
     prefillValues,
+    readinessSummary,
     shownValue,
   };
 }
@@ -155,12 +161,14 @@ if (typeof document !== "undefined") {
     };
     const CONNECTIONS = [
       ["soniox", "Soniox"], ["deepgram", "Deepgram"], ["fish-audio", "Fish Audio"],
-      ["attendee", "Attendee"], ["slack", "Slack"],
+      ["attendee", "Attendee"], ["llm", "LLM"], ["tunnel", "Tunnel"], ["slack", "Slack"],
     ];
     const CONNECTION_EXPLANATIONS = {
       CONNECTED: "接続できました。", NOT_CONFIGURED: "キーが未設定です。", AUTH_FAILED: "キーが不正です。",
       UNREACHABLE: "プロバイダーへ到達できません。", TIMEOUT: "接続がタイムアウトしました。",
       RATE_LIMITED: "プロバイダー側のレート制限に達しました。", PROVIDER_ERROR: "プロバイダーでエラーが発生しました。",
+      PAYMENT_REQUIRED: "支払い状態を確認してください。", NOT_ENABLED: "OpenClaw 側で chatCompletions endpoint を有効にしてください。",
+      MISMATCH: "公開URLが別の meetmate を指しています。", RESTART_REQUIRED: "meetmate の再起動が必要です。",
     };
     const AUDIO_ROLE_LABELS = {
       ack: "応答確認", progress: "進捗", greeting: "あいさつ", farewell: "退出", timeout: "タイムアウト",
@@ -586,14 +594,14 @@ if (typeof document !== "undefined") {
       const stack = document.getElementById("settingsState");
       stack.replaceChildren();
       if (envelope.setupMode) {
-        stack.append(notice("warning", "setup mode", "必須設定を入力して保存すると、ミーティングを開始できる状態へ進めます。"));
+        stack.append(notice("warning", "setup mode", "必須設定を入力して保存し、meetmate を再起動してから Join してください（保存 → 再起動 → Join）。"));
       }
       if (Array.isArray(envelope.issues) && envelope.issues.length) {
         const text = envelope.issues.map((issue) => `${labelFor(issue.fieldId)}: ${ISSUE_LABELS[issue.code] || issue.code}`).join(" / ");
         stack.append(notice("warning", "設定の確認が必要です", text));
       }
       if (Array.isArray(envelope.restartRequired) && envelope.restartRequired.length) {
-        stack.append(notice("success", "保存済み・再起動待ち", `these fields take effect at next boot: ${envelope.restartRequired.join(", ")}`));
+        stack.append(notice("warning", "保存済み・再起動待ち", `meetmate を再起動してから Join してください: ${envelope.restartRequired.join(", ")}`));
       }
       if (!stack.children.length) stack.append(notice("success", "設定は読み込み済みです", "現在、追加の対応が必要な設定項目はありません。"));
     }
@@ -673,6 +681,7 @@ if (typeof document !== "undefined") {
         renderFields();
         renderState();
         renderDiagnostics();
+        applyHashDeepLink();
         loadStatus.textContent = envelope.setupMode ? "セットアップ中" : "読み込み済み";
         loadStatus.className = `status-badge ${envelope.setupMode ? "pending" : "match"}`;
         if (conflict) showToast("設定が別の操作で更新されました。最新の内容を再読み込みしました。もう一度変更してください。");
@@ -783,6 +792,7 @@ if (typeof document !== "undefined") {
         renderFields();
         renderState();
         renderDiagnostics();
+        await renderCachedReadiness();
         showToast("設定を保存しました。");
       } catch (error) {
         if (!error.handled) showToast(error.message);
@@ -822,6 +832,19 @@ if (typeof document !== "undefined") {
           } finally { button.disabled = false; }
         });
         container.append(button);
+      }
+    }
+
+    async function renderCachedReadiness() {
+      const result = document.getElementById("connectionResult");
+      try {
+        const response = await fetch("/readiness", { headers: { Accept: "application/json" } });
+        const body = await responseJson(response);
+        if (!response.ok || !body) return;
+        result.textContent = readinessSummary(body) || "接続結果はまだありません。";
+        result.className = `action-result ${body.ready ? "success-text" : "danger-text"}`;
+      } catch {
+        // The per-provider test buttons remain usable if the cache read fails.
       }
     }
 
@@ -952,6 +975,24 @@ if (typeof document !== "undefined") {
       });
     }
 
+    function applyHashDeepLink() {
+      const hash = decodeURIComponent(location.hash || "").replace(/^#/, "");
+      if (!hash) return;
+      const target = hash.startsWith("field-")
+        ? document.querySelector(`[data-field-id="${CSS.escape(hash.slice("field-".length))}"]`)
+        : hash === "panel-connections" ? document.getElementById(hash) : null;
+      if (!target) return;
+      const panel = target.classList.contains("tab-panel") ? target : target.closest(".tab-panel");
+      const tab = panel && document.querySelector(`[role="tab"][aria-controls="${CSS.escape(panel.id)}"]`);
+      if (tab) activateTab(tab, false);
+      if (target.classList.contains("is-hidden")) return;
+      target.classList.remove("deep-link-highlight");
+      void target.offsetWidth;
+      target.classList.add("deep-link-highlight");
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+      setTimeout(() => target.classList.remove("deep-link-highlight"), 2_500);
+    }
+
     form.addEventListener("submit", saveSettings);
     form.addEventListener("input", (event) => {
       if (event.target.dataset.settingId) {
@@ -974,6 +1015,7 @@ if (typeof document !== "undefined") {
     document.getElementById("exportSettings").addEventListener("click", exportSettings);
     document.getElementById("importSettings").addEventListener("click", importSettings);
     document.getElementById("migrateVendorSettings").addEventListener("click", migrateVendorSettings);
+    window.addEventListener("hashchange", applyHashDeepLink);
 
     initTabs();
     renderConnectionButtons();

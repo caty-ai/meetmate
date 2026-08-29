@@ -2,8 +2,33 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
 const path = require("node:path");
+const readiness = require("../src/settings/readiness");
 
 const src = path.join(__dirname, "..", "src");
+
+test("LLM in-meeting 404 records NOT_ENABLED and the next successful streamed session clears it", { concurrency: false }, async () => {
+  readiness.reset();
+  let failing = true;
+  const provider = {
+    name: "openclaw",
+    streamChat: async function* () {
+      if (failing) throw new Error("OpenClaw Gateway error (404): hidden vendor body");
+      yield "recovered。";
+    },
+  };
+  try {
+    await withPipeline(provider, {}, async (pipeline) => {
+      await pipeline._test.processUserInput("failure");
+      assert.equal(readiness.inspect("llm").code, "NOT_ENABLED");
+      assert.equal(readiness.inspect("llm").source, "runtime");
+      failing = false;
+      await pipeline._test.processUserInput("success");
+      assert.equal(readiness.inspect("llm").code, "CONNECTED");
+    });
+  } finally {
+    readiness.reset();
+  }
+});
 
 function cacheEntry(filename, exports) {
   return { id: filename, filename, loaded: true, exports, children: [], paths: [] };

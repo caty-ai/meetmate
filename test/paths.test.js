@@ -264,10 +264,10 @@ test("T12-02 environment inventory lock recognizes every retained direct read an
   }
 });
 
-test("T12-03 startup/bootstrap boundary allows exactly eight settings modules", () => {
+test("T12-03 startup/bootstrap boundary allows exactly ten settings modules", () => {
   const directory = path.join(__dirname, "..", "src", "settings");
   const files = fs.readdirSync(directory).filter((name) => name.endsWith(".js")).sort();
-  assert.deepEqual(files, ["audio.js", "bootstrap.js", "class2-migration.js", "registry.js", "resolver.js", "routes.js", "schemas.js", "store.js"]);
+  assert.deepEqual(files, ["audio.js", "bootstrap.js", "class2-migration.js", "probes.js", "readiness.js", "registry.js", "resolver.js", "routes.js", "schemas.js", "store.js"]);
   for (const file of files) {
     if (file === "bootstrap.js") continue;
     assert.doesNotMatch(fs.readFileSync(path.join(directory, file), "utf8"), /process\.env|dotenv\.parse|\benvPath\b|\.env["'`]/, file);
@@ -550,7 +550,7 @@ test("T12-13 conjunctive class-1/2/3 sentinels stay out of every settings exit",
     const meetRoutesPath = require.resolve(${JSON.stringify(path.join(__dirname, "..", "src", "transport-meet", "meet-routes.js"))});
     require.cache[meetRoutesPath] = { exports: {
       init: async () => {}, handleHttp(_req, res) { res.writeHead(404); res.end("Not Found"); },
-      handleWsConnection() {},
+      handleWsConnection() {}, startReadinessBootstrap() {},
     } };
     function invoke(handler) {
       return new Promise((resolve) => {
@@ -691,7 +691,7 @@ test("T12-05 bootstrap PUT materializes registry defaults and captured .env clas
   assert.equal(response.body.includes("bootstrap-seed-key"), false);
 });
 
-test("T12-06 optional connection tests remain exact value-free 501 responses", async (t) => {
+test("T12-06 gate connection tests are implemented while Slack remains an exact value-free 501", async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-settings-optional-tests-"));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const configPath = path.join(directory, "config.json");
@@ -700,12 +700,17 @@ test("T12-06 optional connection tests remain exact value-free 501 responses", a
   resetRuntimeForTest();
   initializeRuntime({ state, startup: settingsStartup({ configPath, resolvedHome: directory }), serverPort: 5005 });
   const handler = createSettingsHandler({ port: 5005 });
-  const cases = [
-    ["POST", "/api/settings/connections/deepgram/test", { "content-type": "application/json" }, JSON.stringify({ revision: state.revision })],
-    ["POST", "/api/settings/connections/attendee/test", { "content-type": "application/json" }, JSON.stringify({ revision: state.revision })],
+  for (const provider of ["deepgram", "attendee", "llm", "tunnel"]) {
+    const response = settingsResponse();
+    await handler(settingsRequest("POST", `/api/settings/connections/${provider}/test`, {
+      host: "localhost:5005", origin: "http://localhost:5005", "sec-fetch-site": "same-origin", "content-type": "application/json",
+    }, JSON.stringify({ revision: state.revision })), response);
+    assert.equal(response.status, 200, `${provider}: ${response.body}`);
+    assert.equal(JSON.parse(response.body).code, "NOT_CONFIGURED");
+  }
+  for (const [method, url, headers, body] of [
     ["POST", "/api/settings/connections/slack/test", { "content-type": "application/json" }, JSON.stringify({ revision: state.revision })],
-  ];
-  for (const [method, url, headers, body] of cases) {
+  ]) {
     const response = settingsResponse();
     await handler(settingsRequest(method, url, {
       host: "localhost:5005",

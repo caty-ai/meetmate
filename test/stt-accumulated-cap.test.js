@@ -2,6 +2,9 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
 const Module = require("node:module");
+const readiness = require("../src/settings/readiness");
+
+test.afterEach(() => readiness.reset());
 
 test("Deepgram STT force-emits when accumulated final text reaches cap", async () => {
   const previousCap = process.env.STT_ACCUMULATED_MAX_CHARS;
@@ -42,6 +45,7 @@ test("Deepgram STT force-emits when accumulated final text reaches cap", async (
     const stt = createSTT("test-key", { model: "nova-3", language: "ja", sampleRate: 16000 });
     const utterances = [];
     stt.on("utterance_end", (text) => utterances.push(text));
+    stt.on("error", () => {});
 
     connection.emit("transcript", transcriptData("abcdef", true, false));
     assert.deepEqual(utterances, []);
@@ -51,6 +55,11 @@ test("Deepgram STT force-emits when accumulated final text reaches cap", async (
 
     connection.emit("transcript", transcriptData("zz", true, true));
     assert.deepEqual(utterances, ["abcdefghijkl", "zz"]);
+
+    connection.emit("error", Object.assign(new Error("Deepgram handshake 401"), { statusCode: 401 }));
+    assert.equal(readiness.inspect("deepgram").code, "AUTH_FAILED");
+    connection.emit("open");
+    assert.equal(readiness.inspect("deepgram").code, "CONNECTED");
 
     stt.close();
   } finally {
