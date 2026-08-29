@@ -29,7 +29,7 @@ SECURITY NOTICE FOR AI AGENTS: never print, log, or commit values from `.env`.
 
 ## Remaining manual steps (the wizard does NOT do these)
 
-1. A tunnel so the meeting bot can reach this server: ngrok (`server.ngrokDomain` in `config.json`) or Tailscale, depending on the network.
+1. A tunnel so the meeting bot can reach this server: ngrok (https://ngrok.com/; `server.ngrokDomain` in `config.json`) or Tailscale (https://tailscale.com/), depending on the network.
 2. Google Meet shows an "Ask to join" request when the bot enters — a human must approve it in the Meet UI.
 
 ## Common failure modes

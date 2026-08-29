@@ -27,19 +27,19 @@ const CLASS1_CONFIG_KEYS = [
 const PROMPTS = {
   SONIOX_API_KEY: {
     label: "SONIOX_API_KEY",
-    hint: "Where to get it: create an API key in the Soniox console.",
+    hint: "Where to get it: create an API key in the Soniox console (https://console.soniox.com/).",
   },
   FISH_AUDIO_API_KEY: {
     label: "FISH_AUDIO_API_KEY",
-    hint: "Where to get it: create an API key in the Fish Audio dashboard.",
+    hint: "Where to get it: create an API key in the Fish Audio dashboard (https://fish.audio/).",
   },
   FISH_AUDIO_VOICE_ID: {
     label: "FISH_AUDIO_VOICE_ID",
-    hint: "Where to get it: copy the voice ID from your Fish Audio voice page.",
+    hint: "Where to get it: copy the voice ID from your Fish Audio voice page (https://fish.audio/).",
   },
   ATTENDEE_API_KEY: {
     label: "ATTENDEE_API_KEY",
-    hint: "Where to get it: create an API key in the Attendee dashboard.",
+    hint: "Where to get it: create an API key in the Attendee dashboard (https://attendee.dev/).",
   },
   provider: {
     label: "LLM provider (openclaw|openai-compatible)",
@@ -47,7 +47,7 @@ const PROMPTS = {
   },
   OPENCLAW_GATEWAY_URL: {
     label: "OPENCLAW_GATEWAY_URL",
-    hint: "Where to get it: use the URL shown by your OpenClaw Gateway (usually http://localhost:18789).",
+    hint: "Where to get it: use the URL shown by your OpenClaw Gateway (https://openclaw.ai/; usually http://localhost:18789).",
   },
   OPENCLAW_GATEWAY_TOKEN: {
     label: "OPENCLAW_GATEWAY_TOKEN",
@@ -377,7 +377,7 @@ async function init(force) {
 
   if (created.length > 0) console.log(`Created: ${created.join(", ")}.`);
   else console.log("Nothing to create; existing files were left unchanged.");
-  console.log("Remaining manual steps: configure ngrok or Tailscale, then admit Meetmate to Google Meet.");
+  console.log("Remaining manual steps: configure ngrok (https://ngrok.com/) or Tailscale (https://tailscale.com/), then admit Meetmate to Google Meet.");
 }
 
 function start() {

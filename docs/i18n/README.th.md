@@ -22,7 +22,7 @@ Meetmate ทำแค่สิ่งเดียว: จองที่นั่
 
 ## เริ่มต้นอย่างรวดเร็ว
 
-**สิ่งที่คุณต้องมี:** Node.js ≥ 26 · บัญชี [Attendee](https://attendee.dev/) · [Soniox](https://soniox.com/) (หรือ [Deepgram](https://deepgram.com/)) สำหรับ speech-to-text · [Fish Audio](https://fish.audio/) สำหรับเสียงพูด (รวมถึง voice ID) · เอนด์พอยต์ LLM (OpenClaw Gateway หรือ OpenAI-compatible ใดก็ได้) · โดยปกติต้องมี [ngrok](https://ngrok.com/) หรือ [Tailscale](https://tailscale.com/) · และ Google Meet จะขอให้คุณอนุมัติให้บอทเข้าร่วม บริการจากบุคคลที่สามอาจมีค่าใช้จ่าย
+**สิ่งที่คุณต้องมี:** [Node.js](https://nodejs.org/) ≥ 26 · บัญชี [Attendee](https://attendee.dev/) · [Soniox](https://soniox.com/) (หรือ [Deepgram](https://deepgram.com/)) สำหรับ speech-to-text · [Fish Audio](https://fish.audio/) สำหรับเสียงพูด (รวมถึง voice ID) · เอนด์พอยต์ LLM ([OpenClaw Gateway](https://openclaw.ai/) หรือ OpenAI-compatible ใดก็ได้) · โดยปกติต้องมี [ngrok](https://ngrok.com/) หรือ [Tailscale](https://tailscale.com/) · และ Google Meet จะขอให้คุณอนุมัติให้บอทเข้าร่วม บริการจากบุคคลที่สามอาจมีค่าใช้จ่าย
 
 ในโฟลเดอร์ว่าง:
 
@@ -113,12 +113,12 @@ Meetmate: [warm] มีการเปลี่ยนแปลง 2 จุด �
 
 | รายการ | วัตถุประสงค์ | ชื่อการตั้งค่า | จำเป็นเมื่อไร | หมายเหตุ |
 |---|---|---|---|---|
-| Node.js 26+ | รันเซิร์ฟเวอร์ | `node`, `npm` | เสมอ | จำเป็น |
+| [Node.js](https://nodejs.org/) 26+ | รันเซิร์ฟเวอร์ | `node`, `npm` | เสมอ | จำเป็น |
 | บัญชี [Attendee](https://attendee.dev/) + API key | บอทเข้าร่วม/ออกจากการประชุม + รับส่งเสียง | `ATTENDEE_API_KEY` | เสมอ | บริการแบบโฮสต์; ตรวจสอบความพร้อมใช้งานแบบฟรี/เสียเงินในปัจจุบัน |
 | บัญชี [Soniox](https://console.soniox.com/) + API key | speech-to-text ค่าเริ่มต้น | `STT_PROVIDER=soniox`, `SONIOX_API_KEY` | โดยปกติ | เส้นทางค่าเริ่มต้น เงื่อนไขราคา/ทดลองใช้อาจเปลี่ยนแปลง |
 | บัญชี [Deepgram](https://console.deepgram.com/signup) + API key | speech-to-text ทางเลือก (ไม่บังคับ) | `STT_PROVIDER=deepgram`, `DEEPGRAM_API_KEY` | ไม่บังคับ | ใช้เฉพาะเมื่อเปลี่ยนจาก Soniox |
 | บัญชี [Fish Audio](https://fish.audio/) + เสียง | เสียงสำหรับ text-to-speech | `FISH_AUDIO_API_KEY`, `FISH_AUDIO_VOICE_ID`, `TTS_PROVIDER=fish-audio` | เสมอ | voice ID มาจาก URL ของหน้าเสียง เงื่อนไขราคา/ทดลองใช้อาจเปลี่ยนแปลง |
-| OpenClaw Gateway หรือเกตเวย์ LLM แบบ OpenAI-compatible อื่น | สมองเสียงตัวจริง | `LLM_PROVIDER`, `OPENCLAW_GATEWAY_URL`, `OPENCLAW_GATEWAY_TOKEN` หรือ `OPENAI_COMPATIBLE_BASE_URL`, `OPENAI_COMPATIBLE_API_KEY` | เสมอ | OpenClaw คือเส้นทางหลัก; เกตเวย์ OpenAI-compatible แบบ stateful มีเอกสารอยู่ในคู่มือติดตั้ง |
+| [OpenClaw Gateway](https://openclaw.ai/) หรือเกตเวย์ LLM แบบ OpenAI-compatible อื่น | สมองเสียงตัวจริง | `LLM_PROVIDER`, `OPENCLAW_GATEWAY_URL`, `OPENCLAW_GATEWAY_TOKEN` หรือ `OPENAI_COMPATIBLE_BASE_URL`, `OPENAI_COMPATIBLE_API_KEY` | เสมอ | OpenClaw คือเส้นทางหลัก; เกตเวย์ OpenAI-compatible แบบ stateful มีเอกสารอยู่ในคู่มือติดตั้ง |
 | [ngrok](https://ngrok.com/) หรือ [Tailscale](https://tailscale.com/) | ทำให้ WebSocket ของบอทเข้าถึงได้จากภายนอก | `server.ngrokDomain` สำหรับ ngrok | ตามเงื่อนไข | `ngrok` เป็นเส้นทางที่ใช้กันทั่วไป Tailscale เป็นทางเลือกเมื่อเครือข่ายและการดีพลอย Attendee ของคุณอนุญาต รายละเอียดราคา/แผนฟรีอาจเปลี่ยนแปลง |
 | สิทธิ์ของ Google Meet ในการอนุมัติให้บอทเข้าร่วม | ให้บอทเข้าห้องประชุมได้ | การอนุมัติ "Ask to join" ใน Meet UI | Google Meet | คุณต้องอนุมัติคำขอเข้าร่วมใน Meet เอง |
 | การตั้งค่าแอป/แอดมินใน [Zoom Marketplace](https://marketplace.zoom.us/) | โมเดลสิทธิ์ของบอทใน Zoom | การตั้งค่าแอปฝั่ง Attendee/Zoom | เฉพาะ Zoom | ตามเงื่อนไข ไม่รับประกันว่ารองรับการประชุมที่โฮสต์จากภายนอกหรือ OAuth แบบมีการจัดการ |
@@ -210,7 +210,7 @@ flowchart LR
 
 ## กิตติกรรมประกาศ
 
-Meetmate ยืนอยู่บนบริการและ OSS ที่ยอดเยี่ยม: [Attendee](https://attendee.dev/) (โครงสร้างพื้นฐานบอทประชุม), [Soniox](https://soniox.com/) (STT แบบเรียลไทม์), [Fish Audio](https://fish.audio/) (TTS ที่สื่ออารมณ์), OpenClaw Gateway (โครงสร้างพื้นฐานเอเจนต์ — SOUL / ความจำ / ทักษะ / เครื่องมือ) และระบบนิเวศของ OpenAI-compatible LLM
+Meetmate ยืนอยู่บนบริการและ OSS ที่ยอดเยี่ยม: [Attendee](https://attendee.dev/) (โครงสร้างพื้นฐานบอทประชุม), [Soniox](https://soniox.com/) (STT แบบเรียลไทม์), [Fish Audio](https://fish.audio/) (TTS ที่สื่ออารมณ์), [OpenClaw Gateway](https://openclaw.ai/) (โครงสร้างพื้นฐานเอเจนต์ — SOUL / ความจำ / ทักษะ / เครื่องมือ) และระบบนิเวศของ OpenAI-compatible LLM
 
 ## สัญญาอนุญาต
 
