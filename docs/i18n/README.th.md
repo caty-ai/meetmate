@@ -95,9 +95,11 @@ Meetmate: [warm] มีการเปลี่ยนแปลง 2 จุด �
 | OpenClaw Gateway | รองรับแล้ว | เส้นทางหลักในปัจจุบัน: ความจำ ทักษะ เครื่องมือ และการมอบหมายงานยังคงอยู่ที่เอเจนต์เดิมของคุณ |
 | เบสไลน์ที่เข้ากันได้กับ OpenAI | รองรับแล้ว | โหมดเอเจนต์เสียงล้วนสำหรับเอนด์พอยต์ที่เข้ากันได้ใดก็ตาม |
 | Claude Code ผ่านเกตเวย์ OpenAI-compatible | กำลังผสานรวม | ใช้ provider แบบทั่วไป `openai-compatible` ยังไม่มี provider เฉพาะสำหรับ Claude เราจะเรียกว่ารองรับก็ต่อเมื่อผ่านการทดสอบแบบ end-to-end จริงบน Google Meet แล้วเท่านั้น |
-| Hermes api_server | ยืนยันเอนด์พอยต์แล้ว แต่การเชื่อมต่อฝั่ง Meetmate ยังค้างอยู่ | ณ วันที่ 12 กรกฎาคม 2026 issue [#1](https://github.com/caty-ai/meetmate/issues/1) ยืนยัน `POST /v1/chat/completions`, SSE, Bearer auth และการฉีด profile/persona แล้ว งานที่เหลือคือการส่งต่อ token และ smoke/E2E ของ Meetmate |
+| Hermes api_server | รองรับแล้ว | ยืนยันแบบ end-to-end บน Google Meet จริงเมื่อ 29 สิงหาคม 2026 ([#76](https://github.com/caty-ai/meetmate/issues/76)) — การสนทนาด้วยเสียงในการประชุมจริงทำงานผ่าน provider แบบทั่วไป `openai-compatible` (SSH tunnel, Bearer auth) ครอบคลุมเส้นทางเอเจนต์เสียง รายละเอียดการเชื่อมต่อ: [LLM providers](https://github.com/caty-ai/meetmate/blob/main/docs/TECHNICAL.md#llm-providers) |
 | Codex / Kimi Code | อยู่ในแผน | ยังไม่ได้เชื่อมต่อ |
-| อวาตาร์ในกริดการประชุม | ปัจจุบันเป็นภาพนิ่ง | อวาตาร์แบบสดอยู่ในแผนที่ [#2](https://github.com/caty-ai/meetmate/issues/2) |
+| อวาตาร์ในกริดการประชุม | ค่าเริ่มต้นเป็นภาพนิ่ง มีการทดลองอวาตาร์แบบสด 2 แบบ | ลิปซิงก์แบบสลับเฟรมออกใน v8.4.0 และ proof of concept ของริก 2.5D ก็เข้าสู่ main แล้ว ค่าเริ่มต้นยังคงเป็นภาพนิ่ง งานอวาตาร์แบบสดดำเนินต่อใน [#2](https://github.com/caty-ai/meetmate/issues/2) |
+
+อยากให้อวาตาร์ขยับ? มีการทดลองที่ออกมาแล้ว 2 แบบ: อวาตาร์ลิปซิงก์แบบสลับเฟรมที่สลับ PNG 6 ภาพตามจังหวะเสียงพูด (v8.4.0) และ proof of concept ของริก 2.5D ค่าเริ่มต้นยังคงเป็นภาพนิ่ง — วิธีลองใช้แบบสลับเฟรมอยู่ใน[หัวข้ออวาตาร์แบบสลับเฟรมของคู่มือติดตั้ง](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#実験的なフレーム差し替えアバター) (ต้องใช้ Fish Audio TTS และ HTTPS origin สาธารณะ) ส่วนริก PoC ยังไม่มีเอกสารสำหรับผู้ใช้
 
 ## หมายเหตุเกี่ยวกับแพลตฟอร์ม
 
