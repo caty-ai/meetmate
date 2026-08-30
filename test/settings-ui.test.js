@@ -89,6 +89,8 @@ test("Hermes session header setting is default-off and visible only for OpenAI-c
   assert.equal(entry.envAlias, null);
   assert.equal(entry.schema.safeParse("").success, true);
   assert.equal(entry.schema.safeParse("X-Hermes-Session-Id").success, true);
+  assert.equal(entry.schema.safeParse("Authorization").success, false);
+  assert.equal(entry.schema.safeParse("authorization").success, false);
   assert.equal(entry.schema.safeParse("invalid header name").success, false);
   assert.equal(entry.schema.safeParse("x".repeat(129)).success, false);
 

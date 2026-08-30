@@ -146,6 +146,8 @@ function assertContractType(type, schema, id) {
     valid = "X-Hermes-Session-Id"; invalid = "invalid header name";
     assert.equal(schema.safeParse("").success, true, `${id} empty header token`);
     assert.equal(schema.safeParse("x".repeat(129)).success, false, `${id} header token length`);
+    assert.equal(schema.safeParse("Authorization").success, false, `${id} reserved header name`);
+    assert.equal(schema.safeParse("authorization").success, false, `${id} reserved header name case-insensitive`);
   } else if (base === "secret") {
     valid = "secret"; invalid = "";
   } else if (base === "hex-color") {

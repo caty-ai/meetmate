@@ -155,7 +155,7 @@ test("LLM config uses the boot resolver snapshot and ignores raw-agent bypasses"
   }
 });
 
-test("OpenAI-compatible session header is trimmed and invalid overrides warn once then fail closed", () => {
+test("OpenAI-compatible session header strictly rejects whitespace, reserved names, and invalid overrides", () => {
   const restore = setEnv(CLEAN_LLM_ENV);
   const warnings = [];
   const originalWarn = console.warn;
@@ -164,10 +164,15 @@ test("OpenAI-compatible session header is trimmed and invalid overrides warn onc
     const { getPipelineConfig } = freshConfig({
       llm: { provider: "openai-compatible", model: "standalone-model" },
     });
-    const trimmed = getPipelineConfig({
+    const untrimmed = getPipelineConfig({
       openaiCompatible: { sessionHeader: "  X-Hermes-Session-Id  " },
     });
-    assert.equal(trimmed.llm.openaiCompatible.sessionHeader, "X-Hermes-Session-Id");
+    assert.equal(untrimmed.llm.openaiCompatible.sessionHeader, null);
+
+    for (const sessionHeader of ["Authorization", "authorization"]) {
+      const reserved = getPipelineConfig({ openaiCompatible: { sessionHeader } });
+      assert.equal(reserved.llm.openaiCompatible.sessionHeader, null);
+    }
 
     for (let index = 0; index < 2; index += 1) {
       const invalid = getPipelineConfig({
@@ -177,6 +182,7 @@ test("OpenAI-compatible session header is trimmed and invalid overrides warn onc
     }
     assert.equal(warnings.length, 1);
     assert.match(warnings[0], /invalid llm\.openaiCompatible\.sessionHeader/);
+    assert.match(warnings[0], /non-reserved RFC 7230 header token/);
   } finally {
     console.warn = originalWarn;
     restore();

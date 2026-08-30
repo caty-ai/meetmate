@@ -115,16 +115,32 @@ const SLACK_NOTIFY_ENABLED = getEffectiveValue("slack_notifications_enabled");
 const SUMMARY_ENABLED = getEffectiveValue("summary_enabled");
 
 const HTTP_HEADER_TOKEN = /^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,128}$/;
+// Keep identity, framing, hop-by-hop, and Meetmate trust headers operator-controlled.
+const RESERVED_SESSION_HEADER_NAMES = Object.freeze([
+  "authorization",
+  "proxy-authorization",
+  "content-length",
+  "content-type",
+  "host",
+  "connection",
+  "transfer-encoding",
+  "te",
+  "trailer",
+  "upgrade",
+  "expect",
+  "keep-alive",
+  "x-caty-agent-trust",
+]);
 let warnedInvalidSessionHeader = false;
 
 function normalizeSessionHeader(value) {
   if (value === undefined || value === null || value === "") return null;
-  const normalized = typeof value === "string" ? value.trim() : null;
-  if (normalized === "") return null;
-  if (normalized && HTTP_HEADER_TOKEN.test(normalized)) return normalized;
+  if (typeof value === "string"
+      && HTTP_HEADER_TOKEN.test(value)
+      && !RESERVED_SESSION_HEADER_NAMES.includes(value.toLowerCase())) return value;
   if (!warnedInvalidSessionHeader) {
     warnedInvalidSessionHeader = true;
-    console.warn("⚠️  Ignoring invalid llm.openaiCompatible.sessionHeader; expected an RFC 7230 header token of at most 128 characters.");
+    console.warn("⚠️  Ignoring invalid llm.openaiCompatible.sessionHeader; expected a non-reserved RFC 7230 header token of at most 128 characters.");
   }
   return null;
 }

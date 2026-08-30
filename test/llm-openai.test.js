@@ -270,6 +270,31 @@ test("configured session header stays absent without a session value", async (t)
   assert.equal(Object.hasOwn(captured.body, "user"), false);
 });
 
+test("raw invalid or reserved session headers are not injected", async (t) => {
+  const captured = [];
+  installMockServer(t, async (request) => {
+    captured.push(request);
+    return { chunks: ['{"choices":[{"message":{"content":"done"}}]}'] };
+  });
+
+  for (const sessionHeader of ["invalid header name", "Authorization", "content-length"]) {
+    await openai.complete([], {
+      baseUrl: "http://mock.test",
+      apiKey: "key",
+      model: "model",
+      sessionHeader,
+      sessionUser: "meet-defense-in-depth",
+    });
+  }
+
+  assert.equal(captured.length, 3);
+  for (const request of captured) {
+    assert.deepEqual(Object.keys(request.options.headers).sort(), ["Authorization", "Content-Length", "Content-Type"].sort());
+    assert.equal(request.options.headers.Authorization, "Bearer key");
+    assert.equal(request.body.user, "meet-defense-in-depth");
+  }
+});
+
 test("completion paths add exactly one v1 segment", async (t) => {
   const paths = [];
   installMockServer(t, async ({ options }) => {

@@ -4,6 +4,24 @@ const http = require("http");
 const https = require("https");
 const { filterSilentRepliesStream } = require("./speech-policy");
 
+// Re-check untrusted raw options here instead of relying only on config normalization.
+const HTTP_HEADER_TOKEN = /^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,128}$/;
+const RESERVED_SESSION_HEADER_NAMES = Object.freeze([
+  "authorization",
+  "proxy-authorization",
+  "content-length",
+  "content-type",
+  "host",
+  "connection",
+  "transfer-encoding",
+  "te",
+  "trailer",
+  "upgrade",
+  "expect",
+  "keep-alive",
+  "x-caty-agent-trust",
+]);
+
 function resolveCompletionPath(baseUrl) {
   const basePath = baseUrl.pathname && baseUrl.pathname !== "/"
     ? baseUrl.pathname.replace(/\/$/, "")
@@ -47,6 +65,8 @@ function applyTrustedAgentHeader(request, options = {}) {
 function applySessionHeader(request, options = {}) {
   const sessionValue = options.user ?? options.sessionUser;
   if (typeof options.sessionHeader !== "string" || options.sessionHeader === ""
+      || !HTTP_HEADER_TOKEN.test(options.sessionHeader)
+      || RESERVED_SESSION_HEADER_NAMES.includes(options.sessionHeader.toLowerCase())
       || typeof sessionValue !== "string" || sessionValue === "") return request;
   return {
     ...request,
