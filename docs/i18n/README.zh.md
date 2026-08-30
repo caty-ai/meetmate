@@ -93,7 +93,7 @@ Meetmate: [warm] 有两处变化——年度折扣改成了 15%，还新增了�
 |---|---|---|
 | OpenClaw Gateway | 已支持 | 目前的主路径：记忆、技能、工具和委派都留在你现有的智能体上。 |
 | OpenAI 兼容基线 | 已支持 | 面向任意兼容端点的纯语音智能体模式。 |
-| 通过 OpenAI 兼容网关接入 Claude Code | 集成进行中 | 使用通用的 `openai-compatible` 提供方。没有 Claude 专属的提供方分支。在真实 Google Meet 端到端验证通过之前,我们不会称其为"已支持"。 |
+| 通过 OpenAI 兼容网关接入 Claude Code | 已支持 | 2026年8月30日,以 Claude Code 作为大脑在真实 Google Meet 中完成端到端验证([冒烟测试记录](https://github.com/caty-ai/meetmate/blob/main/docs/claude-code-smoke-test-2026-08-30.md))— 入会、指名语音轮次、上下文、退出指令、会后摘要全部通过通用的 `openai-compatible` 提供方对接有状态的 Claude Code 网关运行。没有 Claude 专属的提供方分支。注意:机器人说话时不会因被打断而停止(其发言期间会屏蔽对方的音频输入)。接线说明:[安装指南 — 有状态网关](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md)。 |
 | Hermes api_server | 已支持 | 2026 年 8 月 29 日已在真实 Google Meet 中完成端到端验证（[#76](https://github.com/caty-ai/meetmate/issues/76)）——通过通用的 `openai-compatible` 提供方（SSH 隧道、Bearer 认证），真实会议中的语音对话运行正常。此项覆盖语音智能体路径。接线细节: [LLM providers](https://github.com/caty-ai/meetmate/blob/main/docs/TECHNICAL.md#llm-providers)。 |
 | Codex / Kimi Code | 计划中 | 尚未接入。 |
 | 会议网格中的头像 | 默认是静态图片;另有两种动态头像实验 | 逐帧口型同步已随 v8.4.0 发布,2.5D 骨骼(rig)概念验证也已合入主干。默认仍是静态图片;动态头像的工作在 [#2](https://github.com/caty-ai/meetmate/issues/2) 中继续。 |
