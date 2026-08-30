@@ -110,7 +110,11 @@ function fixture(t, options = {}) {
   const runtimeStartup = startup(directory);
   fs.writeFileSync(runtimeStartup.configPath, `${JSON.stringify({
     agent: { avatarUrl: options.avatarUrl || "" },
-    avatar: { experiment: options.avatarExperiment || "" },
+    avatar: {
+      experiment: options.avatarExperiment || "",
+      ...(options.rigBackgroundMode === undefined ? {} : { rigBackgroundMode: options.rigBackgroundMode }),
+      ...(options.rigBackgroundColor === undefined ? {} : { rigBackgroundColor: options.rigBackgroundColor }),
+    },
   })}\n`, { mode: 0o600 });
   resetRuntimeForTest();
   initializeRuntime({ state: readConfigState(runtimeStartup.configPath), startup: runtimeStartup, serverPort: 5005 });
@@ -257,6 +261,19 @@ test("invalid stored avatar experiment reports VALUE_INVALID and resolves to the
   assert.deepEqual(
     buildEnvelope().issues.find((issue) => issue.fieldId === "avatar_experiment"),
     { fieldId: "avatar_experiment", code: "VALUE_INVALID" },
+  );
+});
+
+test("rig background settings use pinned defaults and reject invalid stored values", (t) => {
+  fixture(t, { rigBackgroundMode: "video", rigBackgroundColor: "green" });
+  assert.equal(getEffectiveValue("avatar_rig_background_mode"), "solid");
+  assert.equal(getEffectiveValue("avatar_rig_background_color"), "#08111f");
+  assert.deepEqual(
+    buildEnvelope().issues.filter((issue) => issue.fieldId.startsWith("avatar_rig_background_")),
+    [
+      { fieldId: "avatar_rig_background_mode", code: "VALUE_INVALID" },
+      { fieldId: "avatar_rig_background_color", code: "VALUE_INVALID" },
+    ],
   );
 });
 

@@ -1304,6 +1304,10 @@ async function handleHttp(req, res) {
         const issued = createLocalAvatarSession({
           publicOrigin,
           htmlRoute: avatarExperiment === LOCAL_AVATAR_FRAMES_EXPERIMENT ? FRAMES_HTML_ROUTE : undefined,
+          background: {
+            mode: getEffectiveValue("avatar_rig_background_mode"),
+            color: getEffectiveValue("avatar_rig_background_color"),
+          },
         });
         localAvatarSession = issued.session;
         localAvatarLaunchUrl = issued.launchUrl;

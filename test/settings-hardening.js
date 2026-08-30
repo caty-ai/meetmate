@@ -144,6 +144,8 @@ function assertContractType(type, schema, id) {
     assert.equal(schema.safeParse("").success, base.endsWith("-or-empty"), `${id} empty hostname`);
   } else if (base === "secret") {
     valid = "secret"; invalid = "";
+  } else if (base === "hex-color") {
+    valid = "#08111f"; invalid = "green";
   } else if (base === "str[]") {
     valid = ["one", "two"]; invalid = ["same", "same"];
   } else if (base === "absolute path") {

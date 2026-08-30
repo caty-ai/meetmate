@@ -51,6 +51,8 @@ The allowlist below is complete. The compact type notation is directly translata
 | `agent_timeout_fallback` | `agent.timeoutFallback` | `text(4096)` | detail | none | live | none |
 | `agent_avatar_url` | `agent.avatarUrl` | `url-or-empty` | detail | none | restart-required | `BOT_IMAGE_URL` |
 | `avatar_experiment` | `avatar.experiment` | `enum(,hybrid-local-l0,hybrid-local-frames)` / empty | basic | none | live | none |
+| `avatar_rig_background_mode` | `avatar.rigBackgroundMode` | `enum(solid,image,chroma)` / `solid` | basic | none | live | none |
+| `avatar_rig_background_color` | `avatar.rigBackgroundColor` | `hex-color` / `#08111f` | basic | none | live | none |
 | `llm_provider` | `llm.provider` | `enum(openclaw,openai-compatible)` / `openclaw` | basic | none | restart-required | `LLM_PROVIDER` |
 | `llm_model` | `llm.model` | `str(256)` | basic | none | restart-required | none |
 | `llm_temperature` | `llm.temperature` | `num(0,2)` / `0.5` | detail | none | restart-required | `AGENT_TEMPERATURE` |

@@ -6,7 +6,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const vm = require("node:vm");
-const { execFileSync } = require("node:child_process");
+const { execFileSync, spawnSync } = require("node:child_process");
 const agPsd = require("../scripts/vendor/anime25drig/ag-psd.min.js");
 const Rigger = require("../scripts/vendor/anime25drig/rigger.js");
 
@@ -33,6 +33,14 @@ function embeddedProvenance(script) {
   const match = script.match(/const RIG_MODEL_PROVENANCE = "(procedural|external)";/);
   assert.ok(match, "model embed must declare provenance");
   return match[1];
+}
+
+function embeddedBackground(script) {
+  const match = script.match(/\/\* @rig-bg-begin \*\/([\s\S]*?)\/\* @rig-bg-end \*\//);
+  assert.ok(match, "background embed markers must exist");
+  const encoded = match[1].match(/const RIG_BACKGROUND_BASE64URL = "([A-Za-z0-9_-]*)";/);
+  assert.ok(encoded, "background embed must use base64url bytes");
+  return Buffer.from(encoded[1], "base64url");
 }
 
 function initializeImageData() {
@@ -350,6 +358,50 @@ test("generated page retains the frozen capability and network surface", () => {
   assert.deepEqual([...script.matchAll(/fetch\(([^,]+)/g)].map((match) => match[1].trim()), ["stateUrl(parameters)"]);
 });
 
+test("rig generator round-trips a slash-bearing PNG through a slash-free background embed", () => {
+  const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-local-avatar-bg-"));
+  const generatedFile = path.join(temporaryDirectory, "local-avatar.js");
+  const backgroundFile = path.join(ROOT, "assets", "avatar.png");
+  const background = fs.readFileSync(backgroundFile);
+  assert.equal(background.toString("base64").includes("//"), true, "fixture must exercise the standard-base64 URL token hazard");
+  try {
+    execFileSync(process.execPath, [
+      GENERATOR,
+      "--background",
+      backgroundFile,
+      "--out",
+      generatedFile,
+    ], { cwd: ROOT });
+    const generated = fs.readFileSync(generatedFile, "utf8");
+    assert.deepEqual(embeddedBackground(generated), background);
+    assert.equal(/\b(?:https?:)?\/\//i.test(generated), false);
+    assert.ok(Buffer.byteLength(generated) < 2_500_000);
+  } finally {
+    fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
+test("rig generator refuses a background that would exceed the frozen page cap", () => {
+  const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-local-avatar-bg-cap-"));
+  const generatedFile = path.join(temporaryDirectory, "local-avatar.js");
+  const backgroundFile = path.join(temporaryDirectory, "oversize.png");
+  fs.writeFileSync(backgroundFile, Buffer.alloc(1_500_000, 0xff));
+  try {
+    const result = spawnSync(process.execPath, [
+      GENERATOR,
+      "--background",
+      backgroundFile,
+      "--out",
+      generatedFile,
+    ], { cwd: ROOT, encoding: "utf8" });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /exceeds the 2\.5 MB cap/);
+    assert.equal(fs.existsSync(generatedFile), false);
+  } finally {
+    fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
 test("rig generator exactly reproduces the shipped script without mutating it", () => {
   const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-local-avatar-rig-"));
   const generatedFile = path.join(temporaryDirectory, "local-avatar.js");
@@ -358,6 +410,80 @@ test("rig generator exactly reproduces the shipped script without mutating it", 
     execFileSync(process.execPath, [GENERATOR, "--out", generatedFile], { cwd: ROOT });
     assert.deepEqual(fs.readFileSync(generatedFile), shippedBefore);
     assert.deepEqual(fs.readFileSync(SCRIPT_FILE), shippedBefore);
+  } finally {
+    fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
+test("active rig backgrounds apply connect-only solid and chroma values with image fallback", async () => {
+  const defaultBackground = await runBackgroundPage(shippedScript(), undefined);
+  defaultBackground.draws.length = 0;
+  defaultBackground.frames.shift()(1000);
+  assert.deepEqual(defaultBackground.draws[0], ["fill", "#08111f", 0, 0, 1280, 720]);
+
+  const solid = await runBackgroundPage(shippedScript(), { mode: "solid", color: "#123456" });
+  solid.draws.length = 0;
+  solid.frames.shift()(1000);
+  assert.deepEqual(solid.draws[0], ["fill", "#123456", 0, 0, 1280, 720]);
+
+  const chroma = await runBackgroundPage(shippedScript(), { mode: "chroma", color: "#123456" });
+  chroma.draws.length = 0;
+  chroma.frames.shift()(1000);
+  assert.deepEqual(chroma.draws[0], ["fill", "#00FF00", 0, 0, 1280, 720]);
+
+  const imageWithoutEmbed = await runBackgroundPage(shippedScript(), { mode: "image", color: "#654321" });
+  imageWithoutEmbed.draws.length = 0;
+  imageWithoutEmbed.frames.shift()(1000);
+  assert.deepEqual(imageWithoutEmbed.draws[0], ["fill", "#654321", 0, 0, 1280, 720]);
+
+  const markerBackground = {
+    kind: "marker",
+    generation: 1,
+    cancelEpoch: 0,
+    sequence: 2,
+    outputEpoch: 0,
+    sampleIndex: 0,
+    sampleRate: 24_000,
+    background: { mode: "chroma", color: "#000000" },
+  };
+  assert.equal(solid.sandbox.__localAvatarContract.acceptState(markerBackground), true);
+  solid.draws.length = 0;
+  solid.frames.shift()(1100);
+  assert.deepEqual(solid.draws[0], ["fill", "#123456", 0, 0, 1280, 720]);
+});
+
+test("embedded image backgrounds decode through Blob and cover the active rig letterbox", async () => {
+  const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-local-avatar-bg-page-"));
+  const generatedFile = path.join(temporaryDirectory, "local-avatar.js");
+  const backgroundFile = path.join(ROOT, "assets", "avatar.png");
+  try {
+    execFileSync(process.execPath, [GENERATOR, "--background", backgroundFile, "--out", generatedFile], { cwd: ROOT });
+    const bitmap = { width: 640, height: 480 };
+    let decodedBytes = null;
+    const page = await runBackgroundPage(
+      fs.readFileSync(generatedFile, "utf8"),
+      { mode: "image", color: "#123456" },
+      async (blob) => {
+        decodedBytes = Buffer.from(await blob.arrayBuffer());
+        return bitmap;
+      },
+    );
+    assert.deepEqual(decodedBytes, fs.readFileSync(backgroundFile));
+    page.draws.length = 0;
+    page.frames.shift()(1000);
+    const backgroundDraw = page.draws.find((draw) => draw[0] === "image" && draw[1] === bitmap);
+    assert.ok(backgroundDraw);
+    assert.deepEqual(backgroundDraw.slice(-4), [0, 0, 1280, 720]);
+
+    const failed = await runBackgroundPage(
+      fs.readFileSync(generatedFile, "utf8"),
+      { mode: "image", color: "#654321" },
+      async () => { throw new Error("decode failed"); },
+    );
+    failed.draws.length = 0;
+    failed.frames.shift()(1000);
+    assert.deepEqual(failed.draws[0], ["fill", "#654321", 0, 0, 1280, 720]);
+    assert.equal(failed.errors.length, 1);
   } finally {
     fs.rmSync(temporaryDirectory, { recursive: true, force: true });
   }
@@ -414,6 +540,59 @@ function runRigEnvelopePage({ dateNow = 0 } = {}) {
   vm.createContext(sandbox);
   vm.runInContext(shippedScript(), sandbox, { filename: SCRIPT_FILE });
   return { sandbox, frames };
+}
+
+async function runBackgroundPage(script, background, createBitmap = async () => ({ width: 640, height: 480 })) {
+  const frames = [];
+  const draws = [];
+  const errors = [];
+  const gl = createWebGlStub([], () => {});
+  let fillStyle = null;
+  const context = {
+    fillRect: (...args) => draws.push(["fill", fillStyle, ...args]),
+    fillText: (...args) => draws.push(["text", ...args]),
+    drawImage: (...args) => draws.push(["image", ...args]),
+    set fillStyle(value) { fillStyle = value; },
+    set font(_value) {},
+    set textAlign(_value) {},
+  };
+  const initial = {
+    kind: "idle",
+    generation: 1,
+    cancelEpoch: 0,
+    sequence: 1,
+    outputEpoch: -1,
+    sampleIndex: null,
+    sampleRate: null,
+    background,
+  };
+  const sandbox = {
+    URLSearchParams,
+    Blob,
+    console: { error: (...args) => errors.push(args) },
+    createImageBitmap: createBitmap,
+    location: {
+      pathname: "/local-avatar/index.html",
+      search: "?v=abcdefghijklmnop",
+      hash: "#cap=secret",
+    },
+    history: { replaceState: () => {} },
+    document: {
+      getElementById: () => ({ width: 1280, height: 720, getContext: () => context }),
+      createElement: () => ({ width: 0, height: 0, getContext: () => gl }),
+    },
+    requestAnimationFrame: (callback) => { frames.push(callback); return frames.length; },
+    fetch: async () => ({ ok: true, status: 200, json: async () => initial }),
+    setTimeout: () => 1,
+    clearTimeout: () => {},
+    performance: { now: () => 0 },
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(script, sandbox, { filename: SCRIPT_FILE });
+  await Promise.resolve();
+  await Promise.resolve();
+  await new Promise((resolve) => setImmediate(resolve));
+  return { sandbox, frames, draws, errors };
 }
 
 function createWebGlStub(uploaded, onDraw, onUniform = () => {}) {

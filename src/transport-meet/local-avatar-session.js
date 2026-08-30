@@ -16,6 +16,8 @@ const MAX_ENVELOPE_PUSH_VALUES = 150;
 const MAX_ENVELOPE_VALUES = 256;
 const ENVELOPE_WINDOW_MS = 100;
 const ENVELOPE_HISTORY_MS = 20_000;
+const DEFAULT_BACKGROUND = Object.freeze({ mode: "solid", color: "#08111f" });
+const BACKGROUND_MODES = new Set(["solid", "image", "chroma"]);
 
 const sessions = new Map();
 
@@ -35,6 +37,7 @@ function createLocalAvatarSession(options = {}) {
     queueLimit: options.queueLimit,
     retryLimit: options.retryLimit,
     logger: options.logger,
+    background: options.background,
   });
 
   if (sessions.has(visualId)) throw new Error("local avatar visual id collision");
@@ -48,7 +51,7 @@ function createLocalAvatarSession(options = {}) {
 }
 
 class LocalAvatarSession {
-  constructor({ visualId, capability, publicOrigin, now, ttlMs, queueLimit, retryLimit, logger }) {
+  constructor({ visualId, capability, publicOrigin, now, ttlMs, queueLimit, retryLimit, logger, background }) {
     this.visualId = visualId;
     this.publicOrigin = publicOrigin;
     this._now = typeof now === "function" ? now : Date.now;
@@ -71,6 +74,7 @@ class LocalAvatarSession {
     this._dropped = 0;
     this._envelopeLog = [];
     this._envelopeDropped = 0;
+    this._background = normalizeBackground(background);
   }
 
   verifyCapability(candidate) {
@@ -93,12 +97,14 @@ class LocalAvatarSession {
     this._lastDelivery = null;
     this._lastSampleIndex = -1;
     this._envelopeLog.length = 0;
-    const state = this._state("idle", {
-      outputEpoch: this._outputEpoch,
-      sampleIndex: null,
-      sampleRate: null,
-    });
-    return state;
+    return {
+      ...this._state("idle", {
+        outputEpoch: this._outputEpoch,
+        sampleIndex: null,
+        sampleRate: null,
+      }),
+      background: { ...this._background },
+    };
   }
 
   publishMarker(metadata, sourceGeneration = this._sourceGeneration) {
@@ -387,6 +393,18 @@ function normalizePublicOrigin(value) {
 function toBase64Url(value) {
   if (!Buffer.isBuffer(value)) throw new TypeError("randomBytes must return a Buffer");
   return value.toString("base64url");
+}
+
+function normalizeBackground(value) {
+  if (
+    !value
+    || !BACKGROUND_MODES.has(value.mode)
+    || typeof value.color !== "string"
+    || !/^#[0-9a-f]{6}$/i.test(value.color)
+  ) {
+    return { ...DEFAULT_BACKGROUND };
+  }
+  return { mode: value.mode, color: value.color };
 }
 
 function clampInteger(value, fallback, minimum, maximum) {

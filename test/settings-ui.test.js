@@ -78,7 +78,7 @@ test("client field sets deep-match registry UI metadata", () => {
     .map((entry) => entry.id).sort());
 });
 
-test("avatar_experiment mounts exactly once in panel-avatar with pinned labels and next-join help", () => {
+test("avatar settings mount exactly once in panel-avatar with pinned labels and next-join help", () => {
   const fs = require("node:fs");
   const path = require("node:path");
   const { CLIENT_FIELD_SETS, fieldContainerId } = require("../public/settings.js");
@@ -97,6 +97,8 @@ test("avatar_experiment mounts exactly once in panel-avatar with pinned labels a
   }
   const avatarEntries = manifest.filter((field) => AVATAR_FIELDS.has(field.id));
   assert.equal(avatarEntries.some((field) => field.id === "avatar_experiment"), true);
+  assert.equal(avatarEntries.some((field) => field.id === "avatar_rig_background_mode"), true);
+  assert.equal(avatarEntries.some((field) => field.id === "avatar_rig_background_color"), true);
   assert.equal(avatarEntries.every((field) => fieldContainerId(field) === "avatarFields"), true);
   const entry = avatarEntries.find((field) => field.id === "avatar_experiment");
   assert.equal(fieldContainerId(entry), "avatarFields");
@@ -108,6 +110,12 @@ test("avatar_experiment mounts exactly once in panel-avatar with pinned labels a
   assert.match(js, /"hybrid-local-l0": "2\.5Dリグ"/);
   assert.match(js, /"hybrid-local-frames": "フレームセット"/);
   assert.match(js, /avatar_experiment: "次回の会議参加から反映されます"/);
+  assert.match(js, /avatar_rig_background_mode: "2\.5Dリグ背景"/);
+  assert.match(js, /avatar_rig_background_color: "2\.5Dリグ背景色"/);
+  assert.match(js, /solid: "単色"/);
+  assert.match(js, /image: "埋め込み画像"/);
+  assert.match(js, /chroma: "クロマキー"/);
+  assert.match(js, /このビルドには背景画像が埋め込まれていません/);
 });
 
 test("main UI parses both setup and readiness 503 envelopes", () => {
