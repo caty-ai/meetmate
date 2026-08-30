@@ -19,6 +19,7 @@ const floorSettingsSchema = z.object({
   roomCode: z.string().trim().max(256),
   sharedToken: z.string().max(4096),
   tailMs: z.number().int().min(0).max(5000),
+  debug: z.boolean(),
 }).strict().superRefine((value, context) => {
   if (Boolean(value.url) !== Boolean(value.roomCode)) {
     context.addIssue({ code: "custom", message: "HUB_URL and HUB_ROOM_CODE must be set together" });

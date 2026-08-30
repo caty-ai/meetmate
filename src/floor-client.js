@@ -84,7 +84,7 @@ class FloorClient extends EventEmitter {
     this.acquireResponseTimeoutMs = options.acquireResponseTimeoutMs ?? ACQUIRE_RESPONSE_TIMEOUT_MS;
     this.readyGraceMs = options.readyGraceMs ?? READY_GRACE_MS;
     this.assignBufferGraceMs = options.assignBufferGraceMs ?? ASSIGN_BUFFER_GRACE_MS;
-    this.debug = options.debug === true || process.env.FLOOR_DEBUG === "1";
+    this.debug = options.debug === true;
     this.onAbortPlayback = options.onAbortPlayback || (() => {});
     this.onReady = options.onReady || (() => {});
     this.onFallbackCancel = options.onFallbackCancel || (() => {});

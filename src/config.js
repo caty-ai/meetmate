@@ -171,7 +171,7 @@ function loadConfig() {
   return Object.keys(raw).length > 0 ? stripLegacyClass2(raw) : null;
 }
 
-function getHubConfig() {
+function getFloorSettings() {
   const { parseFloorSettings } = require("./settings/schemas");
   const startup = getStartup();
   const rawConfig = getRawConfig();
@@ -182,23 +182,34 @@ function getHubConfig() {
     return fallback;
   };
   const tailValue = resolve("HUB_TAIL_MS", rawConfig?.hub?.tailMs, 500);
+  const debugValue = resolve("FLOOR_DEBUG", rawConfig?.hub?.debug, false);
   const parsedTail = typeof tailValue === "number" ? tailValue : Number(String(tailValue).trim());
   const parsed = parseFloorSettings({
     url: String(resolve("HUB_URL", rawConfig?.hub?.url)).trim(),
     roomCode: String(resolve("HUB_ROOM_CODE", rawConfig?.hub?.roomCode)).trim(),
     sharedToken: String(resolve("HUB_SHARED_TOKEN", rawConfig?.hub?.sharedToken)),
     tailMs: parsedTail,
+    debug: debugValue === true || debugValue === "1",
   });
   return {
-    enabled: Boolean(parsed.url && parsed.roomCode),
-    url: parsed.url || null,
-    roomCode: parsed.roomCode || null,
-    authToken: parsed.sharedToken,
-    tailMs: parsed.tailMs,
+    hub: {
+      enabled: Boolean(parsed.url && parsed.roomCode),
+      url: parsed.url || null,
+      roomCode: parsed.roomCode || null,
+      authToken: parsed.sharedToken,
+      tailMs: parsed.tailMs,
+    },
+    debug: parsed.debug,
   };
 }
 
-const HUB_CONFIG = Object.freeze(getHubConfig());
+function getHubConfig() {
+  return getFloorSettings().hub;
+}
+
+const FLOOR_SETTINGS = getFloorSettings();
+const HUB_CONFIG = Object.freeze(FLOOR_SETTINGS.hub);
+const PIPELINE_HUB_CONFIG = Object.freeze({ ...HUB_CONFIG, debug: FLOOR_SETTINGS.debug });
 
 /**
  * Build pipeline config.
@@ -361,7 +372,7 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
       // moves so there is one source of truth.
       speed: getEffectiveValue("fish_audio_speed"),
     },
-    hub: HUB_CONFIG,
+    hub: PIPELINE_HUB_CONFIG,
     briefing: overrides.briefing || null,
     purposeStatement: overrides.purposeStatement || null,
     greeting,
