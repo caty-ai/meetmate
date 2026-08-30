@@ -4,6 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=1280, initial-scale=1">
   <title>Meetmate marker</title>
+  <style>
+    /* Attendee's webpage streamer injects this overlay div into our DOM on its internal audio-relay timeout; the relay is unused here (audio runs over websocket_settings), so hide it from the captured tile. See issue #67. */
+    #attendee-audio-error { display: none !important; }
+  </style>
 </head>
 <body>
   <canvas id="avatar" width="1280" height="720" aria-label="Playback sample marker"></canvas>
