@@ -110,8 +110,9 @@ test("avatar settings mount exactly once in panel-avatar with pinned labels and 
   assert.match(js, /"hybrid-local-l0": "2\.5Dリグ"/);
   assert.match(js, /"hybrid-local-frames": "フレームセット"/);
   assert.match(js, /avatar_experiment: "次回の会議参加から反映されます"/);
-  assert.match(js, /avatar_rig_background_mode: "2\.5Dリグ背景"/);
-  assert.match(js, /avatar_rig_background_color: "2\.5Dリグ背景色"/);
+  assert.match(js, /avatar_rig_background_mode: "アバター背景"/);
+  assert.match(js, /avatar_rig_background_color: "アバター背景色"/);
+  assert.match(js, /2\.5Dリグとフレームセットの両方に適用され/);
   assert.match(js, /solid: "単色"/);
   assert.match(js, /image: "埋め込み画像"/);
   assert.match(js, /chroma: "クロマキー"/);

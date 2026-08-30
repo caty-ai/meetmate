@@ -19992,7 +19992,7 @@ const RIG_BACKGROUND_BASE64URL = "";
       let previous = rigClock();
       let lastSway = 0;
       let blinkStart = previous + 1700;
-      let blinkEnd = blinkStart + 150;
+      let blinkEnd = blinkStart + 230;
       let nextBlink = blinkEnd + 2700;
 
       function fade(layer, blink, mouth) {
@@ -20077,12 +20077,12 @@ const RIG_BACKGROUND_BASE64URL = "";
           previous = time;
           if (time >= nextBlink) {
             blinkStart = time;
-            blinkEnd = time + 150;
-            nextBlink = blinkEnd + 2300 + ((Math.floor(time / 17) * 73) % 1900);
+            blinkEnd = time + 230;
+            nextBlink = blinkEnd + 2350 + ((Math.floor(time / 17) * 73) % 2500);
           }
           const blink = time < blinkStart || time > blinkEnd
             ? 0
-            : Math.sin(Math.PI * (time - blinkStart) / (blinkEnd - blinkStart));
+            : Math.min(1, (time - blinkStart) / 40, (blinkEnd - time) / 40);
           let mouth;
           if (rigEnvelopeActive) {
             const scheduled = envelopeSchedule.lookup(time);

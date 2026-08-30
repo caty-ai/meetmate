@@ -14,6 +14,7 @@ const ROOT = path.join(__dirname, "..");
 const SCRIPT_FILE = path.join(ROOT, "public", "local-avatar", "local-avatar.js");
 const HTML_FILE = path.join(ROOT, "public", "local-avatar", "index.html");
 const GENERATOR = path.join(ROOT, "scripts", "build-local-avatar-rig.js");
+const BACKGROUND_FILE = path.join(ROOT, "assets", "avatar.png");
 
 function shippedScript() {
   return fs.readFileSync(SCRIPT_FILE, "utf8");
@@ -41,6 +42,21 @@ function embeddedBackground(script) {
   const encoded = match[1].match(/const RIG_BACKGROUND_BASE64URL = "([A-Za-z0-9_-]*)";/);
   assert.ok(encoded, "background embed must use base64url bytes");
   return Buffer.from(encoded[1], "base64url");
+}
+
+function pngDimensions(file) {
+  const bytes = fs.readFileSync(file);
+  assert.equal(bytes.subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
+  return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
+}
+
+function coverVector(width, height, canvasWidth = 1280, canvasHeight = 720) {
+  const scale = Math.max(canvasWidth / width, canvasHeight / height);
+  const sourceWidth = canvasWidth / scale;
+  const sourceHeight = canvasHeight / scale;
+  const sourceX = (width - sourceWidth) / 2;
+  const sourceY = (height - sourceHeight) / 2;
+  return [sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, canvasWidth, canvasHeight];
 }
 
 function initializeImageData() {
@@ -498,6 +514,43 @@ test("forward-only 16g clears the rig watermark through every public reset path"
   }
 });
 
+test("rig blink holds the eye-close layer fully opaque for at least 140ms at 60fps", () => {
+  const page = runRigBlinkPage();
+  const frameDuration = 1000 / 60;
+  const samples = [];
+  for (let time = 1690; time <= 1930; time += frameDuration) {
+    samples.push({ time, weight: page.blinkWeight(time) });
+  }
+
+  const fullyClosed = samples.filter(({ weight }) => weight >= 0.999);
+  assert.ok(fullyClosed.length > 1, "full close must survive beyond a single frame");
+  assert.ok(
+    fullyClosed.at(-1).time - fullyClosed[0].time >= 140,
+    "full-close samples must span at least 140ms",
+  );
+});
+
+test("rig blink remains fully visible when frames arrive at 10fps", () => {
+  const blinks = sampleRigBlinks({ step: 100, through: 20_000 });
+  assert.ok(blinks.length >= 4, "the sample must cover several blinks");
+  for (const blink of blinks) {
+    assert.ok(blink.maxWeight >= 0.999, `blink starting at ${blink.start}ms never fully closes`);
+  }
+});
+
+test("rig blink schedule is deterministic and stays within the CatyPhone cadence bounds", () => {
+  const first = sampleRigBlinks({ step: 100, through: 32_000 });
+  const second = sampleRigBlinks({ step: 100, through: 32_000 });
+  assert.deepEqual(second, first, "identical frame times must produce the same blink schedule");
+  assert.deepEqual(
+    first.map(({ start }) => start),
+    [1800, 4800, 7600, 12400, 15300, 18200, 21000, 25800, 28700, 31600],
+  );
+
+  const intervals = first.slice(1).map(({ start }, index) => start - first[index].start);
+  assert.ok(intervals.every((interval) => interval >= 2580 && interval <= 5080));
+});
+
 test("generated page retains the frozen capability and network surface", () => {
   const script = shippedScript();
   const shipped = `${fs.readFileSync(HTML_FILE, "utf8")}\n${script}`;
@@ -571,6 +624,25 @@ test("rig generator refuses a background that would exceed the frozen page cap",
   }
 });
 
+test("rig generator rejects --model without a rig output when --frames-out is used", () => {
+  const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-local-avatar-model-guard-"));
+  const generatedFrames = path.join(temporaryDirectory, "frames.js");
+  try {
+    const result = spawnSync(process.execPath, [
+      GENERATOR,
+      "--model",
+      path.join(temporaryDirectory, "model.psd"),
+      "--frames-out",
+      generatedFrames,
+    ], { cwd: ROOT, encoding: "utf8" });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /--model requires a rig output; pass --out or drop --model/);
+    assert.equal(fs.existsSync(generatedFrames), false);
+  } finally {
+    fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
 test("rig generator exactly reproduces the shipped script without mutating it", () => {
   const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-local-avatar-rig-"));
   const generatedFile = path.join(temporaryDirectory, "local-avatar.js");
@@ -624,10 +696,11 @@ test("active rig backgrounds apply connect-only solid and chroma values with ima
 test("embedded image backgrounds decode through Blob and cover the active rig letterbox", async () => {
   const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-local-avatar-bg-page-"));
   const generatedFile = path.join(temporaryDirectory, "local-avatar.js");
-  const backgroundFile = path.join(ROOT, "assets", "avatar.png");
+  const fixtureSize = pngDimensions(BACKGROUND_FILE);
+  const expectedVector = coverVector(fixtureSize.width, fixtureSize.height);
   try {
-    execFileSync(process.execPath, [GENERATOR, "--background", backgroundFile, "--out", generatedFile], { cwd: ROOT });
-    const bitmap = { width: 640, height: 480 };
+    execFileSync(process.execPath, [GENERATOR, "--background", BACKGROUND_FILE, "--out", generatedFile], { cwd: ROOT });
+    const bitmap = { width: fixtureSize.width, height: fixtureSize.height };
     let decodedBytes = null;
     const page = await runBackgroundPage(
       fs.readFileSync(generatedFile, "utf8"),
@@ -637,11 +710,12 @@ test("embedded image backgrounds decode through Blob and cover the active rig le
         return bitmap;
       },
     );
-    assert.deepEqual(decodedBytes, fs.readFileSync(backgroundFile));
+    assert.deepEqual(decodedBytes, fs.readFileSync(BACKGROUND_FILE));
     page.draws.length = 0;
     page.frames.shift()(1000);
     const backgroundDraw = page.draws.find((draw) => draw[0] === "image" && draw[1] === bitmap);
     assert.ok(backgroundDraw);
+    assert.deepEqual(backgroundDraw, ["image", bitmap, ...expectedVector]);
     assert.deepEqual(backgroundDraw.slice(-4), [0, 0, 1280, 720]);
 
     const failed = await runBackgroundPage(
@@ -710,6 +784,77 @@ function runRigEnvelopePage({ dateNow = 0, now = 0, offset = 0 } = {}) {
   vm.createContext(sandbox);
   vm.runInContext(shippedScript(), sandbox, { filename: SCRIPT_FILE });
   return { sandbox, frames, clock };
+}
+
+function runRigBlinkPage() {
+  const frames = [];
+  const draws = [];
+  let boundTexture = null;
+  const gl = createWebGlStub([], () => {}, (location, value) => {
+    if (location === "o") draws.push({ texture: boundTexture, opacity: value });
+  });
+  gl.bindTexture = (_target, texture) => { boundTexture = texture; };
+  const context = {
+    fillRect: () => {},
+    fillText: () => {},
+    drawImage: () => {},
+    set fillStyle(_value) {},
+    set font(_value) {},
+    set textAlign(_value) {},
+  };
+  const sandbox = {
+    URLSearchParams,
+    location: { pathname: "/local-avatar/index.html", search: "", hash: "" },
+    history: { replaceState: () => {} },
+    document: {
+      getElementById: () => ({ width: 1280, height: 720, getContext: () => context }),
+      createElement: () => ({ width: 0, height: 0, getContext: () => gl }),
+    },
+    requestAnimationFrame: (callback) => { frames.push(callback); return frames.length; },
+    fetch: async () => { throw new Error("state request is not expected"); },
+    setTimeout: () => 1,
+    clearTimeout: () => {},
+    performance: { now: () => 0 },
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(shippedScript(), sandbox, { filename: SCRIPT_FILE });
+
+  const render = (time) => {
+    draws.length = 0;
+    assert.ok(frames.length > 0, `missing animation frame at ${time}ms`);
+    frames.shift()(time);
+    return new Map(draws.map(({ texture, opacity }) => [texture, opacity]));
+  };
+  const openEyeTextures = new Set(render(0).keys());
+  return {
+    blinkWeight(time) {
+      const rendered = render(time);
+      const eyeCloseOpacities = [...rendered]
+        .filter(([texture]) => !openEyeTextures.has(texture))
+        .map(([, opacity]) => opacity);
+      return eyeCloseOpacities.length === 0 ? 0 : Math.max(...eyeCloseOpacities);
+    },
+  };
+}
+
+function sampleRigBlinks({ step, through }) {
+  const page = runRigBlinkPage();
+  const blinks = [];
+  let active = null;
+  for (let time = step; time <= through; time += step) {
+    const weight = page.blinkWeight(time);
+    if (weight > 0) {
+      if (!active) {
+        active = { start: time, maxWeight: weight };
+        blinks.push(active);
+      } else {
+        active.maxWeight = Math.max(active.maxWeight, weight);
+      }
+    } else {
+      active = null;
+    }
+  }
+  return blinks;
 }
 
 async function runBackgroundPage(script, background, createBitmap = async () => ({ width: 640, height: 480 })) {

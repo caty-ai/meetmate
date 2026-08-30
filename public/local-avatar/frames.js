@@ -29,6 +29,9 @@
   const visualId = query.get("v") || "";
   const fragment = new URLSearchParams(location.hash.slice(1));
   const capability = fragment.get("cap") || "";
+  /* @frames-bg-begin */
+const FRAMES_BACKGROUND_BASE64URL = "";
+/* @frames-bg-end */
 
   history.replaceState(null, "", `${location.pathname}${location.search}`);
 
@@ -53,6 +56,9 @@
   const envelopeSchedule = createEnvelopeSchedule(Date.now);
   let envelopeActive = false;
   let currentFrame = "diagnostic";
+  let framesBackground;
+  let framesBackgroundBitmap = null;
+  let framesBackgroundDecodeStarted = false;
 
   function randomBetween(minimum, maximum) {
     return minimum + (Math.random() * (maximum - minimum));
@@ -202,6 +208,97 @@
     currentFrame = "diagnostic";
   }
 
+  function decodeFramesBase64Url(encoded) {
+    if (!encoded) return new Uint8Array(0);
+    const bytes = new Uint8Array(Math.floor(encoded.length * 3 / 4));
+    let bits = 0;
+    let bitCount = 0;
+    let offset = 0;
+    for (const character of encoded) {
+      const code = character >= "A" && character <= "Z"
+        ? character.charCodeAt(0) - 65
+        : character >= "a" && character <= "z"
+          ? character.charCodeAt(0) - 71
+          : character >= "0" && character <= "9"
+            ? character.charCodeAt(0) + 4
+            : character === "-"
+              ? 62
+              : character === "_"
+                ? 63
+                : -1;
+      if (code < 0) continue;
+      bits = bits * 64 + code;
+      bitCount += 6;
+      if (bitCount >= 8) {
+        bitCount -= 8;
+        bytes[offset] = bits >> bitCount & 255;
+        offset += 1;
+        bits &= (1 << bitCount) - 1;
+      }
+    }
+    return bytes;
+  }
+
+  async function decodeFramesBackground() {
+    try {
+      framesBackgroundBitmap = await createImageBitmap(new Blob([decodeFramesBase64Url(FRAMES_BACKGROUND_BASE64URL)]));
+      repaintCurrentFrame();
+    } catch (error) {
+      framesBackgroundBitmap = null;
+      console.error("local avatar backdrop decode failed", error);
+    }
+  }
+
+  function setFramesBackground(value) {
+    const previous = framesBackground;
+    const validMode = value && ["solid", "image", "chroma"].includes(value.mode);
+    const validColor = value && typeof value.color === "string" && /^#[0-9a-f]{6}$/i.test(value.color);
+    framesBackground = validMode && validColor
+      ? { mode: value.mode, color: value.color }
+      : { mode: "solid", color: "#08111f" };
+    if (framesBackground.mode === "image" && FRAMES_BACKGROUND_BASE64URL && !framesBackgroundDecodeStarted) {
+      framesBackgroundDecodeStarted = true;
+      decodeFramesBackground();
+    }
+    if (!previous || previous.mode !== framesBackground.mode || previous.color !== framesBackground.color) repaintCurrentFrame();
+  }
+
+  function drawFramesBackground() {
+    if (framesBackground.mode === "chroma") {
+      context.fillStyle = "#00FF00";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      return;
+    }
+    if (
+      framesBackground.mode === "image"
+      && framesBackgroundBitmap
+      && Number.isFinite(framesBackgroundBitmap.width)
+      && Number.isFinite(framesBackgroundBitmap.height)
+      && framesBackgroundBitmap.width > 0
+      && framesBackgroundBitmap.height > 0
+    ) {
+      const scale = Math.max(canvas.width / framesBackgroundBitmap.width, canvas.height / framesBackgroundBitmap.height);
+      const sourceWidth = canvas.width / scale;
+      const sourceHeight = canvas.height / scale;
+      const sourceX = (framesBackgroundBitmap.width - sourceWidth) / 2;
+      const sourceY = (framesBackgroundBitmap.height - sourceHeight) / 2;
+      context.drawImage(
+        framesBackgroundBitmap,
+        sourceX,
+        sourceY,
+        sourceWidth,
+        sourceHeight,
+        0,
+        0,
+        canvas.width,
+        canvas.height,
+      );
+      return;
+    }
+    context.fillStyle = framesBackground.color;
+    context.fillRect(0, 0, canvas.width, canvas.height);
+  }
+
   function drawFrame(name) {
     // Pre-load fallback keeps whatever is on screen (startup blank, or the
     // grace diagnostic) so a marker can never repaint a latched diagnostic
@@ -216,8 +313,7 @@
       drawBlank();
       return;
     }
-    context.fillStyle = "#08111f";
-    context.fillRect(0, 0, canvas.width, canvas.height);
+    drawFramesBackground();
     // Contain-fit: preserve the frame's aspect ratio, centered with letterboxing,
     // so square/portrait character art is never stretched across the 16:9 tile.
     const image = frames.get(selected);
@@ -228,6 +324,13 @@
     const drawHeight = sourceHeight * scale;
     context.drawImage(image, (canvas.width - drawWidth) / 2, (canvas.height - drawHeight) / 2, drawWidth, drawHeight);
     currentFrame = selected;
+  }
+
+  function repaintCurrentFrame() {
+    if (!FRAME_NAMES.includes(currentFrame) || !frames.get(currentFrame)) return;
+    const active = currentFrame;
+    currentFrame = "";
+    drawFrame(active);
   }
 
   function enterIdle(at = Date.now()) {
@@ -459,6 +562,7 @@
       if (!Number.isSafeInteger(state.generation) || state.generation <= generation) {
         throw new Error("stale connection generation");
       }
+      setFramesBackground(state.background);
       generation = state.generation;
       cancelEpoch = -1;
       sequence = -1;
@@ -529,6 +633,7 @@
     writable: false,
   });
 
+  setFramesBackground();
   if (/^[A-Za-z0-9_-]{16,64}$/.test(visualId) && capability) {
     drawBlank();
     scheduleRender();
