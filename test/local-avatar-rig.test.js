@@ -498,6 +498,43 @@ test("forward-only 16g clears the rig watermark through every public reset path"
   }
 });
 
+test("rig blink holds the eye-close layer fully opaque for at least 140ms at 60fps", () => {
+  const page = runRigBlinkPage();
+  const frameDuration = 1000 / 60;
+  const samples = [];
+  for (let time = 1690; time <= 1930; time += frameDuration) {
+    samples.push({ time, weight: page.blinkWeight(time) });
+  }
+
+  const fullyClosed = samples.filter(({ weight }) => weight >= 0.999);
+  assert.ok(fullyClosed.length > 1, "full close must survive beyond a single frame");
+  assert.ok(
+    fullyClosed.at(-1).time - fullyClosed[0].time >= 140,
+    "full-close samples must span at least 140ms",
+  );
+});
+
+test("rig blink remains fully visible when frames arrive at 10fps", () => {
+  const blinks = sampleRigBlinks({ step: 100, through: 20_000 });
+  assert.ok(blinks.length >= 4, "the sample must cover several blinks");
+  for (const blink of blinks) {
+    assert.ok(blink.maxWeight >= 0.999, `blink starting at ${blink.start}ms never fully closes`);
+  }
+});
+
+test("rig blink schedule is deterministic and stays within the CatyPhone cadence bounds", () => {
+  const first = sampleRigBlinks({ step: 100, through: 32_000 });
+  const second = sampleRigBlinks({ step: 100, through: 32_000 });
+  assert.deepEqual(second, first, "identical frame times must produce the same blink schedule");
+  assert.deepEqual(
+    first.map(({ start }) => start),
+    [1800, 4800, 7600, 12400, 15300, 18200, 21000, 25800, 28700, 31600],
+  );
+
+  const intervals = first.slice(1).map(({ start }, index) => start - first[index].start);
+  assert.ok(intervals.every((interval) => interval >= 2580 && interval <= 5080));
+});
+
 test("generated page retains the frozen capability and network surface", () => {
   const script = shippedScript();
   const shipped = `${fs.readFileSync(HTML_FILE, "utf8")}\n${script}`;
@@ -710,6 +747,77 @@ function runRigEnvelopePage({ dateNow = 0, now = 0, offset = 0 } = {}) {
   vm.createContext(sandbox);
   vm.runInContext(shippedScript(), sandbox, { filename: SCRIPT_FILE });
   return { sandbox, frames, clock };
+}
+
+function runRigBlinkPage() {
+  const frames = [];
+  const draws = [];
+  let boundTexture = null;
+  const gl = createWebGlStub([], () => {}, (location, value) => {
+    if (location === "o") draws.push({ texture: boundTexture, opacity: value });
+  });
+  gl.bindTexture = (_target, texture) => { boundTexture = texture; };
+  const context = {
+    fillRect: () => {},
+    fillText: () => {},
+    drawImage: () => {},
+    set fillStyle(_value) {},
+    set font(_value) {},
+    set textAlign(_value) {},
+  };
+  const sandbox = {
+    URLSearchParams,
+    location: { pathname: "/local-avatar/index.html", search: "", hash: "" },
+    history: { replaceState: () => {} },
+    document: {
+      getElementById: () => ({ width: 1280, height: 720, getContext: () => context }),
+      createElement: () => ({ width: 0, height: 0, getContext: () => gl }),
+    },
+    requestAnimationFrame: (callback) => { frames.push(callback); return frames.length; },
+    fetch: async () => { throw new Error("state request is not expected"); },
+    setTimeout: () => 1,
+    clearTimeout: () => {},
+    performance: { now: () => 0 },
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(shippedScript(), sandbox, { filename: SCRIPT_FILE });
+
+  const render = (time) => {
+    draws.length = 0;
+    assert.ok(frames.length > 0, `missing animation frame at ${time}ms`);
+    frames.shift()(time);
+    return new Map(draws.map(({ texture, opacity }) => [texture, opacity]));
+  };
+  const openEyeTextures = new Set(render(0).keys());
+  return {
+    blinkWeight(time) {
+      const rendered = render(time);
+      const eyeCloseOpacities = [...rendered]
+        .filter(([texture]) => !openEyeTextures.has(texture))
+        .map(([, opacity]) => opacity);
+      return eyeCloseOpacities.length === 0 ? 0 : Math.max(...eyeCloseOpacities);
+    },
+  };
+}
+
+function sampleRigBlinks({ step, through }) {
+  const page = runRigBlinkPage();
+  const blinks = [];
+  let active = null;
+  for (let time = step; time <= through; time += step) {
+    const weight = page.blinkWeight(time);
+    if (weight > 0) {
+      if (!active) {
+        active = { start: time, maxWeight: weight };
+        blinks.push(active);
+      } else {
+        active.maxWeight = Math.max(active.maxWeight, weight);
+      }
+    } else {
+      active = null;
+    }
+  }
+  return blinks;
 }
 
 async function runBackgroundPage(script, background, createBitmap = async () => ({ width: 640, height: 480 })) {
