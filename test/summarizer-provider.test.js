@@ -35,6 +35,38 @@ test("summarizer sends resolved OpenAI-compatible credentials and model to its p
     assert.equal(completeOptions.apiKey, "key");
     assert.equal(completeOptions.model, "local-model");
     assert.equal(completeOptions.trustedAgentTools, true);
+    assert.match(completeOptions.user, /^meetmate-summary-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+
+    const firstUser = completeOptions.user;
+    await summarizeConversation([{ role: "user", content: "hello again" }], {
+      llm: {
+        provider: "openai-compatible",
+        model: "local-model",
+        openaiCompatible: { ...oaiCfg("https://llm.test/v1", "key"), trustedAgentTools: true },
+      },
+    });
+    assert.notEqual(completeOptions.user, firstUser);
+
+    await summarizeConversation([{ role: "user", content: "hello" }], {
+      sessionUser: "meet-abc-alpha",
+      llm: {
+        provider: "openai-compatible",
+        model: "local-model",
+        openaiCompatible: { ...oaiCfg("https://llm.test/v1", "key"), trustedAgentTools: true },
+      },
+    });
+    assert.equal(completeOptions.user, "meet-abc-alpha");
+
+    assert.equal(completeOptions.timeoutMs, 30_000);
+    await summarizeConversation([{ role: "user", content: "hello" }], {
+      llm: {
+        provider: "openai-compatible",
+        model: "local-model",
+        responseTimeoutMs: 60_000,
+        openaiCompatible: { ...oaiCfg("https://llm.test/v1", "key"), trustedAgentTools: true },
+      },
+    });
+    assert.equal(completeOptions.timeoutMs, 60_000);
   } finally {
     delete require.cache[summarizerPath];
     if (originalSummarizer) require.cache[summarizerPath] = originalSummarizer;
@@ -63,6 +95,19 @@ test("summarizer retains OpenClaw gateway options from resolved config", async (
     assert.equal(completeOptions.openclawUrl, "https://gateway.test/gw");
     assert.equal(completeOptions.openclawToken, "token");
     assert.equal(completeOptions.model, "agent");
+    assert.equal(completeOptions.user, undefined);
+    assert.equal(completeOptions.timeoutMs, 30_000);
+
+    await summarizeConversation([{ role: "user", content: "hello" }], {
+      llm: {
+        provider: "openclaw",
+        model: "agent",
+        responseTimeoutMs: 45_000,
+        gateway: gatewayCfg("https://gateway.test/gw", "token"),
+      },
+    });
+    assert.equal(completeOptions.user, undefined);
+    assert.equal(completeOptions.timeoutMs, 45_000);
   } finally {
     delete require.cache[summarizerPath];
     if (originalSummarizer) require.cache[summarizerPath] = originalSummarizer;

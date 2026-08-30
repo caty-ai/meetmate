@@ -1,5 +1,6 @@
 // summarizer.js — LLM-based conversation summarizer
 
+const crypto = require("node:crypto");
 const { DEFAULT_MESSAGES } = require("./messages");
 
 const SUMMARY_PROMPT = DEFAULT_MESSAGES.prompts.summary;
@@ -132,18 +133,25 @@ async function callLlm(prompt, options) {
         apiKey,
         model: llm.model,
         trustedAgentTools: llm.openaiCompatible?.trustedAgentTools === true,
+        // Stateful OpenAI-compatible gateways (e.g. the Claude Code bridge)
+        // require `user` as a mandatory session-routing key. A fresh key per
+        // summary keeps this turn out of any live meeting session.
+        user: options.sessionUser || `meetmate-summary-${crypto.randomUUID()}`,
       }
     : {
         ...gatewayAuth(llm.gateway?.url, llm.gateway?.token),
         model: llm.model || "openclaw",
       };
+  // Honor the resolved per-provider response timeout (LLM_RESPONSE_TIMEOUT_MS);
+  // stateful gateway turns (e.g. Claude Code bridge) regularly exceed 30s.
+  const configuredTimeoutMs = Number(llm.responseTimeoutMs);
   const { statusCode, text: response } = await provider.complete(
     [{ role: "user", content: prompt }],
     {
       ...providerOptions,
       temperature: 0.3,
       maxTokens: 500,
-      timeoutMs: 30_000,
+      timeoutMs: configuredTimeoutMs > 0 ? configuredTimeoutMs : 30_000,
       timeoutError: "Summarizer timeout",
     },
   );

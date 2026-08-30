@@ -93,7 +93,7 @@ Meetmate: [warm] 変更点は2つです——年間割引が15%になったの�
 |---|---|---|
 | OpenClaw Gateway | 対応済み | 現状のメインパス：記憶・スキル・ツール・委譲はすべて既存のエージェント側に残ります。 |
 | OpenAI 互換ベースライン | 対応済み | 任意の互換エンドポイント向けのシンプルな音声エージェントモード。 |
-| OpenAI 互換ゲートウェイ経由の Claude Code | 統合作業中 | 汎用の `openai-compatible` プロバイダーを使用。Claude 専用のプロバイダー分岐はまだありません。実際の Google Meet でのエンドツーエンド検証が済むまでは「対応済み」とは呼びません。 |
+| OpenAI 互換ゲートウェイ経由の Claude Code | 対応済み | 2026年8月30日、Claude Code を頭脳にした実際の Google Meet でエンドツーエンド検証済み（[スモーク記録](https://github.com/caty-ai/meetmate/blob/main/docs/claude-code-smoke-test-2026-08-30.md)）— 参加・指名音声ターン・文脈・退出コマンド・会議後サマリーのすべてが、状態を持つ Claude Code ゲートウェイに対して汎用の `openai-compatible` プロバイダー経由で動作しました。Claude 専用のプロバイダー分岐はありません。注意: ボットは発話中に割り込まれても話を止めません（発話中は相手の音声入力がゲートされます）。配線の詳細: [セットアップガイド — 状態を持つゲートウェイ](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#3-envgateway-接続情報環境専用値)。 |
 | Hermes api_server | 対応済み | 2026年8月29日、実際の Google Meet でエンドツーエンド検証済み（[#76](https://github.com/caty-ai/meetmate/issues/76)）— 汎用の `openai-compatible` プロバイダー（SSH トンネル・Bearer 認証）経由で、実会議での音声会話が動作しました。対象は音声エージェント経路です。配線の詳細: [LLM providers](https://github.com/caty-ai/meetmate/blob/main/docs/TECHNICAL.md#llm-providers)。 |
 | Codex / Kimi Code | 計画中 | まだ配線されていません。 |
 | 会議グリッド内のアバター | 既定は静止画・ライブアバター実験2種あり | フレーム差し替えリップシンクが v8.4.0 で出荷済み、2.5D リグの PoC も main に入りました。既定は静止画のままで、ライブアバターの作業は [#2](https://github.com/caty-ai/meetmate/issues/2) で継続中です。 |

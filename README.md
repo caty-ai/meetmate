@@ -1,6 +1,6 @@
 # Meetmate
 <!-- repo-state:begin (generated; do not edit) -->
-<p align="center"><sub>generation: <code>4ff5603</code> (2026-08-30T09:13:58Z) · verify: <a href="https://api.github.com/repos/caty-ai/meetmate/commits/main">API HEAD</a> · <a href="./status.json">status.json</a></sub></p>
+<p align="center"><sub>generation: <code>87df0ac</code> (2026-08-30T12:12:20Z) · verify: <a href="https://api.github.com/repos/caty-ai/meetmate/commits/main">API HEAD</a> · <a href="./status.json">status.json</a></sub></p>
 <!-- repo-state:end -->
 
 **English** | [日本語](https://github.com/caty-ai/meetmate/blob/main/docs/i18n/README.ja.md) | [中文](https://github.com/caty-ai/meetmate/blob/main/docs/i18n/README.zh.md) | [ไทย](https://github.com/caty-ai/meetmate/blob/main/docs/i18n/README.th.md)
@@ -94,7 +94,7 @@ Meetmate: [warm] Two changes — the annual discount moved to 15%, and a new
 |---|---|---|
 | OpenClaw Gateway | Supported | Primary path today: memory, skills, tools, and delegation all stay on your existing agent. |
 | OpenAI-compatible baseline | Supported | Plain voice-agent mode for any compatible endpoint. |
-| Claude Code via OpenAI-compatible gateway | Integration in progress | Uses the generic `openai-compatible` provider. No Claude-specific provider branch. We will only call this supported after a real Google Meet end-to-end pass lands. |
+| Claude Code via OpenAI-compatible gateway | Supported | Live Google Meet end-to-end verified on August 30, 2026 with Claude Code as the brain ([smoke record](https://github.com/caty-ai/meetmate/blob/main/docs/claude-code-smoke-test-2026-08-30.md)) — join, addressed voice turns, context, exit command, and post-meeting summary all ran through the generic `openai-compatible` provider against a stateful Claude Code gateway. No Claude-specific provider branch. Note: the bot does not stop speaking when interrupted (inbound audio is gated while it talks). Wiring notes: [setup guide — stateful gateways](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#3-envgateway-接続情報環境専用値). |
 | Hermes api_server | Supported | Live Google Meet end-to-end verified on August 29, 2026 ([#76](https://github.com/caty-ai/meetmate/issues/76)) — real meetings ran voice conversations through the generic `openai-compatible` provider (SSH tunnel, Bearer auth). Covers the voice-agent path. Wiring notes: [LLM providers](https://github.com/caty-ai/meetmate/blob/main/docs/TECHNICAL.md#llm-providers). |
 | Codex / Kimi Code | Planned | Not wired yet. |
 | Avatar in the meeting grid | Static image by default; two live-avatar experiments | Frame-swap lip-sync shipped in v8.4.0 and a 2.5D-rig proof of concept has landed. The static image remains the default; live-avatar work continues in [#2](https://github.com/caty-ai/meetmate/issues/2). |
