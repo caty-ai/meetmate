@@ -84,8 +84,8 @@
     }
 
     function accept(nextEpoch, rate, envelopes, offsetMs) {
-      if (nextEpoch !== epoch) reset(nextEpoch);
       const previousNewestEnd = (nextEpoch !== epoch) ? null : newestEndSample;
+      if (nextEpoch !== epoch) reset(nextEpoch);
       sampleRate = rate;
       windowSamples = Math.round(rate / 10);
 
