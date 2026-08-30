@@ -3,7 +3,8 @@
 
 /*
  * Regenerates the vendored Anime2.5DRig embed and local avatar PSD inside
- * public/local-avatar/local-avatar.js.
+ * public/local-avatar/local-avatar.js, and can emit a frames.js build with an
+ * embedded local backdrop.
  *
  * Default builds embed a deterministic procedural PSD with provenance
  * "procedural".
@@ -24,6 +25,7 @@ const agPsd = require("./vendor/anime25drig/ag-psd.min.js");
 
 const ROOT = path.join(__dirname, "..");
 const TARGET = path.join(ROOT, "public", "local-avatar", "local-avatar.js");
+const FRAMES_TARGET = path.join(ROOT, "public", "local-avatar", "frames.js");
 const VENDOR_DIR = path.join(__dirname, "vendor", "anime25drig");
 const VENDOR_BEGIN = "/* @rig-vendor-begin */";
 const VENDOR_END = "/* @rig-vendor-end */";
@@ -31,6 +33,8 @@ const MODEL_BEGIN = "/* @rig-model-begin */";
 const MODEL_END = "/* @rig-model-end */";
 const BACKGROUND_BEGIN = "/* @rig-bg-begin */";
 const BACKGROUND_END = "/* @rig-bg-end */";
+const FRAMES_BACKGROUND_BEGIN = "/* @frames-bg-begin */";
+const FRAMES_BACKGROUND_END = "/* @frames-bg-end */";
 const MAX_SCRIPT_BYTES = 2_500_000;
 const VENDOR_HASHES = Object.freeze({
   "LICENSE": "15183bfbec774052a5817a28eb03730c40ec941a642097b597f0c50092594adb",
@@ -270,7 +274,7 @@ function buildVendorSection() {
 }
 
 function parseArguments(argv) {
-  const options = { modelPath: null, backgroundPath: null };
+  const options = { modelPath: null, backgroundPath: null, outputPath: null, framesOutputPath: null };
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     if (argument === "--model") {
@@ -291,6 +295,13 @@ function parseArguments(argv) {
       const value = argv[index + 1];
       if (!value || value.startsWith("--")) throw new Error("--out requires a file path");
       options.outputPath = path.resolve(process.cwd(), value);
+      index += 1;
+      continue;
+    }
+    if (argument === "--frames-out") {
+      const value = argv[index + 1];
+      if (!value || value.startsWith("--")) throw new Error("--frames-out requires a file path");
+      options.framesOutputPath = path.resolve(process.cwd(), value);
       index += 1;
       continue;
     }
@@ -324,36 +335,55 @@ function buildModelSection(options = {}) {
   return `const RIG_MODEL_PROVENANCE = "${model.provenance}";\nconst RIG_MODEL_BASE64 = "${base64}";`;
 }
 
-function buildBackgroundSection(options = {}) {
-  if (!options.backgroundPath) return 'const RIG_BACKGROUND_BASE64URL = "";';
+function buildBackgroundLine(options = {}, constantName) {
+  if (!options.backgroundPath) return `const ${constantName} = "";`;
   let bytes;
   try {
     bytes = fs.readFileSync(options.backgroundPath);
   } catch (error) {
     throw new Error(`failed to read --background image ${options.backgroundPath}: ${error.message}`);
   }
-  return `const RIG_BACKGROUND_BASE64URL = "${bytes.toString("base64url")}";`;
+  return `const ${constantName} = "${bytes.toString("base64url")}";`;
+}
+
+function finalizeOutput(output, label) {
+  const forbiddenUrl = /\b(?:https?:)?\/\//i.exec(output);
+  if (forbiddenUrl) {
+    throw new Error(`generated ${label} contains a forbidden URL-shaped token near ${output.slice(Math.max(0, forbiddenUrl.index - 24), forbiddenUrl.index + 48)}`);
+  }
+  const completed = output.endsWith("\n") ? output : `${output}\n`;
+  const outputBytes = Buffer.byteLength(completed);
+  if (outputBytes >= MAX_SCRIPT_BYTES) {
+    throw new Error(`generated ${label} is ${outputBytes} bytes and exceeds the 2.5 MB cap`);
+  }
+  return completed;
+}
+
+function buildRigScript(options = {}) {
+  let output = fs.readFileSync(TARGET, "utf8");
+  output = replaceSection(output, VENDOR_BEGIN, VENDOR_END, buildVendorSection());
+  output = replaceSection(output, MODEL_BEGIN, MODEL_END, buildModelSection(options));
+  output = replaceSection(output, BACKGROUND_BEGIN, BACKGROUND_END, buildBackgroundLine(options, "RIG_BACKGROUND_BASE64URL"));
+  return finalizeOutput(output, "page script");
+}
+
+function buildFramesScript(options = {}) {
+  let output = fs.readFileSync(FRAMES_TARGET, "utf8");
+  output = replaceSection(output, FRAMES_BACKGROUND_BEGIN, FRAMES_BACKGROUND_END, buildBackgroundLine(options, "FRAMES_BACKGROUND_BASE64URL"));
+  return finalizeOutput(output, "frames page script");
 }
 
 function build(options = {}) {
   initializePsdIO();
   verifyVendor();
-  let output = fs.readFileSync(TARGET, "utf8");
-  output = replaceSection(output, VENDOR_BEGIN, VENDOR_END, buildVendorSection());
-  output = replaceSection(output, MODEL_BEGIN, MODEL_END, buildModelSection(options));
-  output = replaceSection(output, BACKGROUND_BEGIN, BACKGROUND_END, buildBackgroundSection(options));
-  const forbiddenUrl = /\b(?:https?:)?\/\//i.exec(output);
-  if (forbiddenUrl) {
-    throw new Error(`generated page script contains a forbidden URL-shaped token near ${output.slice(Math.max(0, forbiddenUrl.index - 24), forbiddenUrl.index + 48)}`);
+  const outputs = [];
+  if (!options.framesOutputPath || options.outputPath) {
+    outputs.push([options.outputPath || TARGET, buildRigScript(options)]);
   }
-  const completed = output.endsWith("\n") ? output : `${output}\n`;
-  const outputBytes = Buffer.byteLength(completed);
-  if (outputBytes >= MAX_SCRIPT_BYTES) {
-    throw new Error(`generated page script is ${outputBytes} bytes and exceeds the 2.5 MB cap`);
-  }
-  fs.writeFileSync(options.outputPath || TARGET, completed);
+  if (options.framesOutputPath) outputs.push([options.framesOutputPath, buildFramesScript(options)]);
+  for (const [file, contents] of outputs) fs.writeFileSync(file, contents);
 }
 
 if (require.main === module) build(parseArguments(process.argv.slice(2)));
 
-module.exports = { build, buildModelPsd, parseArguments };
+module.exports = { build, buildFramesScript, buildModelPsd, buildRigScript, parseArguments };

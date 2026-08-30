@@ -189,6 +189,8 @@ test("frame threshold literals match the server mapping and both pages share the
   const rigScript = fs.readFileSync(SCRIPT_FILE, "utf8");
   assert.match(framesScript, new RegExp(`LEVEL_ONE_THRESHOLD = ${LEVEL_ONE_THRESHOLD}`));
   assert.match(framesScript, new RegExp(`LEVEL_TWO_THRESHOLD = ${LEVEL_TWO_THRESHOLD}`));
+  assert.match(framesScript, /\/\* @frames-bg-begin \*\/[\s\S]*?\/\* @frames-bg-end \*\//);
+  assert.match(framesScript, /const FRAMES_BACKGROUND_BASE64URL = "[A-Za-z0-9_-]*";/);
   assert.equal(extractScheduleCore(framesScript, "\n\n  let framesLoaded"), extractScheduleCore(rigScript, "\n\n  function closeRigMouth"));
   assert.equal(extractConstDeclaration(framesScript, "ENVELOPE_END_GRACE_MS"), extractConstDeclaration(rigScript, "ENVELOPE_END_GRACE_MS"));
   assert.equal(extractConstDeclaration(framesScript, "FORWARD_REANCHOR_MS"), extractConstDeclaration(rigScript, "FORWARD_REANCHOR_MS"));
