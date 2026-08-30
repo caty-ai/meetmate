@@ -10,6 +10,7 @@ const { shouldSuppressReply, stripEmojis, stripRareScriptCharacters, extractChat
 const { recordEvent } = require("./metrics");
 const gatewayEventsClient = require("./gateway-events");
 const { DEFAULT_MESSAGES, renderTemplate, resolveMessages } = require("./messages");
+const { createEnvelopeAccumulator } = require("./audio-envelope");
 
 const DEFAULT_RESOLVED_MESSAGES = resolveMessages();
 
@@ -34,6 +35,9 @@ const CLAUSE_PAUSE_MS = Number(process.env.CLAUSE_PAUSE_MS || 300);     // claus
 const TTS_GAP_MS = Number(process.env.TTS_GAP_MS || 250);
 const TTS_LEAD_MS = Number(process.env.TTS_LEAD_MS || 200);
 const COMFORT_NOISE_AMPLITUDE = Number(process.env.COMFORT_NOISE_AMPLITUDE || 30);
+const LOCAL_AVATAR_ENVELOPE_ENABLED = String(process.env.LOCAL_AVATAR_ENVELOPE || "on").toLowerCase() !== "off";
+const ENVELOPE_REARM_IDLE_MS = 2_000;
+const ENVELOPE_REARM_SLACK_MS = nonNegativeFinite(process.env.LOCAL_AVATAR_ENVELOPE_SLACK_MS, 2_000);
 
 // UX controls
 const POST_UTTERANCE_BUFFER_MS = Number(process.env.POST_UTTERANCE_BUFFER_MS || 500);
@@ -110,6 +114,12 @@ function isWakeCancelText(text, agents = null, selectedAgentIds = [], regexConfi
 function positiveInt(value, fallback) {
   const n = Number(value);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
+}
+
+function nonNegativeFinite(value, fallback) {
+  if (typeof value === "string" && value.trim() === "") return fallback;
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : fallback;
 }
 
 function selectMeetingContextEntries(transcriptBuffer, currentEntry, options = {}) {
@@ -506,6 +516,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   const { EventEmitter } = require("events");
   const { createSTT } = require("./stt-provider");
   const emitter = new EventEmitter();
+  if (turnState.lastTurnEndAt == null) turnState.lastTurnEndAt = null;
 
   // Additive output observability for the existing PCM callback. Epoch 0 is
   // the initial output stream; an authoritative playback abort invalidates it
@@ -513,16 +524,75 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   // transport callback still receives the same Buffer as its first argument.
   let outputEpoch = 0;
   let firstSampleIndex = 0;
+  let envelopeAccumulator = null;
+  if (LOCAL_AVATAR_ENVELOPE_ENABLED) {
+    try {
+      envelopeAccumulator = createEnvelopeAccumulator({ sampleRate: config.tts.sampleRate });
+    } catch {
+      envelopeAccumulator = null;
+    }
+  }
+  let lastAudioSendAt = null;
+  let projectedEnd = -Infinity;
+  let llmStreamOpen = false;
   const cancelledAbortControllers = new WeakSet();
 
-  function deliverAudio(buffer) {
+  function resetEnvelopeEpoch() {
+    firstSampleIndex = 0;
+    projectedEnd = -Infinity;
+    try {
+      envelopeAccumulator?.reset();
+    } catch {
+      envelopeAccumulator = null;
+    }
+  }
+
+  function clearAgentSpeaking() {
+    const wasSpeaking = turnState.isAgentSpeaking === true;
+    turnState.isAgentSpeaking = false;
+    if (wasSpeaking) turnState.lastTurnEndAt = Date.now();
+  }
+
+  function shouldRearmEnvelopeEpoch(now) {
+    return LOCAL_AVATAR_ENVELOPE_ENABLED
+      && turnState.lastTurnEndAt !== null
+      && now - turnState.lastTurnEndAt >= ENVELOPE_REARM_IDLE_MS
+      && !llmStreamOpen
+      && lastAudioSendAt !== null
+      && now - lastAudioSendAt >= ENVELOPE_REARM_IDLE_MS
+      && now >= projectedEnd + ENVELOPE_REARM_SLACK_MS;
+  }
+
+  function deliverAudio(buffer, speakChain = null) {
+    if (
+      speakChain?.rearmEnvelopeEpoch
+      && !speakChain.delivered
+      && speakChain.snapshotEpoch === outputEpoch
+    ) {
+      outputEpoch += 1;
+      resetEnvelopeEpoch();
+    }
+    if (speakChain) speakChain.delivered = true;
+
+    const sendNow = Date.now();
     const metadata = {
       outputEpoch,
       firstSampleIndex,
       sampleRate: config.tts.sampleRate,
     };
+    if (envelopeAccumulator) {
+      try {
+        const segments = envelopeAccumulator.push(buffer);
+        if (segments.length > 0) metadata.envelopeSegments = segments;
+      } catch {
+        // Envelope computation is visual-only and must never block PCM.
+      }
+    }
     onAudio(buffer, metadata);
-    firstSampleIndex += Math.floor(buffer.length / 2);
+    const sampleCount = Math.floor(buffer.length / 2);
+    firstSampleIndex += sampleCount;
+    lastAudioSendAt = sendNow;
+    projectedEnd = Math.max(projectedEnd, sendNow) + (sampleCount / config.tts.sampleRate * 1000);
   }
 
   function emitObserverEvent(type, event) {
@@ -544,7 +614,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     controller.abort();
     cancelledAbortControllers.add(controller);
     outputEpoch += 1;
-    firstSampleIndex = 0;
+    resetEnvelopeEpoch();
     emitObserverEvent("playback_cancelled", {
       outputEpoch: cancelledEpoch,
       reason,
@@ -688,7 +758,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     isProcessing = false;
     gateState = "OPEN";
     turnState.gateState = gateState;
-    turnState.isAgentSpeaking = false;
+    clearAgentSpeaking();
     turnState.inputCooldownUntil = 0;
 
     const cancelMsg = config.cancelAck;
@@ -698,7 +768,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         await speakSentence(cancelMsg, null, { cacheable: true });
         appendConversationEntry("assistant", cancelMsg.replace(/^\([^)]*\)\s*/, ""), currentAgentId || null);
       } catch { /* ignore */ }
-      turnState.isAgentSpeaking = false;
+      clearAgentSpeaking();
     }
   }
 
@@ -1148,7 +1218,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
             } catch {
               // Chat already carries the report.
             } finally {
-              turnState.isAgentSpeaking = false;
+              clearAgentSpeaking();
               turnState.inputCooldownUntil = Date.now() + (config.echoCooldownMs || 300);
             }
             break;
@@ -1369,7 +1439,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       console.log(`🛑  Barge-in detected: "${interim.slice(0, 50)}" — aborting TTS/LLM`);
       abortPlayback(currentAbort, "barge_in");
       currentAbort = null;
-      turnState.isAgentSpeaking = false;
+      clearAgentSpeaking();
       turnState.inputCooldownUntil = 0;
     }
   });
@@ -1423,7 +1493,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       } catch {
         // ignore TTS error during exit
       }
-      turnState.isAgentSpeaking = false;
+      clearAgentSpeaking();
 
       appendConversationEntry("assistant", farewellLog, currentAgentId || null);
 
@@ -1512,7 +1582,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       abortPlayback(currentAbort, "turn_interrupted");
       currentAbort = null;
       isProcessing = false;
-      turnState.isAgentSpeaking = false;
+      clearAgentSpeaking();
     }
 
     // Build user text with meeting context injection
@@ -1726,7 +1796,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       // Release barge-in window so the user can cancel/redirect during the
       // up-to-5s handoff await. Without this, the agent appears deaf for ~8-9s
       // between "ちょっと時間がかかってるね" and the Slack confirmation.
-      turnState.isAgentSpeaking = false;
+      clearAgentSpeaking();
       turnState.inputCooldownUntil = Date.now() + (config.echoCooldownMs || 300);
 
       if (!handoffAttempted) {
@@ -1755,7 +1825,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
             await speakSentence(followup, null, { cacheable: true });
           } catch { /* ignore TTS error during fallback */ }
           appendAssistantLog(followup.replace(/^\([^)]*\)\s*/, ""));
-          turnState.isAgentSpeaking = false;
+          clearAgentSpeaking();
         } else {
           console.log("⏭️  Timeout handoff skipped (no transcript)");
         }
@@ -1846,7 +1916,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       await speakSentence(ping, abort.signal, { cacheable: true, role: "progress" });
       if (!abort.signal.aborted) {
         appendAssistantLog(ping.replace(/^\([^)]*\)\s*/, ""));
-        turnState.isAgentSpeaking = false;
+        clearAgentSpeaking();
       }
 
       if (progressPingIndex >= PROGRESS_PING_MAX) {
@@ -1883,7 +1953,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
           // Release isAgentSpeaking so progress pings can fire while the LLM
           // is still thinking. inputCooldownUntil absorbs any echo from the
           // ack playback so STT noise doesn't trigger barge-in/re-entry.
-          turnState.isAgentSpeaking = false;
+          clearAgentSpeaking();
           turnState.inputCooldownUntil = Date.now() + (config.echoCooldownMs || 300);
         }
       }
@@ -1950,99 +2020,104 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         for (const text of chats) emitChatMessage(text, source);
       };
 
-      for await (const chunk of llmProvider.streamChat(
-        llmMessages,
-        {
-          openclawUrl: config.llm.gateway?.url,
-          openclawToken: config.llm.gateway?.token,
-          openclawSystemAddendum: agentState.openclawSystemAddendum,
-          sessionUser: agentState.sessionUser,
-          model: agentState.model,
-          temperature: config.llm.temperature,
-          maxTokens: config.llm.maxTokens,
-          ...(!isOpenclawProvider ? {
-            baseUrl: config.llm.openaiCompatible?.baseUrl,
-            apiKey: config.llm.openaiCompatible?.apiKey,
-            emptyResponseRetry: config.llm.openaiCompatible?.emptyResponseRetry,
-            trustedAgentTools: config.llm.openaiCompatible?.trustedAgentTools,
-            streamingEquivalentEnabled: config.llm.openaiCompatible?.streamingEquivalentEnabled,
-          } : {}),
-          signal: abort.signal,
-        }
-      )) {
-        if (abort.signal.aborted) break;
-
-        if (!firstChunkSeen) {
-          firstChunkSeen = true;
-          readiness.reportRuntimeSuccess("llm");
-          stopFirstResponseTimers();
-          console.log(`📥  [diag] firstChunk transition: false→true, chunk="${chunk.slice(0, 40)}"`);
-          recordParentFirstTokenSuccess();
-          recordMetric("first_token", {
-            turn_id: metricsTurnId,
-            chunk_char_count: String(chunk || "").length,
-          });
-        }
-
-        fullResponse += chunk;
-        sentenceBuffer += chatHoldback + chunk;
-        chatHoldback = "";
-        const extractedChat = extractChatTags(sentenceBuffer);
-        sentenceBuffer = extractedChat.speech;
-        chatHoldback = extractedChat.holdback;
-        emitChatMessages(extractedChat.chats);
-
-        // #9 First chunk fast path: speak early even before punctuation.
-        // Skip when ack was already spoken (spokenSentenceCount > 0) — ack provides
-        // sufficient responsiveness, so we wait for proper punctuation chunking instead.
-        if (!mainResponseStarted && spokenSentenceCount === 0 && sentenceBuffer.trim().length >= FIRST_CHUNK_MIN_CHARS && !SENTENCE_END_RE.test(sentenceBuffer) && !findSplitPoint(sentenceBuffer)) {
-          mainResponseStarted = true;
-          stopProgressTimer();
-          turnState.isAgentSpeaking = true;
-          const firstChunk = sentenceBuffer.trim();
-          sentenceBuffer = "";
-          console.log(`🗣️  ${requestAgentId || "agent"} speaking (first chunk): "${firstChunk}"`);
-          await speakSentence(firstChunk, abort.signal, {
-            onPlaybackStart: () => recordTtsPlaybackStartOnce(firstChunk, "first_chunk"),
-          });
+      llmStreamOpen = true;
+      try {
+        for await (const chunk of llmProvider.streamChat(
+          llmMessages,
+          {
+            openclawUrl: config.llm.gateway?.url,
+            openclawToken: config.llm.gateway?.token,
+            openclawSystemAddendum: agentState.openclawSystemAddendum,
+            sessionUser: agentState.sessionUser,
+            model: agentState.model,
+            temperature: config.llm.temperature,
+            maxTokens: config.llm.maxTokens,
+            ...(!isOpenclawProvider ? {
+              baseUrl: config.llm.openaiCompatible?.baseUrl,
+              apiKey: config.llm.openaiCompatible?.apiKey,
+              emptyResponseRetry: config.llm.openaiCompatible?.emptyResponseRetry,
+              trustedAgentTools: config.llm.openaiCompatible?.trustedAgentTools,
+              streamingEquivalentEnabled: config.llm.openaiCompatible?.streamingEquivalentEnabled,
+            } : {}),
+            signal: abort.signal,
+          }
+        )) {
           if (abort.signal.aborted) break;
-          spokenSentenceCount += 1;
-          continue;
-        }
 
-        // Check for split point (two-tier: sentence boundary or clause boundary)
-        const split = findSplitPoint(sentenceBuffer);
-        if (split) {
-          const sentence = sentenceBuffer.slice(0, split.splitAt).trim();
-          sentenceBuffer = sentenceBuffer.slice(split.splitAt);
+          if (!firstChunkSeen) {
+            firstChunkSeen = true;
+            readiness.reportRuntimeSuccess("llm");
+            stopFirstResponseTimers();
+            console.log(`📥  [diag] firstChunk transition: false→true, chunk="${chunk.slice(0, 40)}"`);
+            recordParentFirstTokenSuccess();
+            recordMetric("first_token", {
+              turn_id: metricsTurnId,
+              chunk_char_count: String(chunk || "").length,
+            });
+          }
 
-          if (sentence.length >= MIN_SENTENCE_LEN) {
-            if (!mainResponseStarted) {
-              mainResponseStarted = true;
-              stopProgressTimer();
-              turnState.isAgentSpeaking = true;
-            }
+          fullResponse += chunk;
+          sentenceBuffer += chatHoldback + chunk;
+          chatHoldback = "";
+          const extractedChat = extractChatTags(sentenceBuffer);
+          sentenceBuffer = extractedChat.speech;
+          chatHoldback = extractedChat.holdback;
+          emitChatMessages(extractedChat.chats);
 
-            // Insert pause between segments (sentence=long, clause=short)
-            if (spokenSentenceCount > 0 && split.pauseMs > 0) {
-              const silence = generateSilence(split.pauseMs, config.tts.sampleRate);
-              deliverAudio(silence);
-            }
-
-            const splitLabel = split.type === "clause" ? "clause" : "sentence";
-            if (spokenSentenceCount === 0) {
-              console.log(`🗣️  ${requestAgentId || "agent"} speaking [${splitLabel}]: "${sentence}"`);
-            } else {
-              console.log(`🗣️  ${requestAgentId || "agent"} continue [${splitLabel}]: "${sentence}"`);
-            }
-
-            await speakSentence(sentence, abort.signal, {
-              onPlaybackStart: () => recordTtsPlaybackStartOnce(sentence, splitLabel),
+          // #9 First chunk fast path: speak early even before punctuation.
+          // Skip when ack was already spoken (spokenSentenceCount > 0) — ack provides
+          // sufficient responsiveness, so we wait for proper punctuation chunking instead.
+          if (!mainResponseStarted && spokenSentenceCount === 0 && sentenceBuffer.trim().length >= FIRST_CHUNK_MIN_CHARS && !SENTENCE_END_RE.test(sentenceBuffer) && !findSplitPoint(sentenceBuffer)) {
+            mainResponseStarted = true;
+            stopProgressTimer();
+            turnState.isAgentSpeaking = true;
+            const firstChunk = sentenceBuffer.trim();
+            sentenceBuffer = "";
+            console.log(`🗣️  ${requestAgentId || "agent"} speaking (first chunk): "${firstChunk}"`);
+            await speakSentence(firstChunk, abort.signal, {
+              onPlaybackStart: () => recordTtsPlaybackStartOnce(firstChunk, "first_chunk"),
             });
             if (abort.signal.aborted) break;
             spokenSentenceCount += 1;
+            continue;
+          }
+
+          // Check for split point (two-tier: sentence boundary or clause boundary)
+          const split = findSplitPoint(sentenceBuffer);
+          if (split) {
+            const sentence = sentenceBuffer.slice(0, split.splitAt).trim();
+            sentenceBuffer = sentenceBuffer.slice(split.splitAt);
+
+            if (sentence.length >= MIN_SENTENCE_LEN) {
+              if (!mainResponseStarted) {
+                mainResponseStarted = true;
+                stopProgressTimer();
+                turnState.isAgentSpeaking = true;
+              }
+
+              // Insert pause between segments (sentence=long, clause=short)
+              if (spokenSentenceCount > 0 && split.pauseMs > 0) {
+                const silence = generateSilence(split.pauseMs, config.tts.sampleRate);
+                deliverAudio(silence);
+              }
+
+              const splitLabel = split.type === "clause" ? "clause" : "sentence";
+              if (spokenSentenceCount === 0) {
+                console.log(`🗣️  ${requestAgentId || "agent"} speaking [${splitLabel}]: "${sentence}"`);
+              } else {
+                console.log(`🗣️  ${requestAgentId || "agent"} continue [${splitLabel}]: "${sentence}"`);
+              }
+
+              await speakSentence(sentence, abort.signal, {
+                onPlaybackStart: () => recordTtsPlaybackStartOnce(sentence, splitLabel),
+              });
+              if (abort.signal.aborted) break;
+              spokenSentenceCount += 1;
+            }
           }
         }
+      } finally {
+        llmStreamOpen = false;
       }
 
       stopFirstResponseTimers();
@@ -2159,7 +2234,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     } finally {
       stopProgressTimer();
       stopFirstResponseTimers();
-      turnState.isAgentSpeaking = false;
+      clearAgentSpeaking();
       turnState.inputCooldownUntil = Date.now() + (config.echoCooldownMs || 300);
       isProcessing = false;
       currentAbort = null;
@@ -2232,35 +2307,41 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   // overlap into onAudio. A short silence (TTS_GAP_MS) is inserted between
   // utterances for natural breath; the first speak gets a TTS_LEAD_MS pad.
   async function withTtsLock(fn) {
+    const snapshotNow = Date.now();
+    const speakChain = {
+      rearmEnvelopeEpoch: shouldRearmEnvelopeEpoch(snapshotNow),
+      snapshotEpoch: outputEpoch,
+      delivered: false,
+    };
     const prev = ttsLock;
     let release;
     ttsLock = new Promise((r) => { release = r; });
     try {
       await prev.catch(() => {});
-      return await fn();
+      return await fn(speakChain);
     } finally {
       release();
     }
   }
 
   async function speakSentence(text, signal, opts = {}) {
-    return withTtsLock(async () => {
+    return withTtsLock(async (speakChain) => {
       if (signal?.aborted) return;
       if (!ttsHasSpoken) {
         if (TTS_LEAD_MS > 0) {
           const lead = generateSilence(TTS_LEAD_MS, config.tts.sampleRate);
-          deliverAudio(lead);
+          deliverAudio(lead, speakChain);
         }
       } else if (TTS_GAP_MS > 0) {
         const gap = generateSilence(TTS_GAP_MS, config.tts.sampleRate);
-        deliverAudio(gap);
+        deliverAudio(gap, speakChain);
       }
       ttsHasSpoken = true;
-      await _speakSentenceRaw(text, signal, opts);
+      await _speakSentenceRaw(text, signal, opts, speakChain);
     });
   }
 
-  async function _speakSentenceRaw(text, signal, opts = {}) {
+  async function _speakSentenceRaw(text, signal, opts = {}, speakChain = null) {
     const cleaned = stripEmojis(text);
     if (!cleaned.trim() && String(text || "").trim()) {
       console.log("🧹 emoji-only utterance skipped");
@@ -2289,7 +2370,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
               opts.onPlaybackStart?.();
             } catch { /* metrics callbacks must not affect audio */ }
           }
-          deliverAudio(chunk);
+          deliverAudio(chunk, speakChain);
         },
       });
     } catch (err) {
@@ -2389,7 +2470,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         console.error("❌  Greeting TTS error:", err.message);
       }
     }
-    turnState.isAgentSpeaking = false;
+    clearAgentSpeaking();
     isProcessing = false;
     if (currentAbort === greetAbort) currentAbort = null;
     turnState.inputCooldownUntil = Date.now() + (config.echoCooldownMs || 300);
@@ -2459,6 +2540,17 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       handleUtteranceEnd,
       processUserInput,
       sendGreeting,
+      speakSentence,
+      deliverAudio,
+      clearAgentSpeaking,
+      getEnvelopeRearmState: () => ({
+        outputEpoch,
+        firstSampleIndex,
+        lastAudioSendAt,
+        projectedEnd,
+        lastTurnEndAt: turnState.lastTurnEndAt,
+        llmStreamOpen,
+      }),
       switchAgent,
       abortCurrent: () => abortPlayback(currentAbort, "external_abort"),
       abortPlayback,

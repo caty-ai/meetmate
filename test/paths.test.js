@@ -205,7 +205,7 @@ function settingsRequest(method, url, headers = {}, body = "") {
 
 test("T12-01 registry/schema/type lock keeps the write allowlist strict", () => {
   assert.equal(SETTINGS_REGISTRY.length, 62);
-  assert.equal(ENV_DIAGNOSTICS.length, 57);
+  assert.equal(ENV_DIAGNOSTICS.length, 59);
   assert.equal(new Set(SETTINGS_REGISTRY.map((entry) => entry.id)).size, SETTINGS_REGISTRY.length);
   assert.equal(SETTINGS_REGISTRY.filter((entry) => entry.credential === "class-1").length, 5);
   assert.deepEqual(SETTINGS_REGISTRY.filter((entry) => entry.writeSurface === "audio-only").map((entry) => entry.id), ["audio_clips"]);
@@ -220,7 +220,7 @@ test("T12-01 registry/schema/type lock keeps the write allowlist strict", () => 
   assert.equal(settingsMutationSchema.safeParse({ schemaVersion: 1, revision: "bootstrap", fields: { unknown: true } }).success, false);
   resetRuntimeForTest();
   initializeRuntime({ state: settingsState({}), startup: settingsStartup(), serverPort: 5005 });
-  assert.equal(Object.keys(buildEnvelope().diagnostics).length, 59);
+  assert.equal(Object.keys(buildEnvelope().diagnostics).length, 61);
 });
 
 test("T12-02 precedence table is pre-dotenv OS > config > .env seed > default", () => {
@@ -248,9 +248,9 @@ test("T12-02 environment inventory lock recognizes every retained direct read an
   assert.equal(bytes.endsWith("\n"), true);
   assert.equal(bytes.endsWith("\n\n"), false);
   const inventory = JSON.parse(bytes);
-  assert.equal(inventory.baselineUniqueDirectCount, 89);
-  assert.equal(inventory.directReferences.length, 89);
-  assert.equal(new Set(inventory.directReferences.map((entry) => entry.name)).size, 89);
+  assert.equal(inventory.baselineUniqueDirectCount, 91);
+  assert.equal(inventory.directReferences.length, 91);
+  assert.equal(new Set(inventory.directReferences.map((entry) => entry.name)).size, 91);
   const known = new Set(inventory.directReferences.map((entry) => entry.name));
   const productionFiles = [];
   function collect(directory) {

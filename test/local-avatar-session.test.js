@@ -78,7 +78,7 @@ test("successful state polling renews the idle TTL beyond twice the maximum life
   assert.equal(getLocalAvatarSession(issued.session.visualId), null);
 });
 
-test("local avatar queue, delivery retries, source generations, and reconnect history are bounded", () => {
+test("local avatar marker supersede, delivery retries, source generations, and reconnect history are bounded", () => {
   const issued = createLocalAvatarSession({
     publicOrigin: "https://meetmate.example",
     queueLimit: 2,
@@ -91,17 +91,19 @@ test("local avatar queue, delivery retries, source generations, and reconnect hi
     assert.equal(firstSource, 1);
     assert.equal(issued.session.publishMarker(marker(0), firstSource), true);
     assert.equal(issued.session.publishMarker(marker(1), firstSource), true);
-    assert.equal(issued.session.publishMarker(marker(2), firstSource), false);
-    assert.deepEqual(pick(issued.session.snapshot(), ["queueSize", "queueLimit", "dropped"]), {
-      queueSize: 2,
+    assert.equal(issued.session.publishMarker(marker(2), firstSource), true);
+    assert.deepEqual(pick(issued.session.snapshot(), ["queueSize", "queueLimit", "dropped", "envelopeDropped"]), {
+      queueSize: 1,
       queueLimit: 2,
-      dropped: 1,
+      dropped: 0,
+      envelopeDropped: 0,
     });
 
     const readArgs = { ...auth, generation: connected.generation, afterSequence: connected.sequence };
     const latest = issued.session.readState(readArgs);
     assert.equal(latest.kind, "marker");
-    assert.equal(latest.sampleIndex, 1);
+    assert.equal(latest.sampleIndex, 2);
+    assert.deepEqual(latest.envelopes, []);
     assert.deepEqual(issued.session.readState(readArgs), latest);
     assert.deepEqual(issued.session.readState(readArgs), latest);
     assert.equal(issued.session.readState(readArgs), undefined);
@@ -116,6 +118,167 @@ test("local avatar queue, delivery retries, source generations, and reconnect hi
     const secondSource = issued.session.beginSource();
     assert.equal(issued.session.publishMarker(marker(3), firstSource), false);
     assert.equal(issued.session.publishMarker(marker(0), secondSource), true);
+  } finally {
+    issued.session.close();
+  }
+});
+
+test("marker snapshots preserve bursts across supersede and stale retry delivery without mutating prior states", () => {
+  const issued = createLocalAvatarSession({ publicOrigin: "https://meetmate.example" });
+  const auth = { capability: issued.capability, origin: "https://meetmate.example" };
+  try {
+    const connected = issued.session.connect(auth);
+    const source = issued.session.beginSource();
+    assert.equal(issued.session.publishMarker(envelopeMarker(0, [{ s: 0, v: [0.1] }]), source), true);
+    assert.equal(issued.session.publishMarker(envelopeMarker(2_400, [{ s: 2_400, v: [0.2] }]), source), true);
+
+    const readArgs = { ...auth, generation: connected.generation, afterSequence: connected.sequence };
+    const firstDelivery = issued.session.readState(readArgs);
+    const firstBytes = JSON.stringify(firstDelivery);
+    assert.deepEqual(firstDelivery.envelopes, [{ s: 0, v: [0.1, 0.2] }]);
+    assert.strictEqual(issued.session.readState(readArgs), firstDelivery, "retry returns the immutable minted state");
+
+    assert.equal(issued.session.publishMarker(envelopeMarker(4_800, [{ s: 4_800, v: [0.3] }]), source), true);
+    const replacement = issued.session.readState(readArgs);
+    assert.notStrictEqual(replacement, firstDelivery);
+    assert.deepEqual(replacement.envelopes, [{ s: 0, v: [0.1, 0.2, 0.3] }]);
+    assert.equal(JSON.stringify(firstDelivery), firstBytes, "later log growth never mutates a delivered state");
+    assert.notStrictEqual(replacement.envelopes[0].v, firstDelivery.envelopes[0].v);
+  } finally {
+    issued.session.close();
+  }
+});
+
+test("marker supersede scans the whole queue while non-marker cap semantics remain unchanged", () => {
+  const issued = createLocalAvatarSession({ publicOrigin: "https://meetmate.example", queueLimit: 3 });
+  try {
+    issued.session._queue.push(
+      { kind: "marker", outputEpoch: 4, sequence: 1 },
+      { kind: "idle", outputEpoch: 4, sequence: 2 },
+      { kind: "marker", outputEpoch: 5, sequence: 3 },
+    );
+    assert.equal(issued.session._enqueue({ kind: "marker", outputEpoch: 4, sequence: 4 }), true);
+    assert.deepEqual(issued.session._queue.map((state) => state.sequence), [4, 2, 3]);
+    assert.equal(issued.session._enqueue({ kind: "idle", outputEpoch: 5, sequence: 5 }), false);
+    assert.equal(issued.session.snapshot().dropped, 1);
+  } finally {
+    issued.session.close();
+  }
+});
+
+test("envelope log coalesces contiguous pushes, prefix-trims old values, and caps fragmented snapshots", () => {
+  const issued = createLocalAvatarSession({ publicOrigin: "https://meetmate.example" });
+  const auth = { capability: issued.capability, origin: "https://meetmate.example" };
+  try {
+    const connected = issued.session.connect(auth);
+    const source = issued.session.beginSource();
+    for (let index = 0; index < 300; index += 1) {
+      assert.equal(issued.session.publishMarker(
+        envelopeMarker(index * 2_400, [{ s: index * 2_400, v: [index / 300] }]),
+        source,
+      ), true);
+    }
+    const coalesced = issued.session.readState({
+      ...auth,
+      generation: connected.generation,
+      afterSequence: connected.sequence,
+    });
+    assert.equal(coalesced.envelopes.length, 1);
+    assert.equal(coalesced.envelopes[0].v.length, 200, "20 seconds at 10 Hz remain");
+    assert.equal(coalesced.envelopes[0].s, 100 * 2_400, "the coalesced run is prefix-trimmed, not emptied");
+    assert.equal(coalesced.envelopes[0].v.at(-1), 299 / 300);
+    assert.equal(issued.session.snapshot().envelopeDropped, 100);
+
+    const nextSource = issued.session.beginSource();
+    const fragmented = Array.from({ length: 150 }, (_, index) => ({ s: index * 2, v: [0.5] }));
+    const fragmentedAgain = Array.from({ length: 150 }, (_, index) => ({ s: index * 2 + 1, v: [0.6] }));
+    assert.equal(issued.session.publishMarker(envelopeMarker(0, fragmented, 0), nextSource), true);
+    assert.equal(issued.session.publishMarker(envelopeMarker(1, fragmentedAgain, 0), nextSource), true);
+    const capped = issued.session.readState({
+      ...auth,
+      generation: connected.generation,
+      afterSequence: coalesced.sequence,
+    });
+    assert.equal(capped.envelopes.reduce((total, segment) => total + segment.v.length, 0), localAvatarTest.MAX_ENVELOPE_VALUES);
+    assert.ok(Buffer.byteLength(JSON.stringify(capped)) < 8_000, "fragmented worst-case marker stays below 8 KB");
+    assert.ok(issued.session.snapshot().envelopeDropped >= 144);
+  } finally {
+    issued.session.close();
+  }
+});
+
+test("envelope validation clamps finite values, rejects corrupted pushes as a unit, and does not block markers", () => {
+  const invalidValues = [NaN, Infinity, -Infinity, "0.5"];
+  for (const value of invalidValues) {
+    const result = publishSingleEnvelope([{ s: 0, v: [value] }]);
+    assert.deepEqual(result.envelopes, [], `invalid value ${String(value)} is skipped`);
+  }
+  for (const segments of [
+    null,
+    { s: 0, v: [0.5] },
+    [{ s: 0, v: [] }],
+    [{ s: 0.5, v: [0.5] }],
+    [{ s: -1, v: [0.5] }],
+    [{ s: 0, v: "not-an-array" }],
+  ]) {
+    assert.deepEqual(publishSingleEnvelope(segments).envelopes, []);
+  }
+
+  assert.deepEqual(
+    publishSingleEnvelope([{ s: 0, v: [-2, 0.25, 4] }]).envelopes,
+    [{ s: 0, v: [0, 0.25, 1] }],
+  );
+  assert.deepEqual(
+    publishSingleEnvelope([{ s: 0, v: new Array(localAvatarTest.MAX_ENVELOPE_PUSH_VALUES + 1).fill(0.5) }]).envelopes,
+    [],
+    "an oversized synthesize push is rejected as a unit",
+  );
+  const mixed = publishSingleEnvelope([
+    { s: 0, v: [0.25] },
+    { s: 2_400, v: [NaN] },
+  ]);
+  assert.equal(mixed.kind, "marker");
+  assert.deepEqual(mixed.envelopes, [], "a structurally invalid sibling rejects the whole push");
+});
+
+test("multi-segment pushes that cumulatively exceed the 150-window cap are rejected as a unit", () => {
+  const state = publishSingleEnvelope([
+    { s: 0, v: new Array(100).fill(0.25) },
+    { s: 24_000, v: new Array(51).fill(0.5) },
+  ]);
+  assert.equal(state.kind, "marker");
+  assert.deepEqual(state.envelopes, []);
+});
+
+test("connect, epoch bump, cancelPlayback, and beginSource clear envelope history", () => {
+  const issued = createLocalAvatarSession({ publicOrigin: "https://meetmate.example" });
+  const auth = { capability: issued.capability, origin: "https://meetmate.example" };
+  try {
+    let connected = issued.session.connect(auth);
+    let source = issued.session.beginSource();
+    issued.session.publishMarker(envelopeMarker(0, [{ s: 0, v: [0.1] }]), source);
+    connected = issued.session.connect(auth);
+    source = issued.session.beginSource();
+    issued.session.publishMarker(envelopeMarker(0, undefined), source);
+    let state = issued.session.readState({ ...auth, generation: connected.generation, afterSequence: connected.sequence });
+    assert.deepEqual(state.envelopes, [], "connect clears the previous log");
+
+    issued.session.publishMarker(envelopeMarker(2_400, [{ s: 0, v: [0.2] }]), source);
+    issued.session.publishMarker(envelopeMarker(0, [{ s: 0, v: [0.3] }], 1), source);
+    state = issued.session.readState({ ...auth, generation: connected.generation, afterSequence: state.sequence });
+    assert.deepEqual(state.envelopes, [{ s: 0, v: [0.3] }], "epoch bump starts a fresh log");
+
+    assert.equal(issued.session.cancelPlayback({ outputEpoch: 1 }, source), true);
+    assert.equal(issued.session.publishMarker(envelopeMarker(0, [{ s: 0, v: [0.4] }], 2), source), true);
+    state = issued.session.readState({ ...auth, generation: connected.generation, afterSequence: state.sequence });
+    assert.equal(state.kind, "marker", "the next epoch supersedes an unread cancel");
+    assert.equal(state.cancelEpoch, 3);
+    assert.deepEqual(state.envelopes, [{ s: 0, v: [0.4] }]);
+
+    const nextSource = issued.session.beginSource();
+    issued.session.publishMarker(envelopeMarker(0, undefined), nextSource);
+    state = issued.session.readState({ ...auth, generation: connected.generation, afterSequence: state.sequence });
+    assert.deepEqual(state.envelopes, [], "beginSource clears the previous log");
   } finally {
     issued.session.close();
   }
@@ -473,6 +636,361 @@ test("TTS-cache playback and ack silence preserve contiguous metadata", { concur
   ]);
 });
 
+test("pipeline omits zero-window envelopes and keeps audio flowing when envelope computation fails or is disabled", { concurrency: false }, async () => {
+  const small = [];
+  await withPipeline({
+    synthesize: async (_text, { onAudio }) => onAudio(Buffer.alloc(4)),
+    onAudio: (_buffer, metadata) => small.push({ ...metadata }),
+  }, async ({ pipeline }) => {
+    await pipeline._test.speakSentence("small", null);
+  });
+  assert.equal(Object.hasOwn(small[0], "envelopeSegments"), false);
+
+  const failed = [];
+  await withPipeline({
+    audioEnvelope: {
+      createEnvelopeAccumulator: () => ({
+        push: () => { throw new Error("meter failed"); },
+        reset: () => {},
+      }),
+    },
+    synthesize: async (_text, { onAudio }) => onAudio(Buffer.alloc(4_800)),
+    onAudio: (buffer, metadata) => failed.push({ bytes: buffer.length, metadata: { ...metadata } }),
+  }, async ({ pipeline }) => {
+    await pipeline._test.speakSentence("failure", null);
+  });
+  assert.equal(failed[0].bytes, 4_800);
+  assert.equal(Object.hasOwn(failed[0].metadata, "envelopeSegments"), false);
+
+  let accumulatorCreated = false;
+  const disabled = [];
+  await withPipeline({
+    env: { LOCAL_AVATAR_ENVELOPE: "off" },
+    audioEnvelope: {
+      createEnvelopeAccumulator: () => {
+        accumulatorCreated = true;
+        throw new Error("kill switch called the accumulator");
+      },
+    },
+    synthesize: async (_text, { onAudio }) => onAudio(Buffer.alloc(4_800)),
+    onAudio: (_buffer, metadata) => disabled.push({ ...metadata }),
+  }, async ({ pipeline }) => {
+    await pipeline._test.speakSentence("disabled", null);
+  });
+  assert.equal(accumulatorCreated, false);
+  assert.equal(Object.hasOwn(disabled[0], "envelopeSegments"), false);
+});
+
+test("drained ack and post-stream tail boundaries re-arm, while a streamed first chain cannot bump", { concurrency: false }, async () => {
+  await withFakeNow(0, async (clock) => {
+    const ackAudio = [];
+    await withPipeline({
+      env: { ENABLE_IMMEDIATE_ACK: "true" },
+      config: { ackVariants: ["はい。"] },
+      llm: { streamChat: async function* () {} },
+      synthesize: oneWindowSynthesize,
+      onAudio: (_buffer, metadata) => ackAudio.push({ ...metadata }),
+    }, async ({ pipeline }) => {
+      await pipeline._test.processUserInput("first turn");
+      clock.set(2_100);
+      await pipeline._test.processUserInput("second turn");
+    });
+    assert.deepEqual(pick(ackAudio[0], ["outputEpoch", "firstSampleIndex"]), {
+      outputEpoch: 0,
+      firstSampleIndex: 0,
+    });
+    assert.deepEqual(pick(ackAudio.find((item) => item.outputEpoch === 1), ["outputEpoch", "firstSampleIndex"]), {
+      outputEpoch: 1,
+      firstSampleIndex: 0,
+    });
+
+    const tailAudio = [];
+    clock.set(0);
+    await withPipeline({
+      llm: { streamChat: async function* () { yield "short tail"; } },
+      synthesize: oneWindowSynthesize,
+      onAudio: (_buffer, metadata) => tailAudio.push({ ...metadata }),
+    }, async ({ pipeline, turnState }) => {
+      await primeRearmBoundary(pipeline, turnState, clock);
+      clock.set(2_100);
+      await pipeline._test.processUserInput("tail turn");
+    });
+    assert.equal(tailAudio.at(-1).outputEpoch, 1, "tail flush runs after the stream-open veto clears");
+    assert.equal(tailAudio.at(-1).firstSampleIndex, 0);
+
+    const streamedAudio = [];
+    clock.set(0);
+    await withPipeline({
+      llm: { streamChat: async function* () { yield "abcdefghijklmnop"; } },
+      synthesize: oneWindowSynthesize,
+      onAudio: (_buffer, metadata) => streamedAudio.push({ ...metadata }),
+    }, async ({ pipeline, turnState }) => {
+      await primeRearmBoundary(pipeline, turnState, clock);
+      clock.set(2_100);
+      await pipeline._test.processUserInput("streamed turn");
+    });
+    assert.equal(streamedAudio.at(-1).outputEpoch, 0, "the no-ack first chain remains vetoed inside streamChat");
+  });
+});
+
+test("stream-open veto blocks between-sentence stalls and progress pings during thinking", { concurrency: false }, async () => {
+  await withFakeNow(0, async (clock) => {
+    const stalledAudio = [];
+    await withPipeline({
+      llm: {
+        streamChat: async function* () {
+          yield "これは十分に長い第一文です。";
+          clock.set(5_000);
+          yield "これは十分に長い第二文です。";
+        },
+      },
+      synthesize: oneWindowSynthesize,
+      onAudio: (_buffer, metadata) => stalledAudio.push({ ...metadata }),
+    }, async ({ pipeline, turnState }) => {
+      await primeRearmBoundary(pipeline, turnState, clock);
+      clock.set(2_100);
+      await pipeline._test.processUserInput("stall turn");
+    });
+    assert.deepEqual(new Set(stalledAudio.map((item) => item.outputEpoch)), new Set([0]));
+
+    const pingAudio = [];
+    clock.set(0);
+    await withPipeline({
+      llm: { streamChat: waitForAbortStream },
+      synthesize: oneWindowSynthesize,
+      onAudio: (_buffer, metadata) => pingAudio.push({ ...metadata }),
+    }, async ({ pipeline, turnState }) => {
+      await primeRearmBoundary(pipeline, turnState, clock);
+      clock.set(2_100);
+      const processing = pipeline._test.processUserInput("thinking turn");
+      await waitUntil(() => pipeline._test.getEnvelopeRearmState().llmStreamOpen);
+      clock.set(5_000);
+      turnState.isAgentSpeaking = true;
+      await pipeline._test.speakSentence("progress ping", null, { role: "progress" });
+      assert.equal(pingAudio.at(-1).outputEpoch, 0);
+      pipeline._test.abortCurrent();
+      await processing;
+    });
+  });
+});
+
+test("pre-await snapshots prevent a lock-held stall from re-arming a queued chain", { concurrency: false }, async () => {
+  await withFakeNow(0, async (clock) => {
+    let releaseHold;
+    const hold = new Promise((resolve) => { releaseHold = resolve; });
+    const audio = [];
+    await withPipeline({
+      synthesize: async (text, { onAudio }) => {
+        onAudio(Buffer.alloc(4_800));
+        if (text === "hold") await hold;
+      },
+      onAudio: (_buffer, metadata) => audio.push({ ...metadata }),
+    }, async ({ pipeline, turnState }) => {
+      await primeRearmBoundary(pipeline, turnState, clock);
+      clock.set(2_100);
+      const holding = pipeline._test.speakSentence("hold", null);
+      await waitUntil(() => audio.length === 2);
+      const queued = pipeline._test.speakSentence("queued", null);
+      clock.set(8_000);
+      releaseHold();
+      await Promise.all([holding, queued]);
+    });
+    assert.deepEqual(audio.slice(-2).map((item) => item.outputEpoch), [1, 1]);
+  });
+});
+
+test("drain projection blocks burst gaps and accounts for a lead-to-burst send hole", { concurrency: false }, async () => {
+  await withFakeNow(0, async (clock) => {
+    const burstAudio = [];
+    await withPipeline({
+      synthesize: async (_text, { onAudio }) => onAudio(Buffer.alloc(240_000)),
+      onAudio: (_buffer, metadata) => burstAudio.push({ ...metadata }),
+    }, async ({ pipeline, turnState }) => {
+      turnState.isAgentSpeaking = true;
+      await pipeline._test.speakSentence("burst", null);
+      clock.set(100);
+      pipeline._test.clearAgentSpeaking();
+      clock.set(2_100);
+      await pipeline._test.speakSentence("too early", null);
+      assert.equal(burstAudio.at(-1).outputEpoch, 0);
+      turnState.isAgentSpeaking = true;
+      clock.set(2_200);
+      pipeline._test.clearAgentSpeaking();
+      clock.set(12_100);
+      await pipeline._test.speakSentence("drained", null);
+      assert.equal(burstAudio.at(-1).outputEpoch, 1);
+    });
+
+    const holeAudio = [];
+    clock.set(0);
+    await withPipeline({
+      env: { TTS_LEAD_MS: "200" },
+      synthesize: async (text, { onAudio }) => {
+        if (text === "lead-burst") {
+          clock.set(3_000);
+          onAudio(Buffer.alloc(240_000));
+        } else if (text === "probe with audio") {
+          onAudio(Buffer.alloc(4_800));
+        } else if (text === "after-hole") {
+          onAudio(Buffer.alloc(4_800));
+        }
+      },
+      onAudio: (_buffer, metadata) => holeAudio.push({ ...metadata }),
+    }, async ({ pipeline, turnState }) => {
+      turnState.isAgentSpeaking = true;
+      await pipeline._test.speakSentence("lead-burst", null);
+      pipeline._test.clearAgentSpeaking();
+      clock.set(8_600);
+      await pipeline._test.speakSentence("probe with audio", null);
+      assert.equal(holeAudio.at(-1).outputEpoch, 0);
+    });
+
+    const positiveAudio = [];
+    clock.set(0);
+    await withPipeline({
+      env: { TTS_LEAD_MS: "200" },
+      synthesize: async (text, { onAudio }) => {
+        if (text === "lead-burst") {
+          clock.set(3_000);
+          onAudio(Buffer.alloc(240_000));
+        } else if (text === "after-hole") {
+          onAudio(Buffer.alloc(4_800));
+        }
+      },
+      onAudio: (_buffer, metadata) => positiveAudio.push({ ...metadata }),
+    }, async ({ pipeline, turnState }) => {
+      turnState.isAgentSpeaking = true;
+      await pipeline._test.speakSentence("lead-burst", null);
+      pipeline._test.clearAgentSpeaking();
+      clock.set(10_000);
+      await pipeline._test.speakSentence("after-hole", null);
+      assert.equal(positiveAudio.at(-1).outputEpoch, 1, "re-arm waits through burst duration plus slack from burst start");
+    });
+  });
+});
+
+test("an aborted pre-delivery snapshot is chain-local and a second drained boundary re-arms from reset state", { concurrency: false }, async () => {
+  await withFakeNow(0, async (clock) => {
+    const audio = [];
+    await withPipeline({
+      synthesize: oneWindowSynthesize,
+      onAudio: (_buffer, metadata) => audio.push({ ...metadata }),
+    }, async ({ pipeline, turnState }) => {
+      await primeRearmBoundary(pipeline, turnState, clock);
+      clock.set(2_100);
+      const aborted = new AbortController();
+      aborted.abort();
+      await pipeline._test.speakSentence("aborted", aborted.signal);
+      pipeline._test.deliverAudio(Buffer.alloc(4_800));
+      assert.equal(audio.at(-1).outputEpoch, 0, "the aborted chain does not leak its re-arm snapshot");
+
+      turnState.isAgentSpeaking = true;
+      clock.set(2_200);
+      pipeline._test.clearAgentSpeaking();
+      clock.set(4_200);
+      await pipeline._test.speakSentence("first boundary", null);
+      assert.deepEqual(pick(audio.at(-1), ["outputEpoch", "firstSampleIndex"]), {
+        outputEpoch: 1,
+        firstSampleIndex: 0,
+      });
+      assert.equal(audio.at(-1).envelopeSegments[0].s, 0, "a re-arm bump restarts the accumulator at sample zero");
+      assert.equal(pipeline._test.getEnvelopeRearmState().projectedEnd, 4_300, "a re-arm bump resets the drain projection");
+
+      turnState.isAgentSpeaking = true;
+      clock.set(4_300);
+      pipeline._test.clearAgentSpeaking();
+      clock.set(6_300);
+      await pipeline._test.speakSentence("second boundary", null);
+      assert.deepEqual(pick(audio.at(-1), ["outputEpoch", "firstSampleIndex"]), {
+        outputEpoch: 2,
+        firstSampleIndex: 0,
+      });
+      assert.equal(audio.at(-1).envelopeSegments[0].s, 0, "every bumped epoch restarts envelope segments from zero");
+      assert.equal(pipeline._test.getEnvelopeRearmState().projectedEnd, 6_400);
+    });
+  });
+});
+
+test("all twelve pipeline speaking clears use the shared turnState timestamping helper", () => {
+  const source = fs.readFileSync(path.join(__dirname, "..", "src", "pipeline.js"), "utf8");
+  assert.equal((source.match(/clearAgentSpeaking\(\);/g) || []).length, 12);
+  assert.equal((source.match(/turnState\.isAgentSpeaking\s*=\s*false/g) || []).length, 1, "only the helper writes false directly");
+  assert.match(source, /const wasSpeaking = turnState\.isAgentSpeaking === true;[\s\S]*if \(wasSpeaking\) turnState\.lastTurnEndAt = Date\.now\(\);/);
+  assert.match(source, /turnState\.lastTurnEndAt !== null[\s\S]*now - turnState\.lastTurnEndAt >= ENVELOPE_REARM_IDLE_MS/);
+});
+
+test("re-arm gate consumes turnState.lastTurnEndAt instead of a closure-local timestamp", { concurrency: false }, async () => {
+  await withFakeNow(0, async (clock) => {
+    await withPipeline({
+      synthesize: oneWindowSynthesize,
+      onAudio: () => {},
+    }, async ({ pipeline, turnState }) => {
+      turnState.isAgentSpeaking = true;
+      await pipeline._test.speakSentence("seed", null);
+      clock.set(100);
+      pipeline._test.clearAgentSpeaking();
+      turnState.lastTurnEndAt = 8_500;
+      turnState.isAgentSpeaking = false;
+      clock.set(10_100);
+      await pipeline._test.speakSentence("seeded recent block", null);
+      assert.deepEqual(pick(pipeline._test.getEnvelopeRearmState(), ["outputEpoch", "firstSampleIndex"]), {
+        outputEpoch: 0,
+        firstSampleIndex: 4_800,
+      }, "the gate must honor the seeded shared timestamp");
+    });
+
+    const audio = [];
+    clock.set(0);
+    await withPipeline({
+      synthesize: oneWindowSynthesize,
+      onAudio: (_buffer, metadata) => audio.push({ ...metadata }),
+    }, async ({ pipeline, turnState }) => {
+      turnState.isAgentSpeaking = true;
+      await pipeline._test.speakSentence("seed", null);
+      clock.set(100);
+      pipeline._test.clearAgentSpeaking();
+      turnState.lastTurnEndAt = 100;
+      turnState.isAgentSpeaking = false;
+      clock.set(10_100);
+      await pipeline._test.speakSentence("seeded boundary", null);
+      assert.deepEqual(pick(audio.at(-1), ["outputEpoch", "firstSampleIndex"]), {
+        outputEpoch: 1,
+        firstSampleIndex: 0,
+      });
+    });
+  });
+});
+
+test("empty and whitespace local avatar envelope slack fall back to the 2000ms default", { concurrency: false }, async () => {
+  for (const slack of ["", "   "]) {
+    await withFakeNow(0, async (clock) => {
+      const audio = [];
+      await withPipeline({
+        env: {
+          TTS_LEAD_MS: "200",
+          LOCAL_AVATAR_ENVELOPE_SLACK_MS: slack,
+        },
+        synthesize: async (text, { onAudio }) => {
+          if (text === "lead-burst") {
+            clock.set(3_000);
+            onAudio(Buffer.alloc(240_000));
+          } else {
+            onAudio(Buffer.alloc(4_800));
+          }
+        },
+        onAudio: (_buffer, metadata) => audio.push({ ...metadata }),
+      }, async ({ pipeline, turnState }) => {
+        turnState.isAgentSpeaking = true;
+        await pipeline._test.speakSentence("lead-burst", null);
+        pipeline._test.clearAgentSpeaking();
+        clock.set(8_600);
+        await pipeline._test.speakSentence("probe", null);
+        assert.equal(audio.at(-1).outputEpoch, 0, `slack ${JSON.stringify(slack)} must keep the 2000ms default`);
+      });
+    });
+  }
+});
+
 test("wake+cancel emits synchronously and exactly once", { concurrency: false }, async () => {
   await withPipeline({ llm: { streamChat: waitForAbortStream } }, async ({ pipeline, stt }) => {
     const events = collectCancellationEvents(pipeline);
@@ -677,6 +1195,30 @@ function marker(firstSampleIndex, outputEpoch = 0) {
   return { outputEpoch, firstSampleIndex, sampleRate: fixture.pcm.sampleRate };
 }
 
+function envelopeMarker(firstSampleIndex, envelopeSegments, outputEpoch = 0) {
+  return {
+    ...marker(firstSampleIndex, outputEpoch),
+    ...(envelopeSegments === undefined ? {} : { envelopeSegments }),
+  };
+}
+
+function publishSingleEnvelope(envelopeSegments) {
+  const issued = createLocalAvatarSession({ publicOrigin: "https://meetmate.example" });
+  const auth = { capability: issued.capability, origin: "https://meetmate.example" };
+  try {
+    const connected = issued.session.connect(auth);
+    const source = issued.session.beginSource();
+    assert.equal(issued.session.publishMarker(envelopeMarker(0, envelopeSegments), source), true);
+    return issued.session.readState({
+      ...auth,
+      generation: connected.generation,
+      afterSequence: connected.sequence,
+    });
+  } finally {
+    issued.session.close();
+  }
+}
+
 function tamperCapability(value) {
   const first = value[0] === "A" ? "B" : "A";
   return `${first}${value.slice(1)}`;
@@ -720,6 +1262,33 @@ async function waitUntil(predicate, timeoutMs = 1000) {
   }
 }
 
+async function oneWindowSynthesize(_text, { onAudio }) {
+  onAudio(Buffer.alloc(4_800));
+}
+
+async function primeRearmBoundary(pipeline, turnState, clock) {
+  clock.set(0);
+  turnState.isAgentSpeaking = true;
+  await pipeline._test.speakSentence("seed", null);
+  clock.set(100);
+  pipeline._test.clearAgentSpeaking();
+}
+
+async function withFakeNow(initial, fn) {
+  const originalNow = Date.now;
+  let now = initial;
+  Date.now = () => now;
+  try {
+    await fn({
+      get: () => now,
+      set: (value) => { now = value; },
+      advance: (value) => { now += value; },
+    });
+  } finally {
+    Date.now = originalNow;
+  }
+}
+
 async function withPipeline(overrides, fn) {
   const restoreEnv = setEnv({ ...QUIET_ENV, ...(overrides.env || {}) });
   const originalConsole = { log: console.log, warn: console.warn, error: console.error };
@@ -727,7 +1296,7 @@ async function withPipeline(overrides, fn) {
   console.warn = () => {};
   console.error = () => {};
   const src = path.join(__dirname, "..", "src");
-  const modulePaths = ["stt-provider.js", "stt.js", "llm-provider.js", "tts-fish.js", "tts-cache.js", "pipeline.js"]
+  const modulePaths = ["stt-provider.js", "stt.js", "llm-provider.js", "tts-fish.js", "tts-cache.js", "audio-envelope.js", "pipeline.js"]
     .map((file) => path.join(src, file));
   const previousCache = new Map(modulePaths.map((file) => [require.resolve(file), require.cache[require.resolve(file)]]));
   for (const file of modulePaths) delete require.cache[require.resolve(file)];
@@ -751,6 +1320,7 @@ async function withPipeline(overrides, fn) {
     synthesize: overrides.synthesize || (async (_text, { onAudio }) => onAudio(Buffer.alloc(4))),
   });
   if (overrides.ttsCache) installMock(path.join(src, "tts-cache.js"), overrides.ttsCache);
+  if (overrides.audioEnvelope) installMock(path.join(src, "audio-envelope.js"), overrides.audioEnvelope);
 
   let pipeline;
   try {

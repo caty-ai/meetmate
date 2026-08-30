@@ -6,9 +6,18 @@
   const BASE_BACKOFF_MS = 250;
   const MAX_BACKOFF_MS = 4000;
   const POLL_MS = 100;
+  const DEFAULT_OFFSET_MS = 300;
+  const MAX_OFFSET_MS = 5000;
+  const ENVELOPE_END_GRACE_MS = 300;
+  const FORWARD_REANCHOR_MS = 500;
   const canvas = document.getElementById("avatar");
   const context = canvas.getContext("2d", { alpha: false });
   const query = new URLSearchParams(location.search);
+  const offsetValue = query.get("offset");
+  const parsedOffset = offsetValue === null || offsetValue.trim() === "" ? NaN : Number(offsetValue);
+  const OFFSET_MS = Number.isFinite(parsedOffset) && parsedOffset >= 0 && parsedOffset <= MAX_OFFSET_MS
+    ? parsedOffset
+    : DEFAULT_OFFSET_MS;
   const visualId = query.get("v") || "";
   const fragment = new URLSearchParams(location.hash.slice(1));
   const capability = fragment.get("cap") || "";
@@ -28,6 +37,9 @@
   let rigMarkerTime = -Infinity;
   let rigMarkerIndex = -1;
   let rigMarkerRate = 24000;
+  const envelopeSchedule = createEnvelopeSchedule(rigClock);
+  let rigEnvelopeActive = false;
+  let rigMouth = 0;
   const RIG_VENDOR_NOTICE = "Generated from modified pinned Anime2.5DRig and ag-psd sources, including jpeg-js-derived decoding; license terms are in NOTICE.";
 
   /* @rig-vendor-begin */
@@ -19604,9 +19616,120 @@ const RIG_MODEL_BASE64 = "OEJQUwABAAAAAAAAAAMAAAQAAAAEAAAIAAMAAAAAAAAAQDhCSU0EAg
     return Date.now();
   }
 
+  function createEnvelopeSchedule(now) {
+    let epoch = -1;
+    let sampleRate = 0;
+    let windowSamples = 0;
+    let windows = [];
+    let earliestSample = null;
+    let newestEndSample = null;
+    let playbackStartWall = null;
+    let anchorDecided = false;
+    let pastEndSince = null;
+
+    function reset(nextEpoch = -1) {
+      epoch = nextEpoch;
+      sampleRate = 0;
+      windowSamples = 0;
+      windows = [];
+      earliestSample = null;
+      newestEndSample = null;
+      playbackStartWall = null;
+      anchorDecided = false;
+      pastEndSince = null;
+    }
+
+    function accept(nextEpoch, rate, envelopes, offsetMs) {
+      if (nextEpoch !== epoch) reset(nextEpoch);
+      sampleRate = rate;
+      windowSamples = Math.round(rate / 10);
+
+      const deduped = new Map();
+      for (const segment of envelopes) {
+        if (!segment || !Number.isSafeInteger(segment.s) || segment.s < 0 || !Array.isArray(segment.v)) continue;
+        for (let index = 0; index < segment.v.length; index += 1) {
+          const value = segment.v[index];
+          if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) continue;
+          deduped.set(segment.s + index * windowSamples, value);
+        }
+      }
+      windows = [...deduped].sort((left, right) => left[0] - right[0]);
+      if (windows.length === 0) return { mode: "pending" };
+
+      const earliest = windows[0][0];
+      const newestEnd = windows.at(-1)[0] + windowSamples;
+      earliestSample = earliest;
+      newestEndSample = newestEnd;
+      const arrivalNow = now();
+      if (!anchorDecided) {
+        anchorDecided = true;
+        if (earliest <= 2 * windowSamples) {
+          playbackStartWall = arrivalNow + offsetMs - (earliest / sampleRate * 1000);
+        }
+      }
+      if (playbackStartWall === null) return { mode: "fallback" };
+
+      const sampleNow = (arrivalNow - playbackStartWall) * sampleRate / 1000;
+      if (sampleNow - newestEnd >= sampleRate * FORWARD_REANCHOR_MS / 1000) {
+        playbackStartWall = arrivalNow - (newestEnd / sampleRate * 1000);
+      }
+      pastEndSince = null;
+      return { mode: "anchored" };
+    }
+
+    function lookup(at = now()) {
+      if (playbackStartWall === null || earliestSample === null || newestEndSample === null) return { kind: "fallback" };
+      const sampleNow = (at - playbackStartWall) * sampleRate / 1000;
+      if (sampleNow < earliestSample) {
+        pastEndSince = null;
+        return { kind: "envelope", value: 0, sampleNow, phase: "before" };
+      }
+      for (const [start, value] of windows) {
+        if (sampleNow >= start && sampleNow < start + windowSamples) {
+          pastEndSince = null;
+          return { kind: "envelope", value, sampleNow, phase: "window" };
+        }
+      }
+      if (sampleNow < newestEndSample) {
+        pastEndSince = null;
+        return { kind: "fallback", sampleNow, phase: "hole" };
+      }
+      if (pastEndSince === null) pastEndSince = at;
+      return {
+        kind: "envelope",
+        value: 0,
+        sampleNow,
+        phase: "past",
+        idle: at - pastEndSince >= ENVELOPE_END_GRACE_MS,
+      };
+    }
+
+    function prune(at = now()) {
+      if (playbackStartWall === null || windows.length === 0) return;
+      const sampleNow = (at - playbackStartWall) * sampleRate / 1000;
+      const cutoff = sampleNow - 2 * sampleRate;
+      windows = windows.filter(([start]) => start + windowSamples >= cutoff);
+    }
+
+    function snapshot() {
+      return {
+        epoch,
+        sampleRate,
+        windowSamples,
+        windowCount: windows.length,
+        playbackStartWall,
+        anchorDecided,
+        mode: playbackStartWall !== null ? "anchored" : (anchorDecided ? "fallback" : "pending"),
+      };
+    }
+
+    return Object.freeze({ reset, accept, lookup, prune, snapshot });
+  }
+
   function closeRigMouth() {
     rigMarkerTime = -Infinity;
     rigMarkerIndex = -1;
+    rigMouth = 0;
   }
 
   function noteRigMarker(index, rate) {
@@ -19859,11 +19982,31 @@ const RIG_MODEL_BASE64 = "OEJQUwABAAAAAAAAAAMAAAQAAAAEAAAIAAMAAAAAAAAAQDhCSU0EAg
           const blink = time < blinkStart || time > blinkEnd
             ? 0
             : Math.sin(Math.PI * (time - blinkStart) / (blinkEnd - blinkStart));
-          const speaking = time - rigMarkerTime < 400;
-          const samplePhase = rigMarkerRate > 0 ? rigMarkerIndex / rigMarkerRate : 0;
-          const mouth = speaking
-            ? 0.18 + 0.82 * Math.abs(Math.sin(samplePhase * 31.7 + time * 0.0127))
-            : 0;
+          let mouth;
+          if (rigEnvelopeActive) {
+            const scheduled = envelopeSchedule.lookup(time);
+            envelopeSchedule.prune(time);
+            if (scheduled.kind === "envelope") {
+              const target = scheduled.value;
+              const k = target > rigMouth ? 25 : 8;
+              const dt = delta / 1000;
+              rigMouth += (target - rigMouth) * (1 - Math.exp(-k * dt));
+              mouth = rigMouth;
+            } else {
+              const speaking = time - rigMarkerTime < 400;
+              const samplePhase = rigMarkerRate > 0 ? rigMarkerIndex / rigMarkerRate : 0;
+              mouth = speaking
+                ? 0.18 + 0.82 * Math.abs(Math.sin(samplePhase * 31.7 + time * 0.0127))
+                : 0;
+              rigMouth = mouth;
+            }
+          } else {
+            const speaking = time - rigMarkerTime < 400;
+            const samplePhase = rigMarkerRate > 0 ? rigMarkerIndex / rigMarkerRate : 0;
+            mouth = speaking
+              ? 0.18 + 0.82 * Math.abs(Math.sin(samplePhase * 31.7 + time * 0.0127))
+              : 0;
+          }
           const sway = Math.sin(time * 0.00073) + 0.36 * Math.sin(time * 0.00131 + 1.2);
           gl.viewport(0, 0, rigCanvas.width, rigCanvas.height);
           gl.clearColor(0, 0, 0, 0);
@@ -19921,6 +20064,12 @@ const RIG_MODEL_BASE64 = "OEJQUwABAAAAAAAAAAMAAAQAAAAEAAAIAAMAAAAAAAAAQDhCSU0EAg
     context.fillText(`epoch ${epoch} sample ${index}`, canvas.width / 2, canvas.height / 2);
   }
 
+  function resetRigEnvelopeState(nextEpoch = -1) {
+    envelopeSchedule.reset(nextEpoch);
+    rigEnvelopeActive = false;
+    rigMouth = 0;
+  }
+
   function acceptState(state) {
     if (!state || state.generation !== generation) return false;
     if (!Number.isSafeInteger(state.cancelEpoch) || state.cancelEpoch < cancelEpoch) return false;
@@ -19931,6 +20080,7 @@ const RIG_MODEL_BASE64 = "OEJQUwABAAAAAAAAAAMAAAQAAAAEAAAIAAMAAAAAAAAAQDhCSU0EAg
       cancelEpoch = state.cancelEpoch;
       outputEpoch = -1;
       sampleIndex = -1;
+      resetRigEnvelopeState();
       drawIdle();
     }
 
@@ -19939,6 +20089,7 @@ const RIG_MODEL_BASE64 = "OEJQUwABAAAAAAAAAAMAAAQAAAAEAAAIAAMAAAAAAAAAQDhCSU0EAg
       outputEpoch = state.outputEpoch;
       sampleIndex = -1;
       sequence = state.sequence;
+      resetRigEnvelopeState(state.outputEpoch);
       drawIdle();
       return true;
     }
@@ -19947,16 +20098,24 @@ const RIG_MODEL_BASE64 = "OEJQUwABAAAAAAAAAAMAAAQAAAAEAAAIAAMAAAAAAAAAQDhCSU0EAg
       state.kind !== "marker"
       || !Number.isSafeInteger(state.sampleIndex)
       || state.sampleIndex < 0
+      || (Array.isArray(state.envelopes) && (!Number.isSafeInteger(state.sampleRate) || state.sampleRate <= 0))
       || (state.outputEpoch === outputEpoch && state.sampleIndex <= sampleIndex)
     ) {
       return false;
     }
 
+    if (state.outputEpoch !== outputEpoch) resetRigEnvelopeState(state.outputEpoch);
     cancelEpoch = state.cancelEpoch;
     outputEpoch = state.outputEpoch;
     sampleIndex = state.sampleIndex;
     sequence = state.sequence;
     noteRigMarker(state.sampleIndex, state.sampleRate);
+    if (Array.isArray(state.envelopes)) {
+      const accepted = envelopeSchedule.accept(state.outputEpoch, state.sampleRate, state.envelopes, OFFSET_MS);
+      rigEnvelopeActive = accepted.mode === "anchored";
+    } else {
+      rigEnvelopeActive = false;
+    }
     drawMarker(sampleIndex, outputEpoch);
     return true;
   }
@@ -19988,6 +20147,7 @@ const RIG_MODEL_BASE64 = "OEJQUwABAAAAAAAAAAMAAAQAAAAEAAAIAAMAAAAAAAAAQDhCSU0EAg
   async function connect() {
     if (stopped || reconnects >= MAX_RECONNECTS) {
       stopped = true;
+      resetRigEnvelopeState();
       drawIdle();
       return;
     }
@@ -20004,6 +20164,7 @@ const RIG_MODEL_BASE64 = "OEJQUwABAAAAAAAAAAMAAAQAAAAEAAAIAAMAAAAAAAAAQDhCSU0EAg
       sequence = -1;
       outputEpoch = -1;
       sampleIndex = -1;
+      resetRigEnvelopeState();
       if (!acceptState(state)) throw new Error("invalid initial state");
       schedule(poll, POLL_MS);
     } catch {
@@ -20031,6 +20192,7 @@ const RIG_MODEL_BASE64 = "OEJQUwABAAAAAAAAAAMAAAQAAAAEAAAIAAMAAAAAAAAAQDhCSU0EAg
       sequence = -1;
       outputEpoch = -1;
       sampleIndex = -1;
+      resetRigEnvelopeState();
       drawIdle();
       reconnects += 1;
       const backoff = Math.min(MAX_BACKOFF_MS, BASE_BACKOFF_MS * (2 ** (reconnects - 1)));
@@ -20041,8 +20203,18 @@ const RIG_MODEL_BASE64 = "OEJQUwABAAAAAAAAAAMAAAQAAAAEAAAIAAMAAAAAAAAAQDhCSU0EAg
   Object.defineProperty(globalThis, "__localAvatarContract", {
     value: Object.freeze({
       acceptState,
-      getState: () => ({ generation, cancelEpoch, sequence, outputEpoch, sampleIndex, stopped }),
-      limits: Object.freeze({ maxReconnects: MAX_RECONNECTS, maxBackoffMs: MAX_BACKOFF_MS }),
+      getState: () => ({
+        generation,
+        cancelEpoch,
+        sequence,
+        outputEpoch,
+        sampleIndex,
+        stopped,
+        rigEnvelopeActive,
+        rigMouth,
+        envelope: envelopeSchedule.snapshot(),
+      }),
+      limits: Object.freeze({ maxReconnects: MAX_RECONNECTS, maxBackoffMs: MAX_BACKOFF_MS, offsetMs: OFFSET_MS }),
     }),
     configurable: false,
     enumerable: false,

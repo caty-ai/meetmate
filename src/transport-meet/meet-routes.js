@@ -737,6 +737,12 @@ function createLegacyAgent(session, turnState, onAudio) {
   const deepgram = createClient(DG_KEY);
   const agent = deepgram.agent();
 
+  function clearAgentSpeaking() {
+    const wasSpeaking = turnState.isAgentSpeaking === true;
+    turnState.isAgentSpeaking = false;
+    if (wasSpeaking) turnState.lastTurnEndAt = Date.now();
+  }
+
   agent.on(AgentEvents.Open, () => {
     console.log(`🟢  Deepgram Voice Agent 接続完了 (sid=${session.id})`);
 
@@ -752,7 +758,7 @@ function createLegacyAgent(session, turnState, onAudio) {
   agent.on(AgentEvents.Audio, (raw) => onAudio(Buffer.from(raw)));
   agent.on(AgentEvents.Error, (err) => console.error(`❌  Deepgram error (sid=${session.id}):`, err));
   agent.on(AgentEvents.Close, () => {
-    turnState.isAgentSpeaking = false;
+    clearAgentSpeaking();
     turnState.inputCooldownUntil = 0;
     console.log(`🔴  Deepgram Voice Agent 切断 (sid=${session.id})`);
   });
@@ -773,7 +779,7 @@ function createLegacyAgent(session, turnState, onAudio) {
   });
   agent.on(AgentEvents.UserStartedSpeaking, () => console.log(`🎙️  User speaking (sid=${session.id})`));
   agent.on(AgentEvents.AgentAudioDone, () => {
-    turnState.isAgentSpeaking = false;
+    clearAgentSpeaking();
     turnState.inputCooldownUntil = Date.now() + ECHO_LOOP_COOLDOWN_MS;
     console.log(`✅  Audio done (sid=${session.id})`);
   });
@@ -1534,6 +1540,7 @@ function handleWsConnection(client, req) {
 
   const turnState = {
     isAgentSpeaking: false,
+    lastTurnEndAt: null,
     inputCooldownUntil: 0,
     droppedEchoFrames: 0,
   };

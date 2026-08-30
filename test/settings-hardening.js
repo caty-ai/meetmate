@@ -305,7 +305,7 @@ function productionJavaScript() {
 test("T12-02 syntax-consuming environment inventory locks direct, computed, and rejected forms", () => {
   const inventory = JSON.parse(fs.readFileSync(path.join(ROOT, "docs/settings-env-inventory.json"), "utf8"));
   const inventoryByName = new Map(inventory.directReferences.map((entry) => [entry.name, entry]));
-  assert.equal(inventoryByName.size, 89);
+  assert.equal(inventoryByName.size, 91);
   assert.deepEqual(inventory.startupSnapshotReferences, [{
     name: "FFMPEG",
     references: ["src/settings/audio.js:361", "src/settings/audio.js:362"],
@@ -831,8 +831,13 @@ test("diagnostic coercion falls from invalid launch to valid seed", () => {
   })), { value: 4, source: ".env-seed" });
   const metrics = ENV_DIAGNOSTICS.find((entry) => entry.id === "metrics_disabled");
   const calibrate = ENV_DIAGNOSTICS.find((entry) => entry.id === "wake_calibrate_enabled");
+  const localAvatarEnvelope = ENV_DIAGNOSTICS.find((entry) => entry.id === "local_avatar_envelope_enabled");
+  const localAvatarSlack = ENV_DIAGNOSTICS.find((entry) => entry.id === "local_avatar_envelope_slack_ms");
   assert.equal(resolveDiagnostic(metrics, startup({ preDotenvEnv: { METRICS_DISABLED: "yes" } })).value, true);
   assert.equal(resolveDiagnostic(calibrate, startup({ preDotenvEnv: { WAKE_CALIBRATE_ENABLED: "true" } })).value, false);
+  assert.equal(resolveDiagnostic(localAvatarEnvelope, startup({ preDotenvEnv: { LOCAL_AVATAR_ENVELOPE: "off" } })).value, false);
+  assert.equal(resolveDiagnostic(localAvatarEnvelope, startup({ preDotenvEnv: { LOCAL_AVATAR_ENVELOPE: "false" } })).value, true);
+  assert.equal(resolveDiagnostic(localAvatarSlack, startup({ preDotenvEnv: { LOCAL_AVATAR_ENVELOPE_SLACK_MS: "2000.5" } })).value, 2000.5);
 });
 
 test("numeric aliases accept finite base-10 only and preserve canonical equality", () => {
