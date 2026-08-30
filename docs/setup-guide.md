@@ -36,7 +36,7 @@
   - Gateway Token: `openclaw.json` の `gateway.token` を確認
 - `LLM_PROVIDER=openai-compatible` を使う場合は OpenClaw Gateway 不要
 - ngrok アカウント（authtoken 設定済み）
-- [事前録音 MP3](#接続テスト試聴mp3)（任意機能）を使う場合は `ffmpeg` が PATH に必要（Ubuntu では標準で入っていない: `sudo apt install ffmpeg`。バイナリの場所は `FFMPEG` 環境変数でも指定できる）
+- [事前録音 MP3](#事前録音-mp3)（任意機能）を使う場合は `ffmpeg` が PATH に必要（Ubuntu では標準で入っていない: `sudo apt install ffmpeg`。バイナリの場所は `FFMPEG` 環境変数でも指定できる）
 
 ### 会議プラットフォームの前提
 
@@ -113,9 +113,9 @@ file <home>/assets/avatar.png
 # JPEG等の場合はPNGに変換 + 256x256リサイズ（macOS）
 sips -s format png -z 256 256 <home>/assets/avatar.png --out <home>/assets/avatar.png
 
-# Linux / WSL2（sips は macOS 専用）— ImageMagick か ffmpeg で代替
-convert input.jpg -resize 256x256 <home>/assets/avatar.png      # ImageMagick 6（Ubuntu 24.04 の apt 標準。IM7 なら magick）
-ffmpeg -i input.jpg -vf scale=256:256 <home>/assets/avatar.png  # ffmpeg
+# Linux / WSL2（sips は macOS 専用）— ImageMagick か ffmpeg で代替（! と scale= は sips -z と同じ「正確に 256x256」指定）
+convert input.jpg -resize '256x256!' <home>/assets/avatar.png      # ImageMagick 6（Ubuntu 24.04 の apt 標準。IM7 なら magick）
+ffmpeg -y -i input.jpg -vf scale=256:256 <home>/assets/avatar.png  # ffmpeg
 ```
 
 ### 実験的なフレーム差し替えアバター
@@ -209,7 +209,7 @@ ngrok http <port> --domain=your-domain.ngrok-free.dev --config ~/.config/ngrok/n
 
 ### WSL2 で使う場合（ngrok は WSL2 の中で動かす）
 
-ngrok の自動検出は、サーバーと同じマシンの `localhost:4040`（ngrok のローカル API）を見る。ngrok を **Windows ホスト側**で動かすと、WSL2 内のサーバーからはこの API に届かないため「ngrok が起動していない」扱いになり、bot に公開 WSS URL が渡らず参加に失敗する。
+ngrok の自動検出は、サーバーと同じマシンの `localhost:4040`（ngrok のローカル API）を見る。ngrok を **Windows ホスト側**で動かすと、WSL2 内のサーバーからはこの API に届かないため（既定の NAT ネットワーク構成の場合）「ngrok が起動していない」扱いになり、bot に公開 WSS URL が渡らず参加に失敗する。
 
 - 基本は **ngrok も WSL2 の中で起動する**（このガイドのコマンドをそのまま WSL2 内で実行する）
 - ngrok を Windows 側で動かす構成を続けたい場合は、設定 UI の **詳細** タブ「ngrok ドメイン」（`server.ngrokDomain`）にドメインを明示して自動検出をバイパスする
@@ -409,7 +409,7 @@ macOS でも Linux / WSL2 でも、常駐サービスの登録は同じ1コマ�
 
 `--port` はログ表示用の情報であり、サービス定義には埋め込まれない（実際に使うポートは起動時の `PORT` 環境変数か `config.json` の `server.port`。設定 UI からは変更できず、デプロイタブに実測値が表示されるのみ）。
 
-どちらの OS でも、アプリ本体のログは `<dir>/logs/meet-server.stdout.log` / `meet-server.stderr.log` に追記される。ヘルスチェック + 自動再起動の watchdog（`scripts/watchdog.sh` — cron 等の定期実行から呼ぶ）も両 OS の常駐サービスに対応している。
+どちらの OS でも、アプリ本体のログは `<dir>/logs/meet-server.stdout.log` / `meet-server.stderr.log` に追記される。ヘルスチェック + 自動再起動の watchdog（`./scripts/watchdog.sh --service ai-meet.<agent-name> --port <port>` — cron 等の定期実行から呼ぶ。既定値は `ai-meet.server` / `5005` なのでラベルとポートは明示する）も両 OS の常駐サービスに対応している。
 
 ### macOS（launchd / LaunchAgent）
 
@@ -439,7 +439,7 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai-meet.<agent-name>.pli
 
 Linux では `~/.config/systemd/user/ai-meet.<agent-name>.service` が生成され、`systemctl --user enable` と起動・起動確認まで自動で行われる。前提は systemd の user manager が動いていること。
 
-- **WSL2 の注意**: WSL2 の既定では systemd が無効。`/etc/wsl.conf` に次を追記し、Windows 側で `wsl --shutdown` を実行してから WSL を開き直す（systemd 未検出のときはインストーラも同じ案内を出す）:
+- **WSL2 の注意**: WSL2 で systemd が無効な環境ではインストーラが失敗し、次の案内を出す。その場合は `/etc/wsl.conf` に次を追記し、Windows 側で `wsl --shutdown` を実行してから WSL を開き直す:
 
   ```ini
   [boot]
@@ -461,7 +461,7 @@ Linux では `~/.config/systemd/user/ai-meet.<agent-name>.service` が生成さ�
 
   journal に載るのはサービスの起動 / 停止 / 失敗などライフサイクルのみ。アプリ本体の出力は `logs/meet-server.stdout.log` / `meet-server.stderr.log` に追記されるので、エラー調査はまず `logs/meet-server.stderr.log` を見る。
 
-- **環境変数の追加**: 生成された unit ファイルの `[Service]` セクションに `Environment=WAKE_CALIBRATE_ENABLED=1` の形式で行を追記し、反映する:
+- **環境変数の追加**: 生成された unit ファイルの `[Service]` セクションに `Environment=WAKE_CALIBRATE_ENABLED=1` の形式で行を追記し、反映する（unit 内の `PATH` は node と `/usr/local/bin:/usr/bin:/bin` に固定されるため、これ以外の場所にある `ffmpeg` を使う場合は `Environment=FFMPEG=/path/to/ffmpeg` を同じ要領で追記する）:
 
   ```bash
   vi ~/.config/systemd/user/ai-meet.<agent-name>.service
@@ -479,7 +479,7 @@ Linux では `~/.config/systemd/user/ai-meet.<agent-name>.service` が生成さ�
 
 ### キャリブレーション手順
 
-1. `.env` に `WAKE_CALIBRATE_ENABLED=1` を追加（常駐サービスの場合は LaunchAgent plist / systemd unit に設定 — [常駐サービス](#常駐サービス自動起動) の「環境変数の追加」参照）— この機能フラグは環境変数専用で、設定 UI からは変更できない
+1. `.env` に `WAKE_CALIBRATE_ENABLED=1` を追加（常駐サービスでも `.env` で足りる。LaunchAgent plist / systemd unit に設定してもよい — [常駐サービス](#常駐サービス自動起動) の「環境変数の追加」参照）— この機能フラグは環境変数専用で、設定 UI からは変更できない
 2. サーバー再起動
 3. ブラウザで `http://localhost:<port>/calibrate` を開く
 4. 「録音開始」→ エージェントの名前を様々な言い方で30秒間繰り返す
