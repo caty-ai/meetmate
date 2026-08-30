@@ -1,6 +1,6 @@
 # AGENTS.md — Meetmate repository guide for AI assistants
 <!-- repo-state:begin (generated; do not edit) -->
-<p align="center"><sub>generation: <code>c5e3ea5</code> (2026-08-30T13:03:55Z) · verify: <a href="https://api.github.com/repos/caty-ai/meetmate/commits/main">API HEAD</a> · <a href="./status.json">status.json</a></sub></p>
+<p align="center"><sub>generation: <code>397bcde</code> (2026-08-30T15:18:15Z) · verify: <a href="https://api.github.com/repos/caty-ai/meetmate/commits/main">API HEAD</a> · <a href="./status.json">status.json</a></sub></p>
 <!-- repo-state:end -->
 
 Ground truth for AI tools (and humans) working on this repository. The generated per-instance file that `meetmate init` writes into a *user's* directory is a different file — its template lives at `src/agents-template.md`.
