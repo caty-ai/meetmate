@@ -41,6 +41,7 @@ const FIELD_SYSTEMS = Object.freeze({
   openai_base_url: Object.freeze(["llm"]),
   openai_empty_response_retry: Object.freeze(["llm"]),
   openai_trusted_agent_tools: Object.freeze(["llm"]),
+  openai_session_header: Object.freeze(["llm"]),
   server_ngrok_domain: Object.freeze(["tunnel"]),
 });
 

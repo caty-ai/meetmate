@@ -9,6 +9,7 @@
     "llm.openaiCompatible.baseUrl": "OpenAI-compatible proxy base URL; required when llm.provider is openai-compatible.",
     "llm.openaiCompatible.emptyResponseRetry": "Retry one empty streaming response once (default true). Set false for stateful gateways where replaying the same turn is unsafe.",
     "llm.openaiCompatible.trustedAgentTools": "Send X-Caty-Agent-Trust: trusted (default false). Enable only for a trusted local tool-capable gateway in a trusted meeting.",
+    "llm.openaiCompatible.sessionHeader": "Optional per-meeting session header name (default empty/off). Set to X-Hermes-Session-Id only for a Hermes Agent api_server.",
     "prompts.voiceEmotionLine": "Line inserted into the voice system addendum when agent.emotionTags is true.",
     "prompts.voiceSystemAddendumTemplate": "Voice-mode system addendum template; supports {emotionLine}, {openclawSlackRule}, and {openclawRules} placeholders.",
     "prompts.voiceSystemAddendum": "Optional full voice system addendum override; leave empty to use the template.",
@@ -131,7 +132,8 @@
     "openaiCompatible": {
       "baseUrl": "",
       "emptyResponseRetry": true,
-      "trustedAgentTools": false
+      "trustedAgentTools": false,
+      "sessionHeader": ""
     }
   },
   "gateway": {

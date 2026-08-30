@@ -25,7 +25,7 @@ function diffFields(loadedFields, currentFields) {
 }
 
 const OPENAI_FIELDS = new Set([
-  "openai_base_url", "openai_empty_response_retry", "openai_trusted_agent_tools",
+  "openai_base_url", "openai_empty_response_retry", "openai_trusted_agent_tools", "openai_session_header",
 ]);
 const SONIOX_FIELDS = new Set([
   "soniox_api_key", "soniox_model", "soniox_ws_url", "soniox_endpoint_sensitivity",
@@ -132,7 +132,8 @@ if (typeof document !== "undefined") {
       llm_temperature: "Temperature", llm_max_tokens: "最大トークン数",
       llm_history_max_turns: "会話履歴の最大ターン数", llm_system_prompt: "システムプロンプト",
       openai_base_url: "OpenAI-compatible Base URL", openai_empty_response_retry: "空レスポンスを再試行",
-      openai_trusted_agent_tools: "信頼済みエージェントツール", soniox_api_key: "Soniox API key",
+      openai_trusted_agent_tools: "信頼済みエージェントツール", openai_session_header: "セッションヘッダー名",
+      soniox_api_key: "Soniox API key",
       deepgram_api_key: "Deepgram API key", stt_provider: "音声認識プロバイダー",
       soniox_model: "Soniox モデル", soniox_ws_url: "Soniox WebSocket URL",
       soniox_endpoint_sensitivity: "Soniox endpoint sensitivity",
@@ -164,6 +165,7 @@ if (typeof document !== "undefined") {
       avatar_rig_background_color: "2.5Dリグとフレームセットの両方で、単色または画像の読み込み失敗時に使う #rrggbb 形式の色です。次回の会議参加から反映されます",
       task_extraction_enabled: "会議終了時に TODO を抽出します。",
       streaming_equivalent_enabled: "OpenAI-compatible の互換ストリーミング動作を使います。",
+      openai_session_header: "Hermes Agent api_server 専用。未設定なら送信しません。非 Hermes の接続先には設定しないでください。",
     };
     const ISSUE_LABELS = {
       VALUE_REQUIRED: "必須値が未設定です", VALUE_INVALID: "保存値が無効です",

@@ -166,6 +166,7 @@ test("T12-08 init writes class 1 to config and keeps class 2 in .env", (t) => {
   assert.equal(config.llm.provider, "openai-compatible");
   assert.equal(config.llm.model, "branch-model");
   assert.equal(config.llm.openaiCompatible.baseUrl, "http://localhost:4000/v1");
+  assert.equal(config.llm.openaiCompatible.sessionHeader, "");
   assert.equal(Object.hasOwn(config.llm.openaiCompatible, "apiKey"), false);
   assert.equal(envValue(envContents, "OPENAI_COMPATIBLE_API_KEY"), "branch-openai-key");
   assert.equal(config.stt.sonioxApiKey, "branch-soniox");

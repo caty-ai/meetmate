@@ -204,7 +204,7 @@ function settingsRequest(method, url, headers = {}, body = "") {
 }
 
 test("T12-01 registry/schema/type lock keeps the write allowlist strict", () => {
-  assert.equal(SETTINGS_REGISTRY.length, 64);
+  assert.equal(SETTINGS_REGISTRY.length, 65);
   assert.equal(ENV_DIAGNOSTICS.length, 59);
   assert.equal(new Set(SETTINGS_REGISTRY.map((entry) => entry.id)).size, SETTINGS_REGISTRY.length);
   assert.equal(SETTINGS_REGISTRY.filter((entry) => entry.credential === "class-1").length, 5);
