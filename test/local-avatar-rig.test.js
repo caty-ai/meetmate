@@ -14,6 +14,7 @@ const ROOT = path.join(__dirname, "..");
 const SCRIPT_FILE = path.join(ROOT, "public", "local-avatar", "local-avatar.js");
 const HTML_FILE = path.join(ROOT, "public", "local-avatar", "index.html");
 const GENERATOR = path.join(ROOT, "scripts", "build-local-avatar-rig.js");
+const BACKGROUND_FILE = path.join(ROOT, "assets", "avatar.png");
 
 function shippedScript() {
   return fs.readFileSync(SCRIPT_FILE, "utf8");
@@ -41,6 +42,21 @@ function embeddedBackground(script) {
   const encoded = match[1].match(/const RIG_BACKGROUND_BASE64URL = "([A-Za-z0-9_-]*)";/);
   assert.ok(encoded, "background embed must use base64url bytes");
   return Buffer.from(encoded[1], "base64url");
+}
+
+function pngDimensions(file) {
+  const bytes = fs.readFileSync(file);
+  assert.equal(bytes.subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
+  return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
+}
+
+function coverVector(width, height, canvasWidth = 1280, canvasHeight = 720) {
+  const scale = Math.max(canvasWidth / width, canvasHeight / height);
+  const sourceWidth = canvasWidth / scale;
+  const sourceHeight = canvasHeight / scale;
+  const sourceX = (width - sourceWidth) / 2;
+  const sourceY = (height - sourceHeight) / 2;
+  return [sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, canvasWidth, canvasHeight];
 }
 
 function initializeImageData() {
@@ -608,6 +624,25 @@ test("rig generator refuses a background that would exceed the frozen page cap",
   }
 });
 
+test("rig generator rejects --model without a rig output when --frames-out is used", () => {
+  const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-local-avatar-model-guard-"));
+  const generatedFrames = path.join(temporaryDirectory, "frames.js");
+  try {
+    const result = spawnSync(process.execPath, [
+      GENERATOR,
+      "--model",
+      path.join(temporaryDirectory, "model.psd"),
+      "--frames-out",
+      generatedFrames,
+    ], { cwd: ROOT, encoding: "utf8" });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /--model requires a rig output; pass --out or drop --model/);
+    assert.equal(fs.existsSync(generatedFrames), false);
+  } finally {
+    fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
 test("rig generator exactly reproduces the shipped script without mutating it", () => {
   const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-local-avatar-rig-"));
   const generatedFile = path.join(temporaryDirectory, "local-avatar.js");
@@ -661,10 +696,11 @@ test("active rig backgrounds apply connect-only solid and chroma values with ima
 test("embedded image backgrounds decode through Blob and cover the active rig letterbox", async () => {
   const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-local-avatar-bg-page-"));
   const generatedFile = path.join(temporaryDirectory, "local-avatar.js");
-  const backgroundFile = path.join(ROOT, "assets", "avatar.png");
+  const fixtureSize = pngDimensions(BACKGROUND_FILE);
+  const expectedVector = coverVector(fixtureSize.width, fixtureSize.height);
   try {
-    execFileSync(process.execPath, [GENERATOR, "--background", backgroundFile, "--out", generatedFile], { cwd: ROOT });
-    const bitmap = { width: 640, height: 480 };
+    execFileSync(process.execPath, [GENERATOR, "--background", BACKGROUND_FILE, "--out", generatedFile], { cwd: ROOT });
+    const bitmap = { width: fixtureSize.width, height: fixtureSize.height };
     let decodedBytes = null;
     const page = await runBackgroundPage(
       fs.readFileSync(generatedFile, "utf8"),
@@ -674,11 +710,12 @@ test("embedded image backgrounds decode through Blob and cover the active rig le
         return bitmap;
       },
     );
-    assert.deepEqual(decodedBytes, fs.readFileSync(backgroundFile));
+    assert.deepEqual(decodedBytes, fs.readFileSync(BACKGROUND_FILE));
     page.draws.length = 0;
     page.frames.shift()(1000);
     const backgroundDraw = page.draws.find((draw) => draw[0] === "image" && draw[1] === bitmap);
     assert.ok(backgroundDraw);
+    assert.deepEqual(backgroundDraw, ["image", bitmap, ...expectedVector]);
     assert.deepEqual(backgroundDraw.slice(-4), [0, 0, 1280, 720]);
 
     const failed = await runBackgroundPage(

@@ -277,6 +277,14 @@ test("rig background settings use pinned defaults and reject invalid stored valu
   );
 });
 
+test("shared avatar background labels and help copy mention both avatar tiles", () => {
+  const settingsSource = fs.readFileSync(path.join(__dirname, "..", "public", "settings.js"), "utf8");
+  assert.match(settingsSource, /avatar_rig_background_mode: "アバター背景"/);
+  assert.match(settingsSource, /avatar_rig_background_color: "アバター背景色"/);
+  assert.match(settingsSource, /2\.5Dリグとフレームセットの両方に適用され、次回の会議参加から反映されます/);
+  assert.match(settingsSource, /2\.5Dリグとフレームセットの両方で、単色または画像の読み込み失敗時に使う #rrggbb 形式の色です/);
+});
+
 test("avatar frame routes use the six-name allowlist and conceal traversal and unsafe previews", async (t) => {
   const setup = fixture(t);
   const frame = png(720, 720);
