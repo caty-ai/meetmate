@@ -430,6 +430,34 @@ test("unknown avatar experiment fails before creating an Attendee bot", { concur
   });
 });
 
+test("hybrid-local-l0 snapshots configured rig background settings into the connect response", { concurrency: false }, async () => {
+  await withMeetRoutes(async (harness) => {
+    const join = await harness.join(
+      { avatarExperiment: "hybrid-local-l0" },
+      { host: "meetmate.example", "x-forwarded-proto": "https" }
+    );
+    assert.equal(join.statusCode, 200);
+    const createRequest = harness.httpsRequests.find((request) => request.options.path === "/api/v1/bots");
+    const launch = new URL(JSON.parse(createRequest.body).voice_agent_settings.url);
+    const capability = new URLSearchParams(launch.hash.slice(1)).get("cap");
+    harness.connect();
+    const visual = harness.pipelines[0].session.localAvatarSession;
+
+    assert.deepEqual(
+      visual.connect({ capability, origin: launch.origin }).background,
+      { mode: "chroma", color: "#123456" },
+    );
+  }, {
+    settingsParsed: staticSettings({
+      avatar: {
+        experiment: "",
+        rigBackgroundMode: "chroma",
+        rigBackgroundColor: "#123456",
+      },
+    }),
+  });
+});
+
 test("live page state failures cannot interrupt or duplicate realtime audio", { concurrency: false }, async () => {
   await withMeetRoutes(async (harness) => {
     const join = await harness.join(

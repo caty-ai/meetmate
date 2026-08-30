@@ -12,6 +12,9 @@
  * builds. External-model builds are local use only and must never be committed;
  * the shipped public/local-avatar/local-avatar.js must keep provenance
  * "procedural" so the test guard stays honest.
+ *
+ * `--background /path/to/image` embeds operator-local backdrop bytes. Generated
+ * backdrops are local use only and must never be committed.
  */
 
 const fs = require("node:fs");
@@ -26,6 +29,9 @@ const VENDOR_BEGIN = "/* @rig-vendor-begin */";
 const VENDOR_END = "/* @rig-vendor-end */";
 const MODEL_BEGIN = "/* @rig-model-begin */";
 const MODEL_END = "/* @rig-model-end */";
+const BACKGROUND_BEGIN = "/* @rig-bg-begin */";
+const BACKGROUND_END = "/* @rig-bg-end */";
+const MAX_SCRIPT_BYTES = 2_500_000;
 const VENDOR_HASHES = Object.freeze({
   "LICENSE": "15183bfbec774052a5817a28eb03730c40ec941a642097b597f0c50092594adb",
   "ag-psd.min.js": "1df9691925fbd64bdc9f7e3e74a42733cc443ecee770df996f2349a7102c0fe6",
@@ -264,13 +270,20 @@ function buildVendorSection() {
 }
 
 function parseArguments(argv) {
-  const options = { modelPath: null };
+  const options = { modelPath: null, backgroundPath: null };
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     if (argument === "--model") {
       const value = argv[index + 1];
       if (!value || value.startsWith("--")) throw new Error("--model requires a PSD path");
       options.modelPath = path.resolve(process.cwd(), value);
+      index += 1;
+      continue;
+    }
+    if (argument === "--background") {
+      const value = argv[index + 1];
+      if (!value || value.startsWith("--")) throw new Error("--background requires an image path");
+      options.backgroundPath = path.resolve(process.cwd(), value);
       index += 1;
       continue;
     }
@@ -311,17 +324,34 @@ function buildModelSection(options = {}) {
   return `const RIG_MODEL_PROVENANCE = "${model.provenance}";\nconst RIG_MODEL_BASE64 = "${base64}";`;
 }
 
+function buildBackgroundSection(options = {}) {
+  if (!options.backgroundPath) return 'const RIG_BACKGROUND_BASE64URL = "";';
+  let bytes;
+  try {
+    bytes = fs.readFileSync(options.backgroundPath);
+  } catch (error) {
+    throw new Error(`failed to read --background image ${options.backgroundPath}: ${error.message}`);
+  }
+  return `const RIG_BACKGROUND_BASE64URL = "${bytes.toString("base64url")}";`;
+}
+
 function build(options = {}) {
   initializePsdIO();
   verifyVendor();
   let output = fs.readFileSync(TARGET, "utf8");
   output = replaceSection(output, VENDOR_BEGIN, VENDOR_END, buildVendorSection());
   output = replaceSection(output, MODEL_BEGIN, MODEL_END, buildModelSection(options));
+  output = replaceSection(output, BACKGROUND_BEGIN, BACKGROUND_END, buildBackgroundSection(options));
   const forbiddenUrl = /\b(?:https?:)?\/\//i.exec(output);
   if (forbiddenUrl) {
     throw new Error(`generated page script contains a forbidden URL-shaped token near ${output.slice(Math.max(0, forbiddenUrl.index - 24), forbiddenUrl.index + 48)}`);
   }
-  fs.writeFileSync(options.outputPath || TARGET, output.endsWith("\n") ? output : `${output}\n`);
+  const completed = output.endsWith("\n") ? output : `${output}\n`;
+  const outputBytes = Buffer.byteLength(completed);
+  if (outputBytes >= MAX_SCRIPT_BYTES) {
+    throw new Error(`generated page script is ${outputBytes} bytes and exceeds the 2.5 MB cap`);
+  }
+  fs.writeFileSync(options.outputPath || TARGET, completed);
 }
 
 if (require.main === module) build(parseArguments(process.argv.slice(2)));

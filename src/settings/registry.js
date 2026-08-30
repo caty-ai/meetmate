@@ -96,6 +96,8 @@ const SETTINGS_REGISTRY = Object.freeze([
   d("agent_timeout_fallback", "agent.timeoutFallback", text(4096), { apply: "live", multiline: true }),
   d("agent_avatar_url", "agent.avatarUrl", exactUrl(["http:", "https:"], true), { envAlias: "BOT_IMAGE_URL" }),
   d("avatar_experiment", "avatar.experiment", z.enum(["", "hybrid-local-l0", "hybrid-local-frames"]), { ux: "basic", apply: "live", defaultValue: "" }),
+  d("avatar_rig_background_mode", "avatar.rigBackgroundMode", z.enum(["solid", "image", "chroma"]), { ux: "basic", apply: "live", defaultValue: "solid" }),
+  d("avatar_rig_background_color", "avatar.rigBackgroundColor", z.string().regex(/^#[0-9a-f]{6}$/i), { ux: "basic", apply: "live", defaultValue: "#08111f" }),
   d("llm_provider", "llm.provider", z.enum(["openclaw", "openai-compatible"]), { ux: "basic", envAlias: "LLM_PROVIDER", defaultValue: "openclaw" }),
   d("llm_model", "llm.model", trimmedString(256), { ux: "basic" }),
   d("llm_temperature", "llm.temperature", number(0, 2), { envAlias: "AGENT_TEMPERATURE", defaultValue: 0.5 }),

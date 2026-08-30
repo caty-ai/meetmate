@@ -58,6 +58,7 @@ test("successful state polling renews the idle TTL beyond twice the maximum life
   });
   const auth = { capability: issued.capability, origin: "https://meetmate.example" };
   const connected = issued.session.connect(auth);
+  assert.deepEqual(connected.background, { mode: "solid", color: "#08111f" });
   const readArgs = {
     ...auth,
     generation: connected.generation,
@@ -76,6 +77,46 @@ test("successful state polling renews the idle TTL beyond twice the maximum life
   now = issued.session.snapshot().expiresAt;
   assert.equal(issued.session.readState(readArgs), null);
   assert.equal(getLocalAvatarSession(issued.session.visualId), null);
+});
+
+test("connect snapshots an exact validated rig background without extending marker states", () => {
+  const configuredBackground = { mode: "image", color: "#A1b2C3" };
+  const issued = createLocalAvatarSession({
+    publicOrigin: "https://meetmate.example",
+    background: configuredBackground,
+  });
+  configuredBackground.mode = "chroma";
+  configuredBackground.color = "#000000";
+  const auth = { capability: issued.capability, origin: "https://meetmate.example" };
+  try {
+    const connected = issued.session.connect(auth);
+    assert.deepEqual(connected.background, { mode: "image", color: "#A1b2C3" });
+    const source = issued.session.beginSource();
+    assert.equal(issued.session.publishMarker(marker(0), source), true);
+    const state = issued.session.readState({
+      ...auth,
+      generation: connected.generation,
+      afterSequence: connected.sequence,
+    });
+    assert.equal(Object.hasOwn(state, "background"), false);
+  } finally {
+    issued.session.close();
+  }
+
+  for (const background of [
+    { mode: "video", color: "#123456" },
+    { mode: "chroma", color: "green" },
+  ]) {
+    const invalid = createLocalAvatarSession({ publicOrigin: "https://meetmate.example", background });
+    try {
+      assert.deepEqual(invalid.session.connect({
+        capability: invalid.capability,
+        origin: "https://meetmate.example",
+      }).background, { mode: "solid", color: "#08111f" });
+    } finally {
+      invalid.session.close();
+    }
+  }
 });
 
 test("local avatar marker supersede, delivery retries, source generations, and reconnect history are bounded", () => {

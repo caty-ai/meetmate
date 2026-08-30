@@ -52,7 +52,11 @@ const TEXTAREA_FIELDS = new Set([
   "agent_greeting", "agent_ack_variants", "agent_progress_pings", "agent_exit_farewell",
   "agent_cancel_ack", "agent_timeout_fallback", "llm_system_prompt",
 ]);
-const AVATAR_FIELDS = new Set(["avatar_experiment"]);
+const AVATAR_FIELDS = new Set([
+  "avatar_experiment",
+  "avatar_rig_background_mode",
+  "avatar_rig_background_color",
+]);
 const VOICE_FIELDS = new Set([
   "agent_emotion_tags", "agent_greeting", "agent_ack_variants", "agent_progress_pings",
   "agent_exit_farewell", "agent_cancel_ack", "agent_timeout_fallback",
@@ -123,6 +127,7 @@ if (typeof document !== "undefined") {
       agent_progress_pings: "進捗 Ping", agent_exit_farewell: "退出あいさつ",
       agent_cancel_ack: "キャンセル確認", agent_timeout_fallback: "タイムアウト",
       agent_avatar_url: "アイコン URL", avatar_experiment: "アバター表示",
+      avatar_rig_background_mode: "2.5Dリグ背景", avatar_rig_background_color: "2.5Dリグ背景色",
       llm_provider: "LLM プロバイダー", llm_model: "LLM モデル",
       llm_temperature: "Temperature", llm_max_tokens: "最大トークン数",
       llm_history_max_turns: "会話履歴の最大ターン数", llm_system_prompt: "システムプロンプト",
@@ -155,6 +160,8 @@ if (typeof document !== "undefined") {
       agent_progress_pings: "処理中に使う文言を1行に1件入力します。",
       agent_emotion_tags: "Fish Audio の固定タグをプロンプトへ含めます。",
       avatar_experiment: "次回の会議参加から反映されます",
+      avatar_rig_background_mode: "次回の会議参加から反映されます。画像モードで背景画像が未埋め込みの場合: このビルドには背景画像が埋め込まれていません",
+      avatar_rig_background_color: "単色または画像の読み込み失敗時に使う #rrggbb 形式の色です。次回の会議参加から反映されます",
       task_extraction_enabled: "会議終了時に TODO を抽出します。",
       streaming_equivalent_enabled: "OpenAI-compatible の互換ストリーミング動作を使います。",
     };
@@ -187,6 +194,11 @@ if (typeof document !== "undefined") {
       "": "標準（静止画）",
       "hybrid-local-l0": "2.5Dリグ",
       "hybrid-local-frames": "フレームセット",
+    };
+    const RIG_BACKGROUND_OPTION_LABELS = {
+      solid: "単色",
+      image: "埋め込み画像",
+      chroma: "クロマキー",
     };
     const AVATAR_SOURCE_LABELS = {
       uploaded: "アップロード済み", "url-cache": "URL キャッシュ", bundled: "既定",
@@ -257,7 +269,9 @@ if (typeof document !== "undefined") {
     }
 
     function optionLabel(entry, value, fallback) {
-      return entry.id === "avatar_experiment" ? AVATAR_OPTION_LABELS[value] : fallback;
+      if (entry.id === "avatar_experiment") return AVATAR_OPTION_LABELS[value];
+      if (entry.id === "avatar_rig_background_mode") return RIG_BACKGROUND_OPTION_LABELS[value];
+      return fallback;
     }
 
     function sourceElement(entry) {
