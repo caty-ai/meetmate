@@ -498,15 +498,37 @@ function isTtsCacheEnabled() {
   return getEffectiveValue("tts_cache_enabled");
 }
 
+function resolvePipelineTransport(transport) {
+  if (transport === undefined) return "meet";
+  if (transport === "meet" || transport === "zoom" || transport === "discord") return transport;
+  throw new Error(`Unsupported transport: ${transport}`);
+}
+
+function resolvePipelineCapabilities(capabilities) {
+  if (capabilities === undefined) return null;
+  if (!capabilities || typeof capabilities !== "object") {
+    throw new Error("options.capabilities must be an object");
+  }
+  return capabilities;
+}
+
+function isAcceptedAudioMeta(meta) {
+  if (meta === undefined) return true;
+  const speaker = meta && typeof meta === "object" ? meta.speaker : null;
+  return typeof speaker?.id === "string" && speaker.id.length > 0 && typeof speaker.isBot === "boolean";
+}
+
 /**
  * Create the decomposed voice pipeline.
  *
  * @param {object} session - Meeting session object
  * @param {object} turnState - Shared turn state { isAgentSpeaking, inputCooldownUntil, droppedEchoFrames }
- * @param {function} onAudio - Callback: (buffer: Buffer, metadata?: object) => void (sends audio to Attendee)
+ * @param {function} onAudio - Callback: (buffer: Buffer, metadata: { outputEpoch: number, firstSampleIndex: number, sampleRate: number, envelopeSegments?: object[] }) => void
  * @param {object} config - Pipeline config from getPipelineConfig()
- * @param {object} options - Multi-agent options
- * @returns {{ sendAudio(buf: Buffer): void, close(): void }}
+ * @param {object} [options] - Multi-agent and transport options
+ * @param {"meet"|"zoom"|"discord"} [options.transport] - Canonical transport literal for sessionUser names
+ * @param {{ chat?: boolean, perSpeakerAudio?: boolean, avatarStream?: boolean, supportsFlush?: boolean, echoesOwnOutput?: boolean }} [options.capabilities]
+ * @returns {{ sendAudio(buf: Buffer, meta?: { speaker?: { platform: string, id: string, displayName?: string, isBot: boolean } }): void, close(): void }}
  */
 function createPipeline(session, turnState, onAudio, config, options = {}) {
   const pipelineTimers = options.timers || globalThis;
@@ -514,7 +536,11 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   const { EventEmitter } = require("events");
   const { createSTT } = require("./stt-provider");
   const { FloorClient, STATES: FLOOR_STATES } = require("./floor-client");
+  const { sessionUserFor } = require("./session-user");
   const emitter = new EventEmitter();
+  const transport = resolvePipelineTransport(options.transport);
+  const capabilities = resolvePipelineCapabilities(options.capabilities);
+  const echoesOwnOutput = capabilities ? capabilities.echoesOwnOutput === true : true;
   if (turnState.lastTurnEndAt == null) turnState.lastTurnEndAt = null;
 
   // Additive output observability for the existing PCM callback. Epoch 0 is
@@ -715,7 +741,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     voiceId: config.tts.referenceId || null,
     model: config.llm.model,
     openclawSystemAddendum: config.llm.openclawSystemAddendum,
-    sessionUser: `meet-${session.id}`,
+    sessionUser: sessionUserFor(transport, session.id),
   };
 
   function switchAgent(agentId) {
@@ -729,7 +755,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     agentState.openclawSystemAddendum = Object.prototype.hasOwnProperty.call(agent, "openclawSystemAddendum")
       ? agent.openclawSystemAddendum
       : config.llm.openclawSystemAddendum;
-    agentState.sessionUser = `meet-${session.id}-${agentId}`;
+    agentState.sessionUser = sessionUserFor(transport, session.id, agentId);
 
     currentAgentId = agentId;
 
@@ -1623,6 +1649,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     // #8 Barge-in: if user starts speaking while agent is speaking, abort immediately.
     if (
       ENABLE_BARGE_IN &&
+      echoesOwnOutput &&
       interim &&
       interim.length >= BARGE_IN_MIN_CHARS &&
       turnState.isAgentSpeaking &&
@@ -2856,7 +2883,8 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
 
   // ── Public API ──────────────────────────────────────────────────
   const api = {
-    sendAudio(buffer) {
+    sendAudio(buffer, meta) {
+      if (!isAcceptedAudioMeta(meta)) return;
       stt.send(buffer);
     },
     close() {
