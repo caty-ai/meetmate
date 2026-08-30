@@ -44,7 +44,7 @@ Premise **[v1 assumption — verified by the #4 setup-guide walkthrough]**: Disc
 3. **Clear any environment copy**: §3 precedence puts launch-env / `.env` seed **above** the store — a leftover `DISCORD_BOT_TOKEN` in the launch environment or `.env` would keep the dead (or worse, leaked) token as the effective value after restart. Unset the env var / remove the `.env` line (operator action; meetmate never edits `.env`).
 4. Restart meetmate (`restart-required` apply). Expected downtime = the restart window.
 5. Verify with the `discord` connection test (ADR-6) or by observing the bot come online in an allowlisted guild.
-6. If rotating because of suspected compromise: also review the bot's guild membership in the portal (an attacker with the old token could have joined it to new guilds — the allowlist (ADR-3) prevents *our* process from serving those guilds, but membership itself should be pruned) and check the audit log of allowlisted guilds.
+6. If rotating because of suspected compromise: also review the bot's guild membership in the portal (**[v1 assumption — verified by #0c/#4]**: an attacker holding the token could have joined it to new guilds — the allowlist (ADR-3) prevents *our* process from serving those guilds either way, but membership itself should be pruned) and check the audit log of allowlisted guilds.
 
 Rotation requires no settings-contract machinery beyond ADR-1: it is a value replacement through the normal masked-field replace path.
 
@@ -130,15 +130,16 @@ What the vocabulary deliberately does NOT cover: the per-agent dynamic Slack tok
 
 ### 7.4 Migration matrix (exact — the boolean⇒predicate equivalence is NOT mechanical)
 
-`requiredAtMeetingStart: true ≡ requiredWhen: { always: true }` holds **only for entries that are unconditional today**. Entries with existing conditional behavior get their exact predicates:
+`requiredAtMeetingStart: true ≡ requiredWhen: { always: true }` holds **only for entries that are unconditional today**. This matrix enumerates the **complete** current `requiredAtMeetingStart` set — all eight entries carrying the flag in `src/settings/registry.js` (lines 83, 85, 89, 110, 111, 120, 121, 129) plus the Slack resolver rule and the new Discord entry — so applying it verbatim drops no existing requirement:
 
 | Registry entry | Today | Becomes |
 |---|---|---|
+| `agent_id`, `agent_display_name`, `agent_wake_words` | boolean true, unconditional | `requiredWhen: { always: true }` |
+| `fish_audio_api_key`, `fish_audio_voice_id` | boolean true, unconditional | `requiredWhen: { always: true }` |
 | `attendee_api_key` | boolean true (unconditional in resolver) | `requiredWhen: { transport: ["meet", "zoom"] }` |
 | `discord_bot_token` | (new) | `requiredWhen: { transport: ["discord"] }` |
 | `soniox_api_key` | boolean true + resolver skip unless `stt_provider === "soniox"` | `requiredWhen: { setting: "stt_provider", equals: "soniox" }` |
 | `deepgram_api_key` | boolean true + resolver skip unless `stt_provider === "deepgram"` | `requiredWhen: { setting: "stt_provider", equals: "deepgram" }` |
-| `fish_audio_api_key`, `fish_voice_id` | boolean true, unconditional | `requiredWhen: { always: true }` |
 | `slack_bot_token` | resolver rule: enabled AND source not default/unset AND no dynamic token | `requiredWhen: { setting: "slack_notifications_enabled", equals: true, explicit: true }` — the dynamic-token escape stays resolver-owned (7.2) |
 
 A mechanical `always: true` rewrite would newly block Deepgram-only operators (both STT keys demanded) and every default configuration (Slack default is `true` with source `default`) — the matrix above is therefore normative, not illustrative.
@@ -171,7 +172,7 @@ The complete, owner-approval-scoped (checkpoint 2) amendment. Child #2a applies 
 | `discord_lcm_ingest_enabled` | `discord.lcmIngestEnabled` | `bool` / `false` | basic | none | restart-required | none |
 ```
 
-**A-2. `src/settings/registry.js`** — add the three `d(...)` entries (ADR-1, ADR-3, ADR-5.3 — the token entry carries `requiredWhen: { transport: ["discord"] }`), apply the ADR-7.4 migration matrix to `attendee_api_key` / `soniox_api_key` / `deepgram_api_key` / `slack_bot_token` / `fish_audio_api_key` / `fish_voice_id`, and extend the definition helper/type with the `requiredWhen` field (replacing `requiredAtMeetingStart`).
+**A-2. `src/settings/registry.js`** — add the three `d(...)` entries (ADR-1, ADR-3, ADR-5.3 — the token entry carries `requiredWhen: { transport: ["discord"] }`), apply the ADR-7.4 migration matrix to **every entry it lists** (the complete current `requiredAtMeetingStart` set: `agent_id`, `agent_display_name`, `agent_wake_words`, `fish_audio_api_key`, `fish_audio_voice_id`, `attendee_api_key`, `soniox_api_key`, `deepgram_api_key`, plus `slack_bot_token`), and extend the definition helper/type with the `requiredWhen` field (replacing `requiredAtMeetingStart`).
 
 **A-3. Connection-test enum — three pinned sites, all amended**: (i) the **§6 route table** row for `POST /api/settings/connections/:provider/test` — provider set becomes `soniox|deepgram|fish-audio|attendee|slack|discord`; (ii) the **§6 prose sentence** "The five provider literals `soniox|deepgram|fish-audio|attendee|slack` remain the complete endpoint enum in v1" → "The six provider literals `soniox|deepgram|fish-audio|attendee|slack|discord` remain the complete endpoint enum in v1", and the optional-tier sentence becomes "Deepgram, Attendee, Slack, and Discord are optional compatibility/integration tests" (same `501 TEST_NOT_IMPLEMENTED` semantics); (iii) **T12-14** — "lock the six-provider route enum"; 501 permitted for Deepgram/Attendee/Slack/Discord.
 
