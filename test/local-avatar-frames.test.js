@@ -158,7 +158,43 @@ test("envelope blink is independent during continuous speech and selects blink b
   assert.equal(quietContract.getState().currentFrame, "blink");
 });
 
-test("anchor defers across empty snapshots, rejects mid-stream starts, and retries on the next epoch", async () => {
+test("envelope blink survives idle gaps, resets across epoch bumps, and clears stale holds", async () => {
+  const page = await runFramesPage({ offset: 0, now: 0, random: () => 0 });
+  const contract = page.sandbox.__localAvatarFramesContract;
+
+  contract.acceptState(frameMarker({ envelopes: [{ s: 0, v: [1] }] }), 0);
+  contract.render(100);
+  contract.render(400);
+  assert.equal(contract.getState().speaking, false);
+  assert.equal(contract.getState().currentFrame, "idle");
+
+  contract.acceptState(frameMarker({
+    sequence: 3,
+    sampleIndex: 57_600,
+    envelopes: [{ s: 57_600, v: new Array(20).fill(0.5) }],
+  }), 2_400);
+  contract.render(2_499);
+  assert.equal(contract.getState().currentFrame, "talk1");
+  contract.render(2_500);
+  assert.equal(contract.getState().currentFrame, "talk_blink", "same-epoch speech resumes keep the original blink deadline");
+
+  contract.acceptState(frameMarker({
+    sequence: 4,
+    outputEpoch: 1,
+    sampleIndex: 0,
+    envelopes: [{ s: 0, v: new Array(40).fill(0) }],
+  }), 2_550);
+  assert.equal(contract.getState().envelope.epoch, 1);
+  assert.equal(contract.getState().envelopeActive, true);
+  assert.equal(contract.getState().envelope.mode, "anchored");
+  assert.equal(contract.getState().currentFrame, "idle", "epoch bumps clear the stale blink hold and old voiced windows before the next utterance");
+  contract.render(2_649);
+  assert.equal(contract.getState().currentFrame, "idle");
+  contract.render(5_050);
+  assert.match(contract.getState().currentFrame, /blink$/, "the re-armed epoch still gets its own later blink");
+});
+
+test("anchor defers across empty or absent snapshots, rejects mid-stream starts, and retries on the next epoch", async () => {
   const page = await runFramesPage({ now: 0 });
   const contract = page.sandbox.__localAvatarFramesContract;
   assert.equal(contract.limits.offsetMs, 300);
@@ -173,6 +209,19 @@ test("anchor defers across empty snapshots, rejects mid-stream starts, and retri
   }), 1_000), true);
   assert.equal(contract.getState().envelope.mode, "anchored");
   assert.equal(contract.getState().envelope.playbackStartWall, 1_300);
+
+  const bare = await runFramesPage({ now: 0 });
+  const bareContract = bare.sandbox.__localAvatarFramesContract;
+  assert.equal(bareContract.acceptState(frameMarker(), 0), true);
+  assert.equal(bareContract.getState().envelope.mode, "pending");
+  bare.clock.value = 1_000;
+  assert.equal(bareContract.acceptState(frameMarker({
+    sequence: 3,
+    sampleIndex: 2_400,
+    envelopes: [{ s: 0, v: [0.5] }],
+  }), 1_000), true);
+  assert.equal(bareContract.getState().envelope.mode, "anchored");
+  assert.equal(bareContract.getState().envelope.playbackStartWall, 1_300);
 
   const late = await runFramesPage({ offset: 0, now: 0 });
   const lateContract = late.sandbox.__localAvatarFramesContract;
@@ -238,17 +287,50 @@ test("three-way lookup keeps pre-roll quiet, falls back only for interior holes,
   assert.equal(contract.getState().speaking, false);
   contract.render(3_000);
   assert.equal(contract.getState().currentFrame, "idle");
-  assert.equal(contract.getState().envelopeActive, true, "pruning never turns known past-end silence into fallback");
+  contract.acceptState(frameMarker({
+    sequence: 3,
+    sampleIndex: 72_000,
+    envelopes: [{ s: 72_000, v: [1] }],
+  }), 3_000);
+  assert.match(contract.getState().currentFrame, /^talk/, "fresh same-epoch windows still render from the anchored schedule after pruning");
 
-  contract.acceptState(frameMarker({ sequence: 3, sampleIndex: 2_400 }), 610);
+  contract.acceptState(frameMarker({ sequence: 4, sampleIndex: 74_400 }), 3_010);
   assert.equal(contract.getState().envelopeActive, false, "a bare marker switches to byte-compatible legacy rendering");
   assert.match(contract.getState().currentFrame, /^talk/);
 });
 
-test("cancel and epoch-only marker bumps clear the active envelope schedule", async () => {
-  const page = await runFramesPage({ offset: 0, now: 0 });
+test("legacy no-envelope rendering still exercises the idle blink cadence", async () => {
+  const page = await runFramesPage({ offset: 0, now: 0, random: () => 0 });
   const contract = page.sandbox.__localAvatarFramesContract;
-  contract.acceptState(frameMarker({ envelopes: [{ s: 0, v: [0.5] }] }), 0);
+  contract.acceptState(frameMarker(), 0);
+  assert.equal(contract.getState().envelopeActive, false);
+  contract.render(599);
+  assert.equal(contract.getState().speaking, true);
+  contract.render(600);
+  assert.equal(contract.getState().speaking, false);
+  contract.render(4_599);
+  assert.equal(contract.getState().currentFrame, "idle");
+  contract.render(4_600);
+  assert.equal(contract.getState().currentFrame, "blink");
+});
+
+test("cancel signals, marker-borne cancel epochs, and reconnect storms clear the active envelope schedule", async () => {
+  const page = await runFramesPage({
+    offset: 0,
+    now: 0,
+    stateHandler: async ({ params, stateCallCount }) => {
+      if (params.connect === "1" && stateCallCount === 1) {
+        return jsonResponse(frameMarker({
+          generation: 1,
+          sequence: 1,
+          envelopes: [{ s: 0, v: new Array(60).fill(0.5) }],
+        }));
+      }
+      throw new Error("network dropped");
+    },
+  });
+  const contract = page.sandbox.__localAvatarFramesContract;
+  assert.equal(contract.getState().generation, 1);
   assert.equal(contract.getState().envelopeActive, true);
 
   contract.acceptState(frameMarker({
@@ -270,6 +352,31 @@ test("cancel and epoch-only marker bumps clear the active envelope schedule", as
   }), 20);
   assert.equal(contract.getState().envelopeActive, true);
   assert.equal(contract.getState().envelope.epoch, 1);
+
+  contract.acceptState(frameMarker({
+    cancelEpoch: 2,
+    sequence: 5,
+    outputEpoch: 1,
+    sampleIndex: 2_400,
+    envelopes: [{ s: 2_400, v: [0] }],
+  }), 100);
+  assert.equal(contract.getState().cancelEpoch, 2);
+  assert.equal(contract.getState().envelopeActive, true);
+  assert.equal(contract.getState().currentFrame, "idle", "a marker-borne cancel epoch clears the old schedule before applying the new window");
+
+  await fireTimer(page.timers, 100);
+  assert.equal(contract.getState().generation, 0);
+  assert.equal(contract.getState().envelopeActive, false);
+  assert.equal(contract.getState().envelope.windowCount, 0);
+  assert.equal(contract.getState().currentFrame, "idle");
+
+  for (const backoff of [250, 500, 1000, 2000, 4000, 4000]) {
+    await fireTimer(page.timers, backoff);
+  }
+  assert.equal(contract.getState().stopped, true);
+  assert.equal(contract.getState().generation, 0);
+  assert.equal(contract.getState().envelope.windowCount, 0);
+  assert.equal(contract.getState().currentFrame, "idle");
 });
 
 test("missing or broken frames fail closed to idle and then the diagnostic canvas", async () => {
@@ -808,6 +915,7 @@ async function runFramesPage({
   now = Date.now(),
   offset,
   random = () => 0.5,
+  stateHandler = null,
 } = {}) {
   let releaseHeldFrames;
   const heldGate = new Promise((resolve) => { releaseHeldFrames = resolve; });
@@ -828,6 +936,7 @@ async function runFramesPage({
   const sandboxMath = Object.create(Math);
   sandboxMath.random = random;
   const clock = { value: now };
+  const stateRequests = [];
   const sandbox = {
     URLSearchParams,
     Date: { now: () => clock.value },
@@ -854,6 +963,17 @@ async function runFramesPage({
     },
     fetch: async (url) => {
       if (url.startsWith("/local-avatar/state?")) {
+        const params = Object.fromEntries(new URL(url, "https://meetmate.example").searchParams.entries());
+        stateRequests.push(params);
+        if (stateHandler) {
+          return stateHandler({
+            url,
+            params,
+            stateCallCount: stateRequests.length,
+            clock,
+            initial,
+          });
+        }
         return { ok: true, status: 200, json: async () => initial };
       }
       const name = /\/([^/?]+)\.png\?/.exec(url)?.[1] || "";
@@ -872,13 +992,21 @@ async function runFramesPage({
   vm.createContext(sandbox);
   vm.runInContext(script, sandbox, { filename: SCRIPT_FILE });
   await settleMicrotasks();
-  return { sandbox, drawCalls, timers, clock, frameRequests };
+  return { sandbox, drawCalls, timers, clock, frameRequests, stateRequests };
 }
 
 async function settleMicrotasks() {
   for (let i = 0; i < 4; i += 1) {
     await new Promise((resolve) => setImmediate(resolve));
   }
+}
+
+async function fireTimer(timers, ms) {
+  const timer = timers.find((candidate) => candidate.ms === ms && !candidate.cleared && !candidate.fired);
+  assert.ok(timer, `expected pending timer ${ms}`);
+  timer.fired = true;
+  timer.fn();
+  await settleMicrotasks();
 }
 
 async function withFreshUiRoutes(home, fn) {
@@ -955,6 +1083,14 @@ function frameMarker({
     sampleIndex,
     sampleRate,
     ...(envelopes === undefined ? {} : { envelopes }),
+  };
+}
+
+function jsonResponse(body, status = 200) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    json: async () => body,
   };
 }
 

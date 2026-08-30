@@ -227,6 +227,8 @@
   function resetEnvelopeState(nextEpoch = -1) {
     envelopeSchedule.reset(nextEpoch);
     envelopeActive = false;
+    envelopeNextBlinkAt = null;
+    envelopeBlinkUntil = 0;
   }
 
   function renderLegacy(at) {

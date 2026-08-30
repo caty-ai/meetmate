@@ -188,6 +188,12 @@ test("frame threshold literals match the server mapping and both pages share the
   assert.match(framesScript, new RegExp(`LEVEL_ONE_THRESHOLD = ${LEVEL_ONE_THRESHOLD}`));
   assert.match(framesScript, new RegExp(`LEVEL_TWO_THRESHOLD = ${LEVEL_TWO_THRESHOLD}`));
   assert.equal(extractScheduleCore(framesScript, "\n\n  let framesLoaded"), extractScheduleCore(rigScript, "\n\n  function closeRigMouth"));
+  assert.equal(extractConstDeclaration(framesScript, "ENVELOPE_END_GRACE_MS"), extractConstDeclaration(rigScript, "ENVELOPE_END_GRACE_MS"));
+  assert.equal(extractConstDeclaration(framesScript, "FORWARD_REANCHOR_MS"), extractConstDeclaration(rigScript, "FORWARD_REANCHOR_MS"));
+  assert.equal(
+    extractOffsetParsingBlock(framesScript),
+    extractOffsetParsingBlock(rigScript),
+  );
 });
 
 function authHeaders(capability, origin = "https://meetmate.example") {
@@ -232,9 +238,30 @@ function requestRoute(method, requestPath, headers = {}) {
 }
 
 function extractScheduleCore(source, endMarker) {
-  const start = source.indexOf("  function createEnvelopeSchedule(now) {");
-  assert.notEqual(start, -1);
+  return extractBlock(source, "  function createEnvelopeSchedule(now) {", endMarker);
+}
+
+function extractConstDeclaration(source, name) {
+  const marker = `  const ${name} = `;
+  const start = source.indexOf(marker);
+  assert.notEqual(start, -1, `missing const declaration: ${name}`);
+  const end = source.indexOf(";\n", start);
+  assert.notEqual(end, -1, `unterminated const declaration: ${name}`);
+  return source.slice(start, end + 2);
+}
+
+function extractOffsetParsingBlock(source) {
+  return extractBlock(
+    source,
+    "  const query = new URLSearchParams(location.search);",
+    "\n  const visualId = query.get(\"v\") || \"\";",
+  );
+}
+
+function extractBlock(source, startMarker, endMarker) {
+  const start = source.indexOf(startMarker);
+  assert.notEqual(start, -1, `missing block start: ${startMarker}`);
   const end = source.indexOf(endMarker, start);
-  assert.notEqual(end, -1);
+  assert.notEqual(end, -1, `missing block end: ${endMarker}`);
   return source.slice(start, end);
 }

@@ -117,6 +117,7 @@ function positiveInt(value, fallback) {
 }
 
 function nonNegativeFinite(value, fallback) {
+  if (typeof value === "string" && value.trim() === "") return fallback;
   const number = Number(value);
   return Number.isFinite(number) && number >= 0 ? number : fallback;
 }
@@ -515,6 +516,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   const { EventEmitter } = require("events");
   const { createSTT } = require("./stt-provider");
   const emitter = new EventEmitter();
+  if (turnState.lastTurnEndAt == null) turnState.lastTurnEndAt = null;
 
   // Additive output observability for the existing PCM callback. Epoch 0 is
   // the initial output stream; an authoritative playback abort invalidates it
@@ -532,7 +534,6 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   }
   let lastAudioSendAt = null;
   let projectedEnd = -Infinity;
-  let lastTurnEndAt = null;
   let llmStreamOpen = false;
   const cancelledAbortControllers = new WeakSet();
 
@@ -549,13 +550,13 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   function clearAgentSpeaking() {
     const wasSpeaking = turnState.isAgentSpeaking === true;
     turnState.isAgentSpeaking = false;
-    if (wasSpeaking) lastTurnEndAt = Date.now();
+    if (wasSpeaking) turnState.lastTurnEndAt = Date.now();
   }
 
   function shouldRearmEnvelopeEpoch(now) {
     return LOCAL_AVATAR_ENVELOPE_ENABLED
-      && lastTurnEndAt !== null
-      && now - lastTurnEndAt >= ENVELOPE_REARM_IDLE_MS
+      && turnState.lastTurnEndAt !== null
+      && now - turnState.lastTurnEndAt >= ENVELOPE_REARM_IDLE_MS
       && !llmStreamOpen
       && lastAudioSendAt !== null
       && now - lastAudioSendAt >= ENVELOPE_REARM_IDLE_MS
@@ -2547,7 +2548,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         firstSampleIndex,
         lastAudioSendAt,
         projectedEnd,
-        lastTurnEndAt,
+        lastTurnEndAt: turnState.lastTurnEndAt,
         llmStreamOpen,
       }),
       switchAgent,

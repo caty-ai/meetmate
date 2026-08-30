@@ -207,7 +207,7 @@ test("envelope log coalesces contiguous pushes, prefix-trims old values, and cap
   }
 });
 
-test("envelope validation clamps finite values and skips structurally invalid pushes without blocking markers", () => {
+test("envelope validation clamps finite values, rejects corrupted pushes as a unit, and does not block markers", () => {
   const invalidValues = [NaN, Infinity, -Infinity, "0.5"];
   for (const value of invalidValues) {
     const result = publishSingleEnvelope([{ s: 0, v: [value] }]);
@@ -233,6 +233,21 @@ test("envelope validation clamps finite values and skips structurally invalid pu
     [],
     "an oversized synthesize push is rejected as a unit",
   );
+  const mixed = publishSingleEnvelope([
+    { s: 0, v: [0.25] },
+    { s: 2_400, v: [NaN] },
+  ]);
+  assert.equal(mixed.kind, "marker");
+  assert.deepEqual(mixed.envelopes, [], "a structurally invalid sibling rejects the whole push");
+});
+
+test("multi-segment pushes that cumulatively exceed the 150-window cap are rejected as a unit", () => {
+  const state = publishSingleEnvelope([
+    { s: 0, v: new Array(100).fill(0.25) },
+    { s: 24_000, v: new Array(51).fill(0.5) },
+  ]);
+  assert.equal(state.kind, "marker");
+  assert.deepEqual(state.envelopes, []);
 });
 
 test("connect, epoch bump, cancelPlayback, and beginSource clear envelope history", () => {
@@ -814,6 +829,8 @@ test("drain projection blocks burst gaps and accounts for a lead-to-burst send h
         if (text === "lead-burst") {
           clock.set(3_000);
           onAudio(Buffer.alloc(240_000));
+        } else if (text === "probe with audio") {
+          onAudio(Buffer.alloc(4_800));
         } else if (text === "after-hole") {
           onAudio(Buffer.alloc(4_800));
         }
@@ -823,12 +840,31 @@ test("drain projection blocks burst gaps and accounts for a lead-to-burst send h
       turnState.isAgentSpeaking = true;
       await pipeline._test.speakSentence("lead-burst", null);
       pipeline._test.clearAgentSpeaking();
-      clock.set(5_100);
-      await pipeline._test.speakSentence("probe without audio", null);
+      clock.set(8_600);
+      await pipeline._test.speakSentence("probe with audio", null);
       assert.equal(holeAudio.at(-1).outputEpoch, 0);
+    });
+
+    const positiveAudio = [];
+    clock.set(0);
+    await withPipeline({
+      env: { TTS_LEAD_MS: "200" },
+      synthesize: async (text, { onAudio }) => {
+        if (text === "lead-burst") {
+          clock.set(3_000);
+          onAudio(Buffer.alloc(240_000));
+        } else if (text === "after-hole") {
+          onAudio(Buffer.alloc(4_800));
+        }
+      },
+      onAudio: (_buffer, metadata) => positiveAudio.push({ ...metadata }),
+    }, async ({ pipeline, turnState }) => {
+      turnState.isAgentSpeaking = true;
+      await pipeline._test.speakSentence("lead-burst", null);
+      pipeline._test.clearAgentSpeaking();
       clock.set(10_000);
       await pipeline._test.speakSentence("after-hole", null);
-      assert.equal(holeAudio.at(-1).outputEpoch, 1, "re-arm waits through burst duration plus slack from burst start");
+      assert.equal(positiveAudio.at(-1).outputEpoch, 1, "re-arm waits through burst duration plus slack from burst start");
     });
   });
 });
@@ -857,6 +893,8 @@ test("an aborted pre-delivery snapshot is chain-local and a second drained bound
         outputEpoch: 1,
         firstSampleIndex: 0,
       });
+      assert.equal(audio.at(-1).envelopeSegments[0].s, 0, "a re-arm bump restarts the accumulator at sample zero");
+      assert.equal(pipeline._test.getEnvelopeRearmState().projectedEnd, 4_300, "a re-arm bump resets the drain projection");
 
       turnState.isAgentSpeaking = true;
       clock.set(4_300);
@@ -867,15 +905,90 @@ test("an aborted pre-delivery snapshot is chain-local and a second drained bound
         outputEpoch: 2,
         firstSampleIndex: 0,
       });
+      assert.equal(audio.at(-1).envelopeSegments[0].s, 0, "every bumped epoch restarts envelope segments from zero");
+      assert.equal(pipeline._test.getEnvelopeRearmState().projectedEnd, 6_400);
     });
   });
 });
 
-test("all twelve pipeline speaking clears use the timestamping transition helper", () => {
+test("all twelve pipeline speaking clears use the shared turnState timestamping helper", () => {
   const source = fs.readFileSync(path.join(__dirname, "..", "src", "pipeline.js"), "utf8");
   assert.equal((source.match(/clearAgentSpeaking\(\);/g) || []).length, 12);
   assert.equal((source.match(/turnState\.isAgentSpeaking\s*=\s*false/g) || []).length, 1, "only the helper writes false directly");
-  assert.match(source, /const wasSpeaking = turnState\.isAgentSpeaking === true;[\s\S]*if \(wasSpeaking\) lastTurnEndAt = Date\.now\(\);/);
+  assert.match(source, /const wasSpeaking = turnState\.isAgentSpeaking === true;[\s\S]*if \(wasSpeaking\) turnState\.lastTurnEndAt = Date\.now\(\);/);
+  assert.match(source, /turnState\.lastTurnEndAt !== null[\s\S]*now - turnState\.lastTurnEndAt >= ENVELOPE_REARM_IDLE_MS/);
+});
+
+test("re-arm gate consumes turnState.lastTurnEndAt instead of a closure-local timestamp", { concurrency: false }, async () => {
+  await withFakeNow(0, async (clock) => {
+    await withPipeline({
+      synthesize: oneWindowSynthesize,
+      onAudio: () => {},
+    }, async ({ pipeline, turnState }) => {
+      turnState.isAgentSpeaking = true;
+      await pipeline._test.speakSentence("seed", null);
+      clock.set(100);
+      pipeline._test.clearAgentSpeaking();
+      turnState.lastTurnEndAt = 8_500;
+      turnState.isAgentSpeaking = false;
+      clock.set(10_100);
+      await pipeline._test.speakSentence("seeded recent block", null);
+      assert.deepEqual(pick(pipeline._test.getEnvelopeRearmState(), ["outputEpoch", "firstSampleIndex"]), {
+        outputEpoch: 0,
+        firstSampleIndex: 4_800,
+      }, "the gate must honor the seeded shared timestamp");
+    });
+
+    const audio = [];
+    clock.set(0);
+    await withPipeline({
+      synthesize: oneWindowSynthesize,
+      onAudio: (_buffer, metadata) => audio.push({ ...metadata }),
+    }, async ({ pipeline, turnState }) => {
+      turnState.isAgentSpeaking = true;
+      await pipeline._test.speakSentence("seed", null);
+      clock.set(100);
+      pipeline._test.clearAgentSpeaking();
+      turnState.lastTurnEndAt = 100;
+      turnState.isAgentSpeaking = false;
+      clock.set(10_100);
+      await pipeline._test.speakSentence("seeded boundary", null);
+      assert.deepEqual(pick(audio.at(-1), ["outputEpoch", "firstSampleIndex"]), {
+        outputEpoch: 1,
+        firstSampleIndex: 0,
+      });
+    });
+  });
+});
+
+test("empty and whitespace local avatar envelope slack fall back to the 2000ms default", { concurrency: false }, async () => {
+  for (const slack of ["", "   "]) {
+    await withFakeNow(0, async (clock) => {
+      const audio = [];
+      await withPipeline({
+        env: {
+          TTS_LEAD_MS: "200",
+          LOCAL_AVATAR_ENVELOPE_SLACK_MS: slack,
+        },
+        synthesize: async (text, { onAudio }) => {
+          if (text === "lead-burst") {
+            clock.set(3_000);
+            onAudio(Buffer.alloc(240_000));
+          } else {
+            onAudio(Buffer.alloc(4_800));
+          }
+        },
+        onAudio: (_buffer, metadata) => audio.push({ ...metadata }),
+      }, async ({ pipeline, turnState }) => {
+        turnState.isAgentSpeaking = true;
+        await pipeline._test.speakSentence("lead-burst", null);
+        pipeline._test.clearAgentSpeaking();
+        clock.set(8_600);
+        await pipeline._test.speakSentence("probe", null);
+        assert.equal(audio.at(-1).outputEpoch, 0, `slack ${JSON.stringify(slack)} must keep the 2000ms default`);
+      });
+    });
+  }
 });
 
 test("wake+cancel emits synchronously and exactly once", { concurrency: false }, async () => {

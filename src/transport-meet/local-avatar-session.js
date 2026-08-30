@@ -266,14 +266,10 @@ class LocalAvatarSession {
   _appendEnvelopeSegments(input, sampleRate) {
     if (!Array.isArray(input)) return;
     let pushedValues = 0;
+    const accepted = [];
     for (const segment of input) {
       if (segment && Array.isArray(segment.v)) pushedValues += segment.v.length;
       if (pushedValues > MAX_ENVELOPE_PUSH_VALUES) return;
-    }
-
-    const windowSamples = Math.round(sampleRate * ENVELOPE_WINDOW_MS / 1000);
-    const accepted = [];
-    for (const segment of input) {
       if (
         !segment
         || !Number.isSafeInteger(segment.s)
@@ -282,13 +278,16 @@ class LocalAvatarSession {
         || segment.v.length === 0
         || segment.v.some((value) => typeof value !== "number" || !Number.isFinite(value))
       ) {
-        continue;
+        return;
       }
       accepted.push({
         s: segment.s,
         v: segment.v.map((value) => Math.max(0, Math.min(1, value))),
       });
     }
+    if (accepted.length === 0) return;
+
+    const windowSamples = Math.round(sampleRate * ENVELOPE_WINDOW_MS / 1000);
 
     for (const segment of accepted) {
       const previous = this._envelopeLog.at(-1);
@@ -298,8 +297,6 @@ class LocalAvatarSession {
         this._envelopeLog.push({ s: segment.s, v: segment.v.slice() });
       }
     }
-    if (accepted.length === 0) return;
-
     const newestEnd = this._envelopeLog.reduce(
       (latest, segment) => Math.max(latest, segment.s + segment.v.length * windowSamples),
       0,
