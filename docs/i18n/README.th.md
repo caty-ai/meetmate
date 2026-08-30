@@ -22,7 +22,7 @@ Meetmate ทำแค่สิ่งเดียว: จองที่นั่
 
 ## เริ่มต้นอย่างรวดเร็ว
 
-**สิ่งที่คุณต้องมี:** [Node.js](https://nodejs.org/) ≥ 26 · บัญชี [Attendee](https://attendee.dev/) · [Soniox](https://soniox.com/) (หรือ [Deepgram](https://deepgram.com/)) สำหรับ speech-to-text · [Fish Audio](https://fish.audio/) สำหรับเสียงพูด (รวมถึง voice ID) · เอนด์พอยต์ LLM ([OpenClaw Gateway](https://openclaw.ai/) หรือ OpenAI-compatible ใดก็ได้) · โดยปกติต้องมี [ngrok](https://ngrok.com/) หรือ [Tailscale](https://tailscale.com/) · และ Google Meet จะขอให้คุณอนุมัติให้บอทเข้าร่วม บริการจากบุคคลที่สามอาจมีค่าใช้จ่าย
+**สิ่งที่คุณต้องมี:** [Node.js](https://nodejs.org/) ≥ 26 · บัญชี [Attendee](https://attendee.dev/) · [Soniox](https://soniox.com/) (หรือ [Deepgram](https://deepgram.com/)) สำหรับ speech-to-text · ผู้ให้บริการ TTS ([Fish Audio](https://fish.audio/), ElevenLabs หรือ OpenAI-compatible) · เอนด์พอยต์ LLM ([OpenClaw Gateway](https://openclaw.ai/) หรือ OpenAI-compatible ใดก็ได้) · โดยปกติต้องมี [ngrok](https://ngrok.com/) หรือ [Tailscale](https://tailscale.com/) · และ Google Meet จะขอให้คุณอนุมัติให้บอทเข้าร่วม บริการจากบุคคลที่สามอาจมีค่าใช้จ่าย
 
 ในโฟลเดอร์ว่าง:
 
@@ -120,13 +120,15 @@ Meetmate: [warm] มีการเปลี่ยนแปลง 2 จุด �
 | บัญชี [Attendee](https://attendee.dev/) + API key | บอทเข้าร่วม/ออกจากการประชุม + รับส่งเสียง | `ATTENDEE_API_KEY` | เสมอ | บริการแบบโฮสต์; ตรวจสอบความพร้อมใช้งานแบบฟรี/เสียเงินในปัจจุบัน |
 | บัญชี [Soniox](https://console.soniox.com/) + API key | speech-to-text ค่าเริ่มต้น | `STT_PROVIDER=soniox`, `SONIOX_API_KEY` | โดยปกติ | เส้นทางค่าเริ่มต้น เงื่อนไขราคา/ทดลองใช้อาจเปลี่ยนแปลง |
 | บัญชี [Deepgram](https://console.deepgram.com/signup) + API key | speech-to-text ทางเลือก (ไม่บังคับ) | `STT_PROVIDER=deepgram`, `DEEPGRAM_API_KEY` | ไม่บังคับ | ใช้เฉพาะเมื่อเปลี่ยนจาก Soniox |
-| บัญชี [Fish Audio](https://fish.audio/) + เสียง | เสียงสำหรับ text-to-speech | `FISH_AUDIO_API_KEY`, `FISH_AUDIO_VOICE_ID`, `TTS_PROVIDER=fish-audio` | เสมอ | voice ID มาจาก URL ของหน้าเสียง เงื่อนไขราคา/ทดลองใช้อาจเปลี่ยนแปลง |
+| บัญชี [Fish Audio](https://fish.audio/) + เสียง | text-to-speech ค่าเริ่มต้น | `TTS_PROVIDER=fish-audio`, `FISH_AUDIO_API_KEY`, `FISH_AUDIO_VOICE_ID` | ค่าเริ่มต้น | การตั้งค่าเดิมยังใช้ผู้ให้บริการนี้ได้โดยไม่ต้องแก้ไข |
+| บัญชี [ElevenLabs](https://elevenlabs.io/) + เสียง | text-to-speech ทางเลือก | `TTS_PROVIDER=elevenlabs`, `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID` | ไม่บังคับ | เลือกโมเดลใน settings UI; PCM จะตรงกับ sample rate ของ TTS |
+| OpenAI-compatible TTS | text-to-speech ของ OpenAI หรือเซิร์ฟเวอร์ local | `TTS_PROVIDER=openai-compatible`, `OPENAI_COMPATIBLE_TTS_BASE_URL`, `OPENAI_COMPATIBLE_TTS_MODEL`, `OPENAI_COMPATIBLE_TTS_VOICE` | ไม่บังคับ | `api.openai.com` ต้องมี key; เซิร์ฟเวอร์ local ที่ไม่ใช่ค่าเริ่มต้น เช่น Irodori-TTS ไม่จำเป็นต้องมี key และ PCM ต้องเป็น 24 kHz |
 | [OpenClaw Gateway](https://openclaw.ai/) หรือเกตเวย์ LLM แบบ OpenAI-compatible อื่น | สมองเสียงตัวจริง | `LLM_PROVIDER`, `OPENCLAW_GATEWAY_URL`, `OPENCLAW_GATEWAY_TOKEN` หรือ `OPENAI_COMPATIBLE_BASE_URL`, `OPENAI_COMPATIBLE_API_KEY` | เสมอ | OpenClaw คือเส้นทางหลัก; เกตเวย์ OpenAI-compatible แบบ stateful มีเอกสารอยู่ในคู่มือติดตั้ง |
 | [ngrok](https://ngrok.com/) หรือ [Tailscale](https://tailscale.com/) | ทำให้ WebSocket ของบอทเข้าถึงได้จากภายนอก | `server.ngrokDomain` สำหรับ ngrok | ตามเงื่อนไข | `ngrok` เป็นเส้นทางที่ใช้กันทั่วไป Tailscale เป็นทางเลือกเมื่อเครือข่ายและการดีพลอย Attendee ของคุณอนุญาต รายละเอียดราคา/แผนฟรีอาจเปลี่ยนแปลง |
 | สิทธิ์ของ Google Meet ในการอนุมัติให้บอทเข้าร่วม | ให้บอทเข้าห้องประชุมได้ | การอนุมัติ "Ask to join" ใน Meet UI | Google Meet | คุณต้องอนุมัติคำขอเข้าร่วมใน Meet เอง |
 | การตั้งค่าแอป/แอดมินใน [Zoom Marketplace](https://marketplace.zoom.us/) | โมเดลสิทธิ์ของบอทใน Zoom | การตั้งค่าแอปฝั่ง Attendee/Zoom | เฉพาะ Zoom | ตามเงื่อนไข ไม่รับประกันว่ารองรับการประชุมที่โฮสต์จากภายนอกหรือ OAuth แบบมีการจัดการ |
 
-กรอกคีย์ผ่านตัวช่วยติดตั้ง `init` หรือหน้า settings UI — คีย์ของผู้ให้บริการ (Soniox / Deepgram / Fish Audio / Attendee / Slack) จะถูกเก็บใน `config.json` (สร้างด้วยสิทธิ์ 0600) ส่วนค่าการเชื่อมต่อ (URL/Token ของ gateway และคีย์ OpenAI-compatible) จะอยู่ใน `.env` ในรูปตัวแปรสภาพแวดล้อม อย่า commit ทั้งสองไฟล์นี้ รวมถึงภาพหน้าจอของความลับ หรือไฟล์คอนฟิกที่แชร์กันซึ่งมีข้อมูลรับรองที่ใช้งานได้จริง
+กรอกคีย์ผ่านตัวช่วยติดตั้ง `init` หรือหน้า settings UI — คีย์ของผู้ให้บริการ (Soniox / Deepgram / Fish Audio / ElevenLabs / OpenAI-compatible TTS / Attendee / Slack) จะถูกเก็บใน `config.json` (สร้างด้วยสิทธิ์ 0600) ส่วนค่าการเชื่อมต่อ LLM (URL/Token ของ gateway และคีย์ OpenAI-compatible LLM) จะอยู่ใน `.env` อย่า commit ทั้งสองไฟล์นี้ รวมถึงภาพหน้าจอของความลับ หรือไฟล์คอนฟิกที่แชร์กันซึ่งมีข้อมูลรับรองที่ใช้งานได้จริง
 
 หากคุณเชื่อมต่อเกตเวย์ OpenAI-compatible ที่เรียกใช้เครื่องมือได้ ให้จำกัดเส้นทางนั้นไว้ในเครื่องและเชื่อถือได้เท่านั้น ตัวเลือก trust opt-in ของ Meetmate ออกแบบมาเฉพาะสำหรับการประชุมที่เชื่อถือได้ร่วมกับเกตเวย์โลคัลที่เชื่อถือได้เท่านั้น การประชุมภายนอกหรือที่ไม่น่าเชื่อถือยังไม่รองรับโหมดนี้
 

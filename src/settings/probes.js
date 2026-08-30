@@ -35,6 +35,26 @@ const DESCRIPTORS = Object.freeze({
     timeoutMs: DEFAULT_FETCH_TIMEOUT_MS,
     transport: "fetchFn",
   }),
+  elevenlabs: Object.freeze({
+    endpoint: "https://api.elevenlabs.io/v1/user/subscription",
+    method: "GET",
+    credentialId: "elevenlabs_api_key",
+    authHeader: "xi-api-key",
+    authScheme: "",
+    headers: Object.freeze({ Accept: "application/json" }),
+    timeoutMs: DEFAULT_FETCH_TIMEOUT_MS,
+    transport: "fetchFn",
+  }),
+  "openai-compatible": Object.freeze({
+    endpoint: ({ openAiTtsBaseUrl }) => `${String(openAiTtsBaseUrl || "").replace(/\/+$/, "")}/v1/models`,
+    method: "GET",
+    credentialId: "openai_compatible_tts_api_key",
+    authHeader: "Authorization",
+    authScheme: "Bearer",
+    headers: Object.freeze({ Accept: "application/json" }),
+    timeoutMs: DEFAULT_FETCH_TIMEOUT_MS,
+    transport: "fetchFn",
+  }),
   attendee: Object.freeze({
     endpoint: ({ attendeeBaseUrl }) => `https://${attendeeBaseUrl}/api/v1/bots?page_size=1`,
     method: "GET",
@@ -111,22 +131,34 @@ async function cancelBody(response) {
 async function fetchProbe(system, options = {}) {
   const descriptor = DESCRIPTORS[system];
   const credential = getPublishedValue(descriptor.credentialId);
-  if (!meaningful(credential)) return result("NOT_CONFIGURED");
+  const openAiTtsBaseUrl = getPublishedValue("openai_compatible_tts_base_url");
+  if (system === "openai-compatible") {
+    let hosted = false;
+    try { hosted = new URL(openAiTtsBaseUrl).hostname.toLowerCase() === "api.openai.com"; } catch { return result("NOT_CONFIGURED"); }
+    if (hosted && !meaningful(credential)) return result("NOT_CONFIGURED");
+  } else if (!meaningful(credential)) {
+    return result("NOT_CONFIGURED");
+  }
 
   const controller = new AbortController();
   const timeoutReason = new Error(`${system} probe timeout`);
   const timer = setTimeout(() => controller.abort(timeoutReason), options.timeoutMs ?? descriptor.timeoutMs);
   timer.unref?.();
   try {
-    const endpointContext = { attendeeBaseUrl: getPublishedValue("attendee_base_url") };
+    const endpointContext = {
+      attendeeBaseUrl: getPublishedValue("attendee_base_url"),
+      openAiTtsBaseUrl,
+    };
     const endpoint = options.endpoints?.[system]
       || (typeof descriptor.endpoint === "function" ? descriptor.endpoint(endpointContext) : descriptor.endpoint);
+    const headers = { ...descriptor.headers };
+    if (meaningful(credential)) {
+      const authHeader = descriptor.authHeader || "Authorization";
+      headers[authHeader] = descriptor.authScheme ? `${descriptor.authScheme} ${credential}` : credential;
+    }
     const response = await (options.fetchFn || globalThis.fetch)(endpoint, {
       method: descriptor.method,
-      headers: {
-        ...descriptor.headers,
-        Authorization: `${descriptor.authScheme} ${credential}`,
-      },
+      headers,
       redirect: "error",
       signal: controller.signal,
     });

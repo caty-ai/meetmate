@@ -444,6 +444,7 @@ test("Phase A settings HTML metadata is registry-derived and script-safe", () =>
   }
   assert.deepEqual(manifest.fields.find((field) => field.id === "agent_language").options, ["ja", "en"]);
   assert.deepEqual(manifest.fields.find((field) => field.id === "fish_audio_latency").options, ["normal", "balanced", "low"]);
+  assert.deepEqual(manifest.fields.find((field) => field.id === "tts_provider").options, ["fish-audio", "elevenlabs", "openai-compatible"]);
   assert.deepEqual(EMOTION_TAGS.length, 5);
 
   const rendered = _test.renderSettingsHtml([

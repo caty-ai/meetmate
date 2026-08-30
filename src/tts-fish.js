@@ -1,5 +1,6 @@
-// tts-fish.js — Fish Audio TTS streaming wrapper
-// Uses Fish Audio REST API with chunked transfer encoding (no SDK needed)
+// tts-fish.js — provider-dispatching TTS facade (legacy import path)
+// The Fish Audio implementation remains inline so existing callers keep the
+// same synthesize(text, options) streaming PCM contract and request shape.
 //
 // Safety guards:
 //   - MAX_AUDIO_DURATION_MS: hard cap on total audio output per synthesize() call
@@ -78,7 +79,7 @@ function abortableSleep(ms, signal) {
  * @param {function} options.onAudio - Callback for audio chunks: (buffer: Buffer) => void
  * @returns {Promise<void>} Resolves when synthesis complete
  */
-async function synthesize(text, options = {}) {
+async function synthesizeFish(text, options = {}) {
   let attempt = 0;
   while (true) {
     try {
@@ -293,4 +294,32 @@ async function _synthesizeOnce(text, options = {}) {
   });
 }
 
-module.exports = { synthesize };
+async function synthesize(text, options = {}) {
+  const provider = getEffectiveValue("tts_provider") || "fish-audio";
+  if (provider === "fish-audio") {
+    return synthesizeFish(text, {
+      ...options,
+      apiKey: options.apiKey || getEffectiveValue("fish_audio_api_key"),
+    });
+  }
+  if (provider === "elevenlabs") {
+    return require("./tts-elevenlabs").synthesize(text, {
+      ...options,
+      apiKey: getEffectiveValue("elevenlabs_api_key"),
+      voiceId: getEffectiveValue("elevenlabs_voice_id"),
+      modelId: getEffectiveValue("elevenlabs_model"),
+    });
+  }
+  if (provider === "openai-compatible") {
+    return require("./tts-openai-compat").synthesize(text, {
+      ...options,
+      apiKey: getEffectiveValue("openai_compatible_tts_api_key"),
+      baseUrl: getEffectiveValue("openai_compatible_tts_base_url"),
+      model: getEffectiveValue("openai_compatible_tts_model"),
+      voice: getEffectiveValue("openai_compatible_tts_voice"),
+    });
+  }
+  throw new Error(`Unsupported TTS provider: ${provider}`);
+}
+
+module.exports = { synthesize, _test: { synthesizeFish } };

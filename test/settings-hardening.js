@@ -191,7 +191,7 @@ test("T12-01 registry metadata and generated mutation/effective surfaces deep-ma
   assert.equal(Object.keys(envelope.effective).every((id) => writable.includes(id)), true);
   assert.deepEqual(
     SETTINGS_REGISTRY.filter((entry) => entry.requiredAtMeetingStart).map((entry) => entry.id).sort(),
-    ["agent_display_name", "agent_id", "agent_wake_words", "attendee_api_key", "deepgram_api_key", "fish_audio_api_key", "fish_audio_voice_id", "soniox_api_key"],
+    ["agent_display_name", "agent_id", "agent_wake_words", "attendee_api_key", "deepgram_api_key", "elevenlabs_api_key", "elevenlabs_voice_id", "fish_audio_api_key", "fish_audio_voice_id", "openai_compatible_tts_api_key", "soniox_api_key"],
   );
   assert.equal(REGISTRY_BY_ID.agent_greeting.schema.safeParse("😀".repeat(4096)).success, true);
   assert.equal(REGISTRY_BY_ID.agent_greeting.schema.safeParse("😀".repeat(4097)).success, false);
@@ -313,7 +313,7 @@ function productionJavaScript() {
 test("T12-02 syntax-consuming environment inventory locks direct, computed, and rejected forms", () => {
   const inventory = JSON.parse(fs.readFileSync(path.join(ROOT, "docs/settings-env-inventory.json"), "utf8"));
   const inventoryByName = new Map(inventory.directReferences.map((entry) => [entry.name, entry]));
-  assert.equal(inventoryByName.size, 91);
+  assert.equal(inventoryByName.size, 98);
   assert.deepEqual(inventory.startupSnapshotReferences, [{
     name: "FFMPEG",
     references: ["src/settings/audio.js:361", "src/settings/audio.js:362"],
@@ -462,6 +462,46 @@ test("T12-07 setup issues are registry-derived, semantic, provider-aware, and ab
   resetRuntimeForTest();
   initializeRuntime({ state: state({ gateway: { token: "legacy" } }), startup: startup({ connection: { openclawUrl: "", openclawToken: "" } }) });
   assert.equal(buildEnvelope().issues.some((issue) => issue.code === "LEGACY_CONNECTION_CONFIG_PRESENT"), true);
+});
+
+test("TTS meeting-start requirements apply only to the selected provider", () => {
+  const base = {
+    agent: { id: "alpha", displayName: "Alpha", wakeWords: ["alpha"] },
+    stt: { provider: "soniox", sonioxApiKey: "soniox" },
+    attendee: { apiKey: "attendee" },
+  };
+  const issuesFor = (tts) => {
+    resetRuntimeForTest();
+    initializeRuntime({ state: state({ ...base, tts }), startup: startup() });
+    return buildEnvelope().issues;
+  };
+
+  let issues = issuesFor({ provider: "fish-audio", apiKey: "fish", voiceId: "fish-voice" });
+  assert.equal(issues.some((issue) => issue.fieldId.startsWith("elevenlabs_")), false);
+  assert.equal(issues.some((issue) => issue.fieldId.startsWith("openai_compatible_tts_")), false);
+
+  issues = issuesFor({
+    provider: "elevenlabs",
+    elevenlabs: { apiKey: "eleven", voiceId: "eleven-voice" },
+  });
+  assert.equal(issues.some((issue) => issue.fieldId.startsWith("fish_audio_")), false);
+  assert.equal(issues.some((issue) => issue.fieldId === "elevenlabs_api_key"), false);
+
+  issues = issuesFor({ provider: "elevenlabs", elevenlabs: { voiceId: "eleven-voice" } });
+  assert.deepEqual(issues.find((issue) => issue.fieldId === "elevenlabs_api_key"), {
+    fieldId: "elevenlabs_api_key", code: "VALUE_REQUIRED",
+  });
+
+  issues = issuesFor({
+    provider: "openai-compatible",
+    openaiCompatibleTts: { baseUrl: "http://127.0.0.1:8080", model: "local", voice: "local" },
+  });
+  assert.equal(issues.some((issue) => issue.fieldId === "openai_compatible_tts_api_key"), false);
+
+  issues = issuesFor({ provider: "openai-compatible" });
+  assert.deepEqual(issues.find((issue) => issue.fieldId === "openai_compatible_tts_api_key"), {
+    fieldId: "openai_compatible_tts_api_key", code: "VALUE_REQUIRED",
+  });
 });
 
 test("restart-required unset-to-set changes stay on the boot snapshot until restart", () => {
@@ -946,7 +986,7 @@ test("T12-12 class-1 migration is strict, seed-only, transactional, and value-fr
   assert.equal(res.status, 200, res.body);
   const body = JSON.parse(res.body);
   assert.deepEqual(body.imported, ["soniox_api_key"]);
-  assert.deepEqual(body.skipped, ["attendee_api_key", "deepgram_api_key", "fish_audio_api_key", "slack_bot_token"]);
+  assert.deepEqual(body.skipped, ["attendee_api_key", "deepgram_api_key", "elevenlabs_api_key", "fish_audio_api_key", "openai_compatible_tts_api_key", "slack_bot_token"]);
   assert.equal(res.body.includes("seed-soniox"), false);
   const committed = readConfigState(configPath);
   assert.equal(committed.parsed.stt.sonioxApiKey, "seed-soniox");

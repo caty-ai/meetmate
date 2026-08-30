@@ -19,20 +19,44 @@ function defaultCacheDir() {
 }
 
 function normalizeSpeed(speed) {
+  if (speed === undefined || speed === null || speed === "") return null;
   const n = Number(speed);
   return Number.isFinite(n) ? n : null;
+}
+
+function synthesisIdentity(options = {}) {
+  const provider = options.provider || getEffectiveValue("tts_provider") || "fish-audio";
+  if (provider === "elevenlabs") {
+    return {
+      provider,
+      voiceId: options.voiceId || getEffectiveValue("elevenlabs_voice_id") || null,
+      model: options.model || getEffectiveValue("elevenlabs_model"),
+      sampleRate: options.sampleRate || DEFAULT_SAMPLE_RATE,
+      speed: null,
+    };
+  }
+  if (provider === "openai-compatible") {
+    return {
+      provider,
+      voiceId: options.voice || options.voiceId || getEffectiveValue("openai_compatible_tts_voice") || null,
+      model: options.model || getEffectiveValue("openai_compatible_tts_model"),
+      sampleRate: options.sampleRate || DEFAULT_SAMPLE_RATE,
+      speed: null,
+    };
+  }
+  return {
+    provider: "fish-audio",
+    voiceId: options.referenceId || options.voiceId || null,
+    model: options.model || getEffectiveValue("fish_audio_model"),
+    sampleRate: options.sampleRate || DEFAULT_SAMPLE_RATE,
+    speed: normalizeSpeed(options.speed),
+  };
 }
 
 function cacheKey(text, options = {}) {
   // latency is intentionally excluded: Fish treats it as a streaming/delivery
   // hint, not audio content. If that changes, add latency to this key.
-  const payload = {
-    text: String(text || ""),
-    referenceId: options.referenceId || null,
-    model: options.model || getEffectiveValue("fish_audio_model"),
-    sampleRate: options.sampleRate || DEFAULT_SAMPLE_RATE,
-    speed: normalizeSpeed(options.speed),
-  };
+  const payload = { text: String(text || ""), ...synthesisIdentity(options) };
   return crypto.createHash("sha256").update(JSON.stringify(payload)).digest("hex");
 }
 
@@ -113,17 +137,17 @@ function createTtsCache({ dir = defaultCacheDir(), synthesizeFn } = {}) {
     const effectiveText = effectiveSynthesisText(text);
     if (!effectiveText) return;
 
-    const identity = {
-      referenceId: options.referenceId || null,
-      model: options.model || getEffectiveValue("fish_audio_model"),
-      sampleRate: options.sampleRate || DEFAULT_SAMPLE_RATE,
-      speed: normalizeSpeed(options.speed),
-    };
-    const managed = require("./settings/audio").lookupManagedPcm({
-      role: options.role,
-      text: effectiveText,
-      ...identity,
-    });
+    const identity = synthesisIdentity(options);
+    const managed = identity.provider === "fish-audio"
+      ? require("./settings/audio").lookupManagedPcm({
+          role: options.role,
+          text: effectiveText,
+          referenceId: identity.voiceId,
+          model: identity.model,
+          sampleRate: identity.sampleRate,
+          speed: identity.speed,
+        })
+      : null;
     if (managed) {
       try {
         console.log(`🎵 Managed TTS clip hit (${managed.clip.role}, ${managed.pcm.length} bytes)`);
@@ -139,7 +163,7 @@ function createTtsCache({ dir = defaultCacheDir(), synthesizeFn } = {}) {
       return delegate(effectiveText, options);
     }
 
-    const file = fileFor(effectiveText, { ...identity, speed: options.speed });
+    const file = fileFor(effectiveText, identity);
     if (fs.existsSync(file)) {
       try {
         const stat = fs.statSync(file);
@@ -234,5 +258,6 @@ module.exports = {
     effectiveSynthesisText,
     emitPacedPcm,
     normalizeSpeed,
+    synthesisIdentity,
   },
 };

@@ -66,6 +66,35 @@ test("probes use the published credential while restart-required is handled by r
   assert.equal(authorization, "Bearer saved-key");
 });
 
+test("ElevenLabs and OpenAI-compatible TTS probes use provider-specific auth and base URLs", async () => {
+  initialize({
+    tts: {
+      elevenlabs: { apiKey: "eleven-key" },
+      openaiCompatibleTts: { baseUrl: "http://127.0.0.1:8080" },
+    },
+  });
+  const calls = [];
+  const fetchFn = async (url, options) => {
+    calls.push({ url: String(url), headers: options.headers });
+    return new Response("{}", { status: 200 });
+  };
+  assert.equal((await probes.probeSystem("elevenlabs", { fetchFn })).code, "CONNECTED");
+  assert.equal((await probes.probeSystem("openai-compatible", { fetchFn })).code, "CONNECTED");
+  assert.equal(calls[0].url, "https://api.elevenlabs.io/v1/user/subscription");
+  assert.equal(calls[0].headers["xi-api-key"], "eleven-key");
+  assert.equal(Object.prototype.hasOwnProperty.call(calls[0].headers, "Authorization"), false);
+  assert.equal(calls[1].url, "http://127.0.0.1:8080/v1/models");
+  assert.equal(Object.prototype.hasOwnProperty.call(calls[1].headers, "Authorization"), false);
+
+  initialize({ tts: { openaiCompatibleTts: { baseUrl: "https://api.openai.com" } } });
+  let fetched = false;
+  const hosted = await probes.probeSystem("openai-compatible", {
+    fetchFn: async () => { fetched = true; return new Response("{}", { status: 200 }); },
+  });
+  assert.equal(hosted.code, "NOT_CONFIGURED");
+  assert.equal(fetched, false);
+});
+
 test("LLM requestFn uses the production model and fixed non-streaming ping body", async () => {
   initialize({ llm: { provider: "openclaw", model: "main-agent" } });
   let captured;

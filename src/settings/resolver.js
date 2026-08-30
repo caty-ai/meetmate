@@ -245,8 +245,12 @@ function buildIssues(runtime) {
     if (meaningful(stored) && entry.schema.safeParse(stored).success === false) add(entry.id, "VALUE_INVALID");
   }
   for (const entry of SETTINGS_REGISTRY.filter((item) => item.requiredAtMeetingStart)) {
-    if (entry.id === "soniox_api_key" && values.stt_provider !== "soniox") continue;
-    if (entry.id === "deepgram_api_key" && values.stt_provider !== "deepgram") continue;
+    if (entry.visibleWhen && values[entry.visibleWhen.id] !== entry.visibleWhen.value) continue;
+    if (entry.id === "openai_compatible_tts_api_key") {
+      try {
+        if (new URL(values.openai_compatible_tts_base_url).hostname.toLowerCase() !== "api.openai.com") continue;
+      } catch { /* the base URL field reports its own validation issue */ }
+    }
     if (!meaningful(values[entry.id]) || (Array.isArray(values[entry.id]) && values[entry.id].length === 0)) {
       add(entry.id, "VALUE_REQUIRED");
     }

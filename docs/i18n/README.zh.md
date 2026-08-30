@@ -22,7 +22,7 @@ Meetmate 只做一件事:给*你的* AI 智能体在会议里留一个座位。�
 
 ## 快速上手
 
-**你需要准备:** [Node.js](https://nodejs.org/) ≥ 26 · [Attendee](https://attendee.dev/) 账号 · 用于语音转文字的 [Soniox](https://soniox.com/)(或 [Deepgram](https://deepgram.com/)) · 用于语音合成的 [Fish Audio](https://fish.audio/)(包含语音 ID) · 一个 LLM 端点([OpenClaw Gateway](https://openclaw.ai/) 或任意 OpenAI 兼容端点) · 通常还需要 [ngrok](https://ngrok.com/) 或 [Tailscale](https://tailscale.com/) · 另外 Google Meet 会要求你批准机器人加入。第三方服务可能需要付费。
+**你需要准备:** [Node.js](https://nodejs.org/) ≥ 26 · [Attendee](https://attendee.dev/) 账号 · 用于语音转文字的 [Soniox](https://soniox.com/)(或 [Deepgram](https://deepgram.com/)) · 一个 TTS 服务商（[Fish Audio](https://fish.audio/)、ElevenLabs 或 OpenAI 兼容服务） · 一个 LLM 端点([OpenClaw Gateway](https://openclaw.ai/) 或任意 OpenAI 兼容端点) · 通常还需要 [ngrok](https://ngrok.com/) 或 [Tailscale](https://tailscale.com/) · 另外 Google Meet 会要求你批准机器人加入。第三方服务可能需要付费。
 
 在一个空文件夹中:
 
@@ -119,13 +119,15 @@ Meetmate: [warm] 有两处变化——年度折扣改成了 15%，还新增了�
 | [Attendee](https://attendee.dev/) 账号 + API 密钥 | 会议机器人加入/离开 + 音频收发 | `ATTENDEE_API_KEY` | 始终 | 托管服务;请确认当前的免费/付费可用情况。 |
 | [Soniox](https://console.soniox.com/) 账号 + API 密钥 | 默认语音转文字 | `STT_PROVIDER=soniox`, `SONIOX_API_KEY` | 通常 | 默认路径。价格/试用条款可能变化。 |
 | [Deepgram](https://console.deepgram.com/signup) 账号 + API 密钥 | 可选的替代语音转文字 | `STT_PROVIDER=deepgram`, `DEEPGRAM_API_KEY` | 可选 | 仅在你切换出 Soniox 时需要。 |
-| [Fish Audio](https://fish.audio/) 账号 + 语音 | 文字转语音的声音 | `FISH_AUDIO_API_KEY`, `FISH_AUDIO_VOICE_ID`, `TTS_PROVIDER=fish-audio` | 始终 | 语音 ID 来自语音页面的 URL。价格/试用条款可能变化。 |
+| [Fish Audio](https://fish.audio/) 账号 + 语音 | 默认文字转语音 | `TTS_PROVIDER=fish-audio`, `FISH_AUDIO_API_KEY`, `FISH_AUDIO_VOICE_ID` | 默认 | 现有配置无需修改，仍会使用此服务商。 |
+| [ElevenLabs](https://elevenlabs.io/) 账号 + 语音 | 可选文字转语音 | `TTS_PROVIDER=elevenlabs`, `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID` | 可选 | 在设置界面指定模型；PCM 输出跟随 TTS 采样率。 |
+| OpenAI 兼容 TTS | OpenAI 托管或本地文字转语音 | `TTS_PROVIDER=openai-compatible`, `OPENAI_COMPATIBLE_TTS_BASE_URL`, `OPENAI_COMPATIBLE_TTS_MODEL`, `OPENAI_COMPATIBLE_TTS_VOICE` | 可选 | `api.openai.com` 必须提供密钥；Irodori-TTS 等非默认本地服务器可省略。PCM 需要 24 kHz。 |
 | [OpenClaw Gateway](https://openclaw.ai/) 或其他 OpenAI 兼容 LLM 网关 | 真正的语音大脑 | `LLM_PROVIDER`, `OPENCLAW_GATEWAY_URL`, `OPENCLAW_GATEWAY_TOKEN`,或 `OPENAI_COMPATIBLE_BASE_URL`, `OPENAI_COMPATIBLE_API_KEY` | 始终 | OpenClaw 是主路径;有状态的 OpenAI 兼容网关记录在安装指南中。 |
 | [ngrok](https://ngrok.com/) 或 [Tailscale](https://tailscale.com/) | 机器人 WebSocket 的公网可达路径 | ngrok 用 `server.ngrokDomain` | 视情况而定 | `ngrok` 是常见路径。如果你的网络和 Attendee 部署允许,Tailscale 是一种替代方案。价格/免费方案细节可能变化。 |
 | 允许机器人加入的 Google Meet 权限 | 让机器人进入会议 | Meet UI 的"Ask to join"批准 | Google Meet | 你必须在 Meet 中批准加入请求。 |
 | [Zoom Marketplace](https://marketplace.zoom.us/) 应用/管理员设置 | Zoom 机器人权限模型 | Attendee/Zoom 侧应用设置 | 仅 Zoom | 视情况而定。不声称支持外部主办的会议和托管式 OAuth。 |
 
-请通过 `init` 向导或设置界面录入密钥——服务商密钥（Soniox / Deepgram / Fish Audio / Attendee / Slack）保存在 `config.json`（以 0600 权限创建）中，连接类的值（网关 URL/Token、OpenAI 兼容密钥）则以环境变量形式保存在 `.env` 中。这两个文件都不要提交,也不要提交密钥截图或含有有效凭据的共享配置文件。
+请通过 `init` 向导或设置界面录入密钥——服务商密钥（Soniox / Deepgram / Fish Audio / ElevenLabs / OpenAI 兼容 TTS / Attendee / Slack）保存在 `config.json`（以 0600 权限创建）中，LLM 连接值（网关 URL/Token、OpenAI 兼容 LLM 密钥）则保存在 `.env` 中。这两个文件都不要提交,也不要提交密钥截图或含有有效凭据的共享配置文件。
 
 如果你接入了具备工具调用能力的 OpenAI 兼容网关,请把这条路径限制在本地且可信的范围内。Meetmate 的信任选项仅适用于可信本地网关下的可信会议;外部或不可信的会议在该模式下仍不受支持。
 

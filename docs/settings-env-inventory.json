@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "extractionCommand": "grep -rhoE 'process\\.env\\.[A-Z0-9_]+' src/ bin/ | sort -u",
-  "baselineUniqueDirectCount": 91,
+  "baselineUniqueDirectCount": 98,
   "classificationEnums": {
     "ux": [
       "basic",
@@ -189,6 +189,30 @@
       "remainingDirectReads": 0
     },
     {
+      "name": "ELEVENLABS_API_KEY",
+      "references": [],
+      "ux": "basic",
+      "credentialClass": "class-1-external-vendor",
+      "handling": "masked-ui-config-store-export-excluded",
+      "remainingDirectReads": 0
+    },
+    {
+      "name": "ELEVENLABS_MODEL",
+      "references": [],
+      "ux": "detail",
+      "credentialClass": "none",
+      "handling": "ordinary-setting",
+      "remainingDirectReads": 0
+    },
+    {
+      "name": "ELEVENLABS_VOICE_ID",
+      "references": [],
+      "ux": "basic",
+      "credentialClass": "none",
+      "handling": "ordinary-setting",
+      "remainingDirectReads": 0
+    },
+    {
       "name": "ECHO_GATE_CLOSED_BYPASS",
       "references": [
         "src/transport-meet/meet-routes.js:51"
@@ -296,8 +320,8 @@
     {
       "name": "FISH_AUDIO_RETRY_MAX",
       "references": [
-        "src/tts-fish.js:32",
-        "src/tts-fish.js:33"
+        "src/tts-fish.js:33",
+        "src/tts-fish.js:34"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -473,6 +497,38 @@
     },
     {
       "name": "OPENAI_COMPATIBLE_BASE_URL",
+      "references": [],
+      "ux": "detail",
+      "credentialClass": "none",
+      "handling": "ordinary-setting",
+      "remainingDirectReads": 0
+    },
+    {
+      "name": "OPENAI_COMPATIBLE_TTS_API_KEY",
+      "references": [],
+      "ux": "basic",
+      "credentialClass": "class-1-external-vendor",
+      "handling": "masked-ui-config-store-export-excluded",
+      "remainingDirectReads": 0
+    },
+    {
+      "name": "OPENAI_COMPATIBLE_TTS_BASE_URL",
+      "references": [],
+      "ux": "basic",
+      "credentialClass": "none",
+      "handling": "ordinary-setting",
+      "remainingDirectReads": 0
+    },
+    {
+      "name": "OPENAI_COMPATIBLE_TTS_MODEL",
+      "references": [],
+      "ux": "detail",
+      "credentialClass": "none",
+      "handling": "ordinary-setting",
+      "remainingDirectReads": 0
+    },
+    {
+      "name": "OPENAI_COMPATIBLE_TTS_VOICE",
       "references": [],
       "ux": "detail",
       "credentialClass": "none",
@@ -917,8 +973,8 @@
       "expression": "runtime.startup.{preDotenvEnv,dotenvSeeds}[name]",
       "helper": "per-agent Slack token compatibility lookup",
       "references": [
-        "src/settings/resolver.js:348",
-        "src/settings/resolver.js:350"
+        "src/settings/resolver.js:352",
+        "src/settings/resolver.js:354"
       ],
       "pattern": "^[A-Z0-9_-]+_SLACK_BOT_TOKEN$",
       "names": [],

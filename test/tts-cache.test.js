@@ -23,6 +23,48 @@ test("cache key changes with content inputs and ignores streaming-only inputs", 
   });
 });
 
+test("a Fish cache entry is never served after switching to ElevenLabs for the same text", async (t) => {
+  const resolver = require("../src/settings/resolver");
+  const directory = tempDir();
+  t.after(() => {
+    resolver.resetRuntimeForTest();
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+  const startup = Object.freeze({
+    preDotenvEnv: Object.freeze({}), dotenvSeeds: Object.freeze({}),
+    resolvedHome: directory, configPath: path.join(directory, "config.json"),
+    connection: Object.freeze({ openclawUrl: "", openclawToken: "", openaiApiKey: "" }),
+  });
+  const initialize = (tts, revision) => {
+    resolver.resetRuntimeForTest();
+    resolver.initializeRuntime({
+      state: { exists: true, valid: true, parsed: { tts: { ...tts, cache: { enabled: true } } }, revision, fingerprint: revision },
+      startup,
+    });
+  };
+  const calls = [];
+  const cache = createTtsCache({
+    dir: directory,
+    synthesizeFn: async (_text, options) => {
+      const provider = resolver.getEffectiveValue("tts_provider");
+      calls.push(provider);
+      options.onAudio(provider === "fish-audio" ? Buffer.from([1, 2]) : Buffer.from([3, 4]));
+    },
+  });
+
+  initialize({ provider: "fish-audio", model: "same-model", voiceId: "same-voice" }, "a".repeat(64));
+  await cache.synthesize("same text", { referenceId: "same-voice", model: "same-model", onAudio: () => {} });
+  initialize({
+    provider: "elevenlabs",
+    elevenlabs: { apiKey: "key", voiceId: "same-voice", model: "same-model" },
+  }, "b".repeat(64));
+  const emitted = [];
+  await cache.synthesize("same text", { referenceId: "same-voice", model: "same-model", onAudio: (chunk) => emitted.push(Buffer.from(chunk)) });
+
+  assert.deepEqual(calls, ["fish-audio", "elevenlabs"]);
+  assert.deepEqual(Buffer.concat(emitted), Buffer.from([3, 4]));
+});
+
 test("live emotion toggles use distinct effective text for cache, managed lookup, and synthesis", async (t) => {
   const resolver = require("../src/settings/resolver");
   const directory = tempDir();

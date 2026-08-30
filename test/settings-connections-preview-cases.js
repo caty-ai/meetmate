@@ -127,6 +127,34 @@ test("Soniox and Fish tests use effective credentials and return exact value-fre
   assert.equal(calls.length, 2);
 });
 
+test("ElevenLabs and OpenAI-compatible TTS connection routes use the probe seam", async (t) => {
+  const calls = [];
+  const { handler, state } = fixture(t, {
+    tts: {
+      provider: "elevenlabs",
+      elevenlabs: { apiKey: "eleven-secret", voiceId: "voice" },
+      openaiCompatibleTts: { baseUrl: "http://127.0.0.1:8080" },
+    },
+  }, {
+    connections: {
+      minIntervalMs: 0,
+      fetchFn: async (url, options) => {
+        calls.push({ url: String(url), headers: options.headers });
+        return new Response("{}", { status: 200 });
+      },
+    },
+  });
+
+  for (const provider of ["elevenlabs", "openai-compatible"]) {
+    const res = await invoke(handler, "POST", `/api/settings/connections/${provider}/test`, { revision: state.revision });
+    assert.equal(res.status, 200, res.bytes.toString());
+    assert.equal(res.json.code, "CONNECTED");
+  }
+  assert.equal(calls[0].headers["xi-api-key"], "eleven-secret");
+  assert.equal(calls[1].url, "http://127.0.0.1:8080/v1/models");
+  assert.equal(Object.prototype.hasOwnProperty.call(calls[1].headers, "Authorization"), false);
+});
+
 test("connection probes use published credentials after saved restart edits", async (t) => {
   const boot = { soniox: "boot-soniox-33", fish: "boot-fish-33" };
   const saved = { soniox: "saved-soniox-33", fish: "saved-fish-33" };
