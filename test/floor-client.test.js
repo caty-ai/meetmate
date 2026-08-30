@@ -453,8 +453,23 @@ test("peer speech broadcasts track the bounded synthetic-ballot deferral state",
   assert.equal(harness.client.hasActivePeerSpeech(), false);
 });
 
-test("A16 diagnostics include null-assignment cause and received speech phases", () => {
+test("per-speech diagnostics are silent unless floor debug is enabled", () => {
   const harness = createHarness();
+  const socket = connectReady(harness);
+  const debugs = [];
+  const originalDebug = console.debug;
+  console.debug = (...args) => debugs.push(args.join(" "));
+  try {
+    socket.receive({ type: "speech", memberId: "m2", phase: "started", tailMs: 100 });
+    socket.receive({ type: "speech", memberId: "m2", phase: "ended", tailMs: 100 });
+  } finally {
+    console.debug = originalDebug;
+  }
+  assert.deepEqual(debugs, []);
+});
+
+test("A16 diagnostics include null-assignment cause and received speech phases", () => {
+  const harness = createHarness({ debug: true });
   const socket = connectReady(harness);
   const logs = [];
   const debugs = [];

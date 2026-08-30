@@ -661,6 +661,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   let currentAgentId = defaultAgentId || agentProfile?.agentId || "agent";
   const floorEnabled = config?.hub?.enabled === true;
   let floorFallbackActive = false;
+  let floorFallbackGeneration = 0;
   let floorPcmMs = 0;
   let floorSpeechStarted = false;
   const floorClient = floorEnabled
@@ -672,7 +673,6 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         displayName: agentProfile?.displayName || agentProfile?.name || currentAgentId,
         wakeWords: agentProfile?.wakeWords || agents[currentAgentId]?.wakeWords || [],
         onAbortPlayback: ({ cause }) => handleFloorAbort(cause),
-        onFallbackCancel: () => handleFloorAbort("late_assignment"),
         onReady: ({ members }) => {
           if (typeof onChatMessage === "function") {
             Promise.resolve(onChatMessage(`調停ON / room=${config.hub.roomCode} / members=${members.length}`))
@@ -765,10 +765,22 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     return true;
   }
 
-  function handleFloorAbort(reason) {
-    floorFallbackActive = false;
+  function setFloorFallbackActive(active) {
+    floorFallbackGeneration += 1;
+    floorFallbackActive = active;
+    return floorFallbackGeneration;
+  }
+
+  function isFloorFallbackGenerationActive(generation) {
+    return floorFallbackActive && generation === floorFallbackGeneration;
+  }
+
+  function handleFloorAbort(reason, generation = undefined) {
+    if (generation !== undefined && !isFloorFallbackGenerationActive(generation)) return false;
+    setFloorFallbackActive(false);
     for (const controller of floorSpeechControllers) cancelFloorSpeechController(controller, reason);
     if (currentAbort) cancelFloorSpeechController(currentAbort, reason);
+    return true;
   }
 
   function isFloorAssignmentCurrent(assignment) {
@@ -802,12 +814,15 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   }
 
   async function waitForSyntheticBallotWindow(signal) {
-    const deadline = Date.now() + 2_000;
+    const now = typeof floorClient?.now === "function"
+      ? () => floorClient.now()
+      : Date.now;
+    const deadline = now() + 2_000;
     while (
-      Date.now() < deadline
+      now() < deadline
       && (floorClient.hasActivePeerSpeech?.() || floorClient.hasUnsettledReports?.())
     ) {
-      const waited = await waitForFloorResult(sleep(Math.min(50, deadline - Date.now())), { signal });
+      const waited = await waitForFloorResult(sleep(Math.min(50, deadline - now())), { signal });
       if (waited.kind === "aborted") return false;
     }
     return !signal?.aborted;
@@ -825,12 +840,12 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     if (readyWait.kind === "aborted") return null;
     const ready = readyWait.kind === "value" && readyWait.value === true;
     if (!ready) {
-      floorFallbackActive = true;
+      const fallbackGeneration = setFloorFallbackActive(true);
       const delayMs = floorClient.fallbackDelayMs();
       if (delayMs > 0) {
         const delayed = await waitForFloorResult(sleep(delayMs), { signal });
         if (delayed.kind === "aborted") {
-          floorFallbackActive = false;
+          if (isFloorFallbackGenerationActive(fallbackGeneration)) setFloorFallbackActive(false);
           return null;
         }
       }
@@ -838,10 +853,13 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     }
     if (purpose !== "farewell" && !await waitForSyntheticBallotWindow(signal)) return null;
     let acquisitionAbandoned = false;
+    let fallbackGeneration = null;
     const verdictWait = await waitForFloorResult(floorClient.reportWake([floorClient.memberId], {
       suppressGlobalFallbackCancel: true,
       onFallbackCancel: () => {
-        if (!acquisitionAbandoned && !signal?.aborted) handleFloorAbort("late_assignment");
+        if (!acquisitionAbandoned && !signal?.aborted) {
+          handleFloorAbort("late_assignment", fallbackGeneration);
+        }
       },
     }), {
       signal,
@@ -851,12 +869,11 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       acquisitionAbandoned = true;
       return null;
     }
-    if (verdictWait.kind === "timeout" || verdictWait.kind === "error") acquisitionAbandoned = true;
     const verdict = verdictWait.kind === "value"
       ? verdictWait.value
       : { kind: "degraded", delayMs: floorClient.fallbackDelayMs() };
     if (verdict.kind === "verdict_timeout" || verdict.kind === "degraded") {
-      floorFallbackActive = true;
+      fallbackGeneration = setFloorFallbackActive(true);
       return null;
     }
     if (verdict.kind !== "assigned") {
@@ -864,7 +881,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       error.code = "not_assigned";
       throw error;
     }
-    floorFallbackActive = false;
+    setFloorFallbackActive(false);
     floorPcmMs = 0;
     floorSpeechStarted = false;
     return floorClient.acquire(verdict.assignment.roundId);
@@ -879,7 +896,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     floorPcmMs = 0;
     floorSpeechStarted = false;
     if (floorFallbackActive) {
-      floorFallbackActive = false;
+      setFloorFallbackActive(false);
       if (!hasCurrentFence) return;
       floorClient.speech("ended", config.hub.tailMs);
     } else {
@@ -952,7 +969,6 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       clearAgentSpeaking();
     }
     if (floorEnabled) await finishFloorSpeech("cancelled");
-    else await reopenGateAndRescan("wake_cancel", { replay: false });
   }
 
   function appendConversationEntry(role, content, agentId = null) {
@@ -1634,11 +1650,11 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     // Floor reports must leave immediately, outside utteranceChain and before
     // any transcript buffering, so a busy LLM turn cannot miss the hub window.
     const waitingAssignment = floorClient?.claimAssignment() || null;
-    const floorTurn = { cancelled: false, verdictPromise: null };
+    const floorTurn = { cancelled: false, fallbackGeneration: null, verdictPromise: null };
     const reportedVerdictPromise = floorClient?.reportText(cleanedText, {
       onFallbackCancel: () => {
         floorTurn.cancelled = true;
-        handleFloorAbort("late_assignment");
+        handleFloorAbort("late_assignment", floorTurn.fallbackGeneration);
       },
     }) || null;
     // A delayed local STT still must emit its report. The hub recorded a
@@ -1723,7 +1739,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
             : Number(verdict.delayMs || 0);
           if (delayMs > 0) await sleep(delayMs);
           if (!floorTurn?.cancelled) {
-            floorFallbackActive = true;
+            floorTurn.fallbackGeneration = setFloorFallbackActive(true);
             hubAuthorized = true;
             entry.addressed = true;
           }
@@ -1759,7 +1775,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
           if (!floorTurn?.cancelled) {
             const wakeResult = detectWakeAgent(cleanedText, agents, selectedAgentIds, defaultAgentId);
             if (wakeResult.detected) {
-              floorFallbackActive = true;
+              floorTurn.fallbackGeneration = setFloorFallbackActive(true);
               entry.addressed = true;
               entry.injectToLlm = true;
               currentWakeEntry = entry;
@@ -1769,7 +1785,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         }
 
         if (!hubAuthorized || floorTurn?.cancelled) {
-          floorFallbackActive = false;
+          setFloorFallbackActive(false);
           entry.addressed = false;
           entry.injectToLlm = false;
           console.log(`🔇  [会議音声・非指名] "${cleanedText.slice(0, 50)}..."`);
@@ -1818,7 +1834,6 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       console.log(`⏳  Waiting ${EXIT_GRACE_MS}ms for farewell playback before exit...`);
       await sleep(EXIT_GRACE_MS);
 
-      await reopenGateAndRescan("exit_requested", { replay: false });
       emitter.emit("exit_requested", { sessionId: session.id, trigger: "voice_command", text: cleanedText });
       return;
     }
@@ -1928,12 +1943,12 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       // Hub-mode utterances already reported directly from utterance_end and
       // remain serialized by utteranceChain. Replaying them here would bypass
       // their authoritative verdict and floor request.
-      if (!floorEnabled && pendingQueue.length > 0) {
+      if (!floorEnabled && replay && pendingQueue.length > 0) {
         for (const entry of pendingQueue) pushTranscriptEntry(entry);
         const pendingCopy = [...pendingQueue];
         pendingQueue.length = 0;
 
-        for (let i = 0; replay && i < pendingCopy.length; i++) {
+        for (let i = 0; i < pendingCopy.length; i++) {
           const entry = pendingCopy[i];
           const wakeResult = detectWakeAgent(entry.text, agents, selectedAgentIds, defaultAgentId);
           if (!wakeResult.detected) continue;

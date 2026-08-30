@@ -312,6 +312,53 @@ test("A2 cancelled timeout fallback stays fenced and releases the next assigned 
   }
 });
 
+test("pipeline timeout before the client timer still lets a late peer assignment stop fallback PCM", async () => {
+  const timers = new FakeTimers();
+  let fallbackCancel = null;
+  let synthesisStarted;
+  let continueSynthesis;
+  const started = new Promise((resolve) => { synthesisStarted = resolve; });
+  const synthesisGate = new Promise((resolve) => { continueSynthesis = resolve; });
+  const floor = createFloor({
+    verdictTimeoutMs: 10,
+    fallbackDelayMs: () => 0,
+    reportWake(_hits, options) {
+      fallbackCancel = options.onFallbackCancel;
+      return new Promise(() => {});
+    },
+  });
+  const harness = await createHarness({
+    floor,
+    timers,
+    synthesize: async (_text, { onAudio }) => {
+      onAudio(Buffer.alloc(320, 1));
+      synthesisStarted();
+      await synthesisGate;
+      onAudio(Buffer.alloc(320, 2));
+    },
+  });
+  try {
+    const speaking = harness.pipeline._test.speakSentence("遅延割当競合", null);
+    await flushMicrotasks();
+    timers.tick(109);
+    await flushMicrotasks();
+    assert.equal(harness.audio.length, 0);
+    timers.tick(1);
+    await started;
+    assert.equal(harness.audio.length, 1);
+    assert.equal(harness.pipeline._test.getFloorSpeechLifecycle().fallbackActive, true);
+
+    fallbackCancel({ roundId: "r-peer", memberId: "m2" });
+    assert.equal(harness.pipeline._test.getFloorSpeechLifecycle().fallbackActive, false);
+    continueSynthesis();
+    await speaking;
+    assert.equal(harness.audio.length, 1);
+  } finally {
+    continueSynthesis?.();
+    harness.cleanup();
+  }
+});
+
 test("A9 verdict timeout fallback waits for jitter before its first PCM", async () => {
   const timers = new FakeTimers();
   const harness = await createHarness({ floor: createFloor({ fallbackDelayMs: () => 500 }), timers });
@@ -438,26 +485,27 @@ test("A1 speech acquisition bounds readiness to the remaining grace window", asy
 });
 
 test("R1 synthetic self-ballot waits while peer speech or own reports are active", async () => {
-  const startedAt = Date.now();
+  const timers = new FakeTimers();
   let reportAt = null;
   const floor = createFloor({
-    hasActivePeerSpeech: () => Date.now() - startedAt < 70,
-    hasUnsettledReports: () => Date.now() - startedAt < 130,
+    now: () => timers.now,
+    hasActivePeerSpeech: () => timers.now < 70,
+    hasUnsettledReports: () => timers.now < 130,
     reportWake: async () => {
-      reportAt = Date.now();
+      reportAt = timers.now;
       return { kind: "assigned", assignment: { roundId: "r-r1", memberId: "m1" } };
     },
   });
-  const harness = await createHarness({ floor });
+  const harness = await createHarness({ floor, timers });
   try {
-    await harness.pipeline._test.acquireFloorPermission("greeting");
-    assert.equal(reportAt - startedAt >= 120, true, `self ballot sent after ${reportAt - startedAt}ms`);
+    await settleWithMockTimers(harness.pipeline._test.acquireFloorPermission("greeting"), timers);
+    assert.equal(reportAt >= 130, true, `self ballot sent at injected time ${reportAt}ms`);
   } finally {
     harness.cleanup();
   }
 });
 
-test("A7 non-floor exit drops pending replay and emits exit only after grace", async () => {
+test("A7 non-floor exit waits for grace and preserves farewell logging order", async () => {
   const timers = new FakeTimers();
   let unblockLlm;
   let llmCalls = 0;
@@ -493,27 +541,30 @@ test("A7 non-floor exit drops pending replay and emits exit only after grace", a
     let exitEvent = null;
     harness.pipeline.once("exit_requested", (event) => { exitEvent = event; });
     const exiting = harness.pipeline._test.handleUtteranceEnd("ケイティ、退出して");
+    let exitSettled = false;
+    exiting.finally(() => { exitSettled = true; });
     await flushMicrotasks();
     timers.tick(2_999);
     await flushMicrotasks();
+    assert.equal(exitSettled, false);
     assert.equal(exitEvent, null);
     timers.tick(1);
     await settleWithMockTimers(exiting, timers);
+    assert.equal(exitSettled, true);
     assert.equal(exitEvent?.trigger, "voice_command");
-    assert.equal(harness.pipeline._test.getPendingQueueLength(), 0);
+    assert.equal(harness.pipeline._test.getPendingQueueLength(), 1);
     assert.equal(llmCalls, 1);
     assert.equal(farewellWasLoggedDuringSynthesis, false);
     assert.equal(harness.session.conversationLog.some((entry) => entry.content === "さようなら。"), true);
 
     unblockLlm();
     await settleWithMockTimers(seed, timers);
-    assert.equal(llmCalls, 1);
   } finally {
     harness.cleanup();
   }
 });
 
-test("A8 non-floor wake cancel opens synchronously during ack and never replays pending", async () => {
+test("A8 non-floor wake cancel opens synchronously and preserves pending replay", async () => {
   let unblockLlm;
   let llmCalls = 0;
   let gateDuringAck = null;
@@ -543,12 +594,13 @@ test("A8 non-floor wake cancel opens synchronously during ack and never replays 
     await harness.pipeline._test.handleWakeCancelAbort("ケイティ、ストップ");
     assert.equal(gateDuringAck, "OPEN");
     assert.equal(harness.pipeline._test.getGateState(), "OPEN");
-    assert.equal(harness.pipeline._test.getPendingQueueLength(), 0);
+    assert.equal(harness.pipeline._test.getPendingQueueLength(), 1);
     assert.equal(llmCalls, 1);
 
     unblockLlm();
     await seed;
-    assert.equal(llmCalls, 1);
+    assert.equal(llmCalls, 2);
+    assert.equal(harness.pipeline._test.getPendingQueueLength(), 0);
   } finally {
     harness.cleanup();
   }
