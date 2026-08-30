@@ -68,6 +68,7 @@
     let playbackStartWall = null;
     let anchorDecided = false;
     let pastEndSince = null;
+    let retainFromSample = null;
 
     function reset(nextEpoch = -1) {
       epoch = nextEpoch;
@@ -79,10 +80,12 @@
       playbackStartWall = null;
       anchorDecided = false;
       pastEndSince = null;
+      retainFromSample = null;
     }
 
     function accept(nextEpoch, rate, envelopes, offsetMs) {
       if (nextEpoch !== epoch) reset(nextEpoch);
+      const previousNewestEnd = (nextEpoch !== epoch) ? null : newestEndSample;
       sampleRate = rate;
       windowSamples = Math.round(rate / 10);
 
@@ -96,6 +99,9 @@
         }
       }
       windows = [...deduped].sort((left, right) => left[0] - right[0]);
+      if (retainFromSample !== null) {
+        windows = windows.filter(([start]) => start + windowSamples > retainFromSample);
+      }
       if (windows.length === 0) return { mode: "pending" };
 
       const earliest = windows[0][0];
@@ -113,7 +119,17 @@
 
       const sampleNow = (arrivalNow - playbackStartWall) * sampleRate / 1000;
       if (sampleNow - newestEnd >= sampleRate * FORWARD_REANCHOR_MS / 1000) {
-        playbackStartWall = arrivalNow - (newestEnd / sampleRate * 1000);
+        const freshStart = previousNewestEnd !== null && newestEnd > previousNewestEnd
+          ? windows.find(([start]) => start >= previousNewestEnd)?.[0]
+          : undefined;
+        if (freshStart !== undefined) {
+          playbackStartWall = arrivalNow + offsetMs - (freshStart / sampleRate * 1000);
+          retainFromSample = Math.max(retainFromSample ?? 0, freshStart);
+          windows = windows.filter(([start]) => start + windowSamples > retainFromSample);
+          earliestSample = windows[0][0];
+        } else {
+          playbackStartWall = arrivalNow - (newestEnd / sampleRate * 1000);
+        }
       }
       pastEndSince = null;
       return { mode: "anchored" };

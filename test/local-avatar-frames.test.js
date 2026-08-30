@@ -250,20 +250,170 @@ test("anchor defers across empty or absent snapshots, rejects mid-stream starts,
   assert.equal(zeroOffset.sandbox.__localAvatarFramesContract.limits.offsetMs, 0);
 });
 
-test("forward-only correction advances a stale anchor once per state and never moves it backward", async () => {
-  const page = await runFramesPage({ offset: 0, now: 0 });
+test("forward-only 16a keeps the no-fresh floor and its 500ms predicate edge", async () => {
+  const page = await runFramesPage({ offset: 300, now: 0 });
   const contract = page.sandbox.__localAvatarFramesContract;
-  const snapshot = [{ s: 0, v: new Array(10).fill(0.5) }];
-  contract.acceptState(frameMarker({ envelopes: snapshot }), 0);
-  assert.equal(contract.getState().envelope.playbackStartWall, 0);
+  const snapshot = [{ s: 0, v: new Array(10).fill(1) }];
+  contract.acceptState(frameMarker({ sampleRate: 1_000, envelopes: snapshot }), 0);
+  assert.equal(contract.getState().envelope.playbackStartWall, 300);
 
-  page.clock.value = 2_000;
-  contract.acceptState(frameMarker({ sequence: 3, sampleIndex: 2_400, envelopes: snapshot }), 2_000);
-  assert.equal(contract.getState().envelope.playbackStartWall, 1_000);
+  page.clock.value = 1_799;
+  contract.acceptState(frameMarker({ sequence: 3, sampleIndex: 1_000, sampleRate: 1_000, envelopes: snapshot }), 1_799);
+  assert.equal(contract.getState().envelope.playbackStartWall, 300, "499ms behind does not fire");
 
-  page.clock.value = 2_100;
-  contract.acceptState(frameMarker({ sequence: 4, sampleIndex: 4_800, envelopes: snapshot }), 2_100);
-  assert.equal(contract.getState().envelope.playbackStartWall, 1_000);
+  page.clock.value = 1_800;
+  contract.acceptState(frameMarker({ sequence: 4, sampleIndex: 2_000, sampleRate: 1_000, envelopes: snapshot }), 1_800);
+  assert.equal(contract.getState().envelope.playbackStartWall, 800, "500ms behind end-aligns forward");
+
+  page.clock.value = 1_900;
+  contract.acceptState(frameMarker({ sequence: 5, sampleIndex: 3_000, sampleRate: 1_000, envelopes: snapshot }), 1_900);
+  assert.equal(contract.getState().envelope.playbackStartWall, 800, "the floor never moves backward");
+});
+
+test("forward-only 16b start-aligns fresh post-silence audio and drops the played tail", async () => {
+  const page = await runFramesPage({ offset: 300, now: 0, random: () => 0.5 });
+  const contract = page.sandbox.__localAvatarFramesContract;
+  const prior = { s: 0, v: new Array(5).fill(1) };
+  contract.acceptState(frameMarker({ sampleRate: 1_000, envelopes: [prior] }), 0);
+
+  page.clock.value = 3_000;
+  contract.acceptState(frameMarker({
+    sequence: 3,
+    sampleIndex: 1_000,
+    sampleRate: 1_000,
+    envelopes: [prior, { s: 500, v: [1, 0.5] }],
+  }), 3_000);
+  const state = contract.getState();
+  assert.equal(state.envelope.playbackStartWall, 2_800);
+  assert.equal(state.envelope.windowCount, 2, "no window ending at or before freshStart survives");
+  assert.equal(state.currentFrame, "idle", "arrival is the before-start phase, not fallback or past-end");
+  contract.render(3_299);
+  assert.equal(contract.getState().currentFrame, "idle");
+  contract.render(3_301);
+  assert.match(contract.getState().currentFrame, /^talk/, "fresh values render immediately after OFFSET");
+});
+
+test("forward-only 16b2 keeps the watermark sticky across superset snapshots", async () => {
+  const page = await runFramesPage({ offset: 300, now: 0, random: () => 0.5 });
+  const contract = page.sandbox.__localAvatarFramesContract;
+  const snapshot = [{ s: 0, v: new Array(5).fill(1) }, { s: 500, v: [1, 0.5] }];
+  contract.acceptState(frameMarker({ sampleRate: 1_000, envelopes: [snapshot[0]] }), 0);
+  page.clock.value = 3_000;
+  contract.acceptState(frameMarker({ sequence: 3, sampleIndex: 1_000, sampleRate: 1_000, envelopes: snapshot }), 3_000);
+
+  page.clock.value = 3_100;
+  contract.acceptState(frameMarker({ sequence: 4, sampleIndex: 2_000, sampleRate: 1_000, envelopes: snapshot }), 3_100);
+  const state = contract.getState();
+  assert.equal(state.envelope.playbackStartWall, 2_800);
+  assert.equal(state.envelope.windowCount, 2, "the next superset cannot restore the played tail");
+  assert.equal(state.currentFrame, "idle", "the second accept remains in OFFSET pre-roll");
+});
+
+test("forward-only 16c does not re-shift when the accepted frontier is ahead", async () => {
+  const page = await runFramesPage({ offset: 300, now: 0 });
+  const contract = page.sandbox.__localAvatarFramesContract;
+  const prior = { s: 0, v: new Array(5).fill(1) };
+  contract.acceptState(frameMarker({ sampleRate: 1_000, envelopes: [prior] }), 0);
+  page.clock.value = 5_000;
+  contract.acceptState(frameMarker({ sequence: 3, sampleIndex: 1_000, sampleRate: 1_000, envelopes: [prior, { s: 500, v: [1, 1] }] }), 5_000);
+  const aligned = contract.getState().envelope.playbackStartWall;
+
+  page.clock.value = 5_100;
+  contract.acceptState(frameMarker({ sequence: 4, sampleIndex: 2_000, sampleRate: 1_000, envelopes: [prior, { s: 500, v: new Array(7).fill(1) }] }), 5_100);
+  assert.equal(contract.getState().envelope.playbackStartWall, aligned);
+});
+
+test("forward-only 16d remains monotonic across no-fresh and consecutive fresh alignments", async () => {
+  const floorPage = await runFramesPage({ offset: 300, now: 0 });
+  const floorContract = floorPage.sandbox.__localAvatarFramesContract;
+  const floorSnapshot = [{ s: 0, v: new Array(10).fill(1) }];
+  floorContract.acceptState(frameMarker({ sampleRate: 1_000, envelopes: floorSnapshot }), 0);
+  const floorInitial = floorContract.getState().envelope.playbackStartWall;
+  floorPage.clock.value = 1_800;
+  floorContract.acceptState(frameMarker({ sequence: 3, sampleIndex: 1_000, sampleRate: 1_000, envelopes: floorSnapshot }), 1_800);
+  assert.ok(floorContract.getState().envelope.playbackStartWall > floorInitial);
+
+  const freshPage = await runFramesPage({ offset: 300, now: 0 });
+  const freshContract = freshPage.sandbox.__localAvatarFramesContract;
+  const prior = { s: 0, v: new Array(5).fill(1) };
+  freshContract.acceptState(frameMarker({ sampleRate: 1_000, envelopes: [prior] }), 0);
+  const freshInitial = freshContract.getState().envelope.playbackStartWall;
+  freshPage.clock.value = 5_000;
+  freshContract.acceptState(frameMarker({ sequence: 3, sampleIndex: 1_000, sampleRate: 1_000, envelopes: [prior, { s: 500, v: [1, 1] }] }), 5_000);
+  const firstFresh = freshContract.getState().envelope.playbackStartWall;
+  freshPage.clock.value = 6_200;
+  freshContract.acceptState(frameMarker({ sequence: 4, sampleIndex: 2_000, sampleRate: 1_000, envelopes: [prior, { s: 500, v: [1, 1, 1, 1] }] }), 6_200);
+  const secondFresh = freshContract.getState().envelope.playbackStartWall;
+  assert.ok(firstFresh > freshInitial);
+  assert.ok(secondFresh > firstFresh);
+  assert.equal(secondFresh, 5_800, "each accepted state applies the fresh formula once");
+});
+
+test("forward-only 16e start-aligns a resumed mid-utterance chunk", async () => {
+  const page = await runFramesPage({ offset: 300, now: 0, random: () => 0.5 });
+  const contract = page.sandbox.__localAvatarFramesContract;
+  const prefix = { s: 0, v: new Array(5).fill(1) };
+  contract.acceptState(frameMarker({ sampleRate: 1_000, envelopes: [prefix] }), 0);
+
+  page.clock.value = 1_500;
+  contract.acceptState(frameMarker({ sequence: 3, sampleIndex: 1_000, sampleRate: 1_000, envelopes: [prefix, { s: 500, v: [1, 1] }] }), 1_500);
+  assert.equal(contract.getState().envelope.playbackStartWall, 1_300, "the resumed chunk start, not its end, is aligned");
+  contract.render(1_801);
+  assert.match(contract.getState().currentFrame, /^talk/);
+});
+
+test("forward-only 16f preserves epoch, boundary, hole, and filtered-empty edges", async () => {
+  const epochPage = await runFramesPage({ offset: 300, now: 5_000 });
+  const epochContract = epochPage.sandbox.__localAvatarFramesContract;
+  epochContract.acceptState(frameMarker({ outputEpoch: 1, sampleRate: 1_000, envelopes: [{ s: 0, v: [1] }] }), 5_000);
+  assert.equal(epochContract.getState().envelope.playbackStartWall, 5_300, "an epoch change keeps the initial-anchor path");
+
+  const page = await runFramesPage({ offset: 300, now: 0, random: () => 0.5 });
+  const contract = page.sandbox.__localAvatarFramesContract;
+  const prior = { s: 0, v: new Array(5).fill(1) };
+  const withHole = [prior, { s: 500, v: [1] }, { s: 700, v: [1] }];
+  contract.acceptState(frameMarker({ sampleRate: 1_000, envelopes: [prior] }), 0);
+  page.clock.value = 5_000;
+  contract.acceptState(frameMarker({ sequence: 3, sampleIndex: 1_000, sampleRate: 1_000, envelopes: withHole }), 5_000);
+  assert.equal(contract.getState().envelope.windowCount, 2, "ending exactly at freshStart drops and starting there stays");
+  contract.render(5_401);
+  assert.match(contract.getState().currentFrame, /^talk/, "an interior hole uses the flapper fallback");
+
+  page.clock.value = 5_100;
+  contract.acceptState(frameMarker({ sequence: 4, sampleIndex: 2_000, sampleRate: 1_000, envelopes: [prior] }), 5_100);
+  const pending = contract.getState();
+  assert.equal(pending.envelopeActive, false);
+  assert.equal(pending.envelope.windowCount, 0);
+  assert.equal(pending.envelope.playbackStartWall, 4_800, "filtered-empty keeps the existing anchor and derived-state semantics");
+
+  page.clock.value = 6_500;
+  contract.acceptState(frameMarker({ sequence: 5, sampleIndex: 3_000, sampleRate: 1_000, envelopes: [...withHole, { s: 800, v: [1] }] }), 6_500);
+  assert.equal(contract.getState().envelope.playbackStartWall, 6_000, "filtered-empty does not null the previous newest end");
+});
+
+test("forward-only 16g clears the watermark through every public reset path", async () => {
+  const cases = ["cancel epoch", "cancel", "idle", "output epoch"];
+  for (const resetCase of cases) {
+    const page = await runFramesPage({ offset: 300, now: 0 });
+    const contract = page.sandbox.__localAvatarFramesContract;
+    const prior = { s: 0, v: new Array(5).fill(1) };
+    contract.acceptState(frameMarker({ sampleRate: 1_000, envelopes: [prior] }), 0);
+    page.clock.value = 5_000;
+    contract.acceptState(frameMarker({ sequence: 3, sampleIndex: 1_000, sampleRate: 1_000, envelopes: [prior, { s: 500, v: [1] }] }), 5_000);
+
+    page.clock.value = 6_000;
+    if (resetCase === "cancel epoch") {
+      contract.acceptState(frameMarker({ cancelEpoch: 1, sequence: 4, sampleIndex: 0, sampleRate: 1_000, envelopes: [{ s: 0, v: new Array(4).fill(1) }] }), 6_000);
+    } else if (resetCase === "output epoch") {
+      contract.acceptState(frameMarker({ sequence: 4, outputEpoch: 1, sampleIndex: 0, sampleRate: 1_000, envelopes: [{ s: 0, v: new Array(4).fill(1) }] }), 6_000);
+    } else {
+      contract.acceptState(frameMarker({ kind: resetCase, sequence: 4, sampleIndex: null, sampleRate: null }), 6_000);
+      contract.acceptState(frameMarker({ sequence: 5, sampleIndex: 0, sampleRate: 1_000, envelopes: [{ s: 0, v: new Array(4).fill(1) }] }), 6_000);
+    }
+    const state = contract.getState().envelope;
+    assert.equal(state.windowCount, 4, `${resetCase} keeps new-epoch low samples`);
+    assert.equal(state.playbackStartWall, 6_300, `${resetCase} re-runs the initial anchor path`);
+  }
 });
 
 test("three-way lookup keeps pre-roll quiet, falls back only for interior holes, and idles after end grace", async () => {
