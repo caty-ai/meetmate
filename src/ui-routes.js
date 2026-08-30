@@ -23,6 +23,7 @@ const LOCAL_AVATAR_ASSETS = new Map([
   ["/local-avatar/local-avatar.js", { filename: "local-avatar/local-avatar.js", contentType: "application/javascript; charset=utf-8" }],
   ["/local-avatar/frames.html", { filename: "local-avatar/frames.html", contentType: "text/html; charset=utf-8" }],
   ["/local-avatar/frames.js", { filename: "local-avatar/frames.js", contentType: "application/javascript; charset=utf-8" }],
+  ["/local-avatar/attendee-overlay-guard.js", { filename: "local-avatar/attendee-overlay-guard.js", contentType: "application/javascript; charset=utf-8" }],
 ]);
 
 const LOCAL_AVATAR_FRAME_ASSETS = new Map([
