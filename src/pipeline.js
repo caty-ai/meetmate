@@ -515,6 +515,7 @@ function isTtsCacheEnabled() {
 function createPipeline(session, turnState, onAudio, config, options = {}) {
   const { EventEmitter } = require("events");
   const { createSTT } = require("./stt-provider");
+  const { FloorClient, STATES: FLOOR_STATES } = require("./floor-client");
   const emitter = new EventEmitter();
   if (turnState.lastTurnEndAt == null) turnState.lastTurnEndAt = null;
 
@@ -563,7 +564,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       && now >= projectedEnd + ENVELOPE_REARM_SLACK_MS;
   }
 
-  function deliverAudio(buffer, speakChain = null) {
+  function deliverAudio(buffer, speakChain = null, deliveryOptions = {}) {
     if (
       speakChain?.rearmEnvelopeEpoch
       && !speakChain.delivered
@@ -588,8 +589,20 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         // Envelope computation is visual-only and must never block PCM.
       }
     }
-    onAudio(buffer, metadata);
     const sampleCount = Math.floor(buffer.length / 2);
+    if (floorEnabled && deliveryOptions.floorExempt !== true) {
+      const permitted = floorFallbackActive || floorClient?.isFenceCurrent(speakChain?.floorFence);
+      if (!permitted) {
+        cancelFloorSpeechController(speakChain?.controller, "floor_fence");
+        return false;
+      }
+      if (!floorSpeechStarted) {
+        floorSpeechStarted = true;
+        floorClient.speech("started", config.hub.tailMs);
+      }
+      floorPcmMs += sampleCount / config.tts.sampleRate * 1000;
+    }
+    onAudio(buffer, metadata);
     firstSampleIndex += sampleCount;
     lastAudioSendAt = sendNow;
     projectedEnd = Math.max(projectedEnd, sendNow) + (sampleCount / config.tts.sampleRate * 1000);
@@ -628,6 +641,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   // onAudio. ttsHasSpoken selects first-utterance lead vs later gaps.
   let ttsLock = Promise.resolve();
   let ttsHasSpoken = false;
+  const floorSpeechControllers = new Set();
   const usePipelineTtsCache = !options._testExposeInternals;
   const ttsCache = createTtsCache({ synthesizeFn: synthesize });
   const prewarmAbort = new AbortController();
@@ -641,6 +655,28 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   const onChatMessage = options.onChatMessage;
   const defaultAgentId = options.defaultAgentId || selectedAgentIds[0] || null;
   let currentAgentId = defaultAgentId || agentProfile?.agentId || "agent";
+  const floorEnabled = config?.hub?.enabled === true;
+  let floorFallbackActive = false;
+  let floorPcmMs = 0;
+  let floorSpeechStarted = false;
+  const floorClient = floorEnabled
+    ? (options.floorClient || new FloorClient({
+        url: config.hub.url,
+        roomCode: config.hub.roomCode,
+        authToken: config.hub.authToken,
+        agentId: currentAgentId,
+        displayName: agentProfile?.displayName || agentProfile?.name || currentAgentId,
+        wakeWords: agentProfile?.wakeWords || agents[currentAgentId]?.wakeWords || [],
+        onAbortPlayback: ({ cause }) => handleFloorAbort(cause),
+        onFallbackCancel: () => handleFloorAbort("late_assignment"),
+        onReady: ({ members }) => {
+          if (typeof onChatMessage === "function") {
+            Promise.resolve(onChatMessage(`調停ON / room=${config.hub.roomCode} / members=${members.length}`))
+              .catch((error) => console.warn("⚠️  floor status chat failed:", error.message || error));
+          }
+        },
+      }))
+    : null;
   const gatewayEventsConfig = config.gatewayEvents || {};
   const llmProvider = createLlmProvider({ provider: config?.llm?.provider });
   const isOpenclawProvider = llmProvider.name === "openclaw";
@@ -711,6 +747,80 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   let metricsTurnSeq = 0;
   const ttsPlaybackStartRecordedTurnIds = new Set();
 
+  function cancelFloorSpeechController(controller, reason) {
+    if (!controller || controller.signal?.aborted) return false;
+    if (controller === currentAbort) return abortPlayback(controller, reason);
+    controller.abort();
+    outputEpoch += 1;
+    resetEnvelopeEpoch();
+    emitObserverEvent("playback_cancelled", {
+      outputEpoch: outputEpoch - 1,
+      reason,
+      monotonicTime: Number(process.hrtime.bigint()) / 1e6,
+    });
+    return true;
+  }
+
+  function handleFloorAbort(reason) {
+    floorFallbackActive = false;
+    for (const controller of floorSpeechControllers) cancelFloorSpeechController(controller, reason);
+    if (currentAbort) cancelFloorSpeechController(currentAbort, reason);
+  }
+
+  function isFloorAssignmentCurrent(assignment) {
+    return typeof floorClient?.isAssignmentCurrent !== "function"
+      || floorClient.isAssignmentCurrent(assignment);
+  }
+
+  async function acquireFloorPermission(purpose = "speech") {
+    if (!floorEnabled) return null;
+    if (floorFallbackActive) return null;
+    const held = floorClient.fence();
+    if (floorClient.isFenceCurrent(held)) return held;
+    const ready = await floorClient.waitForReady();
+    if (!ready) {
+      floorFallbackActive = true;
+      const delayMs = floorClient.fallbackDelayMs();
+      if (delayMs > 0) await sleep(delayMs);
+      return null;
+    }
+    const verdict = await floorClient.reportWake([floorClient.memberId], {
+      onFallbackCancel: () => handleFloorAbort("late_assignment"),
+    });
+    if (verdict.kind === "verdict_timeout" || verdict.kind === "degraded") {
+      floorFallbackActive = true;
+      return null;
+    }
+    if (verdict.kind !== "assigned") {
+      const error = new Error(`floor did not assign ${purpose}`);
+      error.code = "not_assigned";
+      throw error;
+    }
+    floorFallbackActive = false;
+    floorPcmMs = 0;
+    floorSpeechStarted = false;
+    return floorClient.acquire(verdict.assignment.roundId);
+  }
+
+  async function finishFloorSpeech(cause = "completed") {
+    if (!floorEnabled) return;
+    if (floorFallbackActive) {
+      floorFallbackActive = false;
+      floorPcmMs = 0;
+      floorSpeechStarted = false;
+      return;
+    }
+    if (!floorClient.fence()) return;
+    if (floorSpeechStarted) floorClient.speech("ended", config.hub.tailMs);
+    const releaseDelayMs = Math.ceil(floorPcmMs + config.hub.tailMs);
+    floorPcmMs = 0;
+    floorSpeechStarted = false;
+    if (releaseDelayMs > 0) await sleep(releaseDelayMs);
+    floorClient.release(cause);
+  }
+
+  floorClient?.connect();
+
   // Multi-participant meeting mode: Injection Gate (wake mode only)
   const transcriptBuffer = []; // Accumulates all utterances (with seq numbers)
   const pendingQueue = []; // Utterances that arrive while Gate is CLOSED
@@ -756,8 +866,6 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       currentAbort = null;
     }
     isProcessing = false;
-    gateState = "OPEN";
-    turnState.gateState = gateState;
     clearAgentSpeaking();
     turnState.inputCooldownUntil = 0;
 
@@ -770,6 +878,8 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       } catch { /* ignore */ }
       clearAgentSpeaking();
     }
+    await finishFloorSpeech("cancelled");
+    await reopenGateAndRescan("wake_cancel");
   }
 
   function appendConversationEntry(role, content, agentId = null) {
@@ -1447,6 +1557,22 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   let utteranceChain = Promise.resolve();
   stt.on("utterance_end", (userText) => {
     const cleanedText = String(userText || "").trim();
+    // Floor reports must leave immediately, outside utteranceChain and before
+    // any transcript buffering, so a busy LLM turn cannot miss the hub window.
+    const waitingAssignment = floorClient?.claimAssignment() || null;
+    const floorTurn = { cancelled: false, verdictPromise: null };
+    const reportedVerdictPromise = floorClient?.reportText(cleanedText, {
+      onFallbackCancel: () => {
+        floorTurn.cancelled = true;
+        handleFloorAbort("late_assignment");
+      },
+    }) || null;
+    // A delayed local STT still must emit its report. The hub recorded a
+    // late-slot expected seq when it assigned from peers, so this report is
+    // consumed as late_discarded; it cannot open a phantom second round.
+    floorTurn.verdictPromise = waitingAssignment
+      ? Promise.resolve({ kind: "assigned", assignment: waitingAssignment })
+      : reportedVerdictPromise;
     const metricsTurnId = cleanedText ? nextMetricsTurnId() : null;
     if (metricsTurnId) {
       recordMetric("utterance_end", {
@@ -1461,11 +1587,11 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     }
 
     utteranceChain = utteranceChain
-      .then(() => handleUtteranceEnd(userText, metricsTurnId))
+      .then(() => handleUtteranceEnd(userText, metricsTurnId, floorTurn))
       .catch((err) => console.error("❌  utterance_end handler error:", err.message || err));
   });
 
-  async function handleUtteranceEnd(userText, metricsTurnId = null) {
+  async function handleUtteranceEnd(userText, metricsTurnId = null, floorTurn = null) {
     const cleanedText = String(userText || "").trim();
     if (!cleanedText) return;
     lastUserSpeechAt = Date.now();
@@ -1478,8 +1604,99 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
 
     console.log(`💬  [user] ${cleanedText}`);
 
+    let currentWakeEntry = null;
+    let hubAuthorized = false;
+    const exitRequested = config.exitDetection !== false
+      && isExitCommand(cleanedText, agents, selectedAgentIds, defaultAgentId, agentProfile, config.exit);
+    if (floorEnabled) {
+      utteranceSeq += 1;
+      const entry = {
+        seq: utteranceSeq,
+        text: cleanedText,
+        timestamp: new Date().toISOString(),
+        addressed: false,
+        injectToLlm: false,
+        sentToLlm: false,
+        metricsTurnId,
+      };
+      pushTranscriptEntry(entry);
+      gateState = "CLOSED";
+      turnState.gateState = gateState;
+      if (exitRequested) {
+        currentWakeEntry = entry;
+        let verdict;
+        try {
+          verdict = await floorTurn?.verdictPromise;
+        } catch (error) {
+          console.warn("⚠️  farewell floor verdict failed:", error.message || error);
+          verdict = { kind: "degraded", delayMs: floorClient.fallbackDelayMs() };
+        }
+        if (
+          verdict?.kind === "assigned"
+          && !floorTurn?.cancelled
+          && isFloorAssignmentCurrent(verdict.assignment)
+        ) {
+          try {
+            await floorClient.acquire(verdict.assignment.roundId);
+            hubAuthorized = true;
+            entry.addressed = true;
+          } catch (error) {
+            console.warn("⚠️  farewell floor acquire failed:", error.code || error.message || error);
+          }
+        } else if (["verdict_timeout", "degraded"].includes(verdict?.kind) && !floorTurn?.cancelled) {
+          if (verdict?.delayMs > 0) await sleep(verdict.delayMs);
+          floorFallbackActive = true;
+          hubAuthorized = true;
+          entry.addressed = true;
+        }
+      } else {
+        let verdict;
+        try {
+          verdict = await floorTurn?.verdictPromise;
+        } catch (error) {
+          console.warn("⚠️  floor verdict failed:", error.message || error);
+          verdict = { kind: "degraded", delayMs: floorClient.fallbackDelayMs() };
+        }
+
+        if (verdict?.kind === "assigned" && isFloorAssignmentCurrent(verdict.assignment)) {
+          try {
+            await floorClient.acquire(verdict.assignment.roundId);
+            hubAuthorized = true;
+            entry.addressed = true;
+            entry.injectToLlm = true;
+            currentWakeEntry = entry;
+          } catch (error) {
+            console.warn("⚠️  floor acquire failed:", error.code || error.message || error);
+            entry.injectToLlm = false;
+            appendConversationEntry("user", `[会議音声・未指名] ${cleanedText}`, currentAgentId || null);
+            await reopenGateAndRescan("floor_acquire_failed");
+            return;
+          }
+        } else if (["verdict_timeout", "degraded"].includes(verdict?.kind)) {
+          if (verdict?.delayMs > 0) await sleep(verdict.delayMs);
+          const wakeResult = detectWakeAgent(cleanedText, agents, selectedAgentIds, defaultAgentId);
+          if (wakeResult.detected) {
+            floorFallbackActive = true;
+            entry.addressed = true;
+            entry.injectToLlm = true;
+            currentWakeEntry = entry;
+            hubAuthorized = true;
+          }
+        }
+
+        if (!hubAuthorized || floorTurn?.cancelled) {
+          entry.addressed = false;
+          entry.injectToLlm = false;
+          console.log(`🔇  [会議音声・非指名] "${cleanedText.slice(0, 50)}..."`);
+          appendConversationEntry("user", `[会議音声・未指名] ${cleanedText}`, currentAgentId || null);
+          await reopenGateAndRescan("not_assigned");
+          return;
+        }
+      }
+    }
+
     // Exit command detection
-    if (config.exitDetection !== false && isExitCommand(cleanedText, agents, selectedAgentIds, defaultAgentId, agentProfile, config.exit)) {
+    if (exitRequested) {
       console.log("🚪  Exit command detected!");
       appendConversationEntry("user", cleanedText, currentAgentId || null);
 
@@ -1488,14 +1705,22 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       // Strip leading emotion tag (S1 paren or S2 bracket) for clean console log
       const farewellLog = farewellVoice.replace(/^[\[(][^\])]*[\])]\s*/, "");
       turnState.isAgentSpeaking = true;
-      try {
-        await speakSentence(farewellVoice, null, { cacheable: true, role: "farewell" });
-      } catch {
-        // ignore TTS error during exit
+      let farewellStarted = false;
+      if (!floorEnabled || hubAuthorized) {
+        try {
+          await speakSentence(farewellVoice, null, {
+            cacheable: true,
+            role: "farewell",
+            onPlaybackStart: () => { farewellStarted = true; },
+          });
+        } catch {
+          // Floor/TTS failure makes farewell silent; shutdown still proceeds.
+        }
       }
+      await finishFloorSpeech("farewell");
       clearAgentSpeaking();
 
-      appendConversationEntry("assistant", farewellLog, currentAgentId || null);
+      if (farewellStarted) appendConversationEntry("assistant", farewellLog, currentAgentId || null);
 
       // LCM ingest is now handled in handleMeetSessionEnd() (meet-routes.js)
       // after the bot has already left — no blocking delay before exit.
@@ -1506,6 +1731,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       console.log(`⏳  Waiting ${EXIT_GRACE_MS}ms for farewell playback before exit...`);
       await sleep(EXIT_GRACE_MS);
 
+      await reopenGateAndRescan("exit_requested");
       emitter.emit("exit_requested", { sessionId: session.id, trigger: "voice_command", text: cleanedText });
       return;
     }
@@ -1513,10 +1739,8 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     // Standalone cancel disabled — cancel requires wake word prefix
     // (e.g. "{agentName}、ストップ"). Handled in wake+cancel block below.
 
-    let currentWakeEntry = null;
-
     // Wake word detection
-    {
+    if (!floorEnabled) {
       // Multi-participant mode: create entry with sequence number
       utteranceSeq += 1;
       const wakeResult = detectWakeAgent(cleanedText, agents, selectedAgentIds, defaultAgentId);
@@ -1611,6 +1835,52 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   stt.on("error", (err) => {
     console.error("❌  STT error:", err.message || err);
   });
+
+  async function reopenGateAndRescan(reason = "turn_exit") {
+    try {
+      // Hub-mode utterances already reported directly from utterance_end and
+      // remain serialized by utteranceChain. Replaying them here would bypass
+      // their authoritative verdict and floor request.
+      if (!floorEnabled && pendingQueue.length > 0) {
+        for (const entry of pendingQueue) pushTranscriptEntry(entry);
+        const pendingCopy = [...pendingQueue];
+        pendingQueue.length = 0;
+
+        for (let i = 0; i < pendingCopy.length; i++) {
+          const entry = pendingCopy[i];
+          const wakeResult = detectWakeAgent(entry.text, agents, selectedAgentIds, defaultAgentId);
+          if (!wakeResult.detected) continue;
+
+          console.log(`🔔  Pending wake word found: "${entry.text.slice(0, 50)}"`);
+          if (wakeResult.agentId && wakeResult.agentId !== currentAgentId) switchAgent(wakeResult.agentId);
+          for (const remaining of pendingCopy.slice(i + 1)) enqueuePending(remaining);
+          const pendingPrompt = buildMeetingContextPromptWithEntries(
+            transcriptBuffer,
+            entry,
+            entry.text,
+            meetingContextOptions
+          );
+          appendConversationEntry("user", entry.text, currentAgentId || null);
+          lastUserTranscript = entry.text;
+          const forceImmediateAck = !hasSentInitialWakeAck;
+          if (forceImmediateAck) hasSentInitialWakeAck = true;
+          await processUserInput(pendingPrompt.text, {
+            forceImmediateAck,
+            ackSourceText: entry.text,
+            contextEntries: pendingPrompt.entries,
+            currentEntry: entry,
+            metricsTurnId: entry.metricsTurnId || null,
+          });
+          return;
+        }
+      }
+    } catch (error) {
+      console.error("❌  Pending replay error:", error.message || error);
+    }
+    gateState = "OPEN";
+    turnState.gateState = gateState;
+    emitter.emit("gate_reopened", { reason });
+  }
 
   // ── Process user input: LLM → TTS ──────────────────────────────
   async function processUserInput(userText, options = {}) {
@@ -1946,7 +2216,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
           // Insert silence after ack (same as greeting→purpose transition)
           // so the first LLM sentence doesn't collide with the ack playback.
           const ackSilence = generateSilence(SENTENCE_PAUSE_MS, config.tts.sampleRate);
-          deliverAudio(ackSilence);
+          deliverAudio(ackSilence, null, { floorExempt: true });
           // Count ack as a spoken segment so the first LLM split-point sentence
           // also gets a pause via the spokenSentenceCount > 0 check.
           spokenSentenceCount = 1;
@@ -2098,7 +2368,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
               // Insert pause between segments (sentence=long, clause=short)
               if (spokenSentenceCount > 0 && split.pauseMs > 0) {
                 const silence = generateSilence(split.pauseMs, config.tts.sampleRate);
-                deliverAudio(silence);
+                deliverAudio(silence, null, { floorExempt: true });
               }
 
               const splitLabel = split.type === "clause" ? "clause" : "sentence";
@@ -2247,57 +2517,8 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         });
       }
       if (metricsTurnId) ttsPlaybackStartRecordedTurnIds.delete(metricsTurnId);
-
-      try {
-        // Multi-participant mode: re-scan pending before making OPEN visible.
-        if (pendingQueue.length > 0) {
-          for (const entry of pendingQueue) {
-            pushTranscriptEntry(entry);
-          }
-          const pendingCopy = [...pendingQueue];
-          pendingQueue.length = 0;
-
-          for (let i = 0; i < pendingCopy.length; i++) {
-            const entry = pendingCopy[i];
-            const wakeResult = detectWakeAgent(entry.text, agents, selectedAgentIds, defaultAgentId);
-            if (!wakeResult.detected) continue;
-
-            console.log(`🔔  Pending wake word found: "${entry.text.slice(0, 50)}"`);
-            if (wakeResult.agentId && wakeResult.agentId !== currentAgentId) {
-              switchAgent(wakeResult.agentId);
-            }
-            // Keep later pending turns bounded; the current replay keeps the gate CLOSED.
-            for (const remaining of pendingCopy.slice(i + 1)) {
-              enqueuePending(remaining);
-            }
-            const pendingPrompt = buildMeetingContextPromptWithEntries(
-              transcriptBuffer,
-              entry,
-              entry.text,
-              meetingContextOptions
-            );
-            appendConversationEntry("user", entry.text, currentAgentId || null);
-            lastUserTranscript = entry.text;
-            const forceImmediateAck = !hasSentInitialWakeAck;
-            if (forceImmediateAck) {
-              hasSentInitialWakeAck = true;
-            }
-            await processUserInput(pendingPrompt.text, {
-              forceImmediateAck,
-              ackSourceText: entry.text,
-              contextEntries: pendingPrompt.entries,
-              currentEntry: entry,
-              metricsTurnId: entry.metricsTurnId || null,
-            });
-            return; // Recursive replay owns the final OPEN transition.
-          }
-        }
-      } catch (err) {
-        console.error("❌  Pending replay error:", err.message || err);
-      }
-
-      gateState = "OPEN";
-      turnState.gateState = gateState;
+      await finishFloorSpeech(abort.signal.aborted ? "aborted" : "completed");
+      await reopenGateAndRescan("process_finally");
     }
   }
 
@@ -2306,12 +2527,14 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   // (ack, progress ping, LLM chunks, timeout fallback, greeting…) never
   // overlap into onAudio. A short silence (TTS_GAP_MS) is inserted between
   // utterances for natural breath; the first speak gets a TTS_LEAD_MS pad.
-  async function withTtsLock(fn) {
+  async function withTtsLock(fn, floorFence = null, controller = null) {
     const snapshotNow = Date.now();
     const speakChain = {
       rearmEnvelopeEpoch: shouldRearmEnvelopeEpoch(snapshotNow),
       snapshotEpoch: outputEpoch,
       delivered: false,
+      floorFence,
+      controller,
     };
     const prev = ttsLock;
     let release;
@@ -2325,20 +2548,45 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   }
 
   async function speakSentence(text, signal, opts = {}) {
-    return withTtsLock(async (speakChain) => {
-      if (signal?.aborted) return;
+    if (!floorEnabled) {
+      return withTtsLock(async (speakChain) => {
+        if (signal?.aborted) return;
+        if (!ttsHasSpoken) {
+          if (TTS_LEAD_MS > 0) {
+            const lead = generateSilence(TTS_LEAD_MS, config.tts.sampleRate);
+            deliverAudio(lead, speakChain, { floorExempt: true });
+          }
+        } else if (TTS_GAP_MS > 0) {
+          const gap = generateSilence(TTS_GAP_MS, config.tts.sampleRate);
+          deliverAudio(gap, speakChain, { floorExempt: true });
+        }
+        ttsHasSpoken = true;
+        await _speakSentenceRaw(text, signal, opts, speakChain);
+      });
+    }
+    const ownedController = signal ? null : new AbortController();
+    const controller = ownedController || currentAbort;
+    const effectiveSignal = signal || ownedController.signal;
+    const floorFence = await acquireFloorPermission(opts.role || "speech");
+    if (controller) floorSpeechControllers.add(controller);
+    try {
+      return await withTtsLock(async (speakChain) => {
+      if (effectiveSignal?.aborted) return;
       if (!ttsHasSpoken) {
         if (TTS_LEAD_MS > 0) {
           const lead = generateSilence(TTS_LEAD_MS, config.tts.sampleRate);
-          deliverAudio(lead, speakChain);
+          deliverAudio(lead, speakChain, { floorExempt: true });
         }
       } else if (TTS_GAP_MS > 0) {
         const gap = generateSilence(TTS_GAP_MS, config.tts.sampleRate);
-        deliverAudio(gap, speakChain);
+        deliverAudio(gap, speakChain, { floorExempt: true });
       }
       ttsHasSpoken = true;
-      await _speakSentenceRaw(text, signal, opts, speakChain);
-    });
+      await _speakSentenceRaw(text, effectiveSignal, opts, speakChain);
+      }, floorFence, controller);
+    } finally {
+      if (controller) floorSpeechControllers.delete(controller);
+    }
   }
 
   async function _speakSentenceRaw(text, signal, opts = {}, speakChain = null) {
@@ -2444,9 +2692,6 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       console.log(`📋  Greeting + purpose combined: "${fullGreeting}"`);
     }
 
-    console.log(`💬  [assistant] ${fullGreeting}`);
-    appendConversationEntry("assistant", fullGreeting, currentAgentId || null);
-
     // Use AbortController so barge-in can interrupt greeting/purpose
     if (currentAbort && !currentAbort.signal?.aborted) {
       abortPlayback(currentAbort, "greeting_preempt");
@@ -2455,21 +2700,33 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     currentAbort = greetAbort;
     isProcessing = true;
     turnState.isAgentSpeaking = true;
+    let greetingStarted = false;
     try {
-      await speakSentence(greeting, greetAbort.signal, { cacheable: true, role: "greeting" });
+      await speakSentence(greeting, greetAbort.signal, {
+        cacheable: true,
+        role: "greeting",
+        onPlaybackStart: () => { greetingStarted = true; },
+      });
       if (purposeStatement && !greetAbort.signal.aborted) {
         // Small pause between greeting and purpose
         const silence = generateSilence(SENTENCE_PAUSE_MS || 500, config.tts.sampleRate);
-        deliverAudio(silence);
+        deliverAudio(silence, null, { floorExempt: true });
         // purposeStatement is free text per meeting — caching it would grow
         // assets/tts-cache/ unboundedly for a phrase spoken once (#67 scope).
-        await speakSentence(purposeStatement, greetAbort.signal);
+        await speakSentence(purposeStatement, greetAbort.signal, {
+          onPlaybackStart: () => { greetingStarted = true; },
+        });
       }
     } catch (err) {
-      if (!greetAbort.signal.aborted) {
+      if (!greetAbort.signal.aborted && err.code !== "not_assigned") {
         console.error("❌  Greeting TTS error:", err.message);
       }
     }
+    if (greetingStarted) {
+      console.log(`💬  [assistant] ${fullGreeting}`);
+      appendConversationEntry("assistant", fullGreeting, currentAgentId || null);
+    }
+    await finishFloorSpeech(greetAbort.signal.aborted ? "greeting_aborted" : "greeting_completed");
     clearAgentSpeaking();
     isProcessing = false;
     if (currentAbort === greetAbort) currentAbort = null;
@@ -2494,6 +2751,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     },
     close() {
       stopped = true;
+      floorClient?.close("pipeline_close");
       if (currentAbort) {
         abortPlayback(currentAbort, "pipeline_close");
         currentAbort = null;
@@ -2561,6 +2819,14 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       handleGatewayAnnounceInjected,
       getGateState: () => gateState,
       getPendingQueueLength: () => pendingQueue.length,
+      getFloorState: () => floorClient ? {
+        state: floorClient.state,
+        memberId: floorClient.memberId,
+        connectionEpoch: floorClient.connectionEpoch,
+        members: floorClient.members.slice(),
+        fence: floorClient.fence(),
+      } : { state: FLOOR_STATES.DISABLED },
+      reopenGateAndRescan,
       getReportQueueLength: () => reportQueue.length,
       getReportQueueLines: () => reportQueue.map((item) => item.line),
       getPendingHandoffQueueLength: () => pendingHandoffQueue.length,

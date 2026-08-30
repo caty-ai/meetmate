@@ -8,6 +8,8 @@ const https = require("node:https");
 const os = require("node:os");
 const path = require("node:path");
 const { Duplex } = require("node:stream");
+const { spawn } = require("node:child_process");
+const { EventEmitter } = require("node:events");
 
 const { createDetector } = require("./lib/energy-detector");
 const { sendPacedPcm } = require("./lib/pace");
@@ -30,6 +32,174 @@ function monotonicMs() {
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
+}
+
+function resolveFloorHubDir(env = process.env) {
+  return path.resolve(env.MEET_FLOOR_HUB_DIR || path.join(__dirname, "..", "..", "..", "meet-floor-hub"));
+}
+
+function spawnFloorHub(options = {}) {
+  const hubDir = path.resolve(options.hubDir || resolveFloorHubDir(options.env));
+  const serverFile = path.join(hubDir, "server.js");
+  if (!fs.existsSync(serverFile)) {
+    return Promise.reject(Object.assign(new Error(`meet-floor-hub unavailable at ${hubDir}`), {
+      code: "HUB_DIR_MISSING",
+      hubDir,
+    }));
+  }
+  const token = options.token || "meetmate-floor-test-token";
+  if (options.stdio === true) return spawnFloorHubStdio({ hubDir, token });
+  const child = spawn(process.execPath, [serverFile], {
+    cwd: hubDir,
+    env: { ...process.env, HUB_SHARED_TOKEN: token, PORT: "0" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  return new Promise((resolve, reject) => {
+    let stdout = "";
+    let stderr = "";
+    const timeout = setTimeout(() => fail(new Error(`floor hub startup timeout: ${stderr || stdout}`)), 5_000);
+    timeout.unref?.();
+    const fail = (error) => {
+      clearTimeout(timeout);
+      child.kill("SIGTERM");
+      reject(error);
+    };
+    child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+      let newline;
+      while ((newline = stdout.indexOf("\n")) >= 0) {
+        const line = stdout.slice(0, newline);
+        stdout = stdout.slice(newline + 1);
+        let record;
+        try { record = JSON.parse(line); } catch { continue; }
+        if (record.event !== "listening" || !Number.isInteger(record.port)) continue;
+        clearTimeout(timeout);
+        resolve({
+          child,
+          hubDir,
+          token,
+          url: `ws://127.0.0.1:${record.port}`,
+          stop: () => new Promise((stopResolve) => {
+            if (child.exitCode !== null) return stopResolve();
+            child.once("exit", () => stopResolve());
+            child.kill("SIGTERM");
+          }),
+        });
+      }
+    });
+    child.once("error", fail);
+    child.once("exit", (code, signal) => {
+      if (code === null || code === 0) return;
+      fail(new Error(`floor hub exited before ready (code=${code}, signal=${signal}): ${stderr}`));
+    });
+  });
+}
+
+function spawnFloorHubStdio({ hubDir, token }) {
+  const bridgeSource = String.raw`
+    'use strict';
+    const readline = require('node:readline');
+    const { validateMessage } = require('./server');
+    const { createRoomManager } = require('./rooms');
+    const manager = createRoomManager();
+    const clients = new Map();
+    function output(value) { process.stdout.write(JSON.stringify(value) + '\n'); }
+    function socketFor(clientId) {
+      return { readyState: 1, send(raw) { output({ clientId, message: JSON.parse(raw) }); } };
+    }
+    readline.createInterface({ input: process.stdin }).on('line', (line) => {
+      let command;
+      try { command = JSON.parse(line); } catch { return; }
+      if (command.op === 'connect') {
+        clients.set(command.clientId, { socket: socketFor(command.clientId), context: null });
+        output({ clientId: command.clientId, event: 'open' });
+        return;
+      }
+      const client = clients.get(command.clientId);
+      if (!client) return;
+      if (command.op === 'close') {
+        manager.disconnect(client.context);
+        clients.delete(command.clientId);
+        output({ clientId: command.clientId, event: 'close' });
+        return;
+      }
+      const message = command.message;
+      const invalid = validateMessage(message);
+      if (invalid) { output({ clientId: command.clientId, message: { type: 'error', code: 'invalid_message', message: invalid } }); return; }
+      if (!client.context) {
+        if (message.type !== 'hello') return;
+        if (message.proto !== 1 || message.authToken !== process.env.HUB_SHARED_TOKEN) {
+          output({ clientId: command.clientId, message: { type: 'error', code: 'auth_failed', message: 'invalid hello' } });
+          return;
+        }
+        client.context = manager.join(client.socket, message);
+        return;
+      }
+      manager.handle(client.context, message);
+    });
+    process.once('SIGTERM', () => process.exit(0));
+  `;
+  const child = spawn(process.execPath, ["-e", bridgeSource], {
+    cwd: hubDir,
+    env: { ...process.env, HUB_SHARED_TOKEN: token },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  let nextClientId = 0;
+  let stdout = "";
+  const sockets = new Map();
+  class StdioWebSocket extends EventEmitter {
+    constructor() {
+      super();
+      this.readyState = 0;
+      this.clientId = `stdio-${++nextClientId}`;
+      sockets.set(this.clientId, this);
+      child.stdin.write(`${JSON.stringify({ op: "connect", clientId: this.clientId })}\n`);
+    }
+    send(raw) {
+      child.stdin.write(`${JSON.stringify({ op: "message", clientId: this.clientId, message: JSON.parse(raw) })}\n`);
+    }
+    close() {
+      if (this.readyState === 3) return;
+      child.stdin.write(`${JSON.stringify({ op: "close", clientId: this.clientId })}\n`);
+    }
+  }
+  StdioWebSocket.OPEN = 1;
+  child.stdout.on("data", (chunk) => {
+    stdout += chunk.toString();
+    let newline;
+    while ((newline = stdout.indexOf("\n")) >= 0) {
+      const line = stdout.slice(0, newline);
+      stdout = stdout.slice(newline + 1);
+      let record;
+      try { record = JSON.parse(line); } catch { continue; }
+      const socket = sockets.get(record.clientId);
+      if (!socket) continue;
+      if (record.event === "open") {
+        socket.readyState = 1;
+        socket.emit("open");
+      } else if (record.event === "close") {
+        socket.readyState = 3;
+        sockets.delete(record.clientId);
+        socket.emit("close", 1000, "closed");
+      } else if (record.message) {
+        socket.emit("message", Buffer.from(JSON.stringify(record.message)));
+      }
+    }
+  });
+  return Promise.resolve({
+    child,
+    hubDir,
+    token,
+    url: "ws://stdio.floor-hub",
+    WebSocketImpl: StdioWebSocket,
+    transport: "stdio",
+    stop: () => new Promise((resolve) => {
+      if (child.exitCode !== null) return resolve();
+      child.once("exit", () => resolve());
+      child.kill("SIGTERM");
+    }),
+  });
 }
 
 function sha256(value) {
@@ -873,6 +1043,8 @@ module.exports = {
   parseArgs,
   reportCalibrationPlausibility,
   runSelfTest,
+  resolveFloorHubDir,
+  spawnFloorHub,
   sendPacedPcm,
   sinePcm,
   stats,

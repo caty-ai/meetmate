@@ -841,7 +841,7 @@ function createHandler(session, turnState, onAudio) {
     };
   }
 
-  console.log(`🔊  Deepgram Voice Agent モード (sid=${session.id})`);
+  logLegacyMode(session);
   return createLegacyAgent(session, turnState, onAudio);
 }
 
@@ -1715,6 +1715,12 @@ function readinessPayload() {
 
 const { getPublishedValue, getRuntime: getSettingsRuntime } = require("../settings/resolver");
 const readiness = require("../settings/readiness");
+const { HUB_CONFIG } = require("../config");
+
+function logLegacyMode(session) {
+  console.log(`🔊  Deepgram Voice Agent モード (sid=${session.id})`);
+  if (HUB_CONFIG.enabled) console.warn("⚠️  HUB_* is configured, but floor arbitration requires TTS_PROVIDER=fish-audio; disabling hub integration in legacy Deepgram Voice Agent mode.");
+}
 const readinessProbes = require("../settings/probes");
 let readinessInstanceId = "";
 let readinessProbeOptions = {};

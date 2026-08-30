@@ -247,6 +247,241 @@ test("pending queue replays a wake turn observed while the gate is closed", asyn
   }
 });
 
+test("hub pending reports arbitrate before replay and non-assigned exit reopens the gate", async () => {
+  const previousEnv = {
+    POST_UTTERANCE_BUFFER_MS: process.env.POST_UTTERANCE_BUFFER_MS,
+    ENABLE_IMMEDIATE_ACK: process.env.ENABLE_IMMEDIATE_ACK,
+    ENABLE_PROGRESS_GUARD: process.env.ENABLE_PROGRESS_GUARD,
+    TTS_GAP_MS: process.env.TTS_GAP_MS,
+    TTS_LEAD_MS: process.env.TTS_LEAD_MS,
+  };
+  process.env.POST_UTTERANCE_BUFFER_MS = "0";
+  process.env.ENABLE_IMMEDIATE_ACK = "false";
+  process.env.ENABLE_PROGRESS_GUARD = "false";
+  process.env.TTS_GAP_MS = "0";
+  process.env.TTS_LEAD_MS = "0";
+
+  const src = path.join(__dirname, "..", "src");
+  const paths = ["stt-provider.js", "stt.js", "llm-provider.js", "tts-fish.js", "pipeline.js"]
+    .map((name) => path.join(src, name));
+  const previousCache = new Map(paths.map((file) => [require.resolve(file), require.cache[require.resolve(file)]]));
+  for (const file of paths) delete require.cache[require.resolve(file)];
+
+  let sttEmitter;
+  const events = [];
+  const gatewayPrompts = [];
+  const fallbackCancels = [];
+  const floor = new EventEmitter();
+  floor.state = "READY";
+  floor.memberId = "m1";
+  floor.connectionEpoch = 1;
+  floor.members = [
+    { memberId: "m1", displayName: "Caty", wakeWords: ["ケイティ"] },
+    { memberId: "m2", displayName: "Ciel", wakeWords: ["シエル"] },
+  ];
+  floor.connect = () => {};
+  floor.claimAssignment = () => null;
+  floor.reportText = (text, options = {}) => {
+    events.push(`report:${text}`);
+    fallbackCancels.push(options.onFallbackCancel);
+    if (text.includes("D")) return Promise.resolve({ kind: "verdict_timeout" });
+    return Promise.resolve(/[AC]/u.test(text)
+      ? { kind: "assigned", assignment: { roundId: text.includes("C") ? "r3" : "r1", memberId: "m1" } }
+      : { kind: "not_assigned", assignment: { roundId: "r2", memberId: null } });
+  };
+  floor.reportWake = () => {
+    events.push("synthetic_report");
+    return Promise.resolve({ kind: "not_assigned" });
+  };
+  floor.acquire = async (roundId) => {
+    events.push(`acquire:${roundId}`);
+    floor.grant = { grantId: "g1", connectionEpoch: 1, roundId };
+    floor.state = "HELD";
+    return floor.grant;
+  };
+  floor.fence = () => floor.grant || null;
+  floor.isFenceCurrent = (fence) => Boolean(floor.grant && fence?.grantId === floor.grant.grantId);
+  floor.speech = () => true;
+  floor.release = () => { floor.grant = null; floor.state = "READY"; return true; };
+  floor.close = () => {};
+  floor.waitForReady = async () => true;
+  floor.fallbackDelayMs = () => 0;
+
+  const sttExports = {
+    createSTT: () => {
+      sttEmitter = new EventEmitter();
+      sttEmitter.send = () => {};
+      sttEmitter.close = () => {};
+      return sttEmitter;
+    },
+    buildKeyterms: () => [],
+  };
+  require.cache[require.resolve(path.join(src, "stt-provider.js"))] = cacheEntry(path.join(src, "stt-provider.js"), sttExports);
+  require.cache[require.resolve(path.join(src, "stt.js"))] = cacheEntry(path.join(src, "stt.js"), sttExports);
+  require.cache[require.resolve(path.join(src, "llm-provider.js"))] = cacheEntry(path.join(src, "llm-provider.js"), {
+    createLlmProvider: () => ({
+      name: "openclaw",
+      streamChat: async function* (messages) {
+        events.push("gateway");
+        gatewayPrompts.push(messages.at(-1).content);
+        yield "Aだけの回答です。";
+      },
+    }),
+  });
+  require.cache[require.resolve(path.join(src, "tts-fish.js"))] = cacheEntry(path.join(src, "tts-fish.js"), {
+    synthesize: async (_text, { onAudio }) => onAudio(Buffer.alloc(4)),
+  });
+
+  try {
+    const { createPipeline } = require(path.join(src, "pipeline.js"));
+    const session = { id: "floor-gate-race", conversationLog: [], config: { wakeMode: "wake" } };
+    const pipeline = createPipeline(session, {
+      isAgentSpeaking: false, inputCooldownUntil: 0, droppedEchoFrames: 0,
+    }, () => {}, {
+      dgKey: "x", fishKey: "x",
+      stt: { model: "nova-3", language: "ja", sampleRate: 16_000 },
+      llm: { provider: "openclaw", model: "test", responseTimeoutMs: 0, firstTokenDelegateMs: 0 },
+      tts: { provider: "fish-audio", sampleRate: 16_000, speed: 1, latency: "balanced" },
+      hub: { enabled: true, url: "ws://fake", roomCode: "race", authToken: "x", tailMs: 0 },
+      greeting: "", echoCooldownMs: 0,
+    }, {
+      agents: { caty: { wakeWords: ["ケイティ"] } },
+      selectedAgentIds: ["caty"],
+      defaultAgentId: "caty",
+      floorClient: floor,
+      _testExposeInternals: true,
+    });
+
+    sttEmitter.emit("utterance_end", "ケイティ、タスクA");
+    sttEmitter.emit("utterance_end", "ケイティ、タスクB");
+    assert.deepEqual(events.slice(0, 2), ["report:ケイティ、タスクA", "report:ケイティ、タスクB"]);
+    await waitFor(() => pipeline._test.getGateState() === "OPEN" && gatewayPrompts.length === 1, 1_000);
+    assert.equal(events.indexOf("acquire:r1") < events.indexOf("gateway"), true);
+    assert.equal(gatewayPrompts.length, 1);
+    assert.equal(session.conversationLog.some((entry) => entry.content.includes("[会議音声・未指名] ケイティ、タスクB")), true);
+    assert.equal(pipeline._test.getPendingQueueLength(), 0);
+
+    // A late assignment may cancel one local fallback, but that cancellation
+    // belongs to that report only and must not poison the next valid turn.
+    fallbackCancels[0]();
+    sttEmitter.emit("utterance_end", "ケイティ、タスクC");
+    await waitFor(() => gatewayPrompts.length === 2 && pipeline._test.getGateState() === "OPEN", 1_000);
+    assert.match(gatewayPrompts[1], /タスクC/u);
+
+    sttEmitter.emit("utterance_end", "ケイティ、タスクD");
+    await waitFor(() => gatewayPrompts.length === 3 && pipeline._test.getGateState() === "OPEN", 1_000);
+    assert.match(gatewayPrompts[2], /タスクD/u);
+    assert.equal(events.includes("synthetic_report"), false);
+    pipeline.close();
+  } finally {
+    for (const file of paths) {
+      const resolved = require.resolve(file);
+      delete require.cache[resolved];
+      const previous = previousCache.get(resolved);
+      if (previous) require.cache[resolved] = previous;
+    }
+    for (const [key, value] of Object.entries(previousEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
+
+test("grant fence drops PCM produced after a mid-stream revoke", async () => {
+  const previousEnv = {
+    TTS_GAP_MS: process.env.TTS_GAP_MS,
+    TTS_LEAD_MS: process.env.TTS_LEAD_MS,
+  };
+  process.env.TTS_GAP_MS = "0";
+  process.env.TTS_LEAD_MS = "0";
+
+  const src = path.join(__dirname, "..", "src");
+  const paths = ["stt-provider.js", "stt.js", "llm-provider.js", "tts-fish.js", "pipeline.js"]
+    .map((name) => path.join(src, name));
+  const previousCache = new Map(paths.map((file) => [require.resolve(file), require.cache[require.resolve(file)]]));
+  for (const file of paths) delete require.cache[require.resolve(file)];
+
+  const floor = new EventEmitter();
+  floor.state = "HELD";
+  floor.memberId = "m1";
+  floor.connectionEpoch = 7;
+  floor.members = [{ memberId: "m1", displayName: "Caty", wakeWords: ["ケイティ"] }];
+  floor.grant = { grantId: "g-live", connectionEpoch: 7, roundId: "r1" };
+  floor.connect = () => {};
+  floor.fence = () => floor.grant || null;
+  floor.isFenceCurrent = (fence) => Boolean(
+    floor.grant
+    && fence?.grantId === floor.grant.grantId
+    && fence?.connectionEpoch === floor.connectionEpoch
+  );
+  floor.speech = () => true;
+  floor.release = () => true;
+  floor.close = () => {};
+
+  const sttExports = {
+    createSTT: () => Object.assign(new EventEmitter(), { send() {}, close() {} }),
+    buildKeyterms: () => [],
+  };
+  require.cache[require.resolve(path.join(src, "stt-provider.js"))] = cacheEntry(path.join(src, "stt-provider.js"), sttExports);
+  require.cache[require.resolve(path.join(src, "stt.js"))] = cacheEntry(path.join(src, "stt.js"), sttExports);
+  require.cache[require.resolve(path.join(src, "llm-provider.js"))] = cacheEntry(path.join(src, "llm-provider.js"), {
+    createLlmProvider: () => ({ name: "openclaw", streamChat: async function* () {} }),
+  });
+  require.cache[require.resolve(path.join(src, "tts-fish.js"))] = cacheEntry(path.join(src, "tts-fish.js"), {
+    synthesize: async (_text, { onAudio }) => {
+      onAudio(Buffer.alloc(4, 1));
+      floor.grant = null;
+      floor.state = "READY";
+      onAudio(Buffer.alloc(4, 2));
+    },
+  });
+
+  try {
+    const { createPipeline } = require(path.join(src, "pipeline.js"));
+    const audio = [];
+    const pipeline = createPipeline(
+      { id: "floor-fence-race", conversationLog: [], config: { wakeMode: "wake" } },
+      { isAgentSpeaking: false, inputCooldownUntil: 0, droppedEchoFrames: 0 },
+      (buffer) => audio.push(Buffer.from(buffer)),
+      {
+        dgKey: "x", fishKey: "x",
+        stt: { model: "nova-3", language: "ja", sampleRate: 16_000 },
+        llm: { provider: "openclaw", model: "test", responseTimeoutMs: 0, firstTokenDelegateMs: 0 },
+        tts: { provider: "fish-audio", sampleRate: 16_000, speed: 1, latency: "balanced" },
+        hub: { enabled: true, url: "ws://fake", roomCode: "race", authToken: "x", tailMs: 0 },
+        greeting: "", echoCooldownMs: 0,
+      },
+      {
+        agents: { caty: { wakeWords: ["ケイティ"] } },
+        selectedAgentIds: ["caty"],
+        defaultAgentId: "caty",
+        floorClient: floor,
+        _testExposeInternals: true,
+      },
+    );
+    const cancellations = [];
+    pipeline.on("playback_cancelled", (event) => cancellations.push(event));
+
+    await pipeline._test.speakSentence("二つのPCMチャンク", null);
+
+    assert.equal(audio.length, 1);
+    assert.equal(audio[0].equals(Buffer.alloc(4, 1)), true);
+    assert.equal(cancellations.at(-1)?.reason, "floor_fence");
+    pipeline.close();
+  } finally {
+    for (const file of paths) {
+      const resolved = require.resolve(file);
+      delete require.cache[resolved];
+      const previous = previousCache.get(resolved);
+      if (previous) require.cache[resolved] = previous;
+    }
+    for (const [key, value] of Object.entries(previousEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
+
 function cacheEntry(filename, exports) {
   return {
     id: filename,

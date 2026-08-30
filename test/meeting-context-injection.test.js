@@ -114,3 +114,25 @@ test("meeting context excludes entries already sent to LLM", () => {
   assert.doesNotMatch(nextBlock, /prior context/);
   assert.doesNotMatch(nextBlock, /use the prior context/);
 });
+
+test("floor non-assigned utterance stays buffered without direct LLM injection for handoff context", () => {
+  const originalQuestion = entry(1, "Caty and Ciel, compare the launch budget.", {
+    addressed: false,
+    injectToLlm: false,
+  });
+  const handoff = entry(2, "Ciel, take the budget question.", {
+    addressed: true,
+    injectToLlm: true,
+  });
+  const prompt = buildMeetingContextPromptWithEntries(
+    [originalQuestion, handoff],
+    handoff,
+    handoff.text,
+    { includeUnaddressed: true }
+  );
+
+  assert.equal(originalQuestion.injectToLlm, false);
+  assert.equal(originalQuestion.sentToLlm, false);
+  assert.match(prompt.text, /compare the launch budget/);
+  assert.match(prompt.text, /take the budget question/);
+});

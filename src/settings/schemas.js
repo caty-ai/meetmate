@@ -5,6 +5,31 @@ const { MASK, SETTINGS_REGISTRY } = require("./registry");
 
 const sha256RevisionSchema = z.string().regex(/^[a-f0-9]{64}$/);
 const revisionSchema = z.union([sha256RevisionSchema, z.literal("bootstrap")]);
+const floorSettingsSchema = z.object({
+  url: z.string().refine((value) => {
+    if (value === "") return true;
+    try {
+      const parsed = new URL(value);
+      return ["ws:", "wss:"].includes(parsed.protocol)
+        && !parsed.username && !parsed.password && !parsed.hash;
+    } catch {
+      return false;
+    }
+  }, "HUB_URL must be an absolute ws:// or wss:// URL"),
+  roomCode: z.string().trim().max(256),
+  sharedToken: z.string().max(4096),
+  tailMs: z.number().int().min(0).max(5000),
+}).strict().superRefine((value, context) => {
+  if (Boolean(value.url) !== Boolean(value.roomCode)) {
+    context.addIssue({ code: "custom", message: "HUB_URL and HUB_ROOM_CODE must be set together" });
+  }
+});
+
+function parseFloorSettings(value) {
+  const parsed = floorSettingsSchema.safeParse(value);
+  if (parsed.success) return parsed.data;
+  throw new Error(parsed.error.issues[0]?.message || "Invalid floor hub settings");
+}
 
 const mutationShape = {};
 for (const entry of SETTINGS_REGISTRY.filter((item) => item.writeSurface === "settings")) {
@@ -81,6 +106,8 @@ function parseStrict(schema, value) {
 
 module.exports = {
   audioMetadataSchema,
+  floorSettingsSchema,
+  parseFloorSettings,
   parseStrict,
   exportDocumentSchema,
   exportSettingsSchema,

@@ -171,6 +171,35 @@ function loadConfig() {
   return Object.keys(raw).length > 0 ? stripLegacyClass2(raw) : null;
 }
 
+function getHubConfig() {
+  const { parseFloorSettings } = require("./settings/schemas");
+  const startup = getStartup();
+  const rawConfig = getRawConfig();
+  const resolve = (envName, configValue, fallback = "") => {
+    for (const value of [startup.preDotenvEnv[envName], configValue, startup.dotenvSeeds[envName]]) {
+      if (value !== undefined && value !== null && String(value).trim() !== "") return value;
+    }
+    return fallback;
+  };
+  const tailValue = resolve("HUB_TAIL_MS", rawConfig?.hub?.tailMs, 500);
+  const parsedTail = typeof tailValue === "number" ? tailValue : Number(String(tailValue).trim());
+  const parsed = parseFloorSettings({
+    url: String(resolve("HUB_URL", rawConfig?.hub?.url)).trim(),
+    roomCode: String(resolve("HUB_ROOM_CODE", rawConfig?.hub?.roomCode)).trim(),
+    sharedToken: String(resolve("HUB_SHARED_TOKEN", rawConfig?.hub?.sharedToken)),
+    tailMs: parsedTail,
+  });
+  return {
+    enabled: Boolean(parsed.url && parsed.roomCode),
+    url: parsed.url || null,
+    roomCode: parsed.roomCode || null,
+    authToken: parsed.sharedToken,
+    tailMs: parsed.tailMs,
+  };
+}
+
+const HUB_CONFIG = Object.freeze(getHubConfig());
+
 /**
  * Build pipeline config.
  * Accepts either an agentProfile (from resolveAgentProfile) or a raw agent object
@@ -332,6 +361,7 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
       // moves so there is one source of truth.
       speed: getEffectiveValue("fish_audio_speed"),
     },
+    hub: HUB_CONFIG,
     briefing: overrides.briefing || null,
     purposeStatement: overrides.purposeStatement || null,
     greeting,
@@ -394,6 +424,8 @@ module.exports = {
   SLACK_STATUS_CHANNEL,
   SUMMARY_ENABLED,
   GATEWAY_EVENTS_ENABLED,
+  getHubConfig,
+  HUB_CONFIG,
   FORCED_DELEGATION_ABORT,
   HANDOFF_DELEGATE_SESSION,
   HANDOFF_INFLIGHT_MAX,
