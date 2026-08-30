@@ -43,7 +43,7 @@ This document is the frozen transport/session contract for EPIC #41 child #99. I
 
 ```js
 {
-  speaker?: {
+  speaker: {
     platform: string,
     id: string,
     displayName?: string,
@@ -52,7 +52,12 @@ This document is the frozen transport/session contract for EPIC #41 child #99. I
 }
 ```
 
+- [Normative] `meta` is present whenever the second argument is not `undefined`; `null` is present, not absent.
+- [Normative] A present `meta` is malformed when it is not an object, `speaker` is absent, `speaker.id` is not a non-empty string, or `speaker.isBot` is not a boolean.
+- [Normative] Malformed present `meta` drops the chunk without throwing.
+- [Normative] Unattributed audio must omit the argument entirely: `sendAudio(buffer)`.
 - [Normative] `speaker.platform` must be the canonical transport literal.
+- [Normative] `speaker.platform` is not validated by the pipeline in v1; the adapter owns it.
 - [Normative] `speaker.id` is the stable platform user ID and the only identity key.
 - [Normative] `"unknown"` is a reserved sentinel and must never enter any identity or authorization map as a real user ID.
 - [Normative] `displayName` is presentation-only untrusted data. It is never authorization and never identity equality.
@@ -60,7 +65,7 @@ This document is the frozen transport/session contract for EPIC #41 child #99. I
 - [Normative] Absent `meta` means unattributed mixed audio. That is the entire current Attendee plane and must remain byte-identical in v1.
 - [Normative] Codec decode, per-user decoder and resampler state, downmix, and anti-aliased 16 kHz mono resample stay transport-owned. The resampler must be stateful; naive decimation is non-conforming.
 - [Normative] STT utterance finalization is pipeline-owned, not transport-owned.
-- [Normative] Discord-style adapters must not rely on `EndBehaviorType.AfterSilence` for boundaries. They subscribe per user for session lifetime, treat `receiver.speaking` as advisory presence only, and accept DTX 3-byte frames as normal.
+- [Normative] Discord-style adapters must not rely on `EndBehaviorType.AfterSilence` for boundaries. They subscribe per user with **Manual end** for session lifetime, treat `receiver.speaking` as advisory presence only, and accept DTX 3-byte frames as normal.
 - [Normative] Consent gate: a Discord adapter must not call `sendAudio` and must not buffer PCM for later submission until the join announce has completed.
 - [Lane-note] In issue #99 the pipeline accepts `meta` and validates the malformed speaker cases that the freeze explicitly names, but otherwise ignores it. The mux that consumes it is future pipeline work.
 
@@ -90,7 +95,7 @@ This document is the frozen transport/session contract for EPIC #41 child #99. I
   - [Normative] Internal envelope re-arm increments it silently and emits no event.
 - [Normative] Transports must key stop, purge, and late-audio rejection exclusively off `playback_cancelled`, never off observed epoch deltas.
 - [Normative] `metadata.outputEpoch` on PCM is correlation data only. It is not the stop authority.
-- [Normative] Authority 1 is the observer event `playback_cancelled { outputEpoch, reason, monotonicTime }`.
+- [Normative] Authority 1 is the observer event `playback_cancelled { outputEpoch, reason, monotonicTime }`, where `outputEpoch` is the CANCELLED epoch (pre-increment value), not the new one.
 - [Normative] A `supportsFlush: true` transport must, on `playback_cancelled`, do all of the following synchronously:
   - [Normative] Stop the currently playing resource.
   - [Normative] Drop buffered but unplayed audio with epoch `<= cancelled epoch`.
@@ -120,11 +125,12 @@ This document is the frozen transport/session contract for EPIC #41 child #99. I
 - [Normative] `ending` has zero producers today. It remains an allowed optional intermediate state.
 - [Normative] "ready" maps to `in-progress` and `session_start`. No new readiness event is introduced.
 - [Normative] A transport must create the lifecycle with its canonical literal.
-- [Normative] On externally initiated disconnect, a transport must reach a terminal lifecycle state and close the pipeline. It must never leave a non-terminal lifecycle behind after the voice connection is gone. Examples include Attendee bot removal or WebSocket close and Discord kick, moderator disconnect, channel deletion, or an unresumable gateway drop.
+- [Normative] On externally initiated disconnect, a transport must reach `completed` for a clean disconnect or `failed` for an error, optionally via `ending`, and close the pipeline. It must never leave a non-terminal lifecycle behind after the voice connection is gone. Examples include Attendee bot removal or WebSocket close and Discord kick, moderator disconnect, channel deletion, or an unresumable gateway drop.
 - [Normative] For new transports, supersede is a current-owner concept: a superseded connection must not terminalize or finalize the session, and close effects must be guarded by current-client ownership.
 - [Normative] For new transports, reconnect to a terminal lifecycle must be rejected rather than resuming audio on that lifecycle.
 - [Normative] Attendee's current reconnect-inside-finalize-window behavior violates the previous rule and is intentionally recorded, not fixed, in this issue.
 - [Normative] Attendee's session-in-teardown rejection mechanism is the `leavingSessionIds` set. The observable wire effect is WebSocket close code `1000` with reason `"Session is leaving"`.
+- [Normative] New transports must provide an equivalent session-in-teardown rejection mechanism. The obligation is frozen; its shape is transport-local.
 - [Normative] Session IDs are adapter-minted and transport-local, but must stay unique process-wide while active because they are the mutex key.
 
 ## D6. Capability Flags and Ownership [Normative]
@@ -146,15 +152,18 @@ This document is the frozen transport/session contract for EPIC #41 child #99. I
 - [Normative] The capability carrier is dual-placement and mandatory for new transport registration:
   - [Normative] Immutable `capabilities` on each adapter registry entry. Registration without it is rejected fail-closed.
   - [Normative] The identical object passed into `createPipeline(..., options.capabilities)`.
+- [Normative] `options.capabilities`, when present (not `undefined`), must be an object; a non-object value is a construction error (throw).
 - [Normative] Within an explicitly passed capability object, an absent flag means `false`.
 - [Normative] A completely absent capability object means legacy Attendee semantics and must keep Meet byte-identical.
 - [Normative] Capability flags are static per transport for the lifetime of a session.
+- [Normative] The capability flag vocabulary may only be extended additively; flags are never renamed, removed, or re-typed without a checkpoint-4 amendment.
 - [Normative] The only pipeline-side capability consumer in v1 is barge-in suppression.
 - [Normative] When `options.capabilities.echoesOwnOutput === false`, the pipeline must not run the interim-transcript barge-in branch and must not emit `abortPlayback(..., "barge_in")`.
 - [Normative] Echo policy itself remains transport-owned:
   - [Normative] Attendee (`echoesOwnOutput: true`) gates inbound mixed audio while `turnState.isAgentSpeaking` or `inputCooldownUntil` is active.
   - [Normative] Discord (`echoesOwnOutput: false`) never gates human input and never subscribes any `user.bot === true`, including its own user.
-- [Normative] `turnState` in the decomposed pipeline path contains `{ isAgentSpeaking, lastTurnEndAt, inputCooldownUntil, droppedEchoFrames }`; `gateState` may be absent before the first turn.
+- [Normative] `ENABLE_BARGE_IN` continues to govern the Attendee path unchanged.
+- [Normative] In the decomposed pipeline path, the transport creates `{ isAgentSpeaking: false, lastTurnEndAt: null, inputCooldownUntil: 0, droppedEchoFrames: 0 }`; `gateState` may be absent before the first turn.
 - [Normative] Pipeline writes `isAgentSpeaking`, `lastTurnEndAt`, `gateState`, and `inputCooldownUntil`; the transport reads them for echo policy and writes `droppedEchoFrames`.
 - [Lane-note] The legacy non-decomposed Attendee handler also writes speaking state directly. That exception is recorded, not extended.
 
@@ -164,9 +173,10 @@ This document is the frozen transport/session contract for EPIC #41 child #99. I
 - [Normative] Agent namespace is `${transport}-${session.id}-${agentId}`.
 - [Normative] Delegate namespace appends `-delegate`.
 - [Normative] `src/session-user.js` is the single producer via `sessionUserFor(transport, sessionId, agentId?)`.
-- [Normative] The six current hardcode consumers are part of the frozen contract surface:
-  - [Normative] `src/pipeline.js:718`
-  - [Normative] `src/pipeline.js:732`
+- [Normative] The `-delegate` form is produced by suffix concatenation at consumer sites, not by `sessionUserFor`. This concat-at-consumer exception is recorded; consumers must concatenate onto helper-produced bases only.
+- [Normative] The six pre-#99 hardcode sites are part of the frozen contract surface:
+  - [Normative] `src/pipeline.js:718` (converted to `sessionUserFor` in #99)
+  - [Normative] `src/pipeline.js:732` (converted to `sessionUserFor` in #99)
   - [Normative] `src/gateway-warmup.js:164`
   - [Normative] `src/gateway-session-tracker.js:119`
   - [Normative] `src/transport-meet/meet-routes.js:1340`
@@ -187,6 +197,7 @@ This document is the frozen transport/session contract for EPIC #41 child #99. I
   - [Normative] Attendee remains the default HTTP and WebSocket fallthrough. `/join-meeting` is never reinterpreted.
 - [Normative] MCP behavior is unchanged by transport dispatch.
 - [Normative] Registry path matching is `pathname === prefix || pathname.startsWith(prefix + "/")`.
+- [Normative] The frozen v1 registry mapping is `/api/discord/` → Discord adapter.
 - [Normative] Frozen future registry entry shape is `{ prefixes, capabilities, handleHttp, handleUpgrade?, ... }`, with `capabilities` mandatory.
 - [Normative] Auth-gate transport derivation is separate from dispatch and is never client-supplied:
   - [Normative] Settings, `/health`, and `/calibrate*` derive to "no gate".
@@ -227,9 +238,11 @@ active() -> { transport, sessionId } | null
   - [Normative] the `/join-meeting` catch block
   - [Normative] any other throw-after-acquire path
   - [Normative] the WebSocket close finalize path
+- [Normative] The `/join-meeting` catch (~`meet-routes.js:1410`) currently does NOT delete the session registry entry (pre-existing leak); a lease acquired before it must be released there or joins stick at `409`.
 - [Normative] Discord join must not ship without the Attendee-side coordinator wiring. A one-directional mutex fails open and is forbidden.
 - [Normative] The conflict surface stays transport-specific: Attendee preserves its exact HTTP `409` response, while Discord surfaces a join refusal with a reason.
 - [Lane-note] Issue #1 adds the coordinator, Discord wiring, and the declared Attendee acquire/release edits. Issue #99 only pins the exact existing Attendee 409 surface and retention-window behavior.
+- [Lane-note] Child #5's "meet-routes byte-identical" golden check holds through #99 and is amended by exactly the declared #1 edit set.
 
 ## D10. STT Mux Ownership [Normative]
 
@@ -275,6 +288,7 @@ active() -> { transport, sessionId } | null
   - [Lane-note] A Zoom URL still creates lifecycle transport `"meet"`.
   - [Lane-note] Full sorted key sets and transport/state values for `state_change`, `session_start`, and `session_end`.
   - [Lane-note] `/active-session` response shape and importable `getStatus()` readiness field names/types.
+  - [Lane-note] The `/health` HTTP envelope pin is deferred to #1 (`server.js` is not importable without listening); readiness is pinned via importable `getStatus()`.
   - [Lane-note] Attendee calls `createPipeline` without `options.transport` or `options.capabilities`.
 - [Lane-note] `test/characterization-attendee-audio.test.js` pins all of the following current or issue-#99 observables without network access:
   - [Lane-note] `realtime_audio.mixed` base64 decoding and `sendAudio(buffer)` pass-through with no meta.

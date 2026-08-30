@@ -483,6 +483,7 @@ async function withPipelineHarness(run, options = {}) {
       tts: { referenceId: "voice-id", sampleRate: options.ttsSampleRate || 1_000, latency: "balanced", speed: 1 },
       echoCooldownMs: 0,
       greeting: options.greeting ?? "",
+      hub: options.hubConfig,
       messages: {
         speech: {
           circuitBreakerRecoveryNotice: "recovering",
@@ -624,6 +625,17 @@ test("sessionUser naming stays helper-backed, defaulting to meet and accepting e
   });
 });
 
+test("pipeline capabilities reject present non-object values", { concurrency: false }, async () => {
+  await withPipelineHarness(async ({ createPipeline, turnState, config, session }) => {
+    for (const capabilities of [null, "discord", 0, 1, true, false]) {
+      assert.throws(
+        () => createPipeline(session, turnState, () => {}, config, { capabilities }),
+        /options\.capabilities must be an object/
+      );
+    }
+  });
+});
+
 test("sendAudio accepts absent or well-formed speaker meta and drops malformed meta without throwing", { concurrency: false }, async () => {
   await withPipelineHarness(async ({ pipeline, sttCalls }) => {
     const chunk = Buffer.from([1, 0, 2, 0]);
@@ -686,6 +698,60 @@ test("barge_in remains reachable for Attendee defaults and is suppressed when ec
     pipelineOptions: {
       capabilities: { echoesOwnOutput: false },
     },
+  });
+
+  await withPipelineHarness(async ({ pipeline, sttEmitter, turnState }) => {
+    const events = [];
+    pipeline.on("playback_cancelled", (event) => events.push(event));
+    const processing = pipeline._test.sendGreeting();
+    await waitUntil(() => pipeline._test.getCurrentAbortController());
+    turnState.isAgentSpeaking = true;
+    sttEmitter.emit("transcript", "はい", false, 0.99);
+    await delay(20);
+    assert.equal(events.length, 0);
+    assert.equal(pipeline._test.getCurrentAbortController().signal.aborted, false);
+    pipeline._test.abortCurrent();
+    await processing;
+    assert.deepEqual(events.map((event) => event.reason), ["external_abort"]);
+  }, {
+    synthesize: cancellableSynthesize,
+    greeting: "こんにちは",
+    pipelineOptions: {
+      capabilities: {},
+    },
+  });
+});
+
+test("floor_fence cancellation reports the pre-increment output epoch", { concurrency: false }, async () => {
+  const floorClient = {
+    memberId: "member-caty",
+    readyGraceMs: 100,
+    verdictTimeoutMs: 100,
+    connect() {},
+    close() {},
+    fence: () => null,
+    isFenceCurrent: () => false,
+    waitForReady: async () => true,
+    hasActivePeerSpeech: () => false,
+    hasUnsettledReports: () => false,
+    reportWake: async () => ({ kind: "assigned", assignment: { roundId: "r1" } }),
+    acquire: () => ({ connectionEpoch: "epoch-1", roundId: "r1" }),
+    fallbackDelayMs: () => 0,
+  };
+
+  await withPipelineHarness(async ({ pipeline }) => {
+    const events = [];
+    pipeline.on("playback_cancelled", (event) => events.push(event));
+
+    await pipeline._test.speakSentence("fenced speech", null);
+
+    assert.equal(events.length, 1);
+    assert.equal(events[0].reason, "floor_fence");
+    assert.equal(events[0].outputEpoch, 0);
+    assert.equal(pipeline._test.getEnvelopeRearmState().outputEpoch, 1);
+  }, {
+    hubConfig: { enabled: true, tailMs: 0 },
+    pipelineOptions: { floorClient },
   });
 });
 

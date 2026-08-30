@@ -505,7 +505,11 @@ function resolvePipelineTransport(transport) {
 }
 
 function resolvePipelineCapabilities(capabilities) {
-  return capabilities && typeof capabilities === "object" ? capabilities : null;
+  if (capabilities === undefined) return null;
+  if (!capabilities || typeof capabilities !== "object") {
+    throw new Error("options.capabilities must be an object");
+  }
+  return capabilities;
 }
 
 function isAcceptedAudioMeta(meta) {

@@ -15,6 +15,7 @@ const { stringify } = require("node:querystring");
 const resolver = require("../src/settings/resolver");
 const readiness = require("../src/settings/readiness");
 const realSessionEvents = require("../src/session-events");
+const { sessionUserFor } = require("../src/session-user");
 
 const FIXED_SESSION_ID = "00000000-0000-4000-8000-000000000099";
 const FIXED_RANDOM_BYTES = Buffer.alloc(16, 0x99);
@@ -263,6 +264,14 @@ async function withMeetRoutes(fn, options = {}) {
         },
         getDelegationResults() {
           return [];
+        },
+        getSessionUsers() {
+          const base = sessionUserFor(
+            pipelineOptions.transport ?? "meet",
+            session.id,
+            pipelineOptions.defaultAgentId
+          );
+          return { parent: base, delegate: `${base}-delegate` };
         },
       });
       pipelines.push(pipeline);
@@ -522,8 +531,13 @@ test("Attendee join/connect/leave keeps the observed meet collapse, lifecycle pa
     const lifecycle = harness.lifecycles[0];
     assert.ok(lifecycle);
     assert.equal(lifecycle.transport, "meet");
+    assert.equal(harness.pipelines[0].options.defaultAgentId, "caty");
     assert.equal(Object.hasOwn(harness.pipelines[0].options, "transport"), false);
     assert.equal(Object.hasOwn(harness.pipelines[0].options, "capabilities"), false);
+    assert.deepEqual(harness.pipelines[0].getSessionUsers(), {
+      parent: `meet-${FIXED_SESSION_ID}-caty`,
+      delegate: `meet-${FIXED_SESSION_ID}-caty-delegate`,
+    });
 
     const active = await harness.activeSession();
     assert.equal(active.statusCode, 200);
