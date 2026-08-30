@@ -4,6 +4,23 @@ const path = require("node:path");
 const { EventEmitter } = require("node:events");
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const gateRaceConsole = {
+  log: console.log,
+  warn: console.warn,
+  error: console.error,
+};
+
+test.before(() => {
+  console.log = () => {};
+  console.warn = () => {};
+  console.error = () => {};
+});
+
+test.after(() => {
+  console.log = gateRaceConsole.log;
+  console.warn = gateRaceConsole.warn;
+  console.error = gateRaceConsole.error;
+});
 
 test("utterance handling serializes rapid wake turns without dropping the replayed reply", async () => {
   const previousEnv = {
@@ -254,12 +271,14 @@ test("hub pending reports arbitrate before replay and non-assigned exit reopens 
     ENABLE_PROGRESS_GUARD: process.env.ENABLE_PROGRESS_GUARD,
     TTS_GAP_MS: process.env.TTS_GAP_MS,
     TTS_LEAD_MS: process.env.TTS_LEAD_MS,
+    SENTENCE_PAUSE_MS: process.env.SENTENCE_PAUSE_MS,
   };
   process.env.POST_UTTERANCE_BUFFER_MS = "0";
   process.env.ENABLE_IMMEDIATE_ACK = "false";
   process.env.ENABLE_PROGRESS_GUARD = "false";
   process.env.TTS_GAP_MS = "0";
   process.env.TTS_LEAD_MS = "0";
+  process.env.SENTENCE_PAUSE_MS = "0";
 
   const src = path.join(__dirname, "..", "src");
   const paths = ["stt-provider.js", "stt.js", "llm-provider.js", "tts-fish.js", "pipeline.js"]

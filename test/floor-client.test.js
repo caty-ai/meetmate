@@ -138,12 +138,24 @@ function sent(socket, type) {
 
 test("extractWakeHits ranks every member by first normalized occurrence", () => {
   const members = [
-    { memberId: "caty", wakeWords: ["Caty", "ケイティ"] },
+    { memberId: "caty", wakeWords: ["Caty", "ケイティ"], sttWakeVariants: ["きゃてぃ"] },
     { memberId: "ciel", wakeWords: ["ＣＩＥＬ", "シエル"] },
     { memberId: "other", wakeWords: ["Other"] },
   ];
   assert.deepEqual(extractWakeHits("  ＣＩＥＬ と CATY、お願い ", members), ["ciel", "caty"]);
   assert.deepEqual(extractWakeHits("誰も呼んでいない", members), []);
+  assert.deepEqual(extractWakeHits("ケーティ、お願い", members), ["caty"]);
+  assert.deepEqual(extractWakeHits("きゃてぃ、お願い", members), ["caty"]);
+});
+
+test("waitForReady resolves false immediately when the real client is already DEGRADED", async () => {
+  const harness = createHarness();
+  harness.client.transition(STATES.DEGRADED, { cause: "probe" });
+  const result = await Promise.race([
+    harness.client.waitForReady(),
+    new Promise((_, reject) => setTimeout(() => reject(new Error("waitForReady hung")), 50)),
+  ]);
+  assert.equal(result, false);
 });
 
 test("connect sends the exact proto 1 hello and welcome becomes READY", () => {
@@ -170,6 +182,25 @@ test("connect sends the exact proto 1 hello and welcome becomes READY", () => {
   assert.deepEqual(sent(socket, "pong"), [{ type: "pong" }]);
 });
 
+test("reportText started while CONNECTING recomputes named hits after welcome", async () => {
+  const harness = createHarness();
+  harness.client.connect();
+  const socket = harness.wire.sockets[0];
+  const verdict = harness.client.reportText("ケーティ、お願い");
+  socket.open();
+  welcome(socket);
+  await Promise.resolve();
+  const report = sent(socket, "wake_report").at(-1);
+  assert.deepEqual(report.hits, ["m1"]);
+  socket.receive({
+    type: "turn_assign",
+    roundId: "r1",
+    memberId: "m1",
+    consumedReportIds: [report.reportId],
+  });
+  assert.equal((await verdict).kind, "assigned");
+});
+
 test("verdict timeout falls back, but a late other assignment cancels it", async () => {
   const harness = createHarness();
   const socket = connectReady(harness);
@@ -183,6 +214,7 @@ test("verdict timeout falls back, but a late other assignment cancels it", async
   });
   harness.timers.advance(1_500);
   assert.deepEqual(await verdict, { kind: "verdict_timeout", reportId: report.reportId, seq: 1 });
+  assert.equal(harness.client.reports.size, 0);
   socket.receive({
     type: "turn_assign",
     roundId: "r1",
@@ -192,6 +224,16 @@ test("verdict timeout falls back, but a late other assignment cancels it", async
   });
   assert.equal(harness.fallbackCancelled.length, 1);
   assert.equal(harness.fallbackCancelled[0].memberId, "m2");
+});
+
+test("reportText sends an empty ballot and settles immediately without retaining a report", async () => {
+  const harness = createHarness();
+  const socket = connectReady(harness);
+  const verdict = await harness.client.reportText("誰も呼んでいない");
+  assert.equal(verdict.kind, "empty");
+  assert.deepEqual(sent(socket, "wake_report").at(-1).hits, []);
+  assert.equal(harness.client.reports.size, 0);
+  assert.equal(harness.timers.tasks.size, 0);
 });
 
 test("memberId null is an authoritative verdict and never triggers timeout fallback", async () => {
@@ -385,6 +427,58 @@ test("grant and connection epoch form a real fence across revoke and reconnect",
   welcome(replacement, { connectionEpoch: 2 });
   assert.equal(harness.client.connectionEpoch, 2);
   assert.equal(harness.client.isFenceCurrent(fence), false);
+});
+
+test("acquire rejects a current grant from another round without releasing it", async () => {
+  const harness = createHarness();
+  const socket = connectReady(harness);
+  const first = harness.client.acquire("r1");
+  const request = sent(socket, "request_floor")[0];
+  socket.receive({ type: "granted", reqId: request.reqId, grantId: "g1", leaseMs: 15_000 });
+  await first;
+
+  await assert.rejects(harness.client.acquire("r2"), { code: "grant_mismatch" });
+  assert.equal(harness.client.grant.roundId, "r1");
+  assert.equal(sent(socket, "release").length, 0);
+});
+
+test("peer speech broadcasts track the bounded synthetic-ballot deferral state", () => {
+  const harness = createHarness();
+  const socket = connectReady(harness);
+  socket.receive({ type: "speech", memberId: "m2", phase: "started", tailMs: 100 });
+  assert.equal(harness.client.hasActivePeerSpeech(), true);
+  socket.receive({ type: "speech", memberId: "m1", phase: "started", tailMs: 100 });
+  assert.equal(harness.client.hasActivePeerSpeech(), true);
+  socket.receive({ type: "speech", memberId: "m2", phase: "ended", tailMs: 100 });
+  assert.equal(harness.client.hasActivePeerSpeech(), false);
+});
+
+test("A16 diagnostics include null-assignment cause and received speech phases", () => {
+  const harness = createHarness();
+  const socket = connectReady(harness);
+  const logs = [];
+  const debugs = [];
+  const originalLog = console.log;
+  const originalDebug = console.debug;
+  console.log = (...args) => logs.push(args.join(" "));
+  console.debug = (...args) => debugs.push(args.join(" "));
+  try {
+    socket.receive({
+      type: "turn_assign",
+      roundId: "r1",
+      memberId: null,
+      cause: "no_candidates",
+      consumedReportIds: [],
+    });
+    socket.receive({ type: "speech", memberId: "m2", phase: "started", tailMs: 100 });
+    socket.receive({ type: "speech", memberId: "m2", phase: "ended", tailMs: 100 });
+  } finally {
+    console.log = originalLog;
+    console.debug = originalDebug;
+  }
+  assert.equal(logs.some((line) => line.includes("no_candidates")), true);
+  assert.equal(debugs.some((line) => line.includes("speech started")), true);
+  assert.equal(debugs.some((line) => line.includes("speech ended")), true);
 });
 
 test("reconnect discards unclaimed assignments from the previous epoch", () => {

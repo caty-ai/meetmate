@@ -22,6 +22,8 @@ function normalizeWakeText(value) {
   return String(value || "")
     .normalize("NFKC")
     .toLocaleLowerCase("en-US")
+    .replace(/([エケセテネヘメレゲゼデベペ])(?:ー|イ)/gu, "$1")
+    .replace(/[ーッっ]/gu, "")
     .replace(/\s+/gu, "");
 }
 
@@ -31,7 +33,11 @@ function extractWakeHits(text, members) {
   let order = 0;
   for (const member of Array.isArray(members) ? members : []) {
     let first = -1;
-    for (const wakeWord of Array.isArray(member?.wakeWords) ? member.wakeWords : []) {
+    const variants = [
+      ...(Array.isArray(member?.wakeWords) ? member.wakeWords : []),
+      ...(Array.isArray(member?.sttWakeVariants) ? member.sttWakeVariants : []),
+    ];
+    for (const wakeWord of variants) {
       const needle = normalizeWakeText(wakeWord);
       if (!needle) continue;
       const index = normalized.indexOf(needle);
@@ -99,7 +105,9 @@ class FloorClient extends EventEmitter {
     this.stopped = false;
     this.latestRoundSequence = null;
     this.reports = new Map();
+    this.timedOutReports = new Map();
     this.unclaimedAssignments = new Map();
+    this.activePeerSpeakers = new Set();
     this.pendingAcquire = null;
     this.grant = null;
     this.grantExtendTimer = null;
@@ -210,14 +218,21 @@ class FloorClient extends EventEmitter {
           memberId: message.memberId,
           displayName: message.displayName,
           wakeWords: Array.isArray(message.wakeWords) ? message.wakeWords.slice() : [],
+          sttWakeVariants: Array.isArray(message.sttWakeVariants) ? message.sttWakeVariants.slice() : [],
         }];
         this.emit("members", this.members.slice());
         break;
       case "member_left":
         this.members = this.members.filter((member) => member.memberId !== message.memberId);
+        this.activePeerSpeakers.delete(message.memberId);
         this.emit("members", this.members.slice());
         break;
       case "speech":
+        console.debug(`🔊  floor speech ${message.phase || "unknown"} member=${message.memberId || "unknown"}`);
+        if (message.memberId && message.memberId !== this.memberId) {
+          if (message.phase === "started") this.activePeerSpeakers.add(message.memberId);
+          if (message.phase === "ended") this.activePeerSpeakers.delete(message.memberId);
+        }
         this.emit("speech", message);
         break;
       case "ping":
@@ -278,24 +293,38 @@ class FloorClient extends EventEmitter {
       settled: false,
       fallbackActive: false,
       onFallbackCancel: options.onFallbackCancel || null,
+      suppressGlobalFallbackCancel: options.suppressGlobalFallbackCancel === true,
       timer: null,
     };
-    record.timer = this.timers.setTimeout(() => {
-      record.timer = null;
-      if (record.settled) return;
-      record.settled = true;
-      record.fallbackActive = true;
-      resolveReport({ kind: "verdict_timeout", reportId, seq: record.seq });
-      this.emit("verdict_timeout", { reportId, seq: record.seq });
-    }, this.verdictTimeoutMs);
-    record.timer?.unref?.();
+    const normalizedHits = Array.isArray(hits) ? hits.slice() : [];
+    if (!options.settleEmpty || normalizedHits.length > 0) {
+      record.timer = this.timers.setTimeout(() => {
+        record.timer = null;
+        if (record.settled) return;
+        record.settled = true;
+        record.fallbackActive = true;
+        this.reports.delete(reportId);
+        record.lateTimer = this.timers.setTimeout(() => {
+          this.timedOutReports.delete(reportId);
+        }, this.assignBufferGraceMs);
+        record.lateTimer?.unref?.();
+        this.timedOutReports.set(reportId, record);
+        resolveReport({ kind: "verdict_timeout", reportId, seq: record.seq });
+        this.emit("verdict_timeout", { reportId, seq: record.seq });
+      }, this.verdictTimeoutMs);
+      record.timer?.unref?.();
+    }
     this.reports.set(reportId, record);
-    if (!this.send({ type: "wake_report", reportId, seq: record.seq, hits: Array.isArray(hits) ? hits.slice() : [] })) {
-      this.timers.clearTimeout(record.timer);
+    if (!this.send({ type: "wake_report", reportId, seq: record.seq, hits: normalizedHits })) {
+      if (record.timer !== null) this.timers.clearTimeout(record.timer);
       record.timer = null;
       record.settled = true;
       this.reports.delete(reportId);
       resolveReport({ kind: "degraded", delayMs: this.fallbackDelayMs() });
+    } else if (options.settleEmpty && normalizedHits.length === 0) {
+      record.settled = true;
+      this.reports.delete(reportId);
+      resolveReport({ kind: "empty", reportId, seq: record.seq });
     }
     return promise;
   }
@@ -303,18 +332,23 @@ class FloorClient extends EventEmitter {
   reportText(text, options = {}) {
     if (this.enabled && this.state === STATES.CONNECTING) {
       return this.waitForReady().then((ready) => ready
-        ? this.reportWake(extractWakeHits(text, this.members), options)
+        ? this.reportText(text, options)
         : { kind: "degraded", delayMs: this.fallbackDelayMs() });
     }
-    return this.reportWake(extractWakeHits(text, this.members), options);
+    const hits = extractWakeHits(text, this.members);
+    return this.reportWake(hits, { ...options, settleEmpty: hits.length === 0 });
   }
 
   matchingReports(message) {
     const consumed = new Set(Array.isArray(message.consumedReportIds) ? message.consumedReportIds : []);
-    return [...this.reports.values()].filter((record) => consumed.has(record.reportId));
+    return [...this.reports.values(), ...this.timedOutReports.values()]
+      .filter((record) => consumed.has(record.reportId));
   }
 
   handleAssignment(message) {
+    if (message.memberId === null) {
+      console.log(`ℹ️  floor turn unassigned cause=${message.cause || "unknown"}`);
+    }
     const sequence = roundSequence(message.roundId);
     if (sequence !== null) this.supersedeOlderAcquire(sequence);
     if (sequence !== null && (this.latestRoundSequence === null || sequence > this.latestRoundSequence)) {
@@ -323,11 +357,12 @@ class FloorClient extends EventEmitter {
     const matched = this.matchingReports(message);
     for (const record of matched) {
       if (record.timer !== null) this.timers.clearTimeout(record.timer);
+      if (record.lateTimer !== null && record.lateTimer !== undefined) this.timers.clearTimeout(record.lateTimer);
       record.timer = null;
       if (record.fallbackActive && message.memberId !== this.memberId) {
         const detail = { reportId: record.reportId, roundId: message.roundId, memberId: message.memberId };
         record.onFallbackCancel?.(detail);
-        this.onFallbackCancel(detail);
+        if (!record.suppressGlobalFallbackCancel) this.onFallbackCancel(detail);
         this.emit("fallback_cancelled", detail);
       }
       if (!record.settled) {
@@ -339,6 +374,7 @@ class FloorClient extends EventEmitter {
         });
       }
       this.reports.delete(record.reportId);
+      this.timedOutReports.delete(record.reportId);
     }
     if (message.memberId === this.memberId && matched.length === 0) {
       const timer = this.timers.setTimeout(() => {
@@ -383,7 +419,12 @@ class FloorClient extends EventEmitter {
   }
 
   acquire(roundId) {
-    if (this.grant && this.isFenceCurrent(this.grant)) return Promise.resolve({ ...this.grant });
+    if (this.grant && this.isFenceCurrent(this.grant)) {
+      if (this.grant.roundId === roundId) return Promise.resolve({ ...this.grant });
+      return Promise.reject(Object.assign(new Error("held floor grant belongs to another round"), {
+        code: "grant_mismatch",
+      }));
+    }
     const requestedSequence = roundSequence(roundId);
     if (
       requestedSequence !== null
@@ -604,6 +645,11 @@ class FloorClient extends EventEmitter {
       }
     }
     this.reports.clear();
+    for (const report of this.timedOutReports.values()) {
+      if (report.lateTimer !== null && report.lateTimer !== undefined) this.timers.clearTimeout(report.lateTimer);
+    }
+    this.timedOutReports.clear();
+    this.activePeerSpeakers.clear();
     for (const waiting of this.unclaimedAssignments.values()) {
       this.timers.clearTimeout(waiting.timer);
     }
@@ -647,6 +693,7 @@ class FloorClient extends EventEmitter {
   waitForReady() {
     if (!this.enabled) return Promise.resolve(false);
     if ([STATES.READY, STATES.HELD, STATES.QUEUED].includes(this.state)) return Promise.resolve(true);
+    if ([STATES.DEGRADED, STATES.DISABLED].includes(this.state)) return Promise.resolve(false);
     return new Promise((resolve) => {
       const onReady = () => finish(true);
       const onState = ({ state }) => {
@@ -660,6 +707,19 @@ class FloorClient extends EventEmitter {
       this.on("ready", onReady);
       this.on("state", onState);
     });
+  }
+
+  remainingReadyGraceMs() {
+    if (this.connectStartedAt === null) return this.readyGraceMs;
+    return Math.max(0, this.readyGraceMs - (this.now() - this.connectStartedAt));
+  }
+
+  hasActivePeerSpeech() {
+    return this.activePeerSpeakers.size > 0;
+  }
+
+  hasUnsettledReports() {
+    return [...this.reports.values()].some((record) => !record.settled);
   }
 
   close(cause = "client_close") {
@@ -678,6 +738,11 @@ class FloorClient extends EventEmitter {
       if (!report.settled) report.resolve({ kind: "closed" });
     }
     this.reports.clear();
+    for (const report of this.timedOutReports.values()) {
+      if (report.lateTimer !== null && report.lateTimer !== undefined) this.timers.clearTimeout(report.lateTimer);
+    }
+    this.timedOutReports.clear();
+    this.activePeerSpeakers.clear();
     for (const waiting of this.unclaimedAssignments.values()) this.timers.clearTimeout(waiting.timer);
     this.unclaimedAssignments.clear();
     const socket = this.socket;
