@@ -140,7 +140,7 @@ What the vocabulary deliberately does NOT cover: the per-agent dynamic Slack tok
 | `discord_bot_token` | (new) | `requiredWhen: { transport: ["discord"] }` |
 | `soniox_api_key` | boolean true + resolver skip unless `stt_provider === "soniox"` | `requiredWhen: { setting: "stt_provider", equals: "soniox" }` |
 | `deepgram_api_key` | boolean true + resolver skip unless `stt_provider === "deepgram"` | `requiredWhen: { setting: "stt_provider", equals: "deepgram" }` |
-| `slack_bot_token` | resolver rule: enabled AND source not default/unset AND no dynamic token | `requiredWhen: { setting: "slack_notifications_enabled", equals: true, explicit: true }` — the dynamic-token escape stays resolver-owned (7.2) |
+| `slack_bot_token` | resolver rule: enabled AND source not default/unset AND no dynamic token | `requiredWhen: { setting: "slack_notifications_enabled", equals: true, explicit: true }` — and the requirement is satisfied when `resolveDynamicSlackToken` yields a meaningful value (the resolver-owned escape of 7.2), preserving today's behavior byte-identically |
 
 A mechanical `always: true` rewrite would newly block Deepgram-only operators (both STT keys demanded) and every default configuration (Slack default is `true` with source `default`) — the matrix above is therefore normative, not illustrative.
 
@@ -188,7 +188,7 @@ becomes
 
 and §1 gains the `requiredWhen` field definition (vocabulary + evaluation semantics of ADR-7.2/7.3) in the `SettingDefinition` type block and glossary, replacing `requiredAtMeetingStart?: boolean`.
 
-**A-6. `docs/settings-env-inventory.json`** — add `DISCORD_BOT_TOKEN` as a class-1 alias entry (same shape as `SLACK_BOT_TOKEN`: empty `references`, `class-1-external-vendor`, masked/store/export-excluded handling), and bump `baselineUniqueDirectCount` 91 → 92 together with the two doc sites that pin it: §5 "The baseline has 91 unique direct names" and T12-02's "the 91 direct names".
+**A-6. `docs/settings-env-inventory.json`** — add `DISCORD_BOT_TOKEN` as a class-1 alias entry (same shape as `SLACK_BOT_TOKEN`: empty `references`, `class-1-external-vendor`, masked/store/export-excluded handling), and bump `baselineUniqueDirectCount` 91 → 92 together with the **four** doc sites that pin it: §5 "The baseline has 91 unique direct names", T12-02's "the 91 direct names", and the two Appendix A trace rows — E29-07 "covers 91 static names" and D30-04 "locks 91 names".
 
 **A-7. Class-1 preamble (contract head)** — the fixed enumeration "Class 1 — external Meetmate vendors: `SONIOX_API_KEY`, `DEEPGRAM_API_KEY`, `FISH_AUDIO_API_KEY`, `ATTENDEE_API_KEY`, and `SLACK_BOT_TOKEN`" gains `DISCORD_BOT_TOKEN`.
 
