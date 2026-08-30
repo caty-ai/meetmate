@@ -62,7 +62,22 @@ function readinessDisplayRows(readinessState) {
   return rows;
 }
 
+function avatarExperimentLabel(value) {
+  return ({
+    "": "標準（静止画）",
+    "hybrid-local-l0": "2.5Dリグ",
+    "hybrid-local-frames": "フレームセット",
+  })[value] || "標準（静止画）";
+}
+
+function appendAvatarExperiment(parameters, selection) {
+  if (selection !== "follow-settings") parameters.append("avatarExperiment", selection);
+  return parameters;
+}
+
 if (typeof module !== "undefined" && module.exports) module.exports = {
+  appendAvatarExperiment,
+  avatarExperimentLabel,
   localSettingsUrlFor,
   parseJoinErrorText,
   readinessDisplayRows,
@@ -104,6 +119,7 @@ if (typeof document !== "undefined") (function () {
   const readinessPanel = document.getElementById("readinessPanel");
   const readinessLines = document.getElementById("readinessLines");
   const readinessRecheck = document.getElementById("readinessRecheck");
+  const avatarExperimentEl = document.getElementById("avatarExperiment");
 
   const INSTALL_DISMISSED_KEY = "aiMeetParticipantInstallDismissed";
 
@@ -711,6 +727,19 @@ if (typeof document !== "undefined") (function () {
     }
   }
 
+  async function loadAvatarExperimentDefault() {
+    try {
+      const response = await fetch("/api/settings", { headers: { Accept: "application/json" } });
+      if (!response.ok) return;
+      const settings = await response.json();
+      const configured = typeof settings?.effective?.avatar_experiment === "string"
+        ? settings.effective.avatar_experiment : "";
+      avatarExperimentEl.options[0].textContent = `設定に従う（${avatarExperimentLabel(configured)}）`;
+    } catch {
+      // The explicit choices remain usable if the local settings envelope is unavailable.
+    }
+  }
+
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
 
@@ -745,6 +774,7 @@ if (typeof document !== "undefined") (function () {
         conversationMode,
         agentIds: selectedAgentIds.join(","),
       });
+      appendAvatarExperiment(formData, avatarExperimentEl.value);
 
       const response = await fetch("/join-meeting", {
         method: "POST",
@@ -789,6 +819,7 @@ if (typeof document !== "undefined") (function () {
   loadAgentsFromServer();
   loadCalibrateStatus();
   loadMetrics();
+  loadAvatarExperimentDefault();
   loadReadiness();
   updateMeetingUrlStatus();
   startPolling();

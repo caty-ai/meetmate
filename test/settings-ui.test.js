@@ -73,6 +73,41 @@ test("client field sets deep-match registry UI metadata", () => {
       .filter((entry) => JSON.stringify(entry.visibleWhen) === JSON.stringify(condition))
       .map((entry) => entry.id).sort());
   }
+  assert.deepEqual(ids(CLIENT_FIELD_SETS.AVATAR_FIELDS), SETTINGS_REGISTRY
+    .filter((entry) => entry.path?.startsWith("avatar."))
+    .map((entry) => entry.id).sort());
+});
+
+test("avatar_experiment mounts exactly once in panel-avatar with pinned labels and next-join help", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const { CLIENT_FIELD_SETS, fieldContainerId } = require("../public/settings.js");
+  const { _test } = require("../src/settings/routes");
+  const manifest = _test.buildSettingsUiManifest().fields;
+  const { AVATAR_FIELDS, VOICE_FIELDS } = CLIENT_FIELD_SETS;
+  for (const id of AVATAR_FIELDS) assert.equal(VOICE_FIELDS.has(id), false, `${id} is routed by two field sets`);
+  for (const field of manifest) {
+    const eligibleContainers = [
+      AVATAR_FIELDS.has(field.id) ? "avatarFields" : null,
+      !AVATAR_FIELDS.has(field.id) && VOICE_FIELDS.has(field.id) ? "voiceFields" : null,
+      !AVATAR_FIELDS.has(field.id) && !VOICE_FIELDS.has(field.id) && field.ux === "basic" ? "basicFields" : null,
+      !AVATAR_FIELDS.has(field.id) && !VOICE_FIELDS.has(field.id) && field.ux !== "basic" ? "detailFields" : null,
+    ].filter(Boolean);
+    assert.deepEqual(eligibleContainers, [fieldContainerId(field)], `${field.id} must route to exactly one container`);
+  }
+  const avatarEntries = manifest.filter((field) => AVATAR_FIELDS.has(field.id));
+  assert.equal(avatarEntries.some((field) => field.id === "avatar_experiment"), true);
+  assert.equal(avatarEntries.every((field) => fieldContainerId(field) === "avatarFields"), true);
+  const entry = avatarEntries.find((field) => field.id === "avatar_experiment");
+  assert.equal(fieldContainerId(entry), "avatarFields");
+  const html = fs.readFileSync(path.join(__dirname, "..", "public", "settings.html"), "utf8");
+  const js = fs.readFileSync(path.join(__dirname, "..", "public", "settings.js"), "utf8");
+  const panel = html.match(/<section id="panel-avatar"[\s\S]*?<\/section>\s*<\/section>/)?.[0] || "";
+  assert.equal((panel.match(/id="avatarFields"/g) || []).length, 1);
+  assert.match(js, /"": "標準（静止画）"/);
+  assert.match(js, /"hybrid-local-l0": "2\.5Dリグ"/);
+  assert.match(js, /"hybrid-local-frames": "フレームセット"/);
+  assert.match(js, /avatar_experiment: "次回の会議参加から反映されます"/);
 });
 
 test("main UI parses both setup and readiness 503 envelopes", () => {
@@ -87,6 +122,23 @@ test("main UI parses both setup and readiness 503 envelopes", () => {
   }));
   assert.match(readiness, /Not ready/);
   assert.match(readiness, /Enable chatCompletions/);
+});
+
+test("dashboard avatar encoder omits follow-settings and preserves all three explicit values", () => {
+  const { appendAvatarExperiment, avatarExperimentLabel } = require("../public/app.js");
+  let body = appendAvatarExperiment(new URLSearchParams({ meetingUrl: "https://meet.google.com/abc-defg-hij" }), "follow-settings");
+  assert.equal(body.has("avatarExperiment"), false);
+  body = appendAvatarExperiment(new URLSearchParams(), "");
+  assert.equal(body.has("avatarExperiment"), true);
+  assert.equal(body.get("avatarExperiment"), "");
+  for (const value of ["hybrid-local-l0", "hybrid-local-frames"]) {
+    body = appendAvatarExperiment(new URLSearchParams(), value);
+    assert.equal(body.get("avatarExperiment"), value);
+  }
+  assert.equal(avatarExperimentLabel("hybrid-local-l0"), "2.5Dリグ");
+  const html = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "public", "index.html"), "utf8");
+  assert.match(html, /id="avatarExperiment"/);
+  assert.doesNotMatch(html, /id="avatarExperiment"[^>]*\bname=/);
 });
 
 test("main UI uses the server-provided settings port for tunnel guidance", () => {

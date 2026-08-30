@@ -91,7 +91,9 @@ Settings UI: http://localhost:<port>/settings
 
 ## アバター画像を差し替える
 
-エージェントの顔となる画像は、home（`AI_MEET_HOME` か カレントディレクトリ）配下の `assets/avatar.png` に自分で配置する（`init` は自動コピーしない）。Google Meet の参加者アイコンに表示される。
+設定 UI の **アバター** タブでは、静止画・フレームセット・2.5Dリグをまとめて確認できる。**静止画**カードで PNG を選択するとアップロード前にプレビューされ、登録後は次回の会議参加から Google Meet の参加者アイコンへ反映される。推奨は **256×256 px の正方形 PNG**。アップロード上限は 5 MiB だが、会議参加を軽く保つため 300 KB 以下を目安にする。
+
+手動運用では、home（`AI_MEET_HOME` か カレントディレクトリ）配下の `assets/avatar.png` に同じ画像を配置できる（`init` は自動コピーしない）。
 
 ```bash
 cp /path/to/your-agent-avatar.png <home>/assets/avatar.png
@@ -124,7 +126,9 @@ Fish Audio 構成では、発話マーカーに合わせて PNG を差し替え�
 <home>/assets/avatar-frames/talk_blink.png
 ```
 
-各画像は 1280x720 の PNG を推奨する。`/join-meeting` のフォームデータへ `avatarExperiment=hybrid-local-frames` を追加すると、このページが選ばれる。Fish Audio 以外の TTS 構成、または公開 HTTPS origin が無い構成では参加リクエストは拒否される。
+設定 UI の **フレームセット**カードから各ファイルを個別にプレビュー・登録・削除できる。推奨は **長辺 720〜1080 px、1枚 300 KB 以下**。サーバー上限は各 10 MiB、静止画を含むアバター素材全体で 64 MiB である。
+
+ダッシュボードの **アバター表示**で「フレームセット」を選ぶか、`/join-meeting` のフォームデータへ `avatarExperiment=hybrid-local-frames` を追加すると、このページが選ばれる。「設定に従う」は設定 UI の既定方式を使い、「標準（静止画）」は今回の参加だけ静止画を明示する。Fish Audio 以外の TTS 構成、または公開 HTTPS origin が無い構成では参加リクエストは拒否される。
 
 画像ルートは参加セッションごとの capability で保護され、保存・キャッシュされない。個別の発話・瞬きフレームが無い、壊れている、または読めない場合は `idle.png` へ戻り、`idle.png` も利用できない場合は暗い診断用キャンバスへ戻る。壊れた画像アイコンやスクリプトエラーを会議画面へ出さない fail-closed 動作である。
 
@@ -315,6 +319,7 @@ Legacy connection settings were ignored and must be supplied through the environ
 - Gateway 接続情報（class-2 = `OPENCLAW_GATEWAY_URL` / `OPENCLAW_GATEWAY_TOKEN` / `OPENAI_COMPATIBLE_API_KEY` — そもそも設定ストアに存在せず `.env` 側）
 - 共有トークン（class-3 = `JOIN_SHARED_TOKEN` / `WS_SHARED_TOKEN` — 2台目の home で `npx meetmate init` を実行すれば自動で再生成される）
 - 事前録音 MP3（`audio_clips`）
+- 静止画とフレームセット（`assets/avatar.png` / `assets/avatar-frames/*.png`）
 - 実際に bind されたポート番号（`server_port`）
 - home のパス（`resolved_home`）
 

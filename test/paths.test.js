@@ -204,7 +204,7 @@ function settingsRequest(method, url, headers = {}, body = "") {
 }
 
 test("T12-01 registry/schema/type lock keeps the write allowlist strict", () => {
-  assert.equal(SETTINGS_REGISTRY.length, 61);
+  assert.equal(SETTINGS_REGISTRY.length, 62);
   assert.equal(ENV_DIAGNOSTICS.length, 57);
   assert.equal(new Set(SETTINGS_REGISTRY.map((entry) => entry.id)).size, SETTINGS_REGISTRY.length);
   assert.equal(SETTINGS_REGISTRY.filter((entry) => entry.credential === "class-1").length, 5);
@@ -274,10 +274,10 @@ test("T12-02 environment inventory lock recognizes every retained direct read an
   }
 });
 
-test("T12-03 startup/bootstrap boundary allows exactly ten settings modules", () => {
+test("T12-03 startup/bootstrap boundary allows exactly twelve settings modules", () => {
   const directory = path.join(__dirname, "..", "src", "settings");
   const files = fs.readdirSync(directory).filter((name) => name.endsWith(".js")).sort();
-  assert.deepEqual(files, ["audio.js", "bootstrap.js", "class2-migration.js", "probes.js", "readiness.js", "registry.js", "resolver.js", "routes.js", "schemas.js", "store.js"]);
+  assert.deepEqual(files, ["audio.js", "avatar-assets.js", "bootstrap.js", "class2-migration.js", "multipart.js", "probes.js", "readiness.js", "registry.js", "resolver.js", "routes.js", "schemas.js", "store.js"]);
   for (const file of files) {
     if (file === "bootstrap.js") continue;
     assert.doesNotMatch(fs.readFileSync(path.join(directory, file), "utf8"), /process\.env|dotenv\.parse|\benvPath\b|\.env["'`]/, file);

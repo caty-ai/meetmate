@@ -53,6 +53,17 @@
             </div>
             <span class="field-hint" id="agentInfoDisplay">Google Meet / Zoom の URL を自動検出します</span>
 
+            <div class="join-option">
+              <label class="field-label" for="avatarExperiment">アバター表示</label>
+              <select id="avatarExperiment">
+                <option value="follow-settings">設定に従う（標準（静止画））</option>
+                <option value="">標準（静止画）</option>
+                <option value="hybrid-local-l0">2.5Dリグ</option>
+                <option value="hybrid-local-frames">フレームセット</option>
+              </select>
+              <span class="field-hint">今回の参加だけ表示方式を上書きできます。</span>
+            </div>
+
             <div class="readiness-panel is-hidden" id="readinessPanel" aria-live="polite">
               <div class="readiness-lines" id="readinessLines"></div>
               <button class="readiness-recheck" id="readinessRecheck" type="button">再チェック</button>

@@ -308,7 +308,7 @@ test("T12-02 syntax-consuming environment inventory locks direct, computed, and 
   assert.equal(inventoryByName.size, 89);
   assert.deepEqual(inventory.startupSnapshotReferences, [{
     name: "FFMPEG",
-    references: ["src/settings/audio.js:537", "src/settings/audio.js:538"],
+    references: ["src/settings/audio.js:361", "src/settings/audio.js:362"],
     ux: "deployment-readonly",
     credentialClass: "none",
     handling: "startup-snapshot-consumed-binary-override",
@@ -1489,17 +1489,17 @@ test("settings static routes are GET-only and the asset namespace is allowlisted
   }
 });
 
-test("settings UI keeps six accessible tabs and uses injected registry data without fixtures", () => {
+test("settings UI keeps seven accessible tabs and uses injected registry data without fixtures", () => {
   const publicDir = path.join(ROOT, "public");
   const html = fs.readFileSync(path.join(publicDir, "settings.html"), "utf8");
   const js = fs.readFileSync(path.join(publicDir, "settings.js"), "utf8");
   const labels = Array.from(html.matchAll(/role="tab"[^>]*>([^<]+)<\/button>/g), (match) => match[1]);
-  assert.deepEqual(labels, ["基本", "音声プリセット", "詳細", "デプロイ", "接続テスト", "エクスポート・インポート"]);
-  assert.equal((html.match(/role="tabpanel"/g) || []).length, 6);
+  assert.deepEqual(labels, ["基本", "音声プリセット", "詳細", "デプロイ", "接続テスト", "エクスポート・インポート", "アバター"]);
+  assert.equal((html.match(/role="tabpanel"/g) || []).length, 7);
   assert.match(html, /aria-selected="true" aria-controls="panel-basic" tabindex="0"/);
   assert.match(html, /id="settingsUiManifest">__SETTINGS_UI_MANIFEST__<\/script>/);
   assert.match(html, /id="emotionTagsData">__MEETMATE_EMOTION_TAGS__<\/script>/);
-  for (const marker of ["basicFields", "voiceFields", "detailFields", "diagnosticsList", "変更を保存"]) {
+  for (const marker of ["basicFields", "avatarFields", "avatarAssets", "voiceFields", "detailFields", "diagnosticsList", "変更を保存"]) {
     assert.match(html, new RegExp(marker));
   }
   assert.match(html, /id="audioRole"/);

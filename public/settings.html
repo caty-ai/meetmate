@@ -33,6 +33,7 @@
       <button id="tab-deploy" role="tab" type="button" aria-selected="false" aria-controls="panel-deploy" tabindex="-1">デプロイ</button>
       <button id="tab-connections" role="tab" type="button" aria-selected="false" aria-controls="panel-connections" tabindex="-1">接続テスト</button>
       <button id="tab-transfer" role="tab" type="button" aria-selected="false" aria-controls="panel-transfer" tabindex="-1">エクスポート・インポート</button>
+      <button id="tab-avatar" role="tab" type="button" aria-selected="false" aria-controls="panel-avatar" tabindex="-1">アバター</button>
     </nav>
 
     <form class="settings-form" id="settingsForm">
@@ -85,6 +86,57 @@
             </div>
             <div class="action-result" id="audioResult" role="status" aria-live="polite"></div>
             <div class="audio-list" id="audioClipList" aria-live="polite"></div>
+          </div>
+        </section>
+      </section>
+
+      <section id="panel-avatar" class="tab-panel" role="tabpanel" aria-labelledby="tab-avatar" tabindex="0" hidden>
+        <section class="settings-panel" aria-labelledby="avatarSettingsTitle">
+          <div class="panel-heading">
+            <div><h2 id="avatarSettingsTitle">アバター</h2><p>次回の会議参加で使う表示方式とローカル画像を管理します。</p></div>
+          </div>
+          <div class="field-grid avatar-field-grid" id="avatarFields"></div>
+          <div class="avatar-assets" id="avatarAssets">
+            <article class="avatar-card" aria-labelledby="staticAvatarTitle">
+              <div class="avatar-card-heading">
+                <div><h3 id="staticAvatarTitle">静止画</h3><p>参加者アイコンに使う 256×256 PNG です。</p></div>
+                <span class="status-badge pending" id="avatarStaticSource">確認中</span>
+              </div>
+              <div class="avatar-static-layout">
+                <img class="avatar-preview" id="avatarStaticPreview" alt="現在の静止画プレビュー">
+                <div class="avatar-card-actions">
+                  <p>PNG、5 MiB 以下。静止画は 256×256 px を推奨します。</p>
+                  <label class="file-picker"><span>PNG を選択</span><input id="avatarStaticFile" type="file" accept="image/png,.png"></label>
+                  <div class="inline-actions">
+                    <button class="btn-secondary" id="uploadStaticAvatar" type="button" disabled>アップロード</button>
+                    <button class="btn-text danger-text" id="deleteStaticAvatar" type="button">アップロードを削除</button>
+                  </div>
+                </div>
+              </div>
+              <p class="avatar-url-notice is-hidden" id="avatarStaticUrlNotice">アイコン URL が設定されているため、削除後はこのプロセス中だけ既定画像へ戻り、再起動時に URL から再取得します。完全に戻すには <a href="#field-agent_avatar_url">アイコン URL</a> も空にしてください。</p>
+              <div class="action-result" id="avatarStaticResult" role="status" aria-live="polite"></div>
+            </article>
+
+            <article class="avatar-card" aria-labelledby="frameAvatarTitle">
+              <div class="avatar-card-heading">
+                <div><h3 id="frameAvatarTitle">フレームセット</h3><p>発話に合わせて切り替える 6 枚の PNG を個別に登録します。</p></div>
+                <button class="btn-text danger-text" id="deleteAvatarFrames" type="button">すべて削除</button>
+              </div>
+              <p class="avatar-spec-copy">各フレーム 10 MiB 以下、全アバター素材合計 64 MiB 以下。長辺 720〜1080 px・1枚 300 KB 以下を推奨します。</p>
+              <div class="avatar-frame-list" id="avatarFrameList" aria-live="polite"></div>
+              <div class="action-result" id="avatarFrameResult" role="status" aria-live="polite"></div>
+            </article>
+
+            <article class="avatar-card" aria-labelledby="rigAvatarTitle">
+              <div class="avatar-card-heading">
+                <div><h3 id="rigAvatarTitle">2.5Dリグ</h3><p>このビルドへ組み込まれているローカル描画リグを使用します。</p></div>
+                <span class="status-badge pending" id="avatarRigStatus">確認中</span>
+              </div>
+              <dl class="avatar-rig-facts">
+                <div><dt>モデル由来</dt><dd id="avatarRigProvenance">—</dd></div>
+                <div><dt>スクリプト容量</dt><dd id="avatarRigBytes">—</dd></div>
+              </dl>
+            </article>
           </div>
         </section>
       </section>
