@@ -20,6 +20,7 @@ const HTML_FILE = path.join(PUBLIC_DIR, "frames.html");
 const SCRIPT_FILE = path.join(PUBLIC_DIR, "frames.js");
 const ROOT = path.join(__dirname, "..");
 const GENERATOR = path.join(ROOT, "scripts", "build-local-avatar-rig.js");
+const BACKGROUND_FILE = path.join(ROOT, "assets", "avatar.png");
 
 function shippedFramesScript() {
   return fs.readFileSync(SCRIPT_FILE, "utf8");
@@ -31,6 +32,21 @@ function embeddedFramesBackground(script) {
   const encoded = match[1].match(/const FRAMES_BACKGROUND_BASE64URL = "([A-Za-z0-9_-]*)";/);
   assert.ok(encoded, "frames background embed must use base64url bytes");
   return Buffer.from(encoded[1], "base64url");
+}
+
+function pngDimensions(file) {
+  const bytes = fs.readFileSync(file);
+  assert.equal(bytes.subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
+  return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
+}
+
+function coverVector(width, height, canvasWidth = 1280, canvasHeight = 720) {
+  const scale = Math.max(canvasWidth / width, canvasHeight / height);
+  const sourceWidth = canvasWidth / scale;
+  const sourceHeight = canvasHeight / scale;
+  const sourceX = (width - sourceWidth) / 2;
+  const sourceY = (height - sourceHeight) / 2;
+  return [sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, canvasWidth, canvasHeight];
 }
 
 function unavailableNgrokHttpGet() {
@@ -97,15 +113,14 @@ test("frame avatar page is an isolated dependency-free 1280x720 Canvas surface",
 test("frames generator round-trips a slash-bearing PNG through a slash-free background embed", () => {
   const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-frames-bg-"));
   const generatedFrames = path.join(temporaryDirectory, "frames.js");
-  const backgroundFile = path.join(ROOT, "assets", "avatar.png");
-  const background = fs.readFileSync(backgroundFile);
+  const background = fs.readFileSync(BACKGROUND_FILE);
   const shippedRig = fs.readFileSync(path.join(PUBLIC_DIR, "local-avatar.js"));
   assert.equal(background.toString("base64").includes("//"), true, "fixture must exercise the standard-base64 URL token hazard");
   try {
     execFileSync(process.execPath, [
       GENERATOR,
       "--background",
-      backgroundFile,
+      BACKGROUND_FILE,
       "--frames-out",
       generatedFrames,
     ], { cwd: ROOT });
@@ -113,6 +128,20 @@ test("frames generator round-trips a slash-bearing PNG through a slash-free back
     assert.deepEqual(embeddedFramesBackground(generated), background);
     assert.equal(/\b(?:https?:)?\/\//i.test(generated), false);
     assert.ok(Buffer.byteLength(generated) < 2_500_000);
+    assert.deepEqual(fs.readFileSync(path.join(PUBLIC_DIR, "local-avatar.js")), shippedRig);
+  } finally {
+    fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
+test("frames generator exactly reproduces the shipped script without mutating rig output", () => {
+  const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-frames-idempotent-"));
+  const generatedFrames = path.join(temporaryDirectory, "frames.js");
+  const shippedFrames = fs.readFileSync(SCRIPT_FILE);
+  const shippedRig = fs.readFileSync(path.join(PUBLIC_DIR, "local-avatar.js"));
+  try {
+    execFileSync(process.execPath, [GENERATOR, "--frames-out", generatedFrames], { cwd: ROOT });
+    assert.deepEqual(fs.readFileSync(generatedFrames), shippedFrames);
     assert.deepEqual(fs.readFileSync(path.join(PUBLIC_DIR, "local-avatar.js")), shippedRig);
   } finally {
     fs.rmSync(temporaryDirectory, { recursive: true, force: true });
@@ -178,22 +207,48 @@ test("frames backgrounds use rig-parity fallback, connect-only wiring, and chrom
   assert.deepEqual(solid.draws[0], ["fill", "#123456", 0, 0, 1280, 720]);
 });
 
+test("connect-applied solid and chroma backgrounds repaint an already-painted idle frame", async () => {
+  async function runCase(background, expectedFill) {
+    let releaseConnect;
+    const connectGate = new Promise((resolve) => { releaseConnect = resolve; });
+    const page = await runFramesVisualPage(shippedFramesScript(), {
+      stateHandler: async ({ params, initial }) => {
+        if (params.connect === "1") {
+          await connectGate;
+          return jsonResponse({ ...initial, background });
+        }
+        return jsonResponse(initial);
+      },
+    });
+    assert.equal(page.sandbox.__localAvatarFramesContract.getState().currentFrame, "idle");
+    assert.deepEqual(page.draws.filter((draw) => draw[0] === "fill").at(-1), ["fill", "#08111f", 0, 0, 1280, 720]);
+    releaseConnect();
+    await settleMicrotasks();
+    assert.equal(page.sandbox.__localAvatarFramesContract.getState().currentFrame, "idle");
+    assert.deepEqual(page.draws.filter((draw) => draw[0] === "fill").at(-1), ["fill", expectedFill, 0, 0, 1280, 720]);
+  }
+
+  await runCase({ mode: "solid", color: "#123456" }, "#123456");
+  await runCase({ mode: "chroma", color: "#123456" }, "#00FF00");
+});
+
 test("embedded image backgrounds decode through Blob and cover the frames letterbox", async () => {
   const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-frames-bg-page-"));
   const generatedFrames = path.join(temporaryDirectory, "frames.js");
   const generatedRig = path.join(temporaryDirectory, "local-avatar.js");
-  const backgroundFile = path.join(ROOT, "assets", "avatar.png");
+  const fixtureSize = pngDimensions(BACKGROUND_FILE);
+  const expectedVector = coverVector(fixtureSize.width, fixtureSize.height);
   try {
     execFileSync(process.execPath, [
       GENERATOR,
       "--background",
-      backgroundFile,
+      BACKGROUND_FILE,
       "--out",
       generatedRig,
       "--frames-out",
       generatedFrames,
     ], { cwd: ROOT });
-    const bitmap = { width: 640, height: 480 };
+    const bitmap = { width: fixtureSize.width, height: fixtureSize.height };
     let decodedBytes = null;
     const page = await runFramesBackgroundPage(
       fs.readFileSync(generatedFrames, "utf8"),
@@ -203,11 +258,12 @@ test("embedded image backgrounds decode through Blob and cover the frames letter
         return bitmap;
       },
     );
-    assert.deepEqual(decodedBytes, fs.readFileSync(backgroundFile));
+    assert.deepEqual(decodedBytes, fs.readFileSync(BACKGROUND_FILE));
     page.draws.length = 0;
     assert.equal(page.sandbox.__localAvatarFramesContract.acceptState(frameMarker({ sequence: 2, sampleIndex: 0 }), 1_000), true);
     const backgroundDraw = page.draws.find((draw) => draw[0] === "image" && draw[1] === bitmap);
     assert.ok(backgroundDraw);
+    assert.deepEqual(backgroundDraw, ["image", bitmap, ...expectedVector]);
     assert.deepEqual(backgroundDraw.slice(-4), [0, 0, 1280, 720]);
 
     const failed = await runFramesBackgroundPage(
@@ -219,6 +275,58 @@ test("embedded image backgrounds decode through Blob and cover the frames letter
     assert.equal(failed.sandbox.__localAvatarFramesContract.acceptState(frameMarker({ sequence: 2, sampleIndex: 0 }), 1_000), true);
     assert.deepEqual(failed.draws[0], ["fill", "#654321", 0, 0, 1280, 720]);
     assert.equal(failed.errors.length, 1);
+  } finally {
+    fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
+test("late image decode repaints idle without a frame-name change and decodes only once across reconnect", async () => {
+  const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-frames-bg-repaint-"));
+  const generatedFrames = path.join(temporaryDirectory, "frames.js");
+  const generatedRig = path.join(temporaryDirectory, "local-avatar.js");
+  const fixtureSize = pngDimensions(BACKGROUND_FILE);
+  const expectedVector = coverVector(fixtureSize.width, fixtureSize.height);
+  let releaseDecode;
+  const decodeGate = new Promise((resolve) => { releaseDecode = resolve; });
+  let backgroundDecodeCalls = 0;
+  try {
+    execFileSync(process.execPath, [
+      GENERATOR,
+      "--background",
+      BACKGROUND_FILE,
+      "--out",
+      generatedRig,
+      "--frames-out",
+      generatedFrames,
+    ], { cwd: ROOT });
+    const page = await runFramesVisualPage(fs.readFileSync(generatedFrames, "utf8"), {
+      backgroundBitmapFactory: async (blob) => {
+        backgroundDecodeCalls += 1;
+        await decodeGate;
+        return { width: fixtureSize.width, height: fixtureSize.height, blob };
+      },
+      stateHandler: async ({ params, stateCallCount, initial }) => {
+        if (params.connect === "1") {
+          return jsonResponse({
+            ...initial,
+            background: { mode: "image", color: "#123456" },
+          });
+        }
+        if (stateCallCount === 2) throw new Error("network dropped");
+        return { ok: true, status: 204 };
+      },
+    });
+    assert.equal(page.sandbox.__localAvatarFramesContract.getState().currentFrame, "idle");
+    assert.deepEqual(page.draws.filter((draw) => draw[0] === "fill").at(-1), ["fill", "#123456", 0, 0, 1280, 720]);
+    releaseDecode();
+    await settleMicrotasks();
+    assert.equal(page.sandbox.__localAvatarFramesContract.getState().currentFrame, "idle");
+    const backgroundDraw = page.draws.find((draw) => draw[0] === "image" && draw[1]?.width === fixtureSize.width && draw[1]?.height === fixtureSize.height);
+    assert.ok(backgroundDraw);
+    assert.deepEqual(backgroundDraw, ["image", backgroundDraw[1], ...expectedVector]);
+    await fireTimer(page.timers, 100);
+    await fireTimer(page.timers, 250);
+    assert.equal(backgroundDecodeCalls, 1);
   } finally {
     fs.rmSync(temporaryDirectory, { recursive: true, force: true });
   }
@@ -1348,6 +1456,97 @@ async function runFramesBackgroundPage(script, background, decodeBackground = as
   vm.runInContext(script, sandbox, { filename: SCRIPT_FILE });
   await settleMicrotasks();
   return { sandbox, draws, errors, timers };
+}
+
+async function runFramesVisualPage(script, {
+  stateHandler = null,
+  frameBitmapFactory = async (name) => ({ frame: name, width: 640, height: 640 }),
+  backgroundBitmapFactory = async () => ({ width: 640, height: 480 }),
+} = {}) {
+  const timers = [];
+  const draws = [];
+  const errors = [];
+  let fillStyle = null;
+  const initial = {
+    kind: "idle",
+    generation: 1,
+    cancelEpoch: 0,
+    sequence: 1,
+    outputEpoch: -1,
+    sampleIndex: null,
+    sampleRate: null,
+  };
+  const sandboxMath = Object.create(Math);
+  sandboxMath.random = () => 0.5;
+  const stateRequests = [];
+  const sandbox = {
+    URLSearchParams,
+    Blob,
+    Math: sandboxMath,
+    Date: { now: () => 0 },
+    console: { error: (...args) => errors.push(args) },
+    location: {
+      pathname: "/local-avatar/frames.html",
+      search: "?v=abcdefghijklmnop",
+      hash: "#cap=secret",
+    },
+    history: { replaceState: () => {} },
+    document: {
+      getElementById: () => ({
+        width: 1280,
+        height: 720,
+        getContext: () => ({
+          fillRect: (...args) => draws.push(["fill", fillStyle, ...args]),
+          fillText: (...args) => draws.push(["text", ...args]),
+          drawImage: (...args) => draws.push(["image", ...args]),
+          set fillStyle(value) { fillStyle = value; },
+          set font(_value) {},
+          set textAlign(_value) {},
+        }),
+      }),
+    },
+    fetch: async (url) => {
+      if (url.startsWith("/local-avatar/state?")) {
+        const params = Object.fromEntries(new URL(url, "https://meetmate.example").searchParams.entries());
+        stateRequests.push(params);
+        if (stateHandler) {
+          return stateHandler({
+            url,
+            params,
+            stateCallCount: stateRequests.length,
+            initial,
+          });
+        }
+        return jsonResponse(initial);
+      }
+      const name = /\/([^/?]+)\.png\?/.exec(url)?.[1] || "";
+      return {
+        ok: true,
+        status: 200,
+        blob: async () => ({ name }),
+      };
+    },
+    createImageBitmap: async (blob) => (blob && blob.name
+      ? frameBitmapFactory(blob.name)
+      : backgroundBitmapFactory(blob)),
+    setTimeout: (fn, ms) => {
+      timers.push({ fn, ms, cleared: false });
+      return timers.length;
+    },
+    clearTimeout: (id) => { if (timers[id - 1]) timers[id - 1].cleared = true; },
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(script, sandbox, { filename: SCRIPT_FILE });
+  await settleMicrotasks();
+  return { sandbox, draws, errors, timers };
+}
+
+function jsonResponse(body) {
+  return {
+    ok: true,
+    status: 200,
+    json: async () => body,
+  };
 }
 
 async function settleMicrotasks() {

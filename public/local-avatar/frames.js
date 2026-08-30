@@ -30,8 +30,8 @@
   const fragment = new URLSearchParams(location.hash.slice(1));
   const capability = fragment.get("cap") || "";
   /* @frames-bg-begin */
-  const FRAMES_BACKGROUND_BASE64URL = "";
-  /* @frames-bg-end */
+const FRAMES_BACKGROUND_BASE64URL = "";
+/* @frames-bg-end */
 
   history.replaceState(null, "", `${location.pathname}${location.search}`);
 
@@ -242,6 +242,7 @@
   async function decodeFramesBackground() {
     try {
       framesBackgroundBitmap = await createImageBitmap(new Blob([decodeFramesBase64Url(FRAMES_BACKGROUND_BASE64URL)]));
+      repaintCurrentFrame();
     } catch (error) {
       framesBackgroundBitmap = null;
       console.error("local avatar backdrop decode failed", error);
@@ -249,6 +250,7 @@
   }
 
   function setFramesBackground(value) {
+    const previous = framesBackground;
     const validMode = value && ["solid", "image", "chroma"].includes(value.mode);
     const validColor = value && typeof value.color === "string" && /^#[0-9a-f]{6}$/i.test(value.color);
     framesBackground = validMode && validColor
@@ -258,6 +260,7 @@
       framesBackgroundDecodeStarted = true;
       decodeFramesBackground();
     }
+    if (!previous || previous.mode !== framesBackground.mode || previous.color !== framesBackground.color) repaintCurrentFrame();
   }
 
   function drawFramesBackground() {
@@ -321,6 +324,13 @@
     const drawHeight = sourceHeight * scale;
     context.drawImage(image, (canvas.width - drawWidth) / 2, (canvas.height - drawHeight) / 2, drawWidth, drawHeight);
     currentFrame = selected;
+  }
+
+  function repaintCurrentFrame() {
+    if (!FRAME_NAMES.includes(currentFrame) || !frames.get(currentFrame)) return;
+    const active = currentFrame;
+    currentFrame = "";
+    drawFrame(active);
   }
 
   function enterIdle(at = Date.now()) {

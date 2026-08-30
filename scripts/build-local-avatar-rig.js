@@ -307,6 +307,9 @@ function parseArguments(argv) {
     }
     throw new Error(`unknown option: ${argument}`);
   }
+  if (options.modelPath && options.framesOutputPath && !options.outputPath) {
+    throw new Error("--model requires a rig output; pass --out or drop --model");
+  }
   return options;
 }
 
