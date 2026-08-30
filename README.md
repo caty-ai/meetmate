@@ -107,6 +107,7 @@ Want the avatar to move? Two experiments already ship: a frame-swap lip-sync ava
 |---|---|
 | Google Meet | Mainline path. Start here first. |
 | Zoom | Works for meetings you host/control yourself today. Do not assume support for external-hosted Zoom meetings, OBF, or managed OAuth setups yet. |
+| Server OS & autostart | Windows (via WSL2), macOS, and Linux all run the server. One installer registers the always-on service: `scripts/install-service.sh` sets up launchd on macOS or a systemd user unit on Linux/WSL2 (WSL2 needs `systemd=true` in `/etc/wsl.conf`; run ngrok inside WSL2, or set `server.ngrokDomain` explicitly). Details: [setup guide — always-on service](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#常駐サービス自動起動). |
 | MCP vs voice brain | Meetmate's MCP server is a control plane for `join` / `leave` / `status`. The voice brain is separate: your real agent runs behind OpenClaw or another OpenAI-compatible gateway and speaks in the meeting. |
 
 ## What you need

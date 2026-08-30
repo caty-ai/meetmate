@@ -107,6 +107,7 @@ Meetmate: [warm] มีการเปลี่ยนแปลง 2 จุด �
 |---|---|
 | Google Meet | เส้นทางหลัก เริ่มต้นที่นี่ก่อน |
 | Zoom | ใช้งานได้กับการประชุมที่คุณโฮสต์/ควบคุมเองในตอนนี้ อย่าเพิ่งคาดหวังว่าจะรองรับการประชุม Zoom ที่โฮสต์จากภายนอก, OBF หรือการตั้งค่า OAuth แบบมีการจัดการ |
+| ระบบปฏิบัติการของเซิร์ฟเวอร์และการเริ่มอัตโนมัติ | รันเซิร์ฟเวอร์ได้ทั้งบน Windows (ผ่าน WSL2), macOS และ Linux การลงทะเบียนเซอร์วิสถาวรใช้ตัวติดตั้งตัวเดียว: `scripts/install-service.sh` จะตั้งค่า launchd บน macOS หรือ systemd user unit บน Linux/WSL2 (WSL2 ต้องตั้ง `systemd=true` ใน `/etc/wsl.conf` และให้รัน ngrok ภายใน WSL2 หรือระบุ `server.ngrokDomain` อย่างชัดเจน) รายละเอียด: [คู่มือติดตั้ง — เซอร์วิสถาวร](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#常駐サービス自動起動) |
 | MCP กับสมองเสียง | MCP server ของ Meetmate เป็น control plane สำหรับ `join` / `leave` / `status` ส่วนสมองเสียงแยกต่างหาก: เอเจนต์ตัวจริงของคุณทำงานอยู่หลัง OpenClaw หรือเกตเวย์ OpenAI-compatible อื่น และพูดในที่ประชุม |
 
 ## สิ่งที่คุณต้องมี
