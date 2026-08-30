@@ -95,6 +95,19 @@ test("summarizer retains OpenClaw gateway options from resolved config", async (
     assert.equal(completeOptions.openclawUrl, "https://gateway.test/gw");
     assert.equal(completeOptions.openclawToken, "token");
     assert.equal(completeOptions.model, "agent");
+    assert.equal(completeOptions.user, undefined);
+    assert.equal(completeOptions.timeoutMs, 30_000);
+
+    await summarizeConversation([{ role: "user", content: "hello" }], {
+      llm: {
+        provider: "openclaw",
+        model: "agent",
+        responseTimeoutMs: 45_000,
+        gateway: gatewayCfg("https://gateway.test/gw", "token"),
+      },
+    });
+    assert.equal(completeOptions.user, undefined);
+    assert.equal(completeOptions.timeoutMs, 45_000);
   } finally {
     delete require.cache[summarizerPath];
     if (originalSummarizer) require.cache[summarizerPath] = originalSummarizer;

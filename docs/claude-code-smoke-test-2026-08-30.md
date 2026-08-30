@@ -86,7 +86,12 @@ both invisible against lenient cloud providers:
 2. **Hard-coded 30 s timeout.** The summarizer ignored the resolved
    `LLM_RESPONSE_TIMEOUT_MS` and timed out at 30 s; a stateful-gateway summary
    turn regularly needs more. Fix: it now honors the resolved
-   `llm.responseTimeoutMs` (default unchanged at 30 s when unset).
+   `llm.responseTimeoutMs`. Note the effective change on the real code path:
+   the production caller always passes a resolved config, so the summarizer
+   deadline becomes `LLM_RESPONSE_TIMEOUT_MS` (default 35 s) for **both**
+   providers, including OpenClaw — previously it was a hard 30 s regardless of
+   configuration. The 30 s fallback now applies only to callers that omit the
+   field entirely.
 
 Verification: with both fixes, the summarizer was re-run through the real
 provider path against the live gateway using the saved conversation log from
