@@ -329,6 +329,175 @@ test("rig envelope markers require a positive safe sample rate and stay in the p
   assert.ok(Number.isFinite(fallback.sandbox.__localAvatarContract.getState().rigMouth));
 });
 
+test("forward-only 16a keeps the no-fresh floor and its 500ms predicate edge in the rig clock", () => {
+  const page = runRigEnvelopePage({ offset: 300, now: 0 });
+  const contract = page.sandbox.__localAvatarContract;
+  const snapshot = [{ s: 0, v: new Array(10).fill(1) }];
+  contract.acceptState(rigMarker({ sampleRate: 1_000, envelopes: snapshot }));
+  assert.equal(contract.getState().envelope.playbackStartWall, 300);
+
+  page.clock.value = 1_799;
+  contract.acceptState(rigMarker({ sequence: 1, sampleIndex: 1_000, sampleRate: 1_000, envelopes: snapshot }));
+  assert.equal(contract.getState().envelope.playbackStartWall, 300, "499ms behind does not fire");
+
+  page.clock.value = 1_800;
+  contract.acceptState(rigMarker({ sequence: 2, sampleIndex: 2_000, sampleRate: 1_000, envelopes: snapshot }));
+  assert.equal(contract.getState().envelope.playbackStartWall, 800, "500ms behind end-aligns forward");
+
+  page.clock.value = 1_900;
+  contract.acceptState(rigMarker({ sequence: 3, sampleIndex: 3_000, sampleRate: 1_000, envelopes: snapshot }));
+  assert.equal(contract.getState().envelope.playbackStartWall, 800, "the floor never moves backward");
+});
+
+test("forward-only 16b start-aligns fresh post-silence audio and drops the played tail in the rig", () => {
+  const page = runRigEnvelopePage({ offset: 300, now: 0 });
+  const contract = page.sandbox.__localAvatarContract;
+  const prior = { s: 0, v: new Array(5).fill(1) };
+  contract.acceptState(rigMarker({ sampleRate: 1_000, envelopes: [prior] }));
+
+  page.clock.value = 3_000;
+  contract.acceptState(rigMarker({
+    sequence: 1,
+    sampleIndex: 1_000,
+    sampleRate: 1_000,
+    envelopes: [prior, { s: 500, v: [1, 0.5] }],
+  }));
+  const state = contract.getState();
+  assert.equal(state.envelope.playbackStartWall, 2_800);
+  assert.equal(state.envelope.windowCount, 2, "no window ending at or before freshStart survives");
+  page.frames.shift()(3_000);
+  assert.equal(contract.getState().rigMouth, 0, "arrival is the before-start phase, not fallback or past-end");
+  page.frames.shift()(3_301);
+  assert.ok(contract.getState().rigMouth > 0, "fresh values render immediately after OFFSET");
+});
+
+test("forward-only 16b2 keeps the watermark sticky across rig superset snapshots", () => {
+  const page = runRigEnvelopePage({ offset: 300, now: 0 });
+  const contract = page.sandbox.__localAvatarContract;
+  const snapshot = [{ s: 0, v: new Array(5).fill(1) }, { s: 500, v: [1, 0.5] }];
+  contract.acceptState(rigMarker({ sampleRate: 1_000, envelopes: [snapshot[0]] }));
+  page.clock.value = 3_000;
+  contract.acceptState(rigMarker({ sequence: 1, sampleIndex: 1_000, sampleRate: 1_000, envelopes: snapshot }));
+  page.frames.shift()(3_000);
+
+  page.clock.value = 3_100;
+  contract.acceptState(rigMarker({ sequence: 2, sampleIndex: 2_000, sampleRate: 1_000, envelopes: snapshot }));
+  const state = contract.getState();
+  assert.equal(state.envelope.playbackStartWall, 2_800);
+  assert.equal(state.envelope.windowCount, 2, "the next superset cannot restore the played tail");
+  page.frames.shift()(3_100);
+  assert.equal(contract.getState().rigMouth, 0, "the second accept remains in OFFSET pre-roll");
+});
+
+test("forward-only 16c does not re-shift the rig when the accepted frontier is ahead", () => {
+  const page = runRigEnvelopePage({ offset: 300, now: 0 });
+  const contract = page.sandbox.__localAvatarContract;
+  const prior = { s: 0, v: new Array(5).fill(1) };
+  contract.acceptState(rigMarker({ sampleRate: 1_000, envelopes: [prior] }));
+  page.clock.value = 5_000;
+  contract.acceptState(rigMarker({ sequence: 1, sampleIndex: 1_000, sampleRate: 1_000, envelopes: [prior, { s: 500, v: [1, 1] }] }));
+  const aligned = contract.getState().envelope.playbackStartWall;
+
+  page.clock.value = 5_100;
+  contract.acceptState(rigMarker({ sequence: 2, sampleIndex: 2_000, sampleRate: 1_000, envelopes: [prior, { s: 500, v: new Array(7).fill(1) }] }));
+  assert.equal(contract.getState().envelope.playbackStartWall, aligned);
+});
+
+test("forward-only 16d remains monotonic across no-fresh and consecutive fresh rig alignments", () => {
+  const floorPage = runRigEnvelopePage({ offset: 300, now: 0 });
+  const floorContract = floorPage.sandbox.__localAvatarContract;
+  const floorSnapshot = [{ s: 0, v: new Array(10).fill(1) }];
+  floorContract.acceptState(rigMarker({ sampleRate: 1_000, envelopes: floorSnapshot }));
+  const floorInitial = floorContract.getState().envelope.playbackStartWall;
+  floorPage.clock.value = 1_800;
+  floorContract.acceptState(rigMarker({ sequence: 1, sampleIndex: 1_000, sampleRate: 1_000, envelopes: floorSnapshot }));
+  assert.ok(floorContract.getState().envelope.playbackStartWall > floorInitial);
+
+  const freshPage = runRigEnvelopePage({ offset: 300, now: 0 });
+  const freshContract = freshPage.sandbox.__localAvatarContract;
+  const prior = { s: 0, v: new Array(5).fill(1) };
+  freshContract.acceptState(rigMarker({ sampleRate: 1_000, envelopes: [prior] }));
+  const freshInitial = freshContract.getState().envelope.playbackStartWall;
+  freshPage.clock.value = 5_000;
+  freshContract.acceptState(rigMarker({ sequence: 1, sampleIndex: 1_000, sampleRate: 1_000, envelopes: [prior, { s: 500, v: [1, 1] }] }));
+  const firstFresh = freshContract.getState().envelope.playbackStartWall;
+  freshPage.clock.value = 6_200;
+  freshContract.acceptState(rigMarker({ sequence: 2, sampleIndex: 2_000, sampleRate: 1_000, envelopes: [prior, { s: 500, v: [1, 1, 1, 1] }] }));
+  const secondFresh = freshContract.getState().envelope.playbackStartWall;
+  assert.ok(firstFresh > freshInitial);
+  assert.ok(secondFresh > firstFresh);
+  assert.equal(secondFresh, 5_800, "each accepted state applies the fresh formula once");
+});
+
+test("forward-only 16e start-aligns a resumed mid-utterance rig chunk", () => {
+  const page = runRigEnvelopePage({ offset: 300, now: 0 });
+  const contract = page.sandbox.__localAvatarContract;
+  const prefix = { s: 0, v: new Array(5).fill(1) };
+  contract.acceptState(rigMarker({ sampleRate: 1_000, envelopes: [prefix] }));
+
+  page.clock.value = 1_500;
+  contract.acceptState(rigMarker({ sequence: 1, sampleIndex: 1_000, sampleRate: 1_000, envelopes: [prefix, { s: 500, v: [1, 1] }] }));
+  assert.equal(contract.getState().envelope.playbackStartWall, 1_300, "the resumed chunk start, not its end, is aligned");
+  page.frames.shift()(1_801);
+  assert.ok(contract.getState().rigMouth > 0);
+});
+
+test("forward-only 16f preserves rig epoch, boundary, hole, and filtered-empty edges", () => {
+  const epochPage = runRigEnvelopePage({ offset: 300, now: 5_000 });
+  const epochContract = epochPage.sandbox.__localAvatarContract;
+  epochContract.acceptState(rigMarker({ outputEpoch: 1, sampleRate: 1_000, envelopes: [{ s: 0, v: [1] }] }));
+  assert.equal(epochContract.getState().envelope.playbackStartWall, 5_300, "an epoch change keeps the initial-anchor path");
+
+  const page = runRigEnvelopePage({ offset: 300, now: 0 });
+  const contract = page.sandbox.__localAvatarContract;
+  const prior = { s: 0, v: new Array(5).fill(1) };
+  const withHole = [prior, { s: 500, v: [1] }, { s: 700, v: [1] }];
+  contract.acceptState(rigMarker({ sampleRate: 1_000, envelopes: [prior] }));
+  page.clock.value = 5_000;
+  contract.acceptState(rigMarker({ sequence: 1, sampleIndex: 1_000, sampleRate: 1_000, envelopes: withHole }));
+  assert.equal(contract.getState().envelope.windowCount, 2, "ending exactly at freshStart drops and starting there stays");
+  page.frames.shift()(5_301);
+  assert.ok(contract.getState().rigMouth > 0);
+  page.frames.shift()(5_401);
+  assert.equal(contract.getState().rigMouth, 0, "an interior hole uses the flapper fallback");
+
+  page.clock.value = 5_100;
+  contract.acceptState(rigMarker({ sequence: 2, sampleIndex: 2_000, sampleRate: 1_000, envelopes: [prior] }));
+  const pending = contract.getState();
+  assert.equal(pending.rigEnvelopeActive, false);
+  assert.equal(pending.envelope.windowCount, 0);
+  assert.equal(pending.envelope.playbackStartWall, 4_800, "filtered-empty keeps the existing anchor and derived-state semantics");
+
+  page.clock.value = 6_500;
+  contract.acceptState(rigMarker({ sequence: 3, sampleIndex: 3_000, sampleRate: 1_000, envelopes: [...withHole, { s: 800, v: [1] }] }));
+  assert.equal(contract.getState().envelope.playbackStartWall, 6_000, "filtered-empty does not null the previous newest end");
+});
+
+test("forward-only 16g clears the rig watermark through every public reset path", () => {
+  const cases = ["cancel epoch", "cancel", "idle", "output epoch"];
+  for (const resetCase of cases) {
+    const page = runRigEnvelopePage({ offset: 300, now: 0 });
+    const contract = page.sandbox.__localAvatarContract;
+    const prior = { s: 0, v: new Array(5).fill(1) };
+    contract.acceptState(rigMarker({ sampleRate: 1_000, envelopes: [prior] }));
+    page.clock.value = 5_000;
+    contract.acceptState(rigMarker({ sequence: 1, sampleIndex: 1_000, sampleRate: 1_000, envelopes: [prior, { s: 500, v: [1] }] }));
+
+    page.clock.value = 6_000;
+    if (resetCase === "cancel epoch") {
+      contract.acceptState(rigMarker({ cancelEpoch: 1, sequence: 2, sampleIndex: 0, sampleRate: 1_000, envelopes: [{ s: 0, v: new Array(4).fill(1) }] }));
+    } else if (resetCase === "output epoch") {
+      contract.acceptState(rigMarker({ sequence: 2, outputEpoch: 1, sampleIndex: 0, sampleRate: 1_000, envelopes: [{ s: 0, v: new Array(4).fill(1) }] }));
+    } else {
+      contract.acceptState(rigMarker({ kind: resetCase, sequence: 2, sampleIndex: null, sampleRate: null }));
+      contract.acceptState(rigMarker({ sequence: 3, sampleIndex: 0, sampleRate: 1_000, envelopes: [{ s: 0, v: new Array(4).fill(1) }] }));
+    }
+    const state = contract.getState().envelope;
+    assert.equal(state.windowCount, 4, `${resetCase} keeps new-epoch low samples`);
+    assert.equal(state.playbackStartWall, 6_300, `${resetCase} re-runs the initial anchor path`);
+  }
+});
+
 test("generated page retains the frozen capability and network surface", () => {
   const script = shippedScript();
   const shipped = `${fs.readFileSync(HTML_FILE, "utf8")}\n${script}`;
@@ -511,8 +680,9 @@ function rigMarker({
   };
 }
 
-function runRigEnvelopePage({ dateNow = 0 } = {}) {
+function runRigEnvelopePage({ dateNow = 0, now = 0, offset = 0 } = {}) {
   const frames = [];
+  const clock = { value: now };
   const gl = createWebGlStub([], () => {});
   const context = {
     fillRect: () => {},
@@ -525,7 +695,7 @@ function runRigEnvelopePage({ dateNow = 0 } = {}) {
   const sandbox = {
     URLSearchParams,
     Date: { now: () => dateNow },
-    location: { pathname: "/local-avatar/index.html", search: "?offset=0", hash: "" },
+    location: { pathname: "/local-avatar/index.html", search: `?offset=${offset}`, hash: "" },
     history: { replaceState: () => {} },
     document: {
       getElementById: () => ({ width: 1280, height: 720, getContext: () => context }),
@@ -535,11 +705,11 @@ function runRigEnvelopePage({ dateNow = 0 } = {}) {
     fetch: async () => { throw new Error("state request is not expected"); },
     setTimeout: () => 1,
     clearTimeout: () => {},
-    performance: { now: () => 0 },
+    performance: { now: () => clock.value },
   };
   vm.createContext(sandbox);
   vm.runInContext(shippedScript(), sandbox, { filename: SCRIPT_FILE });
-  return { sandbox, frames };
+  return { sandbox, frames, clock };
 }
 
 async function runBackgroundPage(script, background, createBitmap = async () => ({ width: 640, height: 480 })) {
