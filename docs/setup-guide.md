@@ -692,6 +692,16 @@ LLM_RESPONSE_TIMEOUT_MS=60000
 - これは **既存の `openai-compatible` provider の設定**。Claude 専用 provider を追加するわけではない
 - 外部主催 meeting、不特定参加者 meeting、未信頼 gateway では `trustedAgentTools` を有効にしないこと
 
+### Hermes background delegation
+
+接続先が Hermes Agent の `api_server` である場合に限り、設定画面の `openai_session_header`（`config.json` では `llm.openaiCompatible.sessionHeader`）を `X-Hermes-Session-Id` に設定する。Meetmate はライブ会議の安定した session UUID をこのヘッダーと OpenAI body の `user` の両方へ送り、Hermes が background delegation の結果を後続の wake turn へ返せるようにする。
+
+VPS 側では、Hermes profile で `delegation` toolset を有効にする必要がある（現時点では `[hermes-cli]` profile のみ）。さらに `API_SERVER_KEY` を server-side に設定してから `api_server` を起動すること。
+
+> ⚠️ **非 Hermes endpoint には設定しないこと。** 設定すると、内部の meeting session UUID がその endpoint への全リクエストで送信される。既定値は空で、空のままならヘッダーは送信されない。
+
+ライブ E2E（会議 turn が即座に戻り、結果が後続の wake turn で届くこと）の確認は、上記 VPS prerequisite が有効になってから実施する。
+
 ### 4. 起動
 
 ```bash

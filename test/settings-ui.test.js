@@ -78,6 +78,25 @@ test("client field sets deep-match registry UI metadata", () => {
     .map((entry) => entry.id).sort());
 });
 
+test("Hermes session header setting is default-off and visible only for OpenAI-compatible providers", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const { REGISTRY_BY_ID } = require("../src/settings/registry");
+  const entry = REGISTRY_BY_ID.openai_session_header;
+
+  assert.equal(entry.defaultValue, "");
+  assert.deepEqual(entry.visibleWhen, { id: "llm_provider", value: "openai-compatible" });
+  assert.equal(entry.envAlias, null);
+  assert.equal(entry.schema.safeParse("").success, true);
+  assert.equal(entry.schema.safeParse("X-Hermes-Session-Id").success, true);
+  assert.equal(entry.schema.safeParse("invalid header name").success, false);
+  assert.equal(entry.schema.safeParse("x".repeat(129)).success, false);
+
+  const source = fs.readFileSync(path.join(__dirname, "..", "public", "settings.js"), "utf8");
+  assert.match(source, /openai_session_header: "セッションヘッダー名"/);
+  assert.match(source, /Hermes Agent api_server 専用/);
+});
+
 test("avatar settings mount exactly once in panel-avatar with pinned labels and next-join help", () => {
   const fs = require("node:fs");
   const path = require("node:path");

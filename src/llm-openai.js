@@ -44,11 +44,27 @@ function applyTrustedAgentHeader(request, options = {}) {
   };
 }
 
+function applySessionHeader(request, options = {}) {
+  const sessionValue = options.user ?? options.sessionUser;
+  if (typeof options.sessionHeader !== "string" || options.sessionHeader === ""
+      || typeof sessionValue !== "string" || sessionValue === "") return request;
+  return {
+    ...request,
+    options: {
+      ...request.options,
+      headers: {
+        ...request.options.headers,
+        [options.sessionHeader]: sessionValue,
+      },
+    },
+  };
+}
+
 function buildRequest(baseUrl, apiKey, body, options = {}) {
   const request = requestOptions(baseUrl, apiKey, body);
   return {
     transport: request.transport,
-    options: applyTrustedAgentHeader(request, options).options,
+    options: applySessionHeader(applyTrustedAgentHeader(request, options), options).options,
   };
 }
 

@@ -114,6 +114,21 @@ const SLACK_STATUS_CHANNEL = getEffectiveValue("slack_status_channel") || "";
 const SLACK_NOTIFY_ENABLED = getEffectiveValue("slack_notifications_enabled");
 const SUMMARY_ENABLED = getEffectiveValue("summary_enabled");
 
+const HTTP_HEADER_TOKEN = /^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,128}$/;
+let warnedInvalidSessionHeader = false;
+
+function normalizeSessionHeader(value) {
+  if (value === undefined || value === null || value === "") return null;
+  const normalized = typeof value === "string" ? value.trim() : null;
+  if (normalized === "") return null;
+  if (normalized && HTTP_HEADER_TOKEN.test(normalized)) return normalized;
+  if (!warnedInvalidSessionHeader) {
+    warnedInvalidSessionHeader = true;
+    console.warn("⚠️  Ignoring invalid llm.openaiCompatible.sessionHeader; expected an RFC 7230 header token of at most 128 characters.");
+  }
+  return null;
+}
+
 function validateSttProviderApiKey(options = {}) {
   const {
     env = null,
@@ -296,6 +311,10 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
       overrides.openaiCompatible?.trustedAgentTools
       ?? getEffectiveValue("openai_trusted_agent_tools"),
       false
+    ),
+    sessionHeader: normalizeSessionHeader(
+      overrides.openaiCompatible?.sessionHeader
+      ?? getEffectiveValue("openai_session_header")
     ),
     streamingEquivalentEnabled: boolOption(
       overrides.openaiCompatible?.streamingEquivalentEnabled

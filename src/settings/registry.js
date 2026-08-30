@@ -107,6 +107,7 @@ const SETTINGS_REGISTRY = Object.freeze([
   d("openai_base_url", "llm.openaiCompatible.baseUrl", exactUrl(["http:", "https:"], true), { envAlias: "OPENAI_COMPATIBLE_BASE_URL", visibleWhen: { id: "llm_provider", value: "openai-compatible" } }),
   d("openai_empty_response_retry", "llm.openaiCompatible.emptyResponseRetry", bool, { defaultValue: true, visibleWhen: { id: "llm_provider", value: "openai-compatible" } }),
   d("openai_trusted_agent_tools", "llm.openaiCompatible.trustedAgentTools", bool, { defaultValue: false, visibleWhen: { id: "llm_provider", value: "openai-compatible" } }),
+  d("openai_session_header", "llm.openaiCompatible.sessionHeader", z.string().regex(/^([A-Za-z0-9!#$%&'*+.^_`|~-]{1,128})?$/), { defaultValue: "", visibleWhen: { id: "llm_provider", value: "openai-compatible" } }),
   d("soniox_api_key", "stt.sonioxApiKey", secret, { ux: "basic", credential: "class-1", envAlias: "SONIOX_API_KEY", requiredAtMeetingStart: true, visibleWhen: { id: "stt_provider", value: "soniox" } }),
   d("deepgram_api_key", "stt.apiKey", secret, { ux: "basic", credential: "class-1", envAlias: "DEEPGRAM_API_KEY", requiredAtMeetingStart: true, visibleWhen: { id: "stt_provider", value: "deepgram" } }),
   d("stt_provider", "stt.provider", z.enum(["soniox", "deepgram"]), { ux: "basic", envAlias: "STT_PROVIDER", defaultValue: "soniox" }),

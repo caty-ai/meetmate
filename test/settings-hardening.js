@@ -142,6 +142,10 @@ function assertContractType(type, schema, id) {
   } else if (base === "hostname" || base === "hostname-or-empty") {
     valid = "meet.example.com"; invalid = "https://meet.example.com/path";
     assert.equal(schema.safeParse("").success, base.endsWith("-or-empty"), `${id} empty hostname`);
+  } else if (base === "header-token-or-empty") {
+    valid = "X-Hermes-Session-Id"; invalid = "invalid header name";
+    assert.equal(schema.safeParse("").success, true, `${id} empty header token`);
+    assert.equal(schema.safeParse("x".repeat(129)).success, false, `${id} header token length`);
   } else if (base === "secret") {
     valid = "secret"; invalid = "";
   } else if (base === "hex-color") {

@@ -180,6 +180,96 @@ test("trustedAgentTools adds the trusted gateway header only when explicitly ena
   assert.equal(captured[0].options.headers["X-Caty-Agent-Trust"], "trusted");
 });
 
+test("session header stays absent by default on complete and streaming requests", async (t) => {
+  const captured = [];
+  installMockServer(t, async (request) => {
+    captured.push(request);
+    return request.body.stream
+      ? { chunks: ['data: {"choices":[{"delta":{"content":"done"}}]}\n\ndata: [DONE]\n\n'] }
+      : { chunks: ['{"choices":[{"message":{"content":"done"}}]}'] };
+  });
+  const options = {
+    baseUrl: "http://mock.test",
+    apiKey: "key",
+    model: "model",
+    sessionUser: "meet-default-off",
+  };
+
+  await openai.complete([], options);
+  await collect(openai.streamChat([], options));
+
+  assert.equal(captured.length, 2);
+  for (const request of captured) {
+    assert.deepEqual(Object.keys(request.options.headers).sort(), ["Authorization", "Content-Length", "Content-Type"].sort());
+    assert.equal(request.body.user, "meet-default-off");
+  }
+});
+
+test("configured session header uses the exact name and session user on complete and streaming requests", async (t) => {
+  const captured = [];
+  installMockServer(t, async (request) => {
+    captured.push(request);
+    return request.body.stream
+      ? { chunks: ['data: {"choices":[{"delta":{"content":"done"}}]}\n\ndata: [DONE]\n\n'] }
+      : { chunks: ['{"choices":[{"message":{"content":"done"}}]}'] };
+  });
+  const options = {
+    baseUrl: "http://mock.test",
+    apiKey: "key",
+    model: "model",
+    sessionHeader: "X-Hermes-Session-Id",
+    sessionUser: "meet-hermes-session",
+  };
+
+  await openai.complete([], options);
+  await collect(openai.streamChat([], options));
+
+  assert.equal(captured.length, 2);
+  for (const request of captured) {
+    assert.equal(request.options.headers["X-Hermes-Session-Id"], "meet-hermes-session");
+    assert.equal(Object.keys(request.options.headers).includes("X-Hermes-Session-Id"), true);
+    assert.equal(request.body.user, "meet-hermes-session");
+  }
+});
+
+test("explicit user takes precedence over sessionUser for the session header and body", async (t) => {
+  let captured;
+  installMockServer(t, async (request) => {
+    captured = request;
+    return { chunks: ['{"choices":[{"message":{"content":"done"}}]}'] };
+  });
+
+  await openai.complete([], {
+    baseUrl: "http://mock.test",
+    apiKey: "key",
+    model: "model",
+    sessionHeader: "X-Hermes-Session-Id",
+    sessionUser: "session-fallback",
+    user: "explicit-user",
+  });
+
+  assert.equal(captured.options.headers["X-Hermes-Session-Id"], "explicit-user");
+  assert.equal(captured.body.user, "explicit-user");
+});
+
+test("configured session header stays absent without a session value", async (t) => {
+  let captured;
+  installMockServer(t, async (request) => {
+    captured = request;
+    return { chunks: ['{"choices":[{"message":{"content":"done"}}]}'] };
+  });
+
+  await openai.complete([], {
+    baseUrl: "http://mock.test",
+    apiKey: "key",
+    model: "model",
+    sessionHeader: "X-Hermes-Session-Id",
+  });
+
+  assert.equal(Object.hasOwn(captured.options.headers, "X-Hermes-Session-Id"), false);
+  assert.equal(Object.hasOwn(captured.body, "user"), false);
+});
+
 test("completion paths add exactly one v1 segment", async (t) => {
   const paths = [];
   installMockServer(t, async ({ options }) => {

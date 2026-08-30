@@ -55,6 +55,7 @@ test("LLM config uses the boot resolver snapshot and ignores raw-agent bypasses"
     assert.equal(config.llm.historyMaxTurns, 12);
     assert.equal(config.llm.openaiCompatible.emptyResponseRetry, true);
     assert.equal(config.llm.openaiCompatible.trustedAgentTools, false);
+    assert.equal(config.llm.openaiCompatible.sessionHeader, null);
     assert.equal(config.llm.openaiCompatible.streamingEquivalentEnabled, true);
 
     const configJson = {
@@ -69,6 +70,7 @@ test("LLM config uses the boot resolver snapshot and ignores raw-agent bypasses"
           apiKey: "legacy-json-key-must-be-ignored",
           emptyResponseRetry: false,
           trustedAgentTools: true,
+          sessionHeader: "X-Hermes-Session-Id",
         },
       },
     };
@@ -93,6 +95,7 @@ test("LLM config uses the boot resolver snapshot and ignores raw-agent bypasses"
           apiKey: null,
           emptyResponseRetry: false,
           trustedAgentTools: true,
+          sessionHeader: "X-Hermes-Session-Id",
           streamingEquivalentEnabled: true,
         },
       }
@@ -112,6 +115,7 @@ test("LLM config uses the boot resolver snapshot and ignores raw-agent bypasses"
       apiKey: "env-key",
       emptyResponseRetry: false,
       trustedAgentTools: true,
+      sessionHeader: "X-Hermes-Session-Id",
       streamingEquivalentEnabled: true,
     });
     assert.equal(config.llm.model, "json-model");
@@ -141,10 +145,40 @@ test("LLM config uses the boot resolver snapshot and ignores raw-agent bypasses"
       apiKey: "env-key",
       emptyResponseRetry: false,
       trustedAgentTools: true,
+      sessionHeader: "X-Hermes-Session-Id",
       streamingEquivalentEnabled: true,
     });
   } finally {
     console.error = originalError;
+    restore();
+    delete require.cache[configModulePath];
+  }
+});
+
+test("OpenAI-compatible session header is trimmed and invalid overrides warn once then fail closed", () => {
+  const restore = setEnv(CLEAN_LLM_ENV);
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => warnings.push(args.join(" "));
+  try {
+    const { getPipelineConfig } = freshConfig({
+      llm: { provider: "openai-compatible", model: "standalone-model" },
+    });
+    const trimmed = getPipelineConfig({
+      openaiCompatible: { sessionHeader: "  X-Hermes-Session-Id  " },
+    });
+    assert.equal(trimmed.llm.openaiCompatible.sessionHeader, "X-Hermes-Session-Id");
+
+    for (let index = 0; index < 2; index += 1) {
+      const invalid = getPipelineConfig({
+        openaiCompatible: { sessionHeader: "invalid header name" },
+      });
+      assert.equal(invalid.llm.openaiCompatible.sessionHeader, null);
+    }
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /invalid llm\.openaiCompatible\.sessionHeader/);
+  } finally {
+    console.warn = originalWarn;
     restore();
     delete require.cache[configModulePath];
   }
