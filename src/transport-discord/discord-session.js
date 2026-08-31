@@ -10,6 +10,9 @@ const { SessionLifecycle } = require("../session-events");
 const { SlackNotifier } = require("../slack-notifier");
 const { summarizeConversation } = require("../summarizer");
 const { getEffectiveValue, meaningful, resolveDynamicSlackToken } = require("../settings/resolver");
+const gatewayEvents = require("../gateway-events");
+const { recordEvent } = require("../metrics");
+const { createGatewaySessionTracker } = require("../gateway-session-tracker");
 const sessionCoordinator = require("../session-coordinator");
 const { sessionUserFor } = require("../session-user");
 const { CAPABILITIES, TRANSPORT } = require("./constants");
@@ -109,6 +112,27 @@ function createDiscordSessionManager(options = {}) {
     return voice.entersState(connection, voice.VoiceConnectionStatus.Ready, timeoutMs);
   });
   const onSessionReady = options.onSessionReady || (() => {});
+  const gatewayEventsImpl = options.gatewayEvents || gatewayEvents;
+  const gatewaySessions = new Map();
+  const gatewayConnections = new Map();
+  const getGatewayConfigForProfileImpl = options.getGatewayConfigForProfile || ((profile) => {
+    const config = getPipelineConfigImpl({}, null, profile);
+    return {
+      ...(config.gatewayEvents || {}),
+      name: config.llm?.provider,
+      openclawUrl: config.llm?.gateway?.url,
+      openclawToken: config.llm?.gateway?.token,
+    };
+  });
+  const gatewayTracker = options.gatewayTracker || createGatewaySessionTracker({
+    gatewayEvents: gatewayEventsImpl,
+    recordEvent: options.recordEvent || recordEvent,
+    sessions: gatewaySessions,
+    activeConnections: gatewayConnections,
+    getGatewayConfigForProfile: getGatewayConfigForProfileImpl,
+    getDefaultAgentId: () => resolveAgentProfileImpl()?.agentId || "agent",
+    appendLateResult: () => false,
+  });
   let active = null;
   let loginChain = Promise.resolve();
 
@@ -124,8 +148,6 @@ function createDiscordSessionManager(options = {}) {
       session: active
         ? {
             sessionId: active.id,
-            guildId: active.guildId,
-            channelId: active.channelId,
             state: active.lifecycle.state,
             lifecycle: active.lifecycle.state,
           }
@@ -174,10 +196,20 @@ function createDiscordSessionManager(options = {}) {
       if (!session.lifecycle.isTerminal) {
         session.lifecycle.transition(terminalState, { reason });
       }
-      await teardownSession(session, { destroyConnection: false });
+      await teardownSession(session, { destroyConnection: true });
     };
 
-    session.connection.on?.("stateChange", async (oldState, newState) => {
+    const bindSafe = (emitter, event, handler) => {
+      emitter?.on?.(event, async (...args) => {
+        try {
+          await handler(...args);
+        } catch (error) {
+          console.error(`Discord ${event} listener failed: ${error.message || error}`);
+        }
+      });
+    };
+
+    bindSafe(session.connection, "stateChange", async (oldState, newState) => {
       if (!isCurrent(session)) return;
       const status = newState?.status ?? newState;
       if (status === readyStatus) {
@@ -198,25 +230,25 @@ function createDiscordSessionManager(options = {}) {
       }
     });
 
-    session.connection.on?.("error", async () => {
+    bindSafe(session.connection, "error", async () => {
       await finalize("connection_error");
     });
 
-    session.connection.on?.("invalidated", async () => {
+    bindSafe(session.client, "invalidated", async () => {
       await finalize("gateway_invalidated");
     });
 
-    session.client.on?.("channelDelete", async (channel) => {
+    bindSafe(session.client, "channelDelete", async (channel) => {
       if (!isCurrent(session)) return;
       if (channel?.id === session.channelId) {
         await finalize("channel_deleted");
       }
     });
 
-    session.client.on?.("voiceStateUpdate", async (oldState, newState) => {
+    bindSafe(session.client, "voiceStateUpdate", async (oldState, newState) => {
       if (!isCurrent(session)) return;
       const liveState = newState?.id === session.botUserId ? newState : oldState?.id === session.botUserId ? oldState : null;
-      if (liveState && !isGuildAllowed(session.allowlist, String(liveState.guild?.id || session.guildId))) {
+      if (liveState && !isGuildAllowed(session.allowlist, String(liveState.guild?.id || ""))) {
         if (!session.lifecycle.isTerminal) {
           session.lifecycle.transition("failed", { reason: "allowlist_abort" });
         }
@@ -233,16 +265,23 @@ function createDiscordSessionManager(options = {}) {
         return;
       }
 
-      if (newState?.channelId === session.channelId && newState?.member?.user?.bot !== true && session.audioIn) {
+      const oldChannelId = oldState?.channelId || null;
+      const newChannelId = newState?.channelId || null;
+      const newUserId = newState?.member?.user?.id;
+      const oldUserId = oldState?.member?.user?.id;
+      const joined = newChannelId === session.channelId && oldChannelId !== session.channelId;
+      const left = oldChannelId === session.channelId && newChannelId !== session.channelId;
+
+      if (joined && newUserId && newState.member.user.bot !== true && session.audioIn) {
         session.audioIn.subscribeUser(session.receiver, {
-          id: String(newState.member.user.id),
+          id: String(newUserId),
           displayName: newState.member.displayName || newState.member.user.username || undefined,
           isBot: false,
         });
       }
 
-      if (oldState?.channelId === session.channelId && oldState?.member?.user?.bot !== true && session.audioIn) {
-        session.audioIn.unsubscribeUser(String(oldState.member.user.id));
+      if (left && oldUserId && oldState.member.user.bot !== true && session.audioIn) {
+        session.audioIn.unsubscribeUser(String(oldUserId));
       }
     });
   }
@@ -266,6 +305,9 @@ function createDiscordSessionManager(options = {}) {
     if (!session || session.teardownStarted) return;
     session.teardownStarted = true;
     session.abortController.abort();
+    gatewayConnections.delete(session.id);
+    gatewayTracker.untrackGatewaySession(session.id);
+    gatewaySessions.delete(session.id);
     session.audioIn?.close();
     session.audioOut?.close();
     session.pipeline?.close?.();
@@ -548,6 +590,9 @@ function createDiscordSessionManager(options = {}) {
       sessionRecord.pipeline.on?.("playback_cancelled", (event) => {
         sessionRecord.playbackEvents.emit("playback_cancelled", event);
       });
+      gatewaySessions.set(sessionId, sessionRecord.session);
+      gatewayConnections.set(sessionId, { handler: sessionRecord.pipeline });
+      gatewayTracker.trackGatewaySession(sessionRecord.session, profile, TRANSPORT);
       sessionRecord.audioIn = createAudioInImpl({
         sendAudio: sessionRecord.pipeline.sendAudio.bind(sessionRecord.pipeline),
         loadVoiceModule: () => voice,

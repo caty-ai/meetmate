@@ -84,6 +84,8 @@ test("audio-out uses the opusscript fallback path and emits player-paced opus re
   assert.equal(harness.resources.length, 1);
   assert.equal(harness.resources[0].options.inputType, "opus");
   assert.equal(harness.resources[0].stream.readable, true);
+  audioOut.finish();
+  assert.equal(audioOut._test.getCurrentResource(), null);
 });
 
 test("audio-out keys purge off playback_cancelled and rejects late audio for cancelled epochs only", async () => {
@@ -101,6 +103,8 @@ test("audio-out keys purge off playback_cancelled and rejects late audio for can
   events.emit("playback_cancelled", { outputEpoch: 2 });
   const resourcesAfterCancel = harness.resources.length;
   audioOut.onAudio(monoTone(24000, 440, 0.08), { outputEpoch: 2 });
+  assert.equal(harness.resources.length, resourcesAfterCancel);
+  audioOut.onAudio(monoTone(24000, 440, 0.08));
   assert.equal(harness.resources.length, resourcesAfterCancel);
 
   audioOut.onAudio(monoTone(24000, 440, 0.08), { outputEpoch: 3 });

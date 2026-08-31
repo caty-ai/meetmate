@@ -640,33 +640,33 @@ function appendToMemory(session) {
 
 /**
  * Request bot to leave the meeting via Attendee API (POST /api/v1/bots/{id}/leave).
- * Fire-and-forget — logs result but does not throw.
+ * Resolves on response/error/timeout; unordered callers may ignore the fulfilled promise.
  */
-function requestBotLeave(botId, reason, attendeeKey) {
-  const apiKey = attendeeKey || ATTENDEE_API_KEY;
-  const body = JSON.stringify({});
-  const options = {
-    hostname: ATTENDEE_API_BASE_URL,
-    port: 443,
-    path: `/api/v1/bots/${botId}/leave`,
-    method: "POST",
-    headers: {
-      Authorization: `Token ${apiKey}`,
-      "Content-Type": "application/json",
-      "Content-Length": Buffer.byteLength(body),
-    },
-  };
-  const req = https.request(options, (res) => {
-    let data = "";
-    res.on("data", (c) => (data += c));
-    res.on("end", () => {
-      console.log(`🚪  Attendee bot leave (${reason}): ${botId} → ${res.statusCode} ${data.slice(0, 200)}`);
-    });
+function requestBotLeave(botId, reason, attendeeKey, timeoutMs = 10_000) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (result) => { if (!settled) { settled = true; resolve(result); } }; const apiKey = attendeeKey || ATTENDEE_API_KEY;
+    const body = JSON.stringify({});
+    const options = { hostname: ATTENDEE_API_BASE_URL, port: 443, path: `/api/v1/bots/${botId}/leave`, method: "POST",
+      headers: { Authorization: `Token ${apiKey}`, "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) } };
+    try {
+      const req = https.request(options, (res) => {
+        let data = "";
+        res.on("data", (c) => (data += c));
+        res.on("error", (error) => finish({ ok: false, error }));
+        res.on("end", () => {
+          console.log(`🚪  Attendee bot leave (${reason}): ${botId} → ${res.statusCode} ${data.slice(0, 200)}`);
+          finish({ ok: true, statusCode: res.statusCode });
+        });
+      });
+      req.on("error", (error) => { console.error(`❌  Attendee bot leave error (${reason}): ${error.message}`); finish({ ok: false, error }); });
+      req.setTimeout(timeoutMs, () => {
+        const error = new Error(`Attendee bot leave timeout after ${timeoutMs}ms`);
+        req.destroy?.(error); finish({ ok: false, error });
+      });
+      req.write(body); req.end();
+    } catch (error) { console.error(`❌  Attendee bot leave error (${reason}): ${error.message}`); finish({ ok: false, error }); }
   });
-  req.on("error", (err) => console.error(`❌  Attendee bot leave error (${reason}): ${err.message}`));
-  req.setTimeout(10_000, () => req.destroy());
-  req.write(body);
-  req.end();
 }
 
 function sendAttendeeChatMessage(botId, message, attendeeKey) {
@@ -1445,7 +1445,7 @@ async function handleHttp(req, res) {
       if (failedLifecycle && !failedLifecycle.isTerminal) {
         failedLifecycle.transition("failed", { reason: "bot_launch_failed", statusCode: attendeeResult.statusCode });
       }
-      rollbackJoinAttempt({
+      await rollbackJoinAttempt({
         sessionId,
         lease,
         leaseCreated,
@@ -1456,7 +1456,7 @@ async function handleHttp(req, res) {
       return;
     } catch (err) {
       try { localAvatarSession?.close("join_failed"); } catch { /* visual cleanup is best-effort */ }
-      rollbackJoinAttempt({
+      await rollbackJoinAttempt({
         sessionId,
         lease,
         leaseCreated,
@@ -1487,24 +1487,26 @@ function deleteSessionAndRelease(sessionId) {
   return true;
 }
 
-function rollbackJoinAttempt({ sessionId, lease, leaseCreated, sessionInserted, lifecycleCreated, botId, attendeeKey }) {
-  if (!leaseCreated) return;
+async function rollbackJoinAttempt({ sessionId, lease, leaseCreated, sessionInserted, lifecycleCreated, botId, attendeeKey }) {
+  if (!leaseCreated) {
+    if (sessionInserted) {
+      sessionBotIds.delete(sessionId);
+      if (lifecycleCreated) meetLifecycles.delete(sessionId);
+      meetingSessions.delete(sessionId);
+    }
+    return;
+  }
   try {
     if (botId) {
-      requestBotLeave(botId, "join_failed", attendeeKey);
+      await requestBotLeave(botId, "join_failed", attendeeKey, 2_000);
     }
-  } catch {
-    // Vendor cleanup is best-effort; registry cleanup still must run.
   } finally {
     sessionBotIds.delete(sessionId);
-    if (lifecycleCreated) {
-      meetLifecycles.delete(sessionId);
-    }
+    if (lifecycleCreated) meetLifecycles.delete(sessionId);
     if (sessionInserted) {
-      deleteSessionAndRelease(sessionId);
-    } else if (leaseCreated) {
-      sessionCoordinator.release(lease);
+      meetingSessions.delete(sessionId);
     }
+    sessionCoordinator.release(lease);
   }
 }
 

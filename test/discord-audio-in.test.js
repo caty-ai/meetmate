@@ -2,6 +2,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const { EventEmitter } = require("node:events");
 
 const { createAudioIn } = require("../src/transport-discord/audio-in");
 const { goertzelDb, naiveDecimate, splitBufferRandomly, stereoTone48k } = require("./helpers/discord-audio-fixtures");
@@ -193,4 +194,46 @@ test("audio-in resampler suppresses aliasing compared with naive 3:1 decimation"
 
   assert.equal(filtered.length > 0, true);
   assert.ok(filteredAlias <= naiveAlias - 20, `expected filtered alias (${filteredAlias}) <= naive alias (${naiveAlias}) - 20 dB`);
+});
+
+test("audio-in keeps duplicate subscriptions stable and retires only after five consecutive decode failures", () => {
+  const stream = new EventEmitter();
+  stream.destroyCalls = 0;
+  stream.destroy = () => { stream.destroyCalls += 1; };
+  let subscribeCalls = 0;
+  const audioIn = createAudioIn({
+    sendAudio() {},
+    subscribeStream() {
+      subscribeCalls += 1;
+      return stream;
+    },
+    codecLoader() {
+      return {
+        implementation: "decode-threshold",
+        createDecoder() {
+          return {
+            decode(packet) {
+              if (packet[0] === 0) throw new Error("bad opus");
+              return Buffer.alloc(3840);
+            },
+          };
+        },
+      };
+    },
+  });
+  const speaker = { id: "speaker-1", displayName: "Speaker", isBot: false };
+
+  assert.equal(audioIn.subscribeUser({}, speaker), stream);
+  assert.equal(audioIn.subscribeUser({}, speaker), stream);
+  assert.equal(subscribeCalls, 1);
+
+  for (let index = 0; index < 4; index += 1) stream.emit("data", Buffer.from([0]));
+  assert.deepEqual(audioIn._test.getTrackedUserIds(), ["speaker-1"]);
+  stream.emit("data", Buffer.from([1]));
+  for (let index = 0; index < 4; index += 1) stream.emit("data", Buffer.from([0]));
+  assert.deepEqual(audioIn._test.getTrackedUserIds(), ["speaker-1"]);
+
+  stream.emit("data", Buffer.from([0]));
+  assert.deepEqual(audioIn._test.getTrackedUserIds(), []);
+  assert.equal(stream.destroyCalls, 1);
 });

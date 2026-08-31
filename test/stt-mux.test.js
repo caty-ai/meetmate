@@ -57,6 +57,14 @@ function pcmWindow(sample, sampleCount = 320) {
   return buffer;
 }
 
+function alternatingPcm(positive, negative, sampleCount = 320) {
+  const buffer = Buffer.alloc(sampleCount * 2);
+  for (let index = 0; index < sampleCount; index += 1) {
+    buffer.writeInt16LE(index % 2 === 0 ? positive : negative, index * 2);
+  }
+  return buffer;
+}
+
 function lastUserEntry(session) {
   return [...session.conversationLog].reverse().find((entry) => entry.role === "user") || null;
 }
@@ -242,27 +250,25 @@ test("stt mux evicts only on utterance_end for the current LRU slot, preserves s
     }
     const [, slotA, slotB] = sttInstances;
 
-    pipeline.sendAudio(chunk, { speaker: speaker("b") });
+    pipeline.sendAudio(chunk, { speaker: speaker("a") });
     slotB.emit("transcript", "発話中", true, 0.99);
     await delay(5);
     assert.deepEqual(pipeline._test.getSttMuxState().slots, ["a", "b", "c", "d"]);
 
     slotB.emit("utterance_end", "ただの発話");
-    await delay(15);
-    assert.deepEqual(pipeline._test.getSttMuxState().slots, ["a", "b", "c", "d"]);
+    await waitUntil(() => !pipeline._test.getSttMuxState().slots.includes("b"));
+    assert.deepEqual(pipeline._test.getSttMuxState().slots, ["a", "c", "d"]);
     assert.deepEqual(
       Object.keys(lastUserEntry(session).speaker).sort(),
       ["displayName", "id", "isBot", "platform"]
     );
-
-    slotA.emit("utterance_end", "別の発話");
-    await waitUntil(() => !pipeline._test.getSttMuxState().slots.includes("a"));
-    assert.deepEqual(pipeline._test.getSttMuxState().slots, ["b", "c", "d"]);
-    assert.equal(slotA.closeCalls, 1);
+    assert.equal(lastUserEntry(session).speaker.id, "b");
+    assert.equal(slotA.closeCalls, 0);
+    assert.equal(slotB.closeCalls, 1);
 
     pipeline.sendAudio(chunk, { speaker: speaker("e") });
     assert.equal(sttInstances.length, 6);
-    assert.deepEqual(pipeline._test.getSttMuxState().slots, ["b", "c", "d", "e"]);
+    assert.deepEqual(pipeline._test.getSttMuxState().slots, ["a", "c", "d", "e"]);
   });
 });
 
@@ -354,22 +360,21 @@ test("mixed overflow clamps at flush and resets between separated bursts", { con
     let now = baseNow;
     Date.now = () => now;
     try {
-      const pos = pcmWindow(30_000);
-      const neg = pcmWindow(-30_000);
+      const overflow = alternatingPcm(30_000, -30_000);
       const next = pcmWindow(1_000);
       for (const id of ["a", "b", "c", "d"]) {
-        pipeline.sendAudio(pos, { speaker: speaker(id) });
+        pipeline.sendAudio(overflow, { speaker: speaker(id) });
       }
 
-      pipeline.sendAudio(pos, { speaker: speaker("e") });
-      pipeline.sendAudio(pos, { speaker: speaker("f") });
-      pipeline.sendAudio(neg, { speaker: speaker("g") });
+      pipeline.sendAudio(overflow, { speaker: speaker("e") });
+      pipeline.sendAudio(overflow, { speaker: speaker("f") });
       setTimeout(() => { now = baseNow + 25; }, 10);
       await delay(40);
 
       assert.equal(sttInstances[0].sent.length, 1);
       assert.equal(sttInstances[0].sent[0].length, 640);
-      assert.equal(sttInstances[0].sent[0].readInt16LE(0), 30_000);
+      assert.equal(sttInstances[0].sent[0].readInt16LE(0), 32_767);
+      assert.equal(sttInstances[0].sent[0].readInt16LE(2), -32_768);
 
       now = baseNow + 60;
       pipeline.sendAudio(next, { speaker: speaker("h") });

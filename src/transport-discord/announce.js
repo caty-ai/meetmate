@@ -16,11 +16,10 @@ function renderAnnounceText(agentDisplayName, wakeWords) {
   return `私は${displayName}です。${callout}音声を文字起こしして返答します。会話の記録は運営者に保存されます。`;
 }
 
-function readPlaybackDuration(player) {
+function readPlaybackDuration(state) {
   return Number(
-    player?.state?.resource?.playbackDuration
-    ?? player?.state?.playbackDuration
-    ?? player?.playbackDuration
+    state?.resource?.playbackDuration
+    ?? state?.playbackDuration
     ?? 0
   );
 }
@@ -53,6 +52,8 @@ async function runAnnounce(options = {}) {
   let timedOut = false;
   let aborted = signal?.aborted === true;
   let timeout = null;
+  let maxPlaybackDuration = 0;
+  let cleanup = () => {};
 
   const timeoutResult = new Promise((resolve) => {
     timeout = timers.setTimeout(() => {
@@ -63,14 +64,13 @@ async function runAnnounce(options = {}) {
   });
 
   const waitForIdle = new Promise((resolve) => {
-    const cleanup = () => {
+    cleanup = () => {
       player?.removeListener?.("stateChange", onStateChange);
       player?.removeListener?.("error", onError);
       signal?.removeEventListener?.("abort", onAbort);
     };
 
     const finish = (result) => {
-      cleanup();
       resolve(result);
     };
 
@@ -86,13 +86,18 @@ async function runAnnounce(options = {}) {
 
     const onStateChange = (oldState, newState) => {
       const status = newState?.status ?? newState;
+      maxPlaybackDuration = Math.max(
+        maxPlaybackDuration,
+        readPlaybackDuration(oldState),
+        readPlaybackDuration(newState)
+      );
       if (status === playingStatus) {
         sawPlaying = true;
       }
       if (status === idleStatus && sawPlaying) {
         finish({
           ok: true,
-          playbackDuration: readPlaybackDuration(player),
+          playbackDuration: Math.max(readPlaybackDuration(oldState), maxPlaybackDuration),
         });
       }
     };
@@ -116,47 +121,49 @@ async function runAnnounce(options = {}) {
     (error) => ({ ok: false, code: signal?.aborted ? "aborted" : "synthesis_error", error }),
   );
 
-  const synthResult = await Promise.race([synthPromise, timeoutResult]);
-  if (synthResult.ok !== true) {
-    if (timedOut) {
-      signal?.throwIfAborted?.();
+  try {
+    const synthResult = await Promise.race([synthPromise, timeoutResult]);
+    if (synthResult.ok !== true) {
+      if (timedOut) {
+        signal?.throwIfAborted?.();
+      }
+      return { ok: false, code: synthResult.code, error: synthResult.error || null, totalBytes };
     }
-    timers.clearTimeout(timeout);
-    return { ok: false, code: synthResult.code, error: synthResult.error || null, totalBytes };
-  }
-  if (totalBytes === 0) {
-    timers.clearTimeout(timeout);
-    return { ok: false, code: "zero_audio", totalBytes, playbackDuration: 0 };
-  }
+    if (totalBytes === 0) {
+      return { ok: false, code: "zero_audio", totalBytes, playbackDuration: 0 };
+    }
 
-  audioOut.finish();
-  const idleResult = await Promise.race([waitForIdle, timeoutResult]);
-  timers.clearTimeout(timeout);
-  if (!idleResult.ok) {
+    audioOut.finish();
+    const idleResult = await Promise.race([waitForIdle, timeoutResult]);
+    if (!idleResult.ok) {
+      return {
+        ok: false,
+        code: timedOut ? "timeout" : aborted ? "aborted" : playerError ? "player_error" : idleResult.code,
+        error: playerError || idleResult.error || null,
+        totalBytes,
+      };
+    }
+
+    const expectedDurationMs = totalBytes === 0 ? 0 : (totalBytes / 2 / sampleRate) * 1000;
+    const playbackDuration = idleResult.playbackDuration || 0;
+    if (!sawPlaying) {
+      return { ok: false, code: "never_played", totalBytes, playbackDuration };
+    }
+    if (playbackDuration < expectedDurationMs * 0.8) {
+      return { ok: false, code: "duration_short", totalBytes, playbackDuration, expectedDurationMs };
+    }
+
     return {
-      ok: false,
-      code: timedOut ? "timeout" : aborted ? "aborted" : playerError ? "player_error" : idleResult.code,
-      error: playerError || idleResult.error || null,
+      ok: true,
+      text,
       totalBytes,
+      playbackDuration,
+      expectedDurationMs,
     };
+  } finally {
+    timers.clearTimeout(timeout);
+    cleanup();
   }
-
-  const expectedDurationMs = totalBytes === 0 ? 0 : (totalBytes / 2 / sampleRate) * 1000;
-  const playbackDuration = idleResult.playbackDuration || 0;
-  if (!sawPlaying) {
-    return { ok: false, code: "never_played", totalBytes, playbackDuration };
-  }
-  if (playbackDuration < expectedDurationMs * 0.8) {
-    return { ok: false, code: "duration_short", totalBytes, playbackDuration, expectedDurationMs };
-  }
-
-  return {
-    ok: true,
-    text,
-    totalBytes,
-    playbackDuration,
-    expectedDurationMs,
-  };
 }
 
 module.exports = {

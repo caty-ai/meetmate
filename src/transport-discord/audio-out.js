@@ -152,7 +152,10 @@ function createAudioOut(options = {}) {
 
   function onAudio(buffer, metadata = {}) {
     if (closed || !Buffer.isBuffer(buffer) || buffer.length === 0 || buffer.length % 2 !== 0) return;
-    if (Number.isFinite(lastCancelledEpoch) && metadata.outputEpoch <= lastCancelledEpoch) return;
+    if (
+      Number.isFinite(lastCancelledEpoch)
+      && (!Number.isFinite(metadata.outputEpoch) || metadata.outputEpoch <= lastCancelledEpoch)
+    ) return;
     const transformed = createStereoFrameBuffer(sampleRate, resampler, pcmCarry, buffer);
     pcmCarry = transformed.carry;
     if (transformed.stereo.length > 0) {
@@ -175,7 +178,10 @@ function createAudioOut(options = {}) {
   return {
     implementation: codec.implementation,
     finish() {
-      currentStream?.end();
+      const stream = currentStream;
+      currentStream = null;
+      currentResource = null;
+      stream?.end();
     },
     getPlayer() {
       return player;

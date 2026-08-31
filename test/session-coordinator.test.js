@@ -299,7 +299,10 @@ async function withMeetRoutesHarness(fn, options = {}) {
       const response = new EventEmitter();
       response.statusCode = requestOptions.path === "/api/v1/bots" ? 201 : 200;
       callback(response);
-      queueMicrotask(() => {
+      queueMicrotask(async () => {
+        if (requestOptions.path?.includes("/leave") && options.leaveResponseGate) {
+          await options.leaveResponseGate;
+        }
         const body = requestOptions.path === "/api/v1/bots" ? JSON.stringify({ id: "bot-115" }) : "{}";
         response.emit("data", body);
         response.emit("end");
@@ -404,7 +407,7 @@ async function withMeetRoutesHarness(fn, options = {}) {
 
 function createDiscordHarness(sessionCoordinator) {
   const player = new EventEmitter();
-  player.state = { status: "idle", resource: { playbackDuration: 0 } };
+  player.state = { status: "idle" };
   const connection = new EventEmitter();
   connection.receiver = { subscribe() { return new EventEmitter(); } };
   connection.subscribe = () => {};
@@ -441,10 +444,14 @@ function createDiscordHarness(sessionCoordinator) {
     createAudioOut: () => ({
       onAudio() {},
       finish() {
-        player.state = { status: "playing", resource: { playbackDuration: 0 } };
-        player.emit("stateChange", { status: "idle" }, { status: "playing" });
-        player.state = { status: "idle", resource: { playbackDuration: 900 } };
-        queueMicrotask(() => player.emit("stateChange", { status: "playing" }, { status: "idle" }));
+        const idleState = { status: "idle" };
+        const playingState = { status: "playing", resource: { playbackDuration: 900 } };
+        player.state = playingState;
+        player.emit("stateChange", idleState, playingState);
+        queueMicrotask(() => {
+          player.state = idleState;
+          player.emit("stateChange", playingState, idleState);
+        });
       },
       getPlayer() {
         return player;
@@ -605,6 +612,20 @@ test("retained attendee sessions hold the shared lease until finalize settles on
   });
 });
 
+test("finalize while gateway retention is active keeps the lease and coordinator owner unchanged", async () => {
+  await withMeetRoutesHarness(async (harness) => {
+    const joined = await harness.join();
+    assert.equal(joined.statusCode, 200);
+    harness.retainSession();
+
+    harness.routes._test.finalizeSessionIfInactive(FIXED_SESSION_ID);
+
+    assert.deepEqual(harness.coordinator.api.active(), { transport: "meet", sessionId: FIXED_SESSION_ID });
+    const active = await harness.activeSession();
+    assert.equal(active.text.includes(FIXED_SESSION_ID), true);
+  });
+});
+
 test("vendor-aware catch rollback requests bot leave and still clears lifecycle and lease when leave throws", async () => {
   await withMeetRoutesHarness(async (harness) => {
     const failed = await harness.join({}, { throwOnFirstSuccessEnd: true });
@@ -624,28 +645,34 @@ test("vendor-aware catch rollback requests bot leave and still clears lifecycle 
   }, {
     throwLeaveRequest: true,
   });
+
+  let releaseLeave;
+  const leaveResponseGate = new Promise((resolve) => { releaseLeave = resolve; });
+  await withMeetRoutesHarness(async (harness) => {
+    const pendingJoin = harness.join({}, { throwOnFirstSuccessEnd: true });
+    while (!harness.httpsRequests.some((item) => String(item.options.path || "").includes("/leave"))) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    assert.deepEqual(harness.coordinator.api.active(), { transport: "meet", sessionId: FIXED_SESSION_ID });
+    assert.equal(harness.coordinator.state.releaseCalls, 0);
+    releaseLeave();
+    const failed = await pendingJoin;
+    assert.equal(failed.statusCode, 500);
+    assert.equal(harness.coordinator.api.active(), null);
+  }, { leaveResponseGate });
 });
 
-test("failed re-entry rollback does not release a reused lease or delete the pre-existing attendee record", async () => {
+test("real join reuse rollback removes its fresh registry entry without releasing the pre-existing coordinator lease", async () => {
+  const reusedLease = Object.freeze({ transport: "meet", sessionId: FIXED_SESSION_ID });
   await withMeetRoutesHarness(async (harness) => {
-    const joined = await harness.join();
-    assert.equal(joined.statusCode, 200);
-
-    const reusedLease = harness.coordinator.api.active();
-    harness.routes._test.rollbackJoinAttempt({
-      sessionId: FIXED_SESSION_ID,
-      lease: reusedLease,
-      leaseCreated: false,
-      sessionInserted: true,
-      lifecycleCreated: true,
-      botId: "bot-115",
-      attendeeKey: "attendee-secret",
-    });
+    const failed = await harness.join({}, { throwOnFirstSuccessEnd: true });
+    assert.equal(failed.statusCode, 500);
 
     assert.deepEqual(harness.coordinator.api.active(), { transport: "meet", sessionId: FIXED_SESSION_ID });
+    assert.equal(harness.coordinator.state.releaseCalls, 0);
     const active = await harness.activeSession();
-    assert.equal(active.text.includes(FIXED_SESSION_ID), true);
-  });
+    assert.equal(active.text.includes(FIXED_SESSION_ID), false);
+  }, { initialLease: reusedLease });
 });
 
 test("superseded old-owner websocket close does not release the shared attendee lease", async () => {

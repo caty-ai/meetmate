@@ -108,7 +108,16 @@ async function bootstrap() {
 
     const adapter = adapterRegistry.match(pathname);
     if (adapter) {
-      await adapter.handleHttp(req, res, new URL(req.url || "/", "http://localhost"));
+      try {
+        await adapter.handleHttp(req, res, new URL(req.url || "/", "http://localhost"));
+      } catch (error) {
+        console.error(`Adapter HTTP handler failed (${adapter.transport || "unknown"}):`, error);
+        if (res.headersSent) {
+          res.destroy?.();
+        } else {
+          writeJson(res, 500, { ok: false, code: "ADAPTER_INTERNAL_ERROR" });
+        }
+      }
       return;
     }
 

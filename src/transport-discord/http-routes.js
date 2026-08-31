@@ -132,7 +132,12 @@ function createHttpRoutes(options = {}) {
     }
 
     if (req.method === "GET" && parsedUrl.pathname === "/api/discord/status") {
-      writeJsonResponse(res, 200, getSessionStatus());
+      try {
+        writeJsonResponse(res, 200, getSessionStatus());
+      } catch (error) {
+        console.error(`Discord status handler failed: ${error.message || error}`);
+        writeJsonResponse(res, 500, { ok: false, code: "DISCORD_INTERNAL_ERROR" });
+      }
       return true;
     }
 

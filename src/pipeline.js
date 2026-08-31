@@ -1858,17 +1858,15 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       });
     }
     if (isProcessing && cleanedText && isWakeCancelText(cleanedText, agents, selectedAgentIds, resolvedRegex)) {
-      // Preserve the pre-mux contract: abort and emit playback_cancelled in
-      // the utterance_end listener's stack. Only the async acknowledgement
-      // and subsequent slot eviction are joined back onto the shared chain.
-      const wakeCancelPromise = handleWakeCancelAbort(cleanedText);
-      utteranceChain = utteranceChain
-        .then(() => wakeCancelPromise)
-        .then(() => {
-          if (slot) maybeEvictSpeakerSlot(slot);
-        })
+      const wakeCancelPromise = handleWakeCancelAbort(cleanedText)
         .catch((err) => console.error("❌  wake+cancel handler error:", err.message || err));
-      return utteranceChain;
+      if (slot) {
+        utteranceChain = utteranceChain
+          .then(() => wakeCancelPromise)
+          .then(() => maybeEvictSpeakerSlot(slot))
+          .catch((err) => console.error("❌  wake+cancel slot cleanup error:", err.message || err));
+      }
+      return wakeCancelPromise;
     }
 
     utteranceChain = utteranceChain

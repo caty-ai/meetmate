@@ -8,7 +8,6 @@ const LEGACY_MEET_PATHS = new Set([
   "/leave-meeting",
   "/agents",
   "/info",
-  "/realtime",
 ]);
 
 const entries = [];
@@ -57,12 +56,13 @@ function deriveTransportForAuth(pathname) {
   if (
     pathname === "/health"
     || pathname === "/settings"
-    || pathname.startsWith("/api/settings")
+    || pathname.startsWith("/settings/")
+    || pathname === "/api/settings"
+    || pathname.startsWith("/api/settings/")
+    || pathname === "/settings-assets"
     || pathname.startsWith("/settings-assets/")
     || pathname === "/calibrate"
-    || pathname === "/calibrate/status"
-    || pathname === "/calibrate/stream"
-    || pathname === "/calibrate/apply"
+    || pathname.startsWith("/calibrate/")
   ) {
     return null;
   }

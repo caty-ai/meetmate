@@ -77,9 +77,14 @@ test("adapter-registry derives auth transport from explicit paths and validate-a
 
   assert.equal(adapterRegistry.deriveTransportForAuth("/health"), null);
   assert.equal(adapterRegistry.deriveTransportForAuth("/calibrate"), null);
+  assert.equal(adapterRegistry.deriveTransportForAuth("/calibrate/custom"), null);
+  assert.equal(adapterRegistry.deriveTransportForAuth("/calibrateX"), adapterRegistry.AUTH_VALIDATE_ALL);
   assert.equal(adapterRegistry.deriveTransportForAuth("/api/settings"), null);
+  assert.equal(adapterRegistry.deriveTransportForAuth("/api/settings/profile"), null);
+  assert.equal(adapterRegistry.deriveTransportForAuth("/api/settingsX"), adapterRegistry.AUTH_VALIDATE_ALL);
   assert.equal(adapterRegistry.deriveTransportForAuth("/join-meeting"), "meet");
   assert.equal(adapterRegistry.deriveTransportForAuth("/readiness"), "meet");
+  assert.equal(adapterRegistry.deriveTransportForAuth("/realtime"), adapterRegistry.AUTH_VALIDATE_ALL);
   assert.equal(adapterRegistry.deriveTransportForAuth("/api/discord/join"), "discord");
   assert.equal(adapterRegistry.deriveTransportForAuth("/unknown-path"), adapterRegistry.AUTH_VALIDATE_ALL);
 });
@@ -109,6 +114,16 @@ test("discord http routes conceal non-local and forwarded requests behind the sh
   );
   assert.equal(forwardedProtoDenied.statusCode, 404);
   assert.equal(forwardedProtoDenied.body, "Not Found");
+
+  for (const request of [
+    createRequest({ remoteAddress: "::ffff:10.0.0.1" }),
+    createRequest({ headers: { "x-forwarded-host": "public.example" } }),
+  ]) {
+    const denied = await runHttp(handler, request);
+    assert.equal(denied.statusCode, 404);
+    assert.deepEqual(denied.headers, { "Content-Type": "text/plain; charset=utf-8" });
+    assert.equal(denied.body, "Not Found");
+  }
 });
 
 test("discord status route stays localhost-only and does not echo secrets or allowlist contents", async () => {
@@ -151,6 +166,16 @@ test("discord routes enforce exact methods and keep setup refusal explicit after
   );
   assert.equal(joinRefused.statusCode, 503);
   assert.equal(JSON.parse(joinRefused.body).code, "DISCORD_SETUP_REQUIRED");
+
+  const statusFailure = createHttpRoutes({
+    getSessionStatus() { throw new Error("status failed"); },
+  });
+  const failedStatus = await runHttp(
+    statusFailure,
+    createRequest({ method: "GET", url: "/api/discord/status" })
+  );
+  assert.equal(failedStatus.statusCode, 500);
+  assert.deepEqual(JSON.parse(failedStatus.body), { ok: false, code: "DISCORD_INTERNAL_ERROR" });
 });
 
 test("server destroys websocket upgrades for adapter prefixes without a Discord upgrade handler", () => {
@@ -158,6 +183,24 @@ test("server destroys websocket upgrades for adapter prefixes without a Discord 
   assert.equal(probe.status, 0, probe.stderr);
   const result = parseProbe(probe.stdout, "UPGRADE_SENTINEL");
   assert.deepEqual(result, { destroyed: true, upgradeHandled: false });
+});
+
+test("server concealed Discord rejection byte-matches its real unknown-path fallthrough and catches adapter failures", () => {
+  const concealedProbe = runServerProbe("conceal");
+  assert.equal(concealedProbe.status, 0, concealedProbe.stderr);
+  const concealed = parseProbe(concealedProbe.stdout, "CONCEAL_SENTINEL");
+  assert.deepEqual(concealed.discord, concealed.unknown);
+  assert.deepEqual(concealed.discord, {
+    status: 404,
+    headers: { "Content-Type": "text/plain; charset=utf-8" },
+    body: "Not Found",
+  });
+
+  const errorProbe = runServerProbe("adapter-error");
+  assert.equal(errorProbe.status, 0, errorProbe.stderr);
+  const failure = parseProbe(errorProbe.stdout, "ADAPTER_ERROR_SENTINEL");
+  assert.equal(failure.status, 500);
+  assert.equal(JSON.parse(failure.body).code, "ADAPTER_INTERNAL_ERROR");
 });
 
 test("server health endpoint keeps the pinned JSON envelope", () => {
@@ -305,7 +348,11 @@ function runServerProbe(mode) {
           transport: "discord",
           prefixes: ["/api/discord"],
           capabilities: { chat: false },
-          handleHttp() {},
+          handleHttp(_req, res) {
+            if (mode === "adapter-error") throw new Error("adapter failed");
+            res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+            res.end("Not Found");
+          },
         };
       },
     });
@@ -431,6 +478,38 @@ function runServerProbe(mode) {
             server.close(() => process.exit(0));
           });
         });
+        return server;
+      }
+
+      if (mode === "conceal" || mode === "adapter-error") {
+        const server = new EventEmitter();
+        server.address = () => ({ port: 43123 });
+        server.listen = (_port, callback) => {
+          callback();
+          setImmediate(async () => {
+            async function invoke(url) {
+              const snapshot = { status: null, headers: null, body: "" };
+              const res = {
+                headersSent: false,
+                writeHead(status, headers) { snapshot.status = status; snapshot.headers = headers; this.headersSent = true; },
+                end(chunk = "") { snapshot.body += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk); },
+                destroy() { snapshot.destroyed = true; },
+              };
+              await handler({ method: "GET", url, headers: {}, socket: { remoteAddress: "127.0.0.1" } }, res);
+              return snapshot;
+            }
+            if (mode === "conceal") {
+              const discord = await invoke("/api/discord/status");
+              const unknown = await invoke("/genuinely-unknown-path");
+              process.stdout.write("CONCEAL_SENTINEL=" + JSON.stringify({ discord, unknown }) + "\n");
+            } else {
+              const failure = await invoke("/api/discord/status");
+              process.stdout.write("ADAPTER_ERROR_SENTINEL=" + JSON.stringify(failure) + "\n");
+            }
+            process.exit(0);
+          });
+          return server;
+        };
         return server;
       }
 

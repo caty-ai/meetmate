@@ -14,11 +14,25 @@ const CHANNEL_ID = "22222222222222222";
 const HUMAN_ID = "33333333333333333";
 const BOT_ID = "44444444444444444";
 
+function emitVendorPlayback(player, { duration = 900, error = null, idle = true } = {}) {
+  const idleState = { status: "idle" };
+  const playingState = { status: "playing", resource: { playbackDuration: duration } };
+  player.state = playingState;
+  player.emit("stateChange", idleState, playingState);
+  queueMicrotask(() => {
+    if (error) player.emit("error", error);
+    if (idle) {
+      player.state = idleState;
+      player.emit("stateChange", playingState, idleState);
+    }
+  });
+}
+
 function createHarness(overrides = {}) {
   let manager = null;
   const phaseStates = [];
   const player = new EventEmitter();
-  player.state = { status: "idle", resource: { playbackDuration: 0 } };
+  player.state = { status: "idle" };
   const connection = new EventEmitter();
   connection.receiver = { subscribe() { throw new Error("subscribeStream stub not installed"); } };
   connection.subscribe = () => {};
@@ -163,6 +177,7 @@ function createHarness(overrides = {}) {
       pipeline.options = options;
       pipeline.closeCalls = 0;
       pipeline.sendAudio = () => {};
+      pipeline.handleGatewaySubagentCompletion = overrides.handleGatewaySubagentCompletion;
       pipeline.close = () => {
         pipeline.closeCalls += 1;
       };
@@ -198,14 +213,12 @@ function createHarness(overrides = {}) {
       phaseStates.push({ step: "announce", state: manager?._test.getActiveSession()?.lifecycle.state || null });
       const chunk = Buffer.alloc(24000, 0x11);
       options.onAudio(chunk);
-      player.state = { status: "playing", resource: { playbackDuration: 0 } };
-      player.emit("stateChange", { status: "idle" }, { status: "playing" });
-      player.state = { status: "idle", resource: { playbackDuration: 900 } };
-      queueMicrotask(() => {
-        player.emit("stateChange", { status: "playing" }, { status: "idle" });
-      });
+      emitVendorPlayback(player);
     },
     waitForReconnect: overrides.waitForReconnect,
+    gatewayEvents: overrides.gatewayEvents,
+    getGatewayConfigForProfile: overrides.getGatewayConfigForProfile,
+    recordEvent: overrides.recordEvent,
     timers,
     now: () => 1_725_000_000_000,
     randomBytes: () => Buffer.from("abcdef", "hex"),
@@ -294,6 +307,10 @@ test("discord join succeeds only after announce, then creates pipeline with supp
   assert.equal(harness.warmups[0][0], `discord-${result.body.sessionId}-caty`);
   assert.equal(harness.coordinatorState.releaseCalls, 0);
   assert.equal(harness.notifierCalls.some((item) => item.type === "start"), true);
+  const activeStatus = harness.manager.getStatus();
+  assert.equal(activeStatus.session.sessionId, result.body.sessionId);
+  assert.equal(Object.hasOwn(activeStatus.session, "guildId"), false);
+  assert.equal(Object.hasOwn(activeStatus.session, "channelId"), false);
   assert.deepEqual(harness.phaseStates, [
     { step: "login", state: "initiating" },
     { step: "voice-connect", state: "initiating" },
@@ -360,17 +377,21 @@ test("discord join failure modes after acquire release the lease and avoid pipel
       name: "player error",
       synthesize: async ({ options, player }) => {
         options.onAudio(Buffer.alloc(24000));
-        player.state = { status: "playing", resource: { playbackDuration: 0 } };
-        player.emit("stateChange", { status: "idle" }, { status: "playing" });
-        queueMicrotask(() => player.emit("error", new Error("player failed")));
+        emitVendorPlayback(player, { error: new Error("player failed") });
+      },
+    },
+    {
+      name: "duration short",
+      synthesize: async ({ options, player }) => {
+        options.onAudio(Buffer.alloc(24000));
+        emitVendorPlayback(player, { duration: 399 });
       },
     },
     {
       name: "timeout",
       synthesize: async ({ options, player }) => {
         options.onAudio(Buffer.alloc(24000));
-        player.state = { status: "playing", resource: { playbackDuration: 0 } };
-        player.emit("stateChange", { status: "idle" }, { status: "playing" });
+        emitVendorPlayback(player, { idle: false });
       },
     },
     {
@@ -405,6 +426,8 @@ test("discord join failure modes after acquire release the lease and avoid pipel
     assert.equal(harness.coordinatorState.releaseCalls, 1, scenario.name);
     assert.equal(harness.createdPipelines.length, 0, scenario.name);
     assert.equal(harness.manager._test.getActiveSession(), null, scenario.name);
+    assert.equal(harness.player.listenerCount("stateChange"), 0, scenario.name);
+    assert.equal(harness.player.listenerCount("error"), 0, scenario.name);
   }
 });
 
@@ -425,8 +448,7 @@ test("discord lifecycle maps pre-ready disconnects to failed and in-progress ext
   const preReady = createHarness({
     synthesize: async ({ options, player }) => {
       options.onAudio(Buffer.alloc(24000));
-      player.state = { status: "playing", resource: { playbackDuration: 0 } };
-      player.emit("stateChange", { status: "idle" }, { status: "playing" });
+      emitVendorPlayback(player, { idle: false });
       preReady.connection.emit("stateChange", { status: "ready" }, { status: "destroyed" });
     },
   });
@@ -443,6 +465,7 @@ test("discord lifecycle maps pre-ready disconnects to failed and in-progress ext
   ready.connection.emit("stateChange", { status: "ready" }, { status: "destroyed" });
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(active.lifecycle.state, "completed");
+  assert.equal(ready.connection.destroyCalls, 1);
 
   const disconnected = createHarness({
     waitForReconnect: () => Promise.reject(new Error("timeout")),
@@ -459,7 +482,7 @@ test("discord lifecycle covers invalidated and channelDelete with state-aware te
   const initiatingInvalidated = createHarness({
     synthesize: async ({ options }) => {
       options.onAudio(Buffer.alloc(24000));
-      initiatingInvalidated.connection.emit("invalidated");
+      initiatingInvalidated.client.emit("invalidated");
     },
   });
   const initiatingResult = await initiatingInvalidated.manager.join({ guildId: GUILD_ID, channelId: CHANNEL_ID });
@@ -479,9 +502,10 @@ test("discord lifecycle covers invalidated and channelDelete with state-aware te
   const invalidatedResult = await invalidated.manager.join({ guildId: GUILD_ID, channelId: CHANNEL_ID });
   assert.equal(invalidatedResult.status, 200);
   const invalidatedActive = invalidated.manager._test.getActiveSession();
-  invalidated.connection.emit("invalidated");
+  invalidated.client.emit("invalidated");
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(invalidatedActive.lifecycle.state, "failed");
+  assert.equal(invalidated.connection.destroyCalls, 1);
 });
 
 test("discord voiceStateUpdate aborts non-allowlisted bot movement and terminal leave transitions unsubscribe humans", async () => {
@@ -502,6 +526,105 @@ test("discord voiceStateUpdate aborts non-allowlisted bot movement and terminal 
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(secondSession.lifecycle.state, "failed");
   assert.equal(allowlistAbort.coordinatorState.releaseCalls, 1);
+
+  const missingLiveGuild = createHarness();
+  const third = await missingLiveGuild.manager.join({ guildId: GUILD_ID, channelId: CHANNEL_ID });
+  assert.equal(third.status, 200);
+  const thirdSession = missingLiveGuild.manager._test.getActiveSession();
+  missingLiveGuild.client.emit("voiceStateUpdate", null, { id: BOT_ID, channelId: CHANNEL_ID });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(thirdSession.lifecycle.state, "failed");
+});
+
+test("discord voiceStateUpdate is transition-only, announce-safe, and partial-state safe", async () => {
+  const duringAnnounce = createHarness({
+    synthesize: async ({ options, player }) => {
+      options.onAudio(Buffer.alloc(24000));
+      duringAnnounce.client.emit("voiceStateUpdate", null, {
+        channelId: CHANNEL_ID,
+        member: { user: { id: "55555555555555555", bot: false }, displayName: "During announce" },
+      });
+      emitVendorPlayback(player);
+    },
+  });
+  const announceErrors = [];
+  const originalAnnounceConsoleError = console.error;
+  let joined;
+  console.error = (...args) => announceErrors.push(args);
+  try {
+    joined = await duringAnnounce.manager.join({ guildId: GUILD_ID, channelId: CHANNEL_ID });
+  } finally {
+    console.error = originalAnnounceConsoleError;
+  }
+  assert.equal(joined.status, 200);
+  assert.deepEqual(announceErrors, []);
+  assert.deepEqual(duringAnnounce.audioInSubscriptions, [HUMAN_ID]);
+
+  const beforeSubscriptions = duringAnnounce.audioInSubscriptions.slice();
+  const beforeUnsubscriptions = duringAnnounce.audioInUnsubscriptions.slice();
+  const sameChannelState = {
+    channelId: CHANNEL_ID,
+    member: { user: { id: HUMAN_ID, bot: false }, displayName: "Human" },
+  };
+  duringAnnounce.client.emit("voiceStateUpdate", sameChannelState, { ...sameChannelState, selfMute: true });
+
+  const unhandled = [];
+  const listenerErrors = [];
+  const onUnhandled = (error) => unhandled.push(error);
+  const originalConsoleError = console.error;
+  process.on("unhandledRejection", onUnhandled);
+  console.error = (...args) => listenerErrors.push(args);
+  try {
+    duringAnnounce.client.emit("voiceStateUpdate", { channelId: CHANNEL_ID }, { channelId: null });
+    duringAnnounce.client.emit("voiceStateUpdate", { channelId: null }, { channelId: CHANNEL_ID });
+    await new Promise((resolve) => setImmediate(resolve));
+  } finally {
+    console.error = originalConsoleError;
+    process.off("unhandledRejection", onUnhandled);
+  }
+
+  assert.deepEqual(duringAnnounce.audioInSubscriptions, beforeSubscriptions);
+  assert.deepEqual(duringAnnounce.audioInUnsubscriptions, beforeUnsubscriptions);
+  assert.deepEqual(unhandled, []);
+  assert.deepEqual(listenerErrors, []);
+});
+
+test("discord gateway completion routes through the gateway events client", async () => {
+  const completionListeners = [];
+  const handled = [];
+  const gatewayEvents = {
+    buildSessionKey(user, agentId) { return `agent:${agentId}:openai-user:${user}`; },
+    start() {},
+    stop() {},
+    verifySessionKey: async () => true,
+    onSubagentSpawn() { return () => {}; },
+    onSubagentCompletion(listener) { completionListeners.push(listener); return () => {}; },
+    onSessionReply() { return () => {}; },
+    onAnnounceInjected() { return () => {}; },
+  };
+  const harness = createHarness({
+    gatewayEvents,
+    getGatewayConfigForProfile: () => ({
+      enabled: true,
+      name: "openclaw",
+      agentId: "main",
+      openclawUrl: "https://gateway.example",
+      openclawToken: "gateway.value",
+    }),
+    handleGatewaySubagentCompletion(event) {
+      handled.push(event);
+      return true;
+    },
+  });
+
+  const joined = await harness.manager.join({ guildId: GUILD_ID, channelId: CHANNEL_ID });
+  assert.equal(joined.status, 200);
+  assert.equal(completionListeners.length, 1);
+  const parentSessionKey = `agent:main:openai-user:discord-${joined.body.sessionId}-caty`;
+  await completionListeners[0]({ parentSessionKey, childKey: "child-1", resultText: "done" });
+  assert.equal(handled.length, 1);
+  assert.equal(handled[0].resultText, "done");
+  await harness.manager.leave();
 });
 
 test("discord post-acquire throw sites all release the lease and leave no active zombie session", async () => {

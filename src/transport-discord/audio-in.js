@@ -6,6 +6,7 @@ const { TRANSPORT } = require("./constants");
 const RECEIVE_TAPS = 63;
 const RECEIVE_CUTOFF = 7000 / 48000;
 const DISCORD_FRAME_SIZE = 960;
+const MAX_CONSECUTIVE_DECODE_FAILURES = 5;
 
 function defaultCodecLoader() {
   let nativeFailure = null;
@@ -55,6 +56,8 @@ function createReceiveState(createDecoder) {
     carry: Buffer.alloc(0),
     decoder: createDecoder(),
     decimator: new FirDecimator(3, RECEIVE_TAPS, RECEIVE_CUTOFF),
+    consecutiveDecodeFailures: 0,
+    decodeWarningLogged: false,
   };
 }
 
@@ -120,7 +123,22 @@ function createAudioIn(options = {}) {
 
   function ingestOpusPacket(userId, packet, speaker) {
     if (closed || !Buffer.isBuffer(packet) || packet.length === 0) return;
-    const decoded = ensureState(userId).decoder.decode(packet);
+    const state = ensureState(userId);
+    let decoded;
+    try {
+      decoded = state.decoder.decode(packet);
+      state.consecutiveDecodeFailures = 0;
+    } catch (error) {
+      state.consecutiveDecodeFailures += 1;
+      if (!state.decodeWarningLogged) {
+        state.decodeWarningLogged = true;
+        console.warn(`Discord Opus decode failed for user ${userId}; dropping packet: ${error.message || error}`);
+      }
+      if (state.consecutiveDecodeFailures >= MAX_CONSECUTIVE_DECODE_FAILURES) {
+        unsubscribeUser(userId);
+      }
+      return;
+    }
     if (!Buffer.isBuffer(decoded) || decoded.length === 0 || decoded.length % 2 !== 0) return;
     pushDecodedPcm(userId, decoded, speaker);
   }
@@ -139,14 +157,14 @@ function createAudioIn(options = {}) {
   function subscribeUser(receiver, speaker) {
     if (closed) return null;
     if (!receiver || !speaker || !speaker.id || speaker.isBot === true) return null;
-    unsubscribeUser(speaker.id);
+    if (subscriptions.has(speaker.id)) return subscriptions.get(speaker.id);
 
     const stream = subscribeStream(receiver, speaker.id);
     const onData = (packet) => {
       try {
         ingestOpusPacket(speaker.id, packet, speaker);
-      } catch {
-        unsubscribeUser(speaker.id);
+      } catch (error) {
+        console.error(`Discord audio receive failed for user ${speaker.id}: ${error.message || error}`);
       }
     };
     const onClose = () => unsubscribeUser(speaker.id);
@@ -184,6 +202,7 @@ function createAudioIn(options = {}) {
 }
 
 module.exports = {
+  MAX_CONSECUTIVE_DECODE_FAILURES,
   createAudioIn,
   _test: {
     createReceiveState,
