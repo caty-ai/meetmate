@@ -243,6 +243,11 @@
     "apiKey": "",
     "baseUrl": "app.attendee.dev"
   },
+  "discord": {
+    "botToken": "your_discord_bot_token",
+    "guildAllowlist": [],
+    "lcmIngestEnabled": false
+  },
   "server": {
     "port": 5005,
     "ngrokDomain": ""

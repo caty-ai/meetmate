@@ -252,10 +252,16 @@ function createReadinessController(options = {}) {
     return promise;
   }
 
-  function staticIssuesBySystem() {
+  function statusFor(options) {
+    return options && Object.prototype.hasOwnProperty.call(options, "transport")
+      ? getStatus({ transport: options.transport })
+      : getStatus();
+  }
+
+  function staticIssuesBySystem(options) {
     const grouped = new Map();
     const active = new Set(gateSystems());
-    for (const issue of getStatus().issues || []) {
+    for (const issue of statusFor(options).issues || []) {
       const mapped = FIELD_SYSTEMS[issue.fieldId] || [];
       for (const system of mapped) {
         if (!active.has(system)) continue;
@@ -300,11 +306,11 @@ function createReadinessController(options = {}) {
     return blockers;
   }
 
-  function getReadiness() {
+  function getReadiness(options) {
     const active = gateSystems();
     const restarts = restartBlockers();
     const restartBySystem = new Map(restarts.map((blocker) => [blocker.system, blocker]));
-    const staticBySystem = staticIssuesBySystem();
+    const staticBySystem = staticIssuesBySystem(options);
     const blockers = [];
     const systems = active.map((system) => {
       const restart = restartBySystem.get(system);
@@ -343,7 +349,7 @@ function createReadinessController(options = {}) {
       });
     }
     const settled = systems.every((system) => system.code !== "PENDING");
-    const meetingReady = getStatus().meetingReady;
+    const meetingReady = statusFor(options).meetingReady;
     return {
       ready: settled && blockers.length === 0 && meetingReady,
       setupRequired: !meetingReady,
@@ -364,7 +370,7 @@ function createReadinessController(options = {}) {
       const record = records.get(system);
       return Boolean(record && (!record.ok || isStale(record)));
     });
-    if (!systems.length) return getReadiness();
+    if (!systems.length) return getReadiness(options);
     const budgetMs = options.budgetMs ?? JOIN_REVALIDATION_BUDGET_MS;
     let timer;
     await Promise.race([
@@ -375,7 +381,7 @@ function createReadinessController(options = {}) {
       }),
     ]);
     if (timer) clearTimeout(timer);
-    return getReadiness();
+    return getReadiness(options);
   }
 
   function setProbeObservation(system, outcome) {

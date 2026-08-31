@@ -108,6 +108,31 @@ test("Hermes session header setting is default-off and visible only for OpenAI-c
   assert.match(source, /Hermes Agent api_server 専用/);
 });
 
+test("Discord settings are registry-driven basic controls with strict field shapes", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const { REGISTRY_BY_ID } = require("../src/settings/registry");
+  const { _test } = require("../src/settings/routes");
+  const manifest = new Map(_test.buildSettingsUiManifest().fields.map((entry) => [entry.id, entry]));
+
+  assert.deepEqual(
+    ["discord_bot_token", "discord_guild_allowlist", "discord_lcm_ingest_enabled"].map((id) => manifest.get(id).ux),
+    ["basic", "basic", "basic"],
+  );
+  assert.equal(manifest.get("discord_bot_token").control, "credential");
+  assert.equal(manifest.get("discord_guild_allowlist").control, "array");
+  assert.equal(manifest.get("discord_lcm_ingest_enabled").control, "boolean");
+  assert.equal(REGISTRY_BY_ID.discord_guild_allowlist.schema.safeParse(["12345678901234567"]).success, true);
+  assert.equal(REGISTRY_BY_ID.discord_guild_allowlist.schema.safeParse(["1234567890123456"]).success, false);
+  assert.equal(REGISTRY_BY_ID.discord_guild_allowlist.schema.safeParse(Array(65).fill(0).map((_, index) => String(10n ** 16n + BigInt(index)))).success, false);
+  assert.equal(REGISTRY_BY_ID.discord_lcm_ingest_enabled.defaultValue, false);
+
+  const source = fs.readFileSync(path.join(__dirname, "..", "public", "settings.js"), "utf8");
+  for (const marker of ["Discord Bot token", "Discord サーバー許可リスト", "Discord LCM 取り込み", '["discord", "Discord"]']) {
+    assert.equal(source.includes(marker), true, marker);
+  }
+});
+
 test("avatar settings mount exactly once in panel-avatar with pinned labels and next-join help", () => {
   const fs = require("node:fs");
   const path = require("node:path");

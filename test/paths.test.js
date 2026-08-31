@@ -204,10 +204,10 @@ function settingsRequest(method, url, headers = {}, body = "") {
 }
 
 test("T12-01 registry/schema/type lock keeps the write allowlist strict", () => {
-  assert.equal(SETTINGS_REGISTRY.length, 72);
+  assert.equal(SETTINGS_REGISTRY.length, 75);
   assert.equal(ENV_DIAGNOSTICS.length, 59);
   assert.equal(new Set(SETTINGS_REGISTRY.map((entry) => entry.id)).size, SETTINGS_REGISTRY.length);
-  assert.equal(SETTINGS_REGISTRY.filter((entry) => entry.credential === "class-1").length, 7);
+  assert.equal(SETTINGS_REGISTRY.filter((entry) => entry.credential === "class-1").length, 8);
   assert.deepEqual(SETTINGS_REGISTRY.filter((entry) => entry.writeSurface === "audio-only").map((entry) => entry.id), ["audio_clips"]);
   const visible = JSON.stringify(SETTINGS_REGISTRY.map(({ id, path: configPath }) => ({ id, path: configPath })));
   for (const forbidden of ["gateway.token", "gateway.url", "openaiCompatible.apiKey", "WS_SHARED_TOKEN", "JOIN_SHARED_TOKEN"]) {
@@ -248,9 +248,9 @@ test("T12-02 environment inventory lock recognizes every retained direct read an
   assert.equal(bytes.endsWith("\n"), true);
   assert.equal(bytes.endsWith("\n\n"), false);
   const inventory = JSON.parse(bytes);
-  assert.equal(inventory.baselineUniqueDirectCount, 98);
-  assert.equal(inventory.directReferences.length, 98);
-  assert.equal(new Set(inventory.directReferences.map((entry) => entry.name)).size, 98);
+  assert.equal(inventory.baselineUniqueDirectCount, 99);
+  assert.equal(inventory.directReferences.length, 99);
+  assert.equal(new Set(inventory.directReferences.map((entry) => entry.name)).size, 99);
   const known = new Set(inventory.directReferences.map((entry) => entry.name));
   const productionFiles = [];
   function collect(directory) {
@@ -272,6 +272,20 @@ test("T12-02 environment inventory lock recognizes every retained direct read an
   for (const entry of inventory.directReferences.filter((item) => item.credentialClass === "class-2-connection" || item.credentialClass === "class-3-internal-control")) {
     assert.equal(entry.ux, "hidden", entry.name);
   }
+});
+
+test("T12-02/T12-13/T12-14 contract and template pins stay synchronized", () => {
+  const contract = fs.readFileSync(path.join(__dirname, "..", "docs", "settings-contract.md"), "utf8");
+  const template = fs.readFileSync(path.join(__dirname, "..", "config.json.example"), "utf8");
+  const providerEnum = "soniox|deepgram|fish-audio|attendee|slack|discord";
+  assert.equal(contract.includes("14 exact, case-sensitive checked-in sentinels"), true, "contract §3 sentinel-count sentence moved");
+  assert.equal(contract.includes("the 14 exact case-sensitive placeholder sentinels"), true, "contract T12-13 sentinel-count sentence moved");
+  assert.equal(contract.includes("has 99 unique direct names"), true, "contract §5 unique-direct-name sentence moved");
+  assert.equal(contract.includes("the 99 direct names"), true, "contract T12-02 direct-name sentence moved");
+  assert.equal(contract.includes("covers 99 static names"), true, "contract Appendix A E29-07 static-name sentence moved");
+  assert.equal(contract.includes("locks 99 names"), true, "contract Appendix A D30-04 name-lock sentence moved");
+  assert.equal(contract.split(providerEnum).length - 1, 2, "contract six-provider enum occurrence count drifted");
+  assert.equal(JSON.parse(template).discord.botToken, "your_discord_bot_token", "config example Discord bot-token sentinel drifted");
 });
 
 test("T12-03 startup/bootstrap boundary allows exactly twelve settings modules", () => {
@@ -375,7 +389,7 @@ test("T12-05 bootstrap revision recovers absent and parse-invalid documents", (t
 test("T12-05/T12-13 sentinel semantics and class-2 scan stay exact and value-free", () => {
   const sentinels = [
     "your_gateway_token_here", "your_deepgram_key", "your_soniox_key", "your_attendee_key",
-    "your_fish_audio_key", "your_voice_id", "your_slack_bot_token", "your-model-id",
+    "your_fish_audio_key", "your_voice_id", "your_slack_bot_token", "your_discord_bot_token", "your-model-id",
     "your_openai_compatible_key", "your-agent-id", "YourAgent", "your-agent", "エージェント名",
   ];
   for (const sentinel of sentinels) {
@@ -704,7 +718,7 @@ test("T12-05 bootstrap PUT materializes registry defaults and captured .env clas
   assert.equal(response.body.includes("bootstrap-seed-key"), false);
 });
 
-test("T12-06 gate connection tests are implemented while Slack remains an exact value-free 501", async (t) => {
+test("T12-06 gate connection tests are implemented while Slack and Discord remain exact value-free 501s", async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-settings-optional-tests-"));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const configPath = path.join(directory, "config.json");
@@ -721,9 +735,9 @@ test("T12-06 gate connection tests are implemented while Slack remains an exact 
     assert.equal(response.status, 200, `${provider}: ${response.body}`);
     assert.equal(JSON.parse(response.body).code, "NOT_CONFIGURED");
   }
-  for (const [method, url, headers, body] of [
-    ["POST", "/api/settings/connections/slack/test", { "content-type": "application/json" }, JSON.stringify({ revision: state.revision })],
-  ]) {
+  for (const [method, url, headers, body] of ["slack", "discord"].map((provider) => [
+    "POST", `/api/settings/connections/${provider}/test`, { "content-type": "application/json" }, JSON.stringify({ revision: state.revision }),
+  ])) {
     const response = settingsResponse();
     await handler(settingsRequest(method, url, {
       host: "localhost:5005",

@@ -287,7 +287,7 @@ test("connection failure matrix is finite and vendor bodies and credentials stay
   assert.equal(lateReset.code, "PROVIDER_ERROR");
 });
 
-test("unset keys avoid vendor calls and only non-gate Slack remains exact 501", async (t) => {
+test("unset keys avoid vendor calls and optional Slack/Discord remain exact 501", async (t) => {
   let calls = 0;
   const { handler, state } = fixture(t, {}, {
     connections: { fetchFn: async () => { calls += 1; throw new Error("must not call"); }, minIntervalMs: 0 },
@@ -311,7 +311,7 @@ test("unset keys avoid vendor calls and only non-gate Slack remains exact 501", 
     const stale = await invoke(handler, "POST", `/api/settings/connections/${provider}/test`, { revision: "a".repeat(64) });
     assert.equal(stale.status, 409);
   }
-  for (const provider of ["slack"]) {
+  for (const provider of ["slack", "discord"]) {
     const res = await invoke(handler, "POST", `/api/settings/connections/${provider}/test`, { revision: state.revision });
     assert.equal(res.status, 501);
     assert.equal(res.json.error.code, "TEST_NOT_IMPLEMENTED");

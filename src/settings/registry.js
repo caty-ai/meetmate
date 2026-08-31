@@ -14,6 +14,9 @@ const nullable = (schema) => schema.nullable();
 const stringArray = z.array(z.string().trim().min(1).refine((value) => characterLength(value) <= 128, "too_big"))
   .max(64)
   .refine((values) => new Set(values).size === values.length, "duplicate");
+const snowflakeArray = z.array(z.string().trim().regex(/^[0-9]{17,20}$/))
+  .max(64)
+  .refine((values) => new Set(values).size === values.length, "duplicate");
 // Keep identity, framing, hop-by-hop, and Meetmate trust headers operator-controlled.
 const RESERVED_SESSION_HEADER_NAMES = Object.freeze([
   "authorization",
@@ -90,7 +93,12 @@ function definition(id, configPath, schema, options = {}) {
     apply: options.apply || "restart-required",
     envAlias: options.envAlias || null,
     ...(Object.prototype.hasOwnProperty.call(options, "defaultValue") ? { defaultValue: options.defaultValue } : {}),
-    requiredAtMeetingStart: options.requiredAtMeetingStart === true,
+    requiredWhen: options.requiredWhen ? Object.freeze({
+      ...options.requiredWhen,
+      ...(options.requiredWhen.transport
+        ? { transport: Object.freeze([...options.requiredWhen.transport]) }
+        : {}),
+    }) : null,
     writeSurface: options.writeSurface || (options.ux === "deployment-readonly" ? "none" : "settings"),
     multiline: options.multiline === true,
     visibleWhen: options.visibleWhen ? Object.freeze({ ...options.visibleWhen }) : null,
@@ -99,13 +107,13 @@ function definition(id, configPath, schema, options = {}) {
 
 const d = definition;
 const SETTINGS_REGISTRY = Object.freeze([
-  d("agent_id", "agent.id", trimmedString(128), { ux: "basic", envAlias: "AGENT_ID", requiredAtMeetingStart: true }),
+  d("agent_id", "agent.id", trimmedString(128), { ux: "basic", envAlias: "AGENT_ID", requiredWhen: { always: true } }),
   d("agent_name", "agent.name", trimmedString(128), { ux: "basic" }),
-  d("agent_display_name", "agent.displayName", trimmedString(128), { ux: "basic", requiredAtMeetingStart: true }),
+  d("agent_display_name", "agent.displayName", trimmedString(128), { ux: "basic", requiredWhen: { always: true } }),
   d("agent_language", "agent.language", z.enum(["ja", "en"]), { ux: "basic", envAlias: "AGENT_LANG", defaultValue: "ja" }),
   d("agent_greeting", "agent.greeting", text(4096), { ux: "basic", apply: "live", multiline: true }),
   d("agent_emotion_tags", "agent.emotionTags", bool, { ux: "basic", apply: "live", defaultValue: true }),
-  d("agent_wake_words", "agent.wakeWords", stringArray, { ux: "basic", envAlias: "WAKE_WORDS", requiredAtMeetingStart: true }),
+  d("agent_wake_words", "agent.wakeWords", stringArray, { ux: "basic", envAlias: "WAKE_WORDS", requiredWhen: { always: true } }),
   d("agent_keyterms", "agent.keyterms", stringArray, { envAlias: "SONIOX_CONTEXT_TERMS" }),
   d("agent_stt_wake_variants", "agent.sttWakeVariants", stringArray),
   d("agent_ack_variants", "agent.ackVariants", stringArray, { apply: "live", multiline: true }),
@@ -127,8 +135,8 @@ const SETTINGS_REGISTRY = Object.freeze([
   d("openai_empty_response_retry", "llm.openaiCompatible.emptyResponseRetry", bool, { defaultValue: true, visibleWhen: { id: "llm_provider", value: "openai-compatible" } }),
   d("openai_trusted_agent_tools", "llm.openaiCompatible.trustedAgentTools", bool, { defaultValue: false, visibleWhen: { id: "llm_provider", value: "openai-compatible" } }),
   d("openai_session_header", "llm.openaiCompatible.sessionHeader", sessionHeader, { defaultValue: "", visibleWhen: { id: "llm_provider", value: "openai-compatible" } }),
-  d("soniox_api_key", "stt.sonioxApiKey", secret, { ux: "basic", credential: "class-1", envAlias: "SONIOX_API_KEY", requiredAtMeetingStart: true, visibleWhen: { id: "stt_provider", value: "soniox" } }),
-  d("deepgram_api_key", "stt.apiKey", secret, { ux: "basic", credential: "class-1", envAlias: "DEEPGRAM_API_KEY", requiredAtMeetingStart: true, visibleWhen: { id: "stt_provider", value: "deepgram" } }),
+  d("soniox_api_key", "stt.sonioxApiKey", secret, { ux: "basic", credential: "class-1", envAlias: "SONIOX_API_KEY", requiredWhen: { setting: "stt_provider", equals: "soniox" }, visibleWhen: { id: "stt_provider", value: "soniox" } }),
+  d("deepgram_api_key", "stt.apiKey", secret, { ux: "basic", credential: "class-1", envAlias: "DEEPGRAM_API_KEY", requiredWhen: { setting: "stt_provider", equals: "deepgram" }, visibleWhen: { id: "stt_provider", value: "deepgram" } }),
   d("stt_provider", "stt.provider", z.enum(["soniox", "deepgram"]), { ux: "basic", envAlias: "STT_PROVIDER", defaultValue: "soniox" }),
   d("soniox_model", "stt.soniox.model", trimmedString(128), { envAlias: "SONIOX_MODEL", defaultValue: "stt-rt-v5", visibleWhen: { id: "stt_provider", value: "soniox" } }),
   d("soniox_ws_url", "stt.soniox.wsUrl", exactUrl(["wss:"]), { envAlias: "SONIOX_WS_URL", visibleWhen: { id: "stt_provider", value: "soniox" } }),
@@ -137,31 +145,34 @@ const SETTINGS_REGISTRY = Object.freeze([
   d("soniox_endpoint_latency_level", "stt.soniox.endpointLatencyLevel", nullable(integer(0, 5)), { envAlias: "SONIOX_ENDPOINT_LATENCY_LEVEL", visibleWhen: { id: "stt_provider", value: "soniox" } }),
   d("listen_endpointing_ms", "stt.endpointingMs", integer(0, 30000), { envAlias: "LISTEN_ENDPOINTING_MS", defaultValue: 400 }),
   d("listen_utterance_end_ms", "stt.utteranceEndMs", integer(0, 30000), { envAlias: "LISTEN_UTTERANCE_END_MS", defaultValue: 1200 }),
-  d("fish_audio_api_key", "tts.apiKey", secret, { ux: "basic", credential: "class-1", envAlias: "FISH_AUDIO_API_KEY", requiredAtMeetingStart: true, visibleWhen: { id: "tts_provider", value: "fish-audio" } }),
-  d("fish_audio_voice_id", "tts.voiceId", trimmedString(256), { ux: "basic", envAlias: "FISH_AUDIO_VOICE_ID", requiredAtMeetingStart: true, visibleWhen: { id: "tts_provider", value: "fish-audio" } }),
+  d("fish_audio_api_key", "tts.apiKey", secret, { ux: "basic", credential: "class-1", envAlias: "FISH_AUDIO_API_KEY", requiredWhen: { setting: "tts_provider", equals: "fish-audio" }, visibleWhen: { id: "tts_provider", value: "fish-audio" } }),
+  d("fish_audio_voice_id", "tts.voiceId", trimmedString(256), { ux: "basic", envAlias: "FISH_AUDIO_VOICE_ID", requiredWhen: { setting: "tts_provider", equals: "fish-audio" }, visibleWhen: { id: "tts_provider", value: "fish-audio" } }),
   d("tts_provider", "tts.provider", z.enum(["fish-audio", "elevenlabs", "openai-compatible"]), { ux: "basic", envAlias: "TTS_PROVIDER", defaultValue: "fish-audio" }),
   d("fish_audio_model", "tts.model", trimmedString(128), { envAlias: "FISH_AUDIO_MODEL", defaultValue: "s2-pro", visibleWhen: { id: "tts_provider", value: "fish-audio" } }),
   d("fish_audio_speed", "tts.speed", number(0.5, 2), { envAlias: "FISH_AUDIO_SPEED", defaultValue: 1, visibleWhen: { id: "tts_provider", value: "fish-audio" } }),
   d("fish_audio_latency", "tts.latency", z.enum(["normal", "balanced", "low"]), { envAlias: "FISH_AUDIO_LATENCY", defaultValue: "balanced", visibleWhen: { id: "tts_provider", value: "fish-audio" } }),
-  d("elevenlabs_api_key", "tts.elevenlabs.apiKey", secret, { ux: "basic", credential: "class-1", envAlias: "ELEVENLABS_API_KEY", requiredAtMeetingStart: true, visibleWhen: { id: "tts_provider", value: "elevenlabs" } }),
-  d("elevenlabs_voice_id", "tts.elevenlabs.voiceId", trimmedString(256), { ux: "basic", envAlias: "ELEVENLABS_VOICE_ID", requiredAtMeetingStart: true, visibleWhen: { id: "tts_provider", value: "elevenlabs" } }),
+  d("elevenlabs_api_key", "tts.elevenlabs.apiKey", secret, { ux: "basic", credential: "class-1", envAlias: "ELEVENLABS_API_KEY", requiredWhen: { setting: "tts_provider", equals: "elevenlabs" }, visibleWhen: { id: "tts_provider", value: "elevenlabs" } }),
+  d("elevenlabs_voice_id", "tts.elevenlabs.voiceId", trimmedString(256), { ux: "basic", envAlias: "ELEVENLABS_VOICE_ID", requiredWhen: { setting: "tts_provider", equals: "elevenlabs" }, visibleWhen: { id: "tts_provider", value: "elevenlabs" } }),
   d("elevenlabs_model", "tts.elevenlabs.model", trimmedString(128), { envAlias: "ELEVENLABS_MODEL", defaultValue: "eleven_multilingual_v2", visibleWhen: { id: "tts_provider", value: "elevenlabs" } }),
-  d("openai_compatible_tts_api_key", "tts.openaiCompatibleTts.apiKey", secret, { ux: "basic", credential: "class-1", envAlias: "OPENAI_COMPATIBLE_TTS_API_KEY", requiredAtMeetingStart: true, visibleWhen: { id: "tts_provider", value: "openai-compatible" } }),
+  d("openai_compatible_tts_api_key", "tts.openaiCompatibleTts.apiKey", secret, { ux: "basic", credential: "class-1", envAlias: "OPENAI_COMPATIBLE_TTS_API_KEY", requiredWhen: { setting: "tts_provider", equals: "openai-compatible" }, visibleWhen: { id: "tts_provider", value: "openai-compatible" } }),
   d("openai_compatible_tts_base_url", "tts.openaiCompatibleTts.baseUrl", exactUrl(["http:", "https:"]), { ux: "basic", envAlias: "OPENAI_COMPATIBLE_TTS_BASE_URL", defaultValue: "https://api.openai.com", visibleWhen: { id: "tts_provider", value: "openai-compatible" } }),
   d("openai_compatible_tts_model", "tts.openaiCompatibleTts.model", trimmedString(128), { envAlias: "OPENAI_COMPATIBLE_TTS_MODEL", defaultValue: "gpt-4o-mini-tts", visibleWhen: { id: "tts_provider", value: "openai-compatible" } }),
   d("openai_compatible_tts_voice", "tts.openaiCompatibleTts.voice", trimmedString(128), { envAlias: "OPENAI_COMPATIBLE_TTS_VOICE", defaultValue: "alloy", visibleWhen: { id: "tts_provider", value: "openai-compatible" } }),
   d("tts_sample_rate", "tts.sampleRate", integer(8000, 96000), { envAlias: "TTS_SAMPLE_RATE", defaultValue: 24000 }),
   d("tts_cache_enabled", "tts.cache.enabled", bool, { envAlias: "TTS_CACHE_ENABLED", defaultValue: true }),
   d("tts_cache_prewarm", "tts.cache.prewarm", bool, { envAlias: "TTS_CACHE_PREWARM", defaultValue: true }),
-  d("attendee_api_key", "attendee.apiKey", secret, { ux: "basic", credential: "class-1", envAlias: "ATTENDEE_API_KEY", requiredAtMeetingStart: true }),
+  d("attendee_api_key", "attendee.apiKey", secret, { ux: "basic", credential: "class-1", envAlias: "ATTENDEE_API_KEY", requiredWhen: { transport: ["meet", "zoom"] } }),
   d("attendee_base_url", "attendee.baseUrl", hostname(), { envAlias: "ATTENDEE_API_BASE_URL", defaultValue: "app.attendee.dev" }),
-  d("slack_bot_token", "slack.botToken", secret, { ux: "basic", credential: "class-1", envAlias: "SLACK_BOT_TOKEN" }),
+  d("slack_bot_token", "slack.botToken", secret, { ux: "basic", credential: "class-1", envAlias: "SLACK_BOT_TOKEN", requiredWhen: { setting: "slack_notifications_enabled", equals: true, explicit: true } }),
   d("slack_notifications_enabled", "slack.notifications.enabled", bool, { ux: "basic", envAlias: "SLACK_NOTIFY_ENABLED", defaultValue: true }),
   d("slack_notifications_target", "slack.notifications.target", z.enum(["dm", "channel"]), { ux: "basic", defaultValue: "dm" }),
   d("slack_dm_user_id", "slack.notifications.dmUserId", trimmedString(128)),
   d("slack_notify_channel", "slack.notifyChannel", trimmedString(128), { envAlias: "SLACK_NOTIFY_CHANNEL" }),
   d("slack_summary_channel", "slack.summaryChannel", trimmedString(128), { envAlias: "SLACK_SUMMARY_CHANNEL" }),
   d("slack_status_channel", "slack.statusChannel", trimmedString(128), { envAlias: "SLACK_STATUS_CHANNEL" }),
+  d("discord_bot_token", "discord.botToken", secret, { ux: "basic", credential: "class-1", envAlias: "DISCORD_BOT_TOKEN", requiredWhen: { transport: ["discord"] } }),
+  d("discord_guild_allowlist", "discord.guildAllowlist", snowflakeArray, { ux: "basic", defaultValue: [] }),
+  d("discord_lcm_ingest_enabled", "discord.lcmIngestEnabled", bool, { ux: "basic", defaultValue: false }),
   d("summary_enabled", "summary.enabled", bool, { ux: "basic", envAlias: "SUMMARY_ENABLED", defaultValue: true }),
   d("gateway_warmup_timeout_ms", "gateway.warmupTimeoutMs", integer(0, 120000), { envAlias: "GATEWAY_WARMUP_TIMEOUT_MS", defaultValue: 8000 }),
   d("gateway_display_name", "gateway.displayName", trimmedString(128), { defaultValue: "AI MeetServer" }),
