@@ -214,12 +214,14 @@ function readinessDisplayRows(readinessState) {
 
 function discordReadinessAllowsJoin(readinessState) {
   if (!readinessState || typeof readinessState !== "object") return false;
-  const blockers = Array.isArray(readinessState.blockers) ? readinessState.blockers : [];
-  if (blockers.length === 0) return readinessState?.ready === true;
-  if (!blockers.every((blocker) => typeof blocker?.system === "string" && blocker.system)) {
-    return readinessState?.ready === true;
-  }
-  return blockers.every((blocker) => blocker.system === "attendee" || blocker.system === "tunnel");
+  const systems = Array.isArray(readinessState.systems) ? readinessState.systems : null;
+  if (!systems) return readinessState?.ready === true;
+  const blockers = Array.isArray(readinessState.blockers) ? readinessState.blockers : null;
+  if (!blockers) return readinessState?.ready === true;
+  const relevantSystems = systems.filter((system) => system?.id !== "attendee" && system?.id !== "tunnel");
+  if (!relevantSystems.every((system) => typeof system?.id === "string" && typeof system?.code === "string")) return false;
+  if (blockers.some((blocker) => blocker?.system !== "attendee" && blocker?.system !== "tunnel")) return false;
+  return relevantSystems.every((system) => system.code !== "PENDING");
 }
 
 function avatarExperimentLabel(value) {

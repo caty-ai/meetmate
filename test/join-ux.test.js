@@ -89,19 +89,64 @@ test("Discord status poll failure lines distinguish local-only 404s from generic
   assert.equal(discordStatusFetchLine(0), "Discord 接続状態: 取得失敗");
 });
 
-test("Discord readiness gate ignores only attendee/tunnel blockers and otherwise fails closed", () => {
-  assert.equal(discordReadinessAllowsJoin({ ready: true, blockers: [] }), true);
+test("Discord readiness gate uses granular per-system readiness and ignores only attendee/tunnel systems", () => {
   assert.equal(discordReadinessAllowsJoin({
     ready: false,
-    blockers: [{ system: "attendee", code: "NOT_CONFIGURED" }, { system: "tunnel", code: "UNREACHABLE" }],
-  }), true);
-  assert.equal(discordReadinessAllowsJoin({
-    ready: false,
-    blockers: [{ system: "stt", code: "AUTH_FAILED" }],
+    systems: [
+      { id: "soniox", ok: false, code: "PENDING" },
+      { id: "fish-audio", ok: true, code: "CONNECTED" },
+      { id: "attendee", ok: false, code: "NOT_CONFIGURED" },
+      { id: "llm", ok: true, code: "CONNECTED" },
+      { id: "tunnel", ok: true, code: "CONNECTED" },
+    ],
+    blockers: [{ system: "attendee", code: "NOT_CONFIGURED" }],
   }), false);
+
   assert.equal(discordReadinessAllowsJoin({
     ready: false,
-    blockers: [{ fieldId: "soniox_api_key", code: "AUTH_FAILED" }],
+    systems: [
+      { id: "soniox", ok: true, code: "CONNECTED" },
+      { id: "fish-audio", ok: true, code: "CONNECTED" },
+      { id: "attendee", ok: false, code: "PENDING" },
+      { id: "llm", ok: true, code: "CONNECTED" },
+      { id: "tunnel", ok: false, code: "PENDING" },
+    ],
+    blockers: [{ system: "attendee", code: "NOT_CONFIGURED" }],
+  }), true);
+
+  assert.equal(discordReadinessAllowsJoin({
+    ready: false,
+    systems: [
+      { id: "soniox", ok: true, code: "CONNECTED" },
+      { id: "fish-audio", ok: false, code: "TIMEOUT" },
+      { id: "attendee", ok: false, code: "PENDING" },
+      { id: "llm", ok: true, code: "CONNECTED" },
+      { id: "tunnel", ok: false, code: "UNREACHABLE" },
+    ],
+    blockers: [],
+  }), true);
+
+  assert.equal(discordReadinessAllowsJoin({
+    ready: false,
+    systems: [
+      { id: "soniox", ok: true, code: "CONNECTED" },
+      { id: "fish-audio", ok: false, code: "AUTH_FAILED" },
+      { id: "attendee", ok: false, code: "PENDING" },
+      { id: "llm", ok: true, code: "CONNECTED" },
+      { id: "tunnel", ok: false, code: "UNREACHABLE" },
+    ],
+    blockers: [{ system: "fish-audio", code: "AUTH_FAILED" }],
+  }), false);
+
+  assert.equal(discordReadinessAllowsJoin({ ready: true, blockers: [] }), true);
+  assert.equal(discordReadinessAllowsJoin({ ready: false, blockers: [] }), false);
+  assert.equal(discordReadinessAllowsJoin({
+    ready: false,
+    systems: [
+      { id: "soniox", ok: true, code: "CONNECTED" },
+      { id: "fish-audio", ok: true, code: "CONNECTED" },
+      { id: "llm", ok: true, code: "CONNECTED" },
+    ],
   }), false);
 });
 

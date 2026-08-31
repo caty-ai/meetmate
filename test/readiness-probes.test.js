@@ -336,10 +336,10 @@ test("discord probe shares one wall-clock timeout budget across auth and guild p
   initialize({ discord: { botToken: "discord.fixture.value", guildAllowlist: ["11111111111111111"] } });
   const startedAt = Date.now();
   const outcome = await probes.probeSystem("discord", {
-    timeoutMs: 40,
+    timeoutMs: 80,
     fetchFn: async (url, options) => {
       if (!String(url).includes("/guilds")) {
-        await new Promise((resolve) => setTimeout(resolve, 35));
+        await new Promise((resolve) => setTimeout(resolve, 60));
         return new Response("{}", { status: 200 });
       }
       return new Promise((_resolve, reject) => {
@@ -350,7 +350,7 @@ test("discord probe shares one wall-clock timeout budget across auth and guild p
   const elapsed = Date.now() - startedAt;
   t.diagnostic(`shared-budget elapsedMs=${elapsed}`);
   assert.deepEqual(outcome, { ok: false, code: "TIMEOUT" });
-  assert.ok(elapsed >= 20 && elapsed < 250, `elapsed=${elapsed}`);
+  assert.ok(elapsed >= 50 && elapsed < 120, `elapsed=${elapsed}`);
 });
 
 test("discord probe times out mid-pagination when the shared budget is exhausted", async () => {
