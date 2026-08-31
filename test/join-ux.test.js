@@ -138,6 +138,18 @@ test("Discord readiness gate uses granular per-system readiness and ignores only
     blockers: [{ system: "fish-audio", code: "AUTH_FAILED" }],
   }), false);
 
+  assert.equal(discordReadinessAllowsJoin({
+    ready: false,
+    systems: [],
+    blockers: [],
+  }), false);
+
+  assert.equal(discordReadinessAllowsJoin({
+    ready: true,
+    systems: [],
+    blockers: [],
+  }), true);
+
   assert.equal(discordReadinessAllowsJoin({ ready: true, blockers: [] }), true);
   assert.equal(discordReadinessAllowsJoin({ ready: false, blockers: [] }), false);
   assert.equal(discordReadinessAllowsJoin({

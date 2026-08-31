@@ -215,7 +215,7 @@ function readinessDisplayRows(readinessState) {
 function discordReadinessAllowsJoin(readinessState) {
   if (!readinessState || typeof readinessState !== "object") return false;
   const systems = Array.isArray(readinessState.systems) ? readinessState.systems : null;
-  if (!systems) return readinessState?.ready === true;
+  if (!systems || systems.length === 0) return readinessState?.ready === true;
   const blockers = Array.isArray(readinessState.blockers) ? readinessState.blockers : null;
   if (!blockers) return readinessState?.ready === true;
   const relevantSystems = systems.filter((system) => system?.id !== "attendee" && system?.id !== "tunnel");
