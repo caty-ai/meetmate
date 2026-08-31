@@ -282,6 +282,9 @@ function createDiscordSessionManager(options = {}) {
 
       if (left && oldUserId && oldState.member.user.bot !== true && session.audioIn) {
         session.audioIn.unsubscribeUser(String(oldUserId));
+        if (typeof session.pipeline?.releaseSpeaker === "function") {
+          session.pipeline.releaseSpeaker(String(oldUserId));
+        }
       }
     });
   }

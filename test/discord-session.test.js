@@ -553,6 +553,108 @@ test("discord voiceStateUpdate aborts non-allowlisted bot movement and terminal 
   assert.equal(thirdSession.lifecycle.state, "failed");
 });
 
+test("discord voiceStateUpdate left transitions release the departed speaker slot", async () => {
+  const harness = createHarness();
+  const result = await harness.manager.join({ guildId: GUILD_ID, channelId: CHANNEL_ID });
+  assert.equal(result.status, 200);
+
+  const released = [];
+  harness.createdPipelines[0].releaseSpeaker = (userId) => {
+    released.push(userId);
+    return true;
+  };
+
+  harness.client.emit(
+    "voiceStateUpdate",
+    {
+      channelId: CHANNEL_ID,
+      member: { user: { id: HUMAN_ID, bot: false }, displayName: "Human" },
+    },
+    {
+      channelId: null,
+    }
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(harness.audioInUnsubscriptions, [HUMAN_ID]);
+  assert.deepEqual(released, [HUMAN_ID]);
+});
+
+test("discord voiceStateUpdate does not release slots for bot movement or other-channel leaves", async () => {
+  const otherChannelHarness = createHarness();
+  const otherChannelResult = await otherChannelHarness.manager.join({ guildId: GUILD_ID, channelId: CHANNEL_ID });
+  assert.equal(otherChannelResult.status, 200);
+  const otherChannelReleased = [];
+  otherChannelHarness.createdPipelines[0].releaseSpeaker = (userId) => {
+    otherChannelReleased.push(userId);
+    return true;
+  };
+  otherChannelHarness.client.emit(
+    "voiceStateUpdate",
+    {
+      channelId: "99999999999999999",
+      member: { user: { id: HUMAN_ID, bot: false }, displayName: "Human" },
+    },
+    {
+      channelId: null,
+      member: { user: { id: HUMAN_ID, bot: false }, displayName: "Human" },
+    }
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(otherChannelReleased, []);
+  assert.deepEqual(otherChannelHarness.audioInUnsubscriptions, []);
+
+  const botHarness = createHarness();
+  const botResult = await botHarness.manager.join({ guildId: GUILD_ID, channelId: CHANNEL_ID });
+  assert.equal(botResult.status, 200);
+  const botReleased = [];
+  botHarness.createdPipelines[0].releaseSpeaker = (userId) => {
+    botReleased.push(userId);
+    return true;
+  };
+  botHarness.client.emit(
+    "voiceStateUpdate",
+    { id: BOT_ID, guild: { id: GUILD_ID }, channelId: CHANNEL_ID },
+    { id: BOT_ID, guild: { id: GUILD_ID }, channelId: null }
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(botReleased, []);
+});
+
+test("discord voiceStateUpdate tolerates pipelines without releaseSpeaker on human leave", async () => {
+  const harness = createHarness();
+  const result = await harness.manager.join({ guildId: GUILD_ID, channelId: CHANNEL_ID });
+  assert.equal(result.status, 200);
+
+  const unhandled = [];
+  const listenerErrors = [];
+  const onUnhandled = (error) => unhandled.push(error);
+  const originalConsoleError = console.error;
+  process.on("unhandledRejection", onUnhandled);
+  console.error = (...args) => listenerErrors.push(args);
+  try {
+    harness.client.emit(
+      "voiceStateUpdate",
+      {
+        channelId: CHANNEL_ID,
+        member: { user: { id: HUMAN_ID, bot: false }, displayName: "Human" },
+      },
+      {
+        channelId: null,
+        member: { user: { id: HUMAN_ID, bot: false }, displayName: "Human" },
+      }
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+  } finally {
+    console.error = originalConsoleError;
+    process.off("unhandledRejection", onUnhandled);
+  }
+
+  assert.deepEqual(harness.audioInUnsubscriptions, [HUMAN_ID]);
+  assert.deepEqual(unhandled, []);
+  assert.deepEqual(listenerErrors, []);
+});
+
 test("discord voiceStateUpdate is transition-only, announce-safe, and partial-state safe", async () => {
   const duringAnnounce = createHarness({
     synthesize: async ({ options, player }) => {

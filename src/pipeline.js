@@ -546,7 +546,7 @@ function cloneSpeakerMeta(speaker) {
  * @param {"meet"|"zoom"|"discord"} [options.transport] - Canonical transport literal for sessionUser names
  * @param {{ chat?: boolean, perSpeakerAudio?: boolean, avatarStream?: boolean, supportsFlush?: boolean, echoesOwnOutput?: boolean }} [options.capabilities]
  * @param {boolean} [options.suppressGreeting] - Skip pipeline-owned greeting while preserving default-agent switch side effects
- * @returns {{ sendAudio(buf: Buffer, meta?: { speaker?: { platform: string, id: string, displayName?: string, isBot: boolean } }): void, close(): void }}
+ * @returns {{ sendAudio(buf: Buffer, meta?: { speaker?: { platform: string, id: string, displayName?: string, isBot: boolean } }): void, releaseSpeaker(speakerId: string): boolean, close(): void }}
  */
 function createPipeline(session, turnState, onAudio, config, options = {}) {
   const pipelineTimers = options.timers || globalThis;
@@ -3132,6 +3132,18 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         return;
       }
       routeAttributedAudio(buffer, meta.speaker);
+    },
+    releaseSpeaker(speakerId) {
+      if (!perSpeakerAudioEnabled) return false;
+      try {
+        const slot = speakerSlots.get(String(speakerId));
+        const current = currentSlotFor(slot);
+        if (!current) return false;
+        closeSpeakerSlot(current);
+        return true;
+      } catch {
+        return false;
+      }
     },
     close() {
       stopped = true;
