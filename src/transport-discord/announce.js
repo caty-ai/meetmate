@@ -81,7 +81,7 @@ async function runAnnounce(options = {}) {
 
     const onError = (error) => {
       playerError = error;
-      finish({ ok: false, code: "player_error", error });
+      finish({ ok: false, code: "player_error", error, playbackDuration: maxPlaybackDuration });
     };
 
     const onStateChange = (oldState, newState) => {

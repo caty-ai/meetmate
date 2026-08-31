@@ -441,6 +441,7 @@ test("discord announce rejects an error before a sufficient-duration Idle transi
 
   const result = await harness.manager.join({ guildId: GUILD_ID, channelId: CHANNEL_ID });
   assert.equal(result.status, 502);
+  assert.equal(result.body.message, "Discord announce failed: player_error");
   assert.equal(harness.coordinatorState.releaseCalls, 1);
   assert.equal(harness.createdPipelines.length, 0);
   assert.equal(harness.player.listenerCount("stateChange"), 0);
