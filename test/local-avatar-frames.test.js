@@ -946,7 +946,7 @@ test("frame launch selection is explicit and leaves the H0 default unchanged", (
   }
 });
 
-test("hybrid-local-frames joins only on Fish Audio with a public HTTPS origin", { concurrency: false }, async () => {
+test("hybrid-local-frames joins only on pipeline TTS providers with a public HTTPS origin", { concurrency: false }, async () => {
   await withMeetRoutes(async (harness) => {
     const join = await harness.join({ avatarExperiment: "hybrid-local-frames" });
     assert.equal(join.statusCode, 200);
@@ -968,7 +968,7 @@ test("hybrid-local-frames joins only on Fish Audio with a public HTTPS origin", 
       providerErrors[experiment] = join.text;
     }, { ttsProvider: "other" });
   }
-  assert.equal(providerErrors["hybrid-local-l0"], "hybrid-local-l0 は Fish Audio 構成でのみ利用できます。");
+  assert.equal(providerErrors["hybrid-local-l0"], "hybrid-local-l0 はパイプライン TTS プロバイダー構成でのみ利用できます。");
   assert.equal(
     providerErrors["hybrid-local-frames"].replace("hybrid-local-frames", "hybrid-local-l0"),
     providerErrors["hybrid-local-l0"],

@@ -4,7 +4,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
-const { validators } = require("./registry");
+const { SETTINGS_REGISTRY, validators } = require("./registry");
 const { audioMetadataSchema, parseStrict } = require("./schemas");
 const { readConfigState, saveAudioClips, settingsError } = require("./store");
 const { parseMultipart: parseSharedMultipart } = require("./multipart");
@@ -365,12 +365,18 @@ function ffmpegExecutable(options, startup) {
 
 const PREVIEW_TIMEOUT_MS = 30_000;
 const PREVIEW_DURATION_MS = 15_000;
-const PREVIEW_RETRY_MAX = 2;
-const PREVIEW_RETRY_BASE_MS = 100;
-const FISH_TTS_URL = "https://api.fish.audio/v1/tts";
+const PREVIEW_TTS_CREDENTIAL_IDS = Object.freeze(Object.fromEntries(
+  SETTINGS_REGISTRY
+    .filter((entry) => entry.credential === "class-1" && entry.visibleWhen?.id === "tts_provider")
+    .map((entry) => [entry.visibleWhen.value, entry.id])
+));
 
 function previewError(code, status = 500) {
   return settingsError(code, "TTS preview failed", status);
+}
+
+function previewDurationLimitError() {
+  return previewError("SETTINGS_PREVIEW_DURATION_LIMIT", 422);
 }
 
 function wavFromPcm(pcm, sampleRate) {
@@ -392,68 +398,33 @@ function wavFromPcm(pcm, sampleRate) {
   return wav;
 }
 
-function abortablePreviewDelay(ms, signal) {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) {
-      reject(signal.reason || new Error("aborted"));
-      return;
-    }
-    const timer = setTimeout(() => { cleanup(); resolve(); }, ms);
-    function onAbort() { cleanup(); reject(signal.reason || new Error("aborted")); }
-    function cleanup() {
-      clearTimeout(timer);
-      signal.removeEventListener("abort", onAbort);
-    }
-    signal.addEventListener("abort", onAbort, { once: true });
-  });
-}
-
 function isAbortError(error) {
   return error?.name === "AbortError"
     || error?.code === "ABORT_ERR"
-    || String(error?.message || "").toLowerCase() === "aborted";
-}
-
-async function bufferPreviewResponse(response, maxPcmBytes, controller) {
-  if (!response.body) throw previewError("SETTINGS_PREVIEW_PROVIDER_FAILED");
-  const chunks = [];
-  let total = 0;
-  const reader = response.body.getReader();
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      const chunk = Buffer.from(value);
-      total += chunk.length;
-      if (total > maxPcmBytes) {
-        controller.abort();
-        throw previewError("SETTINGS_PREVIEW_DURATION_LIMIT", 422);
-      }
-      chunks.push(chunk);
-    }
-  } finally {
-    try { reader.releaseLock(); } catch { /* best effort */ }
-  }
-  if (total === 0 || total % 2 !== 0) throw previewError("SETTINGS_PREVIEW_AUDIO_INVALID", 422);
-  return Buffer.concat(chunks, total);
+    || String(error?.message || "").toLowerCase().includes("abort");
 }
 
 async function previewTts({ revision, text }, options = {}) {
   const { stripCanonicalEmotionTags } = require("../messages");
-  const { getEffectiveValue, getRuntime } = require("./resolver");
+  const { getEffectiveValue, getRuntime, getStatus } = require("./resolver");
   assertCommittedRevision(getRuntime().startup.configPath, revision);
-  const apiKey = getEffectiveValue("fish_audio_api_key");
-  if (typeof apiKey !== "string" || apiKey.trim() === "") {
+  const provider = getEffectiveValue("tts_provider") || "fish-audio";
+  const credentialId = PREVIEW_TTS_CREDENTIAL_IDS[provider];
+  const credential = credentialId ? getEffectiveValue(credentialId) : null;
+  const missingCredential = provider === "openai-compatible"
+    ? getStatus().issues.some((issue) => issue.fieldId === credentialId && issue.code === "VALUE_REQUIRED")
+    : typeof credential !== "string" || credential.trim() === "";
+  if (!credentialId || missingCredential) {
     throw previewError("SETTINGS_PREVIEW_NOT_CONFIGURED", 422);
   }
-  const referenceId = getEffectiveValue("fish_audio_voice_id");
-  const model = getEffectiveValue("fish_audio_model");
+  const apiKey = getEffectiveValue("fish_audio_api_key");
+  const referenceId = provider === "fish-audio" ? getEffectiveValue("fish_audio_voice_id") : null;
   const sampleRate = getEffectiveValue("tts_sample_rate");
   const speed = getEffectiveValue("fish_audio_speed");
   const latency = getEffectiveValue("fish_audio_latency");
-  const requestText = getEffectiveValue("agent_emotion_tags") === false
+  const requestText = provider !== "fish-audio" || getEffectiveValue("agent_emotion_tags") === false
     ? stripCanonicalEmotionTags(text)
-    : text;
+    : String(text || "").trim();
   if (!requestText) throw previewError("SETTINGS_VALIDATION_FAILED", 422);
   if (typeof options.takeAllowance === "function" && !options.takeAllowance()) {
     throw previewError("SETTINGS_PREVIEW_RATE_LIMITED", 429);
@@ -466,59 +437,48 @@ async function previewTts({ revision, text }, options = {}) {
     controller.abort(timeoutAbort);
   }, timeoutMs);
   timer.unref?.();
-  const fetchFn = options.fetchFn || globalThis.fetch;
   const maxPcmBytes = sampleRate * 2 * (PREVIEW_DURATION_MS / 1000);
-  const body = JSON.stringify({
-    text: requestText,
-    format: "pcm",
-    sample_rate: sampleRate,
-    latency,
-    temperature: 0.7,
-    top_p: 0.7,
-    chunk_length: 300,
-    normalize: true,
-    ...(referenceId ? { reference_id: referenceId } : {}),
-    ...(Number.isFinite(speed) ? { speed } : {}),
-    ...(Number.isFinite(speed) ? { prosody: { speed } } : {}),
-  });
+  const chunks = [];
+  let pcmBytes = 0;
+  let durationLimit = null;
+  const synthesize = options.synthesizeFn || require("../tts-fish").synthesize;
   try {
-    for (let attempt = 0; ; attempt += 1) {
-      let response;
-      try {
-        response = await fetchFn(options.url || FISH_TTS_URL, {
-          method: "POST",
-          headers: {
-            Accept: "application/octet-stream",
-            Authorization: `Bearer ${apiKey}`,
-            "Content-Type": "application/json",
-            model,
-          },
-          body,
-          redirect: "error",
-          signal: controller.signal,
-        });
-      } catch (error) {
-        if (error === timeoutAbort || (controller.signal.reason === timeoutAbort && isAbortError(error))) {
-          throw timeoutAbort;
+    await synthesize(text, {
+      apiKey,
+      referenceId,
+      sampleRate,
+      latency,
+      speed,
+      signal: controller.signal,
+      ...(options.fetchFn ? { fetchFn: options.fetchFn } : {}),
+      onDurationCapExceeded() {
+        durationLimit = durationLimit || previewDurationLimitError();
+        controller.abort(durationLimit);
+        return durationLimit;
+      },
+      onAudio(chunk) {
+        if (durationLimit) return;
+        const bytes = Buffer.from(chunk);
+        if (pcmBytes + bytes.length > maxPcmBytes) {
+          durationLimit = durationLimit || previewDurationLimitError();
+          controller.abort(durationLimit);
+          return;
         }
-        throw previewError("SETTINGS_PREVIEW_PROVIDER_FAILED");
-      }
-      if (response.ok) {
-        const pcm = await bufferPreviewResponse(response, maxPcmBytes, controller);
-        const wav = wavFromPcm(pcm, sampleRate);
-        if (wav.length > sampleRate * 2 * 15 + 44) throw previewError("SETTINGS_PREVIEW_DURATION_LIMIT", 422);
-        return { wav, pcmBytes: pcm.length };
-      }
-      try { await response.body?.cancel(); } catch { /* vendor body is deliberately discarded */ }
-      const retryable = response.status === 429 || response.status >= 500;
-      if (!retryable || attempt >= (options.retryMax ?? PREVIEW_RETRY_MAX)) {
-        throw previewError("SETTINGS_PREVIEW_PROVIDER_FAILED");
-      }
-      await abortablePreviewDelay((options.retryBaseMs ?? PREVIEW_RETRY_BASE_MS) * (4 ** attempt), controller.signal);
+        pcmBytes += bytes.length;
+        chunks.push(bytes);
+      },
+    });
+    if (durationLimit) throw durationLimit;
+    const pcm = Buffer.concat(chunks, pcmBytes);
+    if (pcmBytes === 0 || pcmBytes % 2 !== 0) {
+      throw previewError("SETTINGS_PREVIEW_AUDIO_INVALID", 422);
     }
+    return { wav: wavFromPcm(pcm, sampleRate), pcmBytes };
   } catch (error) {
+    if (durationLimit) throw durationLimit;
     if (error === timeoutAbort || (controller.signal.reason === timeoutAbort && isAbortError(error))) throw timeoutAbort;
-    throw error;
+    if (typeof error?.code === "string" && error.code.startsWith("SETTINGS_PREVIEW_")) throw error;
+    throw previewError("SETTINGS_PREVIEW_PROVIDER_FAILED");
   } finally {
     clearTimeout(timer);
   }

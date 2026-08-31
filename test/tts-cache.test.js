@@ -23,6 +23,106 @@ test("cache key changes with content inputs and ignores streaming-only inputs", 
   });
 });
 
+test("Fish cache keys remain byte-compatible with the pre-provider identity payload", () => {
+  const options = {
+    referenceId: "legacy-voice",
+    model: "s2-pro",
+    sampleRate: 24_000,
+    speed: 1,
+  };
+  assert.equal(
+    _test.cacheKey("upgrade-compatible fish", options),
+    "d0c7d1ce3f61be2ca68d3b5e288532b194157cbe676d2b3f110b82a3031e61b6",
+  );
+  assert.deepEqual(_test.synthesisIdentity(options), {
+    referenceId: "legacy-voice",
+    model: "s2-pro",
+    sampleRate: 24_000,
+    speed: 1,
+  });
+});
+
+test("new-provider cache namespaces stay disjoint from Fish and use the effective voice override", () => {
+  const common = { model: "same-model", sampleRate: 24_000 };
+  const fish = _test.cacheKey("same text", { ...common, referenceId: "same-voice", speed: 1 });
+  const elevenGlobal = _test.cacheKey("same text", {
+    ...common, provider: "elevenlabs", voiceId: "same-voice",
+  });
+  const elevenOverride = _test.cacheKey("same text", {
+    ...common, provider: "elevenlabs", voiceId: "same-voice", referenceId: "agent-voice",
+  });
+  assert.notEqual(elevenGlobal, fish);
+  assert.notEqual(elevenOverride, elevenGlobal);
+
+  const openaiGlobal = _test.cacheKey("same text", {
+    ...common, provider: "openai-compatible", baseUrl: "http://tts-a.example", voice: "same-voice",
+  });
+  const openaiOverride = _test.cacheKey("same text", {
+    ...common, provider: "openai-compatible", baseUrl: "http://tts-a.example", voice: "same-voice", referenceId: "agent-voice",
+  });
+  assert.notEqual(openaiGlobal, fish);
+  assert.notEqual(openaiOverride, openaiGlobal);
+});
+
+test("OpenAI-compatible cache identity includes the canonical backend base URL", () => {
+  const common = {
+    provider: "openai-compatible",
+    voice: "voice",
+    model: "model",
+    sampleRate: 24_000,
+  };
+  assert.notEqual(
+    _test.cacheKey("same text", { ...common, baseUrl: "https://tts-a.example" }),
+    _test.cacheKey("same text", { ...common, baseUrl: "https://tts-b.example" }),
+  );
+  assert.equal(
+    _test.cacheKey("same text", { ...common, baseUrl: "https://API.OPENAI.COM./" }),
+    _test.cacheKey("same text", { ...common, baseUrl: "https://api.openai.com" }),
+  );
+});
+
+test("a Fish cache entry is never served after switching to ElevenLabs for the same text", async (t) => {
+  const resolver = require("../src/settings/resolver");
+  const directory = tempDir();
+  t.after(() => {
+    resolver.resetRuntimeForTest();
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+  const startup = Object.freeze({
+    preDotenvEnv: Object.freeze({}), dotenvSeeds: Object.freeze({}),
+    resolvedHome: directory, configPath: path.join(directory, "config.json"),
+    connection: Object.freeze({ openclawUrl: "", openclawToken: "", openaiApiKey: "" }),
+  });
+  const initialize = (tts, revision) => {
+    resolver.resetRuntimeForTest();
+    resolver.initializeRuntime({
+      state: { exists: true, valid: true, parsed: { tts: { ...tts, cache: { enabled: true } } }, revision, fingerprint: revision },
+      startup,
+    });
+  };
+  const calls = [];
+  const cache = createTtsCache({
+    dir: directory,
+    synthesizeFn: async (_text, options) => {
+      const provider = resolver.getEffectiveValue("tts_provider");
+      calls.push(provider);
+      options.onAudio(provider === "fish-audio" ? Buffer.from([1, 2]) : Buffer.from([3, 4]));
+    },
+  });
+
+  initialize({ provider: "fish-audio", model: "same-model", voiceId: "same-voice" }, "a".repeat(64));
+  await cache.synthesize("same text", { referenceId: "same-voice", model: "same-model", onAudio: () => {} });
+  initialize({
+    provider: "elevenlabs",
+    elevenlabs: { apiKey: "key", voiceId: "same-voice", model: "same-model" },
+  }, "b".repeat(64));
+  const emitted = [];
+  await cache.synthesize("same text", { referenceId: "same-voice", model: "same-model", onAudio: (chunk) => emitted.push(Buffer.from(chunk)) });
+
+  assert.deepEqual(calls, ["fish-audio", "elevenlabs"]);
+  assert.deepEqual(Buffer.concat(emitted), Buffer.from([3, 4]));
+});
+
 test("live emotion toggles use distinct effective text for cache, managed lookup, and synthesis", async (t) => {
   const resolver = require("../src/settings/resolver");
   const directory = tempDir();

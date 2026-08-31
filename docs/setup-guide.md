@@ -19,7 +19,9 @@
 | Soniox | https://console.soniox.com/ | STT（音声認識・既定プロバイダ） | ✅ | 現在の free / paid は公式で確認 |
 | Deepgram | https://console.deepgram.com/signup | STT（`deepgram` 切替時のみ） | 任意 | 現在の free / paid は公式で確認 |
 | Attendee | https://app.attendee.dev/accounts/signup/ | Google Meet / Zoom Bot | ✅ | 現在の free / paid は公式で確認 |
-| Fish Audio | https://fish.audio/ | TTS（音声合成） | ✅ | 現在の free / paid は公式で確認。試聴・接続テストにも同じキーの利用料がかかる |
+| Fish Audio | https://fish.audio/ | TTS（既定） | 条件付き（既定） | 現在の free / paid は公式で確認。試聴・接続テストにも同じキーの利用料がかかる |
+| ElevenLabs | https://elevenlabs.io/ | TTS（`elevenlabs` 切替時） | 条件付き | API key・Voice ID が必要。料金は公式で確認 |
+| OpenAI互換 TTS / ローカル TTS | 利用する endpoint に応じる | TTS（`openai-compatible` 切替時） | 条件付き | `api.openai.com` は API key 必須。既定外のローカル endpoint は key なしでも利用可 |
 | ngrok | https://ngrok.com/ | WebSocket トンネル（外部接続用） | 条件付き（一般的な構成） | 無料/有料とも内容は変わりうる |
 | Tailscale | https://tailscale.com/ | ngrok代替の到達経路（self-hosted Attendee 等） | 任意 | 無料/有料とも内容は変わりうる |
 | Zoom Marketplace | https://marketplace.zoom.us/ | Zoom Bot 権限・アプリ管理 | 条件付き | プラン/権限要件は運用形態次第 |
@@ -79,7 +81,7 @@ Settings UI: http://localhost:<port>/settings
 
    <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/setup-mode-settings.png" alt="setup mode の設定画面。セットアップ中バッジと2つの黄色バナー、空欄の必須項目が並んでいる" width="100%">
 
-2. バナーに挙がった項目（エージェント ID・表示名・Wake Words・Soniox もしくは Deepgram のキー・Fish Audio のキーと Voice ID・Attendee のキーなど）を埋め、下部の **`変更を保存`** をクリックする。保存できると `設定を保存しました。` のトーストが出る。
+2. バナーに挙がった項目（エージェント ID・表示名・Wake Words・Soniox もしくは Deepgram のキー・選択した TTS プロバイダーの接続情報・Attendee のキーなど）を埋め、下部の **`変更を保存`** をクリックする。保存できると `設定を保存しました。` のトーストが出る。
 3. サーバーを再起動する（`npx meetmate start` をもう一度、または常駐サービスなら再起動）。すべて揃っていればヘッダーのバッジが `読み込み済み` に変わり、setup mode のバナーが消える:
 
    <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-page-basic.png" alt="設定完了後の基本タブ。読み込み済みバッジと緑の「設定は読み込み済みです」バナー" width="100%">
@@ -87,6 +89,32 @@ Settings UI: http://localhost:<port>/settings
 4. `/`（ダッシュボード）に移動し、会議 URL を貼り付けて参加させる。手順の画面つき詳細は [動作確認](#動作確認画面つきウォークスルー) を参照。
 
 2人目以降のエージェントを増やす場合は [2人目のエージェントを増やす](#2人目のエージェントを増やすエクスポートインポート) を参照。設定項目の全体像は次章 [設定リファレンス](#設定リファレンスsettings-ui) にまとめてある。
+
+### TTS プロバイダーを選ぶ
+
+設定 UI の **音声合成プロバイダー** では次の3つだけを選べる。変更後は保存して Meetmate を再起動する。
+
+- `fish-audio`（既定）: 既存の `tts.apiKey` / `tts.voiceId` / `tts.model` をそのまま使う。既存設定の編集は不要
+- `elevenlabs`: API key、Voice ID、モデルを入力する。`tts_sample_rate` は ElevenLabs の PCM 対応値（8000 / 16000 / 22050 / 24000 / 44100 Hz）を指定する
+- `openai-compatible`: Base URL、モデル、Voice を入力し、`tts_sample_rate` は `24000` にする。`api.openai.com` では API key が必須。既定外の Base URL では key を省略できる
+
+ローカル OpenAI 互換サーバー（例: Irodori-TTS）を key なしで使う `config.json` の例:
+
+```json
+{
+  "tts": {
+    "provider": "openai-compatible",
+    "sampleRate": 24000,
+    "openaiCompatibleTts": {
+      "baseUrl": "http://127.0.0.1:8080",
+      "model": "irodori-tts",
+      "voice": "default"
+    }
+  }
+}
+```
+
+Meetmate はこの Base URL に `/v1/audio/speech` を付け、`response_format: "pcm"` で呼び出す。ローカルサーバー側も mono PCM16 / 24 kHz を返す必要がある。公開サーバーや `api.openai.com` へ key なしで接続するためのフォールバックはない。
 
 ---
 
@@ -298,6 +326,8 @@ tailscale serve --https=443 http://127.0.0.1:<port>
 | `[empathetic, unhurried]` | 謝罪・落ち着き |
 | `[thoughtful]` | 考え深く |
 
+ElevenLabs と OpenAI 互換 TTS は角括弧の感情タグを常に除去し、ライブで感情を音声に反映する機能は現時点では Fish Audio のみが対応している。
+
 ユーザーが変更できるのは、**感情タグ** の on/off トグル（音声プリセットタブ、ライブ設定、デフォルト有効）と、自由記述の**あいさつ**（同じくライブ設定）。あいさつの書式は角括弧タグを文頭に置く形:
 
 ```
@@ -369,7 +399,7 @@ Legacy connection settings were ignored and must be supplied through the environ
 
 ### 接続テスト
 
-**接続テスト** タブには Soniox / Deepgram / Fish Audio / Attendee / Slack それぞれのテストボタンがある。**現在実装されているのは Soniox と Fish Audio のみ**。それ以外を押すと「この接続テストは現在未実装です。」と表示される。
+**接続テスト** タブには Soniox / Deepgram / Fish Audio / ElevenLabs / OpenAI-compatible TTS / Attendee / LLM / Tunnel / Slack のテストボタンがある。Slack 以外は実装済みで、TTS は選択前でも保存済みの接続情報を個別に確認できる。
 
 - タイムアウト: 5秒
 - 結果表示: `<サービス名>: <コード> — <説明> (<n> ms)`（コードは `CONNECTED` / `NOT_CONFIGURED` / `AUTH_FAILED` / `UNREACHABLE` / `TIMEOUT` / `RATE_LIMITED` / `PROVIDER_ERROR` のいずれか）
@@ -515,10 +545,10 @@ Linux では `~/.config/systemd/user/ai-meet.<agent-name>.service` が生成さ�
 - ngrok が起動しているか確認
 
 ### Bot は参加するが音声応答しない
-- 設定 UI の基本タブで **音声合成プロバイダー** が `fish-audio` になっているか確認（現時点でこれ以外の値は受け付けない）
-- Fish Audio の API キー・Voice ID が正しいか確認（接続テストタブでも確認できる）
-- サーバーログに `🐟 Fish Audio パイプラインモード` が表示されているか確認
-  - `🔊 Deepgram Voice Agent モード` が出ていたら音声合成プロバイダーの設定が間違っている
+- 設定 UI の基本タブで **音声合成プロバイダー** が意図した `fish-audio` / `elevenlabs` / `openai-compatible` になっているか確認
+- 選択したプロバイダーの API キー・Voice ID・モデル・Base URL を確認（接続テストタブでも確認できる）
+- サーバーログに選択したプロバイダー名の `TTS パイプラインモード` が表示されているか確認
+  - `🔊 Deepgram Voice Agent モード` は、3つの対応プロバイダー以外の従来値を明示した場合だけ使われる。設定を対応値へ戻して再起動する
 
 ### Gateway warm-up がタイムアウトする
 - openai-compatible では join 時に Gateway warm-up エラーがログに出る既知問題あり（無害・修正は #140）。
@@ -720,7 +750,7 @@ Settings UI: http://localhost:<port>/settings
 ## アーキテクチャ概要
 
 ```
-STT(Soniox stt-rt-v5 既定 / Deepgram 切替可) → ウェイクワード検出 → LLM(OpenClaw Gateway 既定) → TTS(Fish Audio) → Meet/Zoom
+STT(Soniox stt-rt-v5 既定 / Deepgram 切替可) → ウェイクワード検出 → LLM(OpenClaw Gateway 既定) → TTS(Fish Audio 既定 / ElevenLabs / OpenAI互換) → Meet/Zoom
 ```
 
 詳細は `docs/architecture.md` を参照。

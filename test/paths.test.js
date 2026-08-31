@@ -204,10 +204,10 @@ function settingsRequest(method, url, headers = {}, body = "") {
 }
 
 test("T12-01 registry/schema/type lock keeps the write allowlist strict", () => {
-  assert.equal(SETTINGS_REGISTRY.length, 65);
+  assert.equal(SETTINGS_REGISTRY.length, 72);
   assert.equal(ENV_DIAGNOSTICS.length, 59);
   assert.equal(new Set(SETTINGS_REGISTRY.map((entry) => entry.id)).size, SETTINGS_REGISTRY.length);
-  assert.equal(SETTINGS_REGISTRY.filter((entry) => entry.credential === "class-1").length, 5);
+  assert.equal(SETTINGS_REGISTRY.filter((entry) => entry.credential === "class-1").length, 7);
   assert.deepEqual(SETTINGS_REGISTRY.filter((entry) => entry.writeSurface === "audio-only").map((entry) => entry.id), ["audio_clips"]);
   const visible = JSON.stringify(SETTINGS_REGISTRY.map(({ id, path: configPath }) => ({ id, path: configPath })));
   for (const forbidden of ["gateway.token", "gateway.url", "openaiCompatible.apiKey", "WS_SHARED_TOKEN", "JOIN_SHARED_TOKEN"]) {
@@ -248,9 +248,9 @@ test("T12-02 environment inventory lock recognizes every retained direct read an
   assert.equal(bytes.endsWith("\n"), true);
   assert.equal(bytes.endsWith("\n\n"), false);
   const inventory = JSON.parse(bytes);
-  assert.equal(inventory.baselineUniqueDirectCount, 91);
-  assert.equal(inventory.directReferences.length, 91);
-  assert.equal(new Set(inventory.directReferences.map((entry) => entry.name)).size, 91);
+  assert.equal(inventory.baselineUniqueDirectCount, 98);
+  assert.equal(inventory.directReferences.length, 98);
+  assert.equal(new Set(inventory.directReferences.map((entry) => entry.name)).size, 98);
   const known = new Set(inventory.directReferences.map((entry) => entry.name));
   const productionFiles = [];
   function collect(directory) {

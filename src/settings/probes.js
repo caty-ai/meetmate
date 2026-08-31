@@ -3,6 +3,7 @@
 const { complete: requestOpenClaw } = require("../llm-openclaw");
 const { complete: requestOpenAi } = require("../llm-openai");
 const { getPublishedValue, getRuntime, meaningful } = require("./resolver");
+const { canonicalHostname } = require("../url-utils");
 
 const DEFAULT_FETCH_TIMEOUT_MS = 5_000;
 const LLM_TIMEOUT_MS = 15_000;
@@ -30,6 +31,26 @@ const DESCRIPTORS = Object.freeze({
     endpoint: "https://api.fish.audio/model?page_size=1&page_number=1&self=true",
     method: "GET",
     credentialId: "fish_audio_api_key",
+    authScheme: "Bearer",
+    headers: Object.freeze({ Accept: "application/json" }),
+    timeoutMs: DEFAULT_FETCH_TIMEOUT_MS,
+    transport: "fetchFn",
+  }),
+  elevenlabs: Object.freeze({
+    endpoint: "https://api.elevenlabs.io/v1/user/subscription",
+    method: "GET",
+    credentialId: "elevenlabs_api_key",
+    authHeader: "xi-api-key",
+    authScheme: "",
+    headers: Object.freeze({ Accept: "application/json" }),
+    timeoutMs: DEFAULT_FETCH_TIMEOUT_MS,
+    transport: "fetchFn",
+  }),
+  "openai-compatible": Object.freeze({
+    endpoint: ({ openAiTtsBaseUrl }) => `${String(openAiTtsBaseUrl || "").replace(/\/+$/, "")}/v1/models`,
+    method: "GET",
+    credentialId: "openai_compatible_tts_api_key",
+    authHeader: "Authorization",
     authScheme: "Bearer",
     headers: Object.freeze({ Accept: "application/json" }),
     timeoutMs: DEFAULT_FETCH_TIMEOUT_MS,
@@ -86,6 +107,9 @@ function classifyStatus(status, options = {}) {
       ? result("NOT_ENABLED", "OpenClaw 側で gateway.http.endpoints.chatCompletions.enabled を有効にしてください")
       : result("PROVIDER_ERROR", "ベースURL/モデル名を確認してください");
   }
+  if ((status === 404 || status === 405) && options.system === "openai-compatible") {
+    return result("CONNECTED", "The optional /v1/models probe endpoint is not implemented");
+  }
   return result("PROVIDER_ERROR");
 }
 
@@ -111,22 +135,34 @@ async function cancelBody(response) {
 async function fetchProbe(system, options = {}) {
   const descriptor = DESCRIPTORS[system];
   const credential = getPublishedValue(descriptor.credentialId);
-  if (!meaningful(credential)) return result("NOT_CONFIGURED");
+  const openAiTtsBaseUrl = getPublishedValue("openai_compatible_tts_base_url");
+  if (system === "openai-compatible") {
+    const hostname = canonicalHostname(openAiTtsBaseUrl);
+    if (!hostname) return result("NOT_CONFIGURED");
+    if (hostname === "api.openai.com" && !meaningful(credential)) return result("NOT_CONFIGURED");
+  } else if (!meaningful(credential)) {
+    return result("NOT_CONFIGURED");
+  }
 
   const controller = new AbortController();
   const timeoutReason = new Error(`${system} probe timeout`);
   const timer = setTimeout(() => controller.abort(timeoutReason), options.timeoutMs ?? descriptor.timeoutMs);
   timer.unref?.();
   try {
-    const endpointContext = { attendeeBaseUrl: getPublishedValue("attendee_base_url") };
+    const endpointContext = {
+      attendeeBaseUrl: getPublishedValue("attendee_base_url"),
+      openAiTtsBaseUrl,
+    };
     const endpoint = options.endpoints?.[system]
       || (typeof descriptor.endpoint === "function" ? descriptor.endpoint(endpointContext) : descriptor.endpoint);
+    const headers = { ...descriptor.headers };
+    if (meaningful(credential)) {
+      const authHeader = descriptor.authHeader || "Authorization";
+      headers[authHeader] = descriptor.authScheme ? `${descriptor.authScheme} ${credential}` : credential;
+    }
     const response = await (options.fetchFn || globalThis.fetch)(endpoint, {
       method: descriptor.method,
-      headers: {
-        ...descriptor.headers,
-        Authorization: `${descriptor.authScheme} ${credential}`,
-      },
+      headers,
       redirect: "error",
       signal: controller.signal,
     });

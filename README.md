@@ -1,6 +1,6 @@
 # Meetmate
 <!-- repo-state:begin (generated; do not edit) -->
-<p align="center"><sub>generation: <code>6ca90c3</code> (2026-08-30T20:09:04Z) · verify: <a href="https://api.github.com/repos/caty-ai/meetmate/commits/main">API HEAD</a> · <a href="./status.json">status.json</a></sub></p>
+<p align="center"><sub>generation: <code>fa9c3f6</code> (2026-08-31T14:49:03Z) · verify: <a href="https://api.github.com/repos/caty-ai/meetmate/commits/main">API HEAD</a> · <a href="./status.json">status.json</a></sub></p>
 <!-- repo-state:end -->
 
 **English** | [日本語](https://github.com/caty-ai/meetmate/blob/main/docs/i18n/README.ja.md) | [中文](https://github.com/caty-ai/meetmate/blob/main/docs/i18n/README.zh.md) | [ไทย](https://github.com/caty-ai/meetmate/blob/main/docs/i18n/README.th.md)
@@ -23,7 +23,7 @@ Meetmate does exactly one thing: it gives *your* AI agent a seat in your meeting
 
 ## Quick start
 
-**What you need:** [Node.js](https://nodejs.org/) ≥ 26 · an [Attendee](https://attendee.dev/) account · [Soniox](https://soniox.com/) (or [Deepgram](https://deepgram.com/)) for speech-to-text · [Fish Audio](https://fish.audio/) for the voice (including a voice ID) · an LLM endpoint ([OpenClaw Gateway](https://openclaw.ai/) or any OpenAI-compatible) · usually [ngrok](https://ngrok.com/) or [Tailscale](https://tailscale.com/) · and Google Meet will ask you to admit the bot. The third-party services may cost money.
+**What you need:** [Node.js](https://nodejs.org/) ≥ 26 · an [Attendee](https://attendee.dev/) account · [Soniox](https://soniox.com/) (or [Deepgram](https://deepgram.com/)) for speech-to-text · a TTS provider ([Fish Audio](https://fish.audio/), ElevenLabs, or OpenAI-compatible) · an LLM endpoint ([OpenClaw Gateway](https://openclaw.ai/) or any OpenAI-compatible) · usually [ngrok](https://ngrok.com/) or [Tailscale](https://tailscale.com/) · and Google Meet will ask you to admit the bot. The third-party services may cost money.
 
 In an empty folder:
 
@@ -120,13 +120,15 @@ The `init` wizard collects the API keys, the voice ID, and the LLM endpoint for 
 | [Attendee](https://attendee.dev/) account + API key | Meeting bot join/leave + audio I/O | `ATTENDEE_API_KEY` | Always | Hosted service; check current free/paid availability. |
 | [Soniox](https://console.soniox.com/) account + API key | Default speech-to-text | `STT_PROVIDER=soniox`, `SONIOX_API_KEY` | Usually | Default path. Pricing/trial terms vary. |
 | [Deepgram](https://console.deepgram.com/signup) account + API key | Optional alternate speech-to-text | `STT_PROVIDER=deepgram`, `DEEPGRAM_API_KEY` | Optional | Only if you switch away from Soniox. |
-| [Fish Audio](https://fish.audio/) account + voice | Text-to-speech voice | `FISH_AUDIO_API_KEY`, `FISH_AUDIO_VOICE_ID`, `TTS_PROVIDER=fish-audio` | Always | Voice ID comes from the voice page URL. Pricing/trial terms vary. |
+| [Fish Audio](https://fish.audio/) account + voice | Default text-to-speech voice | `TTS_PROVIDER=fish-audio`, `FISH_AUDIO_API_KEY`, `FISH_AUDIO_VOICE_ID` | Default | Existing configurations continue to use this provider. |
+| [ElevenLabs](https://elevenlabs.io/) account + voice | Alternate text-to-speech voice | `TTS_PROVIDER=elevenlabs`, `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID` | Optional | Configure the model in the settings UI; PCM output follows the TTS sample rate. |
+| OpenAI-compatible TTS | OpenAI-hosted or local text-to-speech | `TTS_PROVIDER=openai-compatible`, `OPENAI_COMPATIBLE_TTS_BASE_URL`, `OPENAI_COMPATIBLE_TTS_MODEL`, `OPENAI_COMPATIBLE_TTS_VOICE` | Optional | The key is required for `api.openai.com` but optional for a non-default local server such as Irodori-TTS. PCM output requires 24 kHz. |
 | [OpenClaw Gateway](https://openclaw.ai/) or another OpenAI-compatible LLM gateway | The actual voice brain | `LLM_PROVIDER`, `OPENCLAW_GATEWAY_URL`, `OPENCLAW_GATEWAY_TOKEN`, or `OPENAI_COMPATIBLE_BASE_URL`, `OPENAI_COMPATIBLE_API_KEY` | Always | OpenClaw is the mainline path; stateful OpenAI-compatible gateways are documented in the setup guide. |
 | [ngrok](https://ngrok.com/) or [Tailscale](https://tailscale.com/) | Public/reachable bot WebSocket path | `server.ngrokDomain` for ngrok | Conditional | `ngrok` is the common path. Tailscale is an alternative when your network and Attendee deployment allow it. Pricing/free-plan details vary. |
 | Google Meet permission to admit the bot | Let the bot enter the meeting | Meet UI “Ask to join” approval | Google Meet | You must approve the join request in Meet. |
 | [Zoom Marketplace](https://marketplace.zoom.us/) app/admin setup | Zoom bot permission model | Attendee/Zoom-side app settings | Zoom only | Conditional. External-hosted meetings and managed OAuth are not claimed as supported. |
 
-Enter keys through the `init` wizard or the settings UI — vendor keys (Soniox / Deepgram / Fish Audio / Attendee / Slack) are stored in `config.json` (created with permissions 0600), while connection values (gateway URL/token, the OpenAI-compatible key) live in `.env` as environment values. Do not commit either file, screenshots of secrets, or shared config files with live credentials.
+Enter keys through the `init` wizard or the settings UI — vendor keys (Soniox / Deepgram / Fish Audio / ElevenLabs / OpenAI-compatible TTS / Attendee / Slack) are stored in `config.json` (created with permissions 0600), while LLM connection values (gateway URL/token and the OpenAI-compatible LLM key) live in `.env`. Do not commit either file, screenshots of secrets, or shared config files with live credentials.
 
 If you connect a tool-capable OpenAI-compatible gateway, keep that route local and trusted. Meetmate's trust opt-in is intended only for a trusted meeting with a trusted local gateway; external or untrusted meetings remain unsupported for that mode.
 
