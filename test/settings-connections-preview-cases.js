@@ -1,8 +1,10 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const { EventEmitter } = require("node:events");
 const fs = require("node:fs");
 const http = require("node:http");
+const https = require("node:https");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
@@ -354,22 +356,31 @@ test("loopback manual recheck bypasses readiness failure backoff", async (t) => 
 test("TTS preview buffers Fish PCM, strips disabled emotion tags, and returns a valid WAV without mutation", async (t) => {
   const vendorCalls = [];
   const pcm = Buffer.from([0, 0, 1, 0, 255, 255, 2, 0]);
-  const fallbackFetch = async (_url, options) => {
-    vendorCalls.push({ headers: options.headers, body: Buffer.from(options.body) });
-    return new Response(pcm, { status: 200, headers: { "Content-Type": "application/octet-stream" } });
+  const originalRequest = https.request;
+  https.request = (requestOptions, callback) => {
+    const body = [];
+    const req = new EventEmitter();
+    req.setTimeout = () => req;
+    req.destroy = (error) => { if (error) req.emit("error", error); };
+    req.write = (chunk) => { body.push(Buffer.from(chunk)); };
+    req.end = () => process.nextTick(() => {
+      vendorCalls.push({ headers: requestOptions.headers, body: Buffer.concat(body) });
+      const response = new EventEmitter();
+      response.statusCode = 200;
+      response.headers = {};
+      response.destroy = () => {};
+      callback(response);
+      response.emit("data", pcm);
+      response.emit("end");
+    });
+    return req;
   };
-  const vendor = await localVendor(t, async (req, res) => {
-    const chunks = [];
-    for await (const chunk of req) chunks.push(chunk);
-    vendorCalls.push({ headers: req.headers, body: Buffer.concat(chunks) });
-    res.writeHead(200, { "Content-Type": "application/octet-stream" });
-    res.end(pcm);
-  }, fallbackFetch);
+  t.after(() => { https.request = originalRequest; });
   const logs = [];
   const { handler, state, directory } = fixture(t, {
     agent: { emotionTags: false },
     tts: { apiKey: SENTINEL, voiceId: "voice-33", model: "s2-pro", sampleRate: 8_000, speed: 1.25, latency: "low" },
-  }, { preview: { url: `${vendor.baseUrl}/v1/tts`, fetchFn: vendor.fetchFn }, logger: { info: (line) => logs.push(line) } });
+  }, { logger: { info: (line) => logs.push(line) } });
   const before = fs.readFileSync(path.join(directory, "config.json"));
   const res = await invoke(handler, "POST", "/api/settings/tts-preview", {
     revision: state.revision, text: "[soft voice] 接続確認",
@@ -403,6 +414,106 @@ test("TTS preview buffers Fish PCM, strips disabled emotion tags, and returns a 
   assert.equal(logs.join("\n").includes("接続確認"), false);
 });
 
+test("TTS preview dispatches ElevenLabs and OpenAI-compatible synthesis with provider settings", async (t) => {
+  for (const providerCase of [
+    {
+      provider: "elevenlabs",
+      document: {
+        tts: {
+          provider: "elevenlabs",
+          sampleRate: 24_000,
+          elevenlabs: { apiKey: "eleven-preview-key", voiceId: "eleven-preview-voice", model: "eleven-preview-model" },
+        },
+      },
+      assertRequest(url, options) {
+        assert.equal(url, "https://api.elevenlabs.io/v1/text-to-speech/eleven-preview-voice?output_format=pcm_24000");
+        assert.equal(options.headers["xi-api-key"], "eleven-preview-key");
+        assert.deepEqual(JSON.parse(options.body), { text: "provider preview", model_id: "eleven-preview-model" });
+      },
+    },
+    {
+      provider: "openai-compatible",
+      document: {
+        tts: {
+          provider: "openai-compatible",
+          sampleRate: 24_000,
+          openaiCompatibleTts: { baseUrl: "http://127.0.0.1:7777", model: "local-preview-model", voice: "local-preview-voice" },
+        },
+      },
+      assertRequest(url, options) {
+        assert.equal(url, "http://127.0.0.1:7777/v1/audio/speech");
+        assert.equal(Object.prototype.hasOwnProperty.call(options.headers, "Authorization"), false);
+        assert.deepEqual(JSON.parse(options.body), {
+          model: "local-preview-model", input: "provider preview", voice: "local-preview-voice", response_format: "pcm",
+        });
+      },
+    },
+  ]) {
+    let calls = 0;
+    const pcm = Buffer.from([1, 0, 2, 0]);
+    const { handler, state } = fixture(t, providerCase.document, {
+      preview: {
+        fetchFn: async (url, options) => {
+          calls += 1;
+          providerCase.assertRequest(String(url), options);
+          return new Response(pcm, { status: 200 });
+        },
+      },
+      logger: { info() {} },
+    });
+    const res = await invoke(handler, "POST", "/api/settings/tts-preview", {
+      revision: state.revision, text: "[soft voice] provider preview",
+    });
+    assert.equal(res.status, 200, `${providerCase.provider}: ${res.bytes}`);
+    assert.deepEqual(res.bytes.subarray(44), pcm);
+    assert.equal(calls, 1);
+  }
+});
+
+test("TTS preview configuration gating follows the selected provider and hosted OpenAI key rule", async (t) => {
+  let calls = 0;
+  const fetchFn = async () => { calls += 1; return new Response(Buffer.from([0, 0]), { status: 200 }); };
+
+  const fish = fixture(t, {
+    tts: { provider: "fish-audio", elevenlabs: { apiKey: "eleven-only", voiceId: "voice" } },
+  }, { preview: { fetchFn }, logger: { info() {} } });
+  const missingFish = await invoke(fish.handler, "POST", "/api/settings/tts-preview", {
+    revision: fish.state.revision, text: "fish missing",
+  });
+  assert.equal(missingFish.status, 422);
+  assert.equal(missingFish.json.error.code, "SETTINGS_PREVIEW_NOT_CONFIGURED");
+
+  const hosted = fixture(t, {
+    tts: { provider: "openai-compatible", openaiCompatibleTts: { baseUrl: "https://api.openai.com" } },
+  }, { preview: { fetchFn }, logger: { info() {} } });
+  const missingHostedKey = await invoke(hosted.handler, "POST", "/api/settings/tts-preview", {
+    revision: hosted.state.revision, text: "hosted missing",
+  });
+  assert.equal(missingHostedKey.status, 422);
+  assert.equal(missingHostedKey.json.error.code, "SETTINGS_PREVIEW_NOT_CONFIGURED");
+  assert.equal(calls, 0);
+});
+
+test("TTS preview provider failures keep credentials and vendor details out of the response", async (t) => {
+  const logs = [];
+  const { handler, state } = fixture(t, {
+    tts: {
+      provider: "elevenlabs",
+      elevenlabs: { apiKey: SENTINEL, voiceId: "failed-voice", model: "failed-model" },
+    },
+  }, {
+    preview: { fetchFn: async () => new Response(JSON.stringify({ secret: SENTINEL }), { status: 503 }) },
+    logger: { info: (line) => logs.push(line) },
+  });
+  const res = await invoke(handler, "POST", "/api/settings/tts-preview", {
+    revision: state.revision, text: "provider failure",
+  });
+  assert.equal(res.status, 500);
+  assert.equal(res.json.error.code, "SETTINGS_PREVIEW_PROVIDER_FAILED");
+  assert.equal(res.bytes.includes(Buffer.from(SENTINEL)), false);
+  assert.equal(logs.join("\n").includes(SENTINEL), false);
+});
+
 test("preview limiter allows one vendor attempt per 2000ms without consuming connection or settings routes", async (t) => {
   let now = 10_000;
   let previewCalls = 0;
@@ -414,7 +525,7 @@ test("preview limiter allows one vendor attempt per 2000ms without consuming con
   }, {
     preview: {
       now: () => now,
-      fetchFn: async () => { previewCalls += 1; return new Response(pcm, { status: 200 }); },
+      synthesizeFn: async (_text, options) => { previewCalls += 1; options.onAudio(pcm); },
     },
     connections: {
       minIntervalMs: 0,
@@ -477,7 +588,7 @@ test("preview enforces strict schema, committed revision, and the 15-second byte
   const overLimit = Buffer.alloc(8_000 * 2 * 15 + 2);
   const { handler, state } = fixture(t, {
     tts: { apiKey: SENTINEL, sampleRate: 8_000 },
-  }, { preview: { fetchFn: async () => new Response(overLimit, { status: 200 }) }, logger: { info() {} } });
+  }, { preview: { synthesizeFn: async (_text, options) => options.onAudio(overLimit) }, logger: { info() {} } });
 
   const longText = await invoke(handler, "POST", "/api/settings/tts-preview", {
     revision: state.revision, text: "あ".repeat(501),
@@ -508,8 +619,18 @@ test("one preview AbortSignal spans retries and timeout returns a value-free 504
       options.signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
     });
   };
+  const synthesizeFn = async (_text, options) => {
+    for (let attempt = 0; ; attempt += 1) {
+      const response = await fetchFn("http://mock.vendor/v1/tts", options);
+      if (response.ok) {
+        options.onAudio(Buffer.from(await response.arrayBuffer()));
+        return;
+      }
+      if (attempt >= 2) throw new Error(`provider failed (${response.status})`);
+    }
+  };
   const { handler, state } = fixture(t, { tts: { apiKey: SENTINEL, sampleRate: 8_000 } }, {
-    preview: { url: "http://mock.vendor/v1/tts", fetchFn, timeoutMs: 80, retryBaseMs: 0, retryMax: 2 },
+    preview: { synthesizeFn, timeoutMs: 80 },
     logger: { info: (line) => logs.push(line) },
   });
   const res = await invoke(handler, "POST", "/api/settings/tts-preview", { revision: state.revision, text: "timeout text" });
@@ -531,9 +652,9 @@ test("preview duration and audio validation errors keep precedence when the wall
     const { handler, state } = fixture(t, { tts: { apiKey: SENTINEL, sampleRate: 8_000 } }, {
       preview: {
         timeoutMs: 5,
-        fetchFn: async () => {
+        synthesizeFn: async (_text, options) => {
           await new Promise((resolve) => setTimeout(resolve, 15));
-          return new Response(bytes, { status: 200 });
+          options.onAudio(bytes);
         },
       },
       logger: { info() {} },
