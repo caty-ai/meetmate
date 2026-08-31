@@ -16,6 +16,7 @@ const {
   resolveMessages,
 } = require("../config");
 const { createPipeline } = require("../pipeline");
+const { PIPELINE_TTS_PROVIDERS } = require("../tts-fish");
 const { warmUpGatewaySession, warmUpMultipleAgents } = require("../gateway-warmup");
 const { SessionLifecycle } = require("../session-events");
 const { SlackNotifier } = require("../slack-notifier");
@@ -795,8 +796,8 @@ function createLegacyAgent(session, turnState, onAudio) {
 }
 
 function createHandler(session, turnState, onAudio) {
-  if (TTS_PROVIDER === "fish-audio") {
-    console.log(`🐟  Fish Audio パイプラインモード (sid=${session.id})`);
+  if (PIPELINE_TTS_PROVIDERS.has(TTS_PROVIDER)) {
+    console.log(`🎙️  ${TTS_PROVIDER} TTS パイプラインモード (sid=${session.id})`);
     const profile = currentAgentProfile();
 
     const config = getPipelineConfig({
@@ -1174,8 +1175,8 @@ async function handleHttp(req, res) {
         writePlainResponse(res, 400, "avatarExperiment が不正です。");
         return;
       }
-      if (isLocalAvatarExperiment && TTS_PROVIDER !== "fish-audio") {
-        writePlainResponse(res, 400, `${avatarExperiment} は Fish Audio 構成でのみ利用できます。`);
+      if (isLocalAvatarExperiment && !PIPELINE_TTS_PROVIDERS.has(TTS_PROVIDER)) {
+        writePlainResponse(res, 400, `${avatarExperiment} はパイプライン TTS プロバイダー構成でのみ利用できます。`);
         return;
       }
 
@@ -1719,7 +1720,7 @@ const { HUB_CONFIG } = require("../config");
 
 function logLegacyMode(session) {
   console.log(`🔊  Deepgram Voice Agent モード (sid=${session.id})`);
-  if (HUB_CONFIG.enabled) console.warn("⚠️  HUB_* is configured, but floor arbitration requires TTS_PROVIDER=fish-audio; disabling hub integration in legacy Deepgram Voice Agent mode.");
+  if (HUB_CONFIG.enabled) console.warn("⚠️  HUB_* is configured, but floor arbitration requires a pipeline TTS provider; disabling hub integration in legacy Deepgram Voice Agent mode.");
 }
 const readinessProbes = require("../settings/probes");
 let readinessInstanceId = "";
@@ -1736,6 +1737,7 @@ module.exports = {
     buildConfiguredDelegationResultsSection,
     configuredSummaryPrompt: () => _resolvedMessages.prompts.summary,
     configureReadinessForTest,
+    createHandler,
     runtimeDiagnostics,
     refreshNgrokDetection,
     resolvePublicOrigin,

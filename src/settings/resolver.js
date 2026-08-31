@@ -4,6 +4,8 @@ const { getStartup } = require("./bootstrap");
 const path = require("node:path");
 const { MASK, ENV_DIAGNOSTICS, SETTINGS_REGISTRY, REGISTRY_BY_ID } = require("./registry");
 const { scanLegacyClass2 } = require("./class2-migration");
+const { canonicalHostname } = require("../url-utils");
+const { PCM_SAMPLE_RATES: ELEVENLABS_PCM_SAMPLE_RATES } = require("../tts-elevenlabs");
 
 const PLACEHOLDER = /^\$\{[A-Z][A-Z0-9_]*\}$/;
 const SENTINELS = new Set([
@@ -245,11 +247,20 @@ function buildIssues(runtime) {
     if (meaningful(stored) && entry.schema.safeParse(stored).success === false) add(entry.id, "VALUE_INVALID");
   }
   for (const entry of SETTINGS_REGISTRY.filter((item) => item.requiredAtMeetingStart)) {
-    if (entry.id === "soniox_api_key" && values.stt_provider !== "soniox") continue;
-    if (entry.id === "deepgram_api_key" && values.stt_provider !== "deepgram") continue;
+    if (entry.visibleWhen && values[entry.visibleWhen.id] !== entry.visibleWhen.value) continue;
+    if (entry.id === "openai_compatible_tts_api_key") {
+      const hostname = canonicalHostname(values.openai_compatible_tts_base_url);
+      if (hostname && hostname !== "api.openai.com") continue;
+    }
     if (!meaningful(values[entry.id]) || (Array.isArray(values[entry.id]) && values[entry.id].length === 0)) {
       add(entry.id, "VALUE_REQUIRED");
     }
+  }
+  if (values.tts_provider === "openai-compatible" && values.tts_sample_rate !== 24_000) {
+    add("tts_sample_rate", "VALUE_INVALID");
+  }
+  if (values.tts_provider === "elevenlabs" && !ELEVENLABS_PCM_SAMPLE_RATES.has(values.tts_sample_rate)) {
+    add("tts_sample_rate", "VALUE_INVALID");
   }
   const connectionReady = values.llm_provider === "openai-compatible"
     ? meaningful(runtime.startup.connection.openaiApiKey) && meaningful(values.openai_base_url) && meaningful(values.llm_model)

@@ -66,6 +66,59 @@ test("probes use the published credential while restart-required is handled by r
   assert.equal(authorization, "Bearer saved-key");
 });
 
+test("ElevenLabs and OpenAI-compatible TTS probes use provider-specific auth and base URLs", async () => {
+  initialize({
+    tts: {
+      elevenlabs: { apiKey: "eleven-key" },
+      openaiCompatibleTts: { baseUrl: "http://127.0.0.1:8080" },
+    },
+  });
+  const calls = [];
+  const fetchFn = async (url, options) => {
+    calls.push({ url: String(url), headers: options.headers });
+    return new Response("{}", { status: 200 });
+  };
+  assert.equal((await probes.probeSystem("elevenlabs", { fetchFn })).code, "CONNECTED");
+  assert.equal((await probes.probeSystem("openai-compatible", { fetchFn })).code, "CONNECTED");
+  assert.equal(calls[0].url, "https://api.elevenlabs.io/v1/user/subscription");
+  assert.equal(calls[0].headers["xi-api-key"], "eleven-key");
+  assert.equal(Object.prototype.hasOwnProperty.call(calls[0].headers, "Authorization"), false);
+  assert.equal(calls[1].url, "http://127.0.0.1:8080/v1/models");
+  assert.equal(Object.prototype.hasOwnProperty.call(calls[1].headers, "Authorization"), false);
+
+  for (const baseUrl of ["https://api.openai.com.", "https://API.OPENAI.COM"]) {
+    initialize({ tts: { openaiCompatibleTts: { baseUrl } } });
+    let fetched = false;
+    const hosted = await probes.probeSystem("openai-compatible", {
+      fetchFn: async () => { fetched = true; return new Response("{}", { status: 200 }); },
+    });
+    assert.equal(hosted.code, "NOT_CONFIGURED", baseUrl);
+    assert.equal(fetched, false, baseUrl);
+  }
+});
+
+test("OpenAI-compatible TTS model-probe 404 and 405 are inconclusive successes", async () => {
+  initialize({ tts: { openaiCompatibleTts: { baseUrl: "http://127.0.0.1:8080" } } });
+  for (const status of [404, 405]) {
+    const outcome = await probes.probeSystem("openai-compatible", {
+      fetchFn: async () => new Response("missing optional endpoint", { status }),
+    });
+    assert.equal(outcome.ok, true, String(status));
+    assert.equal(outcome.code, "CONNECTED", String(status));
+    assert.match(outcome.message, /optional \/v1\/models/);
+  }
+  const unauthorized = await probes.probeSystem("openai-compatible", {
+    fetchFn: async () => new Response("denied", { status: 401 }),
+  });
+  assert.deepEqual(unauthorized, { ok: false, code: "AUTH_FAILED" });
+  const refused = new Error("connection refused");
+  refused.code = "ECONNREFUSED";
+  const unreachable = await probes.probeSystem("openai-compatible", {
+    fetchFn: async () => { throw refused; },
+  });
+  assert.deepEqual(unreachable, { ok: false, code: "UNREACHABLE" });
+});
+
 test("LLM requestFn uses the production model and fixed non-streaming ping body", async () => {
   initialize({ llm: { provider: "openclaw", model: "main-agent" } });
   let captured;

@@ -65,7 +65,9 @@ function _buildProfileFromConfig(config, effectiveAgentId) {
     systemPrompt: "", // Gateway manages prompts via SOUL.md
     greeting: getEffectiveValue("agent_greeting") || "",
     model: getEffectiveValue("llm_model") || null,
-    voiceId: getEffectiveValue("fish_audio_voice_id") || null,
+    voiceId: getEffectiveValue("tts_provider") === "fish-audio"
+      ? getEffectiveValue("fish_audio_voice_id") || null
+      : null,
     wakeWords: getEffectiveValue("agent_wake_words") || [],
     keyterms: getEffectiveValue("agent_keyterms") || [],
     emotionTags: getEffectiveValue("agent_emotion_tags") !== false,

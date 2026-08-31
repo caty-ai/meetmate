@@ -253,7 +253,9 @@ const PIPELINE_HUB_CONFIG = Object.freeze({ ...HUB_CONFIG, debug: FLOOR_SETTINGS
  */
 function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, configJson = null) {
   const isJapanese = LANG === "ja";
-  const envVoiceId = getEffectiveValue("fish_audio_voice_id") || null;
+  const envVoiceId = TTS_PROVIDER === "fish-audio"
+    ? getEffectiveValue("fish_audio_voice_id") || null
+    : null;
   const messages = resolveMessages(configJson);
   let provider = String(
     overrides.provider
@@ -396,7 +398,7 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
       openclawSystemAddendum: llmAddendum,
     },
     tts: {
-      provider: "fish-audio",
+      provider: TTS_PROVIDER,
       referenceId: ttsReferenceId,
       sampleRate: TTS_SAMPLE_RATE,
       latency: getEffectiveValue("fish_audio_latency"),

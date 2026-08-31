@@ -5,6 +5,64 @@ const { EventEmitter } = require("node:events");
 const https = require("node:https");
 const readiness = require("../src/settings/readiness");
 
+test("Fish synthesize contract streams aligned PCM16 at 24 kHz and resolves void", async (t) => {
+  const resolver = require("../src/settings/resolver");
+  resolver.resetRuntimeForTest();
+  resolver.initializeRuntime({
+    state: { exists: true, valid: true, parsed: {}, revision: "a".repeat(64), fingerprint: "fish-contract" },
+    startup: Object.freeze({
+      preDotenvEnv: Object.freeze({}), dotenvSeeds: Object.freeze({}),
+      resolvedHome: "/tmp/fish-contract", configPath: "/tmp/fish-contract/config.json",
+      connection: Object.freeze({ openclawUrl: "", openclawToken: "", openaiApiKey: "" }),
+    }),
+  });
+  const originalRequest = https.request;
+  let requestOptions;
+  let requestBody = "";
+  const events = [];
+  https.request = (options, callback) => {
+    requestOptions = options;
+    const req = new EventEmitter();
+    req.setTimeout = () => req;
+    req.destroy = (error) => error && req.emit("error", error);
+    req.write = (chunk) => { requestBody += String(chunk); };
+    req.end = () => process.nextTick(() => {
+      const response = new EventEmitter();
+      response.statusCode = 200;
+      response.headers = {};
+      response.destroy = () => {};
+      callback(response);
+      response.emit("data", Buffer.from([1]));
+      response.emit("data", Buffer.from([2, 3, 4]));
+      response.emit("end");
+    });
+    return req;
+  };
+  t.after(() => {
+    https.request = originalRequest;
+    readiness.reset();
+    resolver.resetRuntimeForTest();
+  });
+
+  const { synthesize } = require("../src/tts-fish");
+  const returned = await synthesize(" contract ", {
+    apiKey: "fish-key",
+    onAudio: (chunk) => events.push(Buffer.from(chunk)),
+  });
+
+  assert.equal(returned, undefined);
+  assert.deepEqual(events, [Buffer.from([1, 2, 3, 4])]);
+  assert.equal(events.every((chunk) => chunk.length % 2 === 0), true);
+  assert.deepEqual(
+    { hostname: requestOptions.hostname, path: requestOptions.path, method: requestOptions.method },
+    { hostname: "api.fish.audio", path: "/v1/tts", method: "POST" },
+  );
+  assert.deepEqual(JSON.parse(requestBody), {
+    text: "contract", format: "pcm", sample_rate: 24_000, latency: "balanced",
+    temperature: 0.7, top_p: 0.7, chunk_length: 300, normalize: true,
+  });
+});
+
 test("Fish runtime 402 records PAYMENT_REQUIRED through the real synthesize path", async (t) => {
   const resolver = require("../src/settings/resolver");
   resolver.resetRuntimeForTest();

@@ -10,6 +10,7 @@ const path = require("node:path");
 const { ttsCacheDir } = require("./paths");
 const { stripCanonicalEmotionTags } = require("./messages");
 const { getEffectiveValue } = require("./settings/resolver");
+const { canonicalBaseUrl } = require("./url-utils");
 
 const DEFAULT_SAMPLE_RATE = 24_000;
 const CHUNK_MS = 100;
@@ -23,16 +24,39 @@ function normalizeSpeed(speed) {
   return Number.isFinite(n) ? n : null;
 }
 
-function cacheKey(text, options = {}) {
-  // latency is intentionally excluded: Fish treats it as a streaming/delivery
-  // hint, not audio content. If that changes, add latency to this key.
-  const payload = {
-    text: String(text || ""),
+function synthesisIdentity(options = {}) {
+  const provider = options.provider || getEffectiveValue("tts_provider") || "fish-audio";
+  if (provider === "elevenlabs") {
+    return {
+      provider,
+      voiceId: options.referenceId || options.voiceId || getEffectiveValue("elevenlabs_voice_id") || null,
+      model: options.model || getEffectiveValue("elevenlabs_model"),
+      sampleRate: options.sampleRate || DEFAULT_SAMPLE_RATE,
+      speed: null,
+    };
+  }
+  if (provider === "openai-compatible") {
+    return {
+      provider,
+      baseUrl: canonicalBaseUrl(options.baseUrl || getEffectiveValue("openai_compatible_tts_base_url")),
+      voiceId: options.referenceId || options.voice || options.voiceId || getEffectiveValue("openai_compatible_tts_voice") || null,
+      model: options.model || getEffectiveValue("openai_compatible_tts_model"),
+      sampleRate: options.sampleRate || DEFAULT_SAMPLE_RATE,
+      speed: null,
+    };
+  }
+  return {
     referenceId: options.referenceId || null,
     model: options.model || getEffectiveValue("fish_audio_model"),
     sampleRate: options.sampleRate || DEFAULT_SAMPLE_RATE,
     speed: normalizeSpeed(options.speed),
   };
+}
+
+function cacheKey(text, options = {}) {
+  // latency is intentionally excluded: Fish treats it as a streaming/delivery
+  // hint, not audio content. If that changes, add latency to this key.
+  const payload = { text: String(text || ""), ...synthesisIdentity(options) };
   return crypto.createHash("sha256").update(JSON.stringify(payload)).digest("hex");
 }
 
@@ -113,17 +137,18 @@ function createTtsCache({ dir = defaultCacheDir(), synthesizeFn } = {}) {
     const effectiveText = effectiveSynthesisText(text);
     if (!effectiveText) return;
 
-    const identity = {
-      referenceId: options.referenceId || null,
-      model: options.model || getEffectiveValue("fish_audio_model"),
-      sampleRate: options.sampleRate || DEFAULT_SAMPLE_RATE,
-      speed: normalizeSpeed(options.speed),
-    };
-    const managed = require("./settings/audio").lookupManagedPcm({
-      role: options.role,
-      text: effectiveText,
-      ...identity,
-    });
+    const identity = synthesisIdentity(options);
+    const provider = options.provider || getEffectiveValue("tts_provider") || "fish-audio";
+    const managed = provider === "fish-audio"
+      ? require("./settings/audio").lookupManagedPcm({
+          role: options.role,
+          text: effectiveText,
+          referenceId: identity.referenceId,
+          model: identity.model,
+          sampleRate: identity.sampleRate,
+          speed: identity.speed,
+        })
+      : null;
     if (managed) {
       try {
         console.log(`🎵 Managed TTS clip hit (${managed.clip.role}, ${managed.pcm.length} bytes)`);
@@ -234,5 +259,6 @@ module.exports = {
     effectiveSynthesisText,
     emitPacedPcm,
     normalizeSpeed,
+    synthesisIdentity,
   },
 };

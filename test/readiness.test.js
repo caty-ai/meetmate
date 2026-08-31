@@ -68,6 +68,17 @@ test("PENDING is unsettled and non-blocking while the selected STT boundary excl
   assert.equal(controller.gateSystems().includes("slack"), false);
 });
 
+test("the readiness gate follows the selected TTS provider", () => {
+  const parsed = document();
+  parsed.tts = {
+    provider: "elevenlabs",
+    elevenlabs: { apiKey: "eleven", voiceId: "voice" },
+  };
+  initialize(parsed);
+  const controller = readiness.createReadinessController();
+  assert.deepEqual(controller.gateSystems(), ["soniox", "elevenlabs", "attendee", "llm", "tunnel"]);
+});
+
 test("probe settlement, single-flight, CAS, and runtime stickiness preserve the strongest observation", async () => {
   initialize();
   let calls = 0;

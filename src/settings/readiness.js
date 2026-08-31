@@ -8,7 +8,7 @@ const {
   registerCacheInvalidator,
 } = require("./resolver");
 
-const BILLING_SYSTEMS = new Set(["fish-audio", "llm"]);
+const BILLING_SYSTEMS = new Set(["fish-audio", "elevenlabs", "openai-compatible", "llm"]);
 const HARD_CODES = new Set([
   "AUTH_FAILED", "NOT_CONFIGURED", "PAYMENT_REQUIRED", "NOT_ENABLED", "MISMATCH", "RESTART_REQUIRED",
 ]);
@@ -32,8 +32,15 @@ const FIELD_SYSTEMS = Object.freeze({
   fish_audio_model: Object.freeze(["fish-audio"]),
   fish_audio_speed: Object.freeze(["fish-audio"]),
   fish_audio_latency: Object.freeze(["fish-audio"]),
-  tts_provider: Object.freeze(["fish-audio"]),
-  tts_sample_rate: Object.freeze(["fish-audio"]),
+  elevenlabs_api_key: Object.freeze(["elevenlabs"]),
+  elevenlabs_voice_id: Object.freeze(["elevenlabs"]),
+  elevenlabs_model: Object.freeze(["elevenlabs"]),
+  openai_compatible_tts_api_key: Object.freeze(["openai-compatible"]),
+  openai_compatible_tts_base_url: Object.freeze(["openai-compatible"]),
+  openai_compatible_tts_model: Object.freeze(["openai-compatible"]),
+  openai_compatible_tts_voice: Object.freeze(["openai-compatible"]),
+  tts_provider: Object.freeze(["fish-audio", "elevenlabs", "openai-compatible"]),
+  tts_sample_rate: Object.freeze(["fish-audio", "elevenlabs", "openai-compatible"]),
   attendee_api_key: Object.freeze(["attendee"]),
   attendee_base_url: Object.freeze(["attendee"]),
   llm_provider: Object.freeze(["llm"]),
@@ -49,6 +56,8 @@ const DEFAULT_FIELDS = Object.freeze({
   soniox: "soniox_api_key",
   deepgram: "deepgram_api_key",
   "fish-audio": "fish_audio_api_key",
+  elevenlabs: "elevenlabs_api_key",
+  "openai-compatible": "openai_compatible_tts_base_url",
   attendee: "attendee_api_key",
   llm: "llm_provider",
   tunnel: "server_ngrok_domain",
@@ -82,6 +91,11 @@ function systemsForFields(fieldIds) {
 
 function fieldFor(system, code, message = "") {
   if (system === "tunnel" && ["NOT_CONFIGURED", "MISMATCH"].includes(code)) return "server_ngrok_domain";
+  if (system === "openai-compatible") {
+    return ["AUTH_FAILED", "PAYMENT_REQUIRED"].includes(code)
+      ? "openai_compatible_tts_api_key"
+      : "openai_compatible_tts_base_url";
+  }
   if (system === "llm") {
     if (code === "NOT_ENABLED") return "panel-connections";
     if (/model/i.test(message)) return "llm_model";
@@ -141,7 +155,11 @@ function createReadinessController(options = {}) {
 
   function gateSystems() {
     const stt = String(getPublishedValue("stt_provider") || "soniox").toLowerCase();
-    return [stt === "deepgram" ? "deepgram" : "soniox", "fish-audio", "attendee", "llm", "tunnel"];
+    const selectedTts = String(getPublishedValue("tts_provider") || "fish-audio").toLowerCase();
+    const tts = ["fish-audio", "elevenlabs", "openai-compatible"].includes(selectedTts)
+      ? selectedTts
+      : "fish-audio";
+    return [stt === "deepgram" ? "deepgram" : "soniox", tts, "attendee", "llm", "tunnel"];
   }
 
   function configure(next = {}) {
