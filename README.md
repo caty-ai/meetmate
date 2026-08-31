@@ -1,6 +1,6 @@
 # Meetmate
 <!-- repo-state:begin (generated; do not edit) -->
-<p align="center"><sub>generation: <code>ac017cd</code> (2026-08-30T18:01:59Z) · verify: <a href="https://api.github.com/repos/caty-ai/meetmate/commits/main">API HEAD</a> · <a href="./status.json">status.json</a></sub></p>
+<p align="center"><sub>generation: <code>6ca90c3</code> (2026-08-30T20:09:04Z) · verify: <a href="https://api.github.com/repos/caty-ai/meetmate/commits/main">API HEAD</a> · <a href="./status.json">status.json</a></sub></p>
 <!-- repo-state:end -->
 
 **English** | [日本語](https://github.com/caty-ai/meetmate/blob/main/docs/i18n/README.ja.md) | [中文](https://github.com/caty-ai/meetmate/blob/main/docs/i18n/README.zh.md) | [ไทย](https://github.com/caty-ai/meetmate/blob/main/docs/i18n/README.th.md)
@@ -107,6 +107,7 @@ Want the avatar to move? Two experiments already ship: a frame-swap lip-sync ava
 |---|---|
 | Google Meet | Mainline path. Start here first. |
 | Zoom | Works for meetings you host/control yourself today. Do not assume support for external-hosted Zoom meetings, OBF, or managed OAuth setups yet. |
+| Server OS & autostart | Windows (via WSL2), macOS, and Linux all run the server. One installer registers the always-on service: `scripts/install-service.sh` sets up launchd on macOS or a systemd user unit on Linux/WSL2 (WSL2 needs `systemd=true` in `/etc/wsl.conf`; run ngrok inside WSL2, or set `server.ngrokDomain` explicitly). Details: [setup guide — always-on service](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#常駐サービス自動起動). |
 | MCP vs voice brain | Meetmate's MCP server is a control plane for `join` / `leave` / `status`. The voice brain is separate: your real agent runs behind OpenClaw or another OpenAI-compatible gateway and speaks in the meeting. |
 
 ## What you need

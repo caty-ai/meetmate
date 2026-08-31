@@ -106,6 +106,7 @@ Meetmate: [warm] 変更点は2つです——年間割引が15%になったの�
 |---|---|
 | Google Meet | メインの対応パス。まずはここから。 |
 | Zoom | 自分がホスト/管理する会議では現状動作します。外部主催の Zoom 会議・OBF・管理された OAuth 設定への対応はまだ想定しないでください。 |
+| サーバー OS と自動起動 | Windows（WSL2 経由）・macOS・Linux でサーバーを動かせます。常駐サービスの登録はインストーラ1本: `scripts/install-service.sh` が macOS では launchd、Linux/WSL2 では systemd user unit を設定します（WSL2 は `/etc/wsl.conf` に `systemd=true` が必要。ngrok は WSL2 の中で動かすか、`server.ngrokDomain` を明示してください）。詳細: [セットアップガイド — 常駐サービス](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#常駐サービス自動起動)。 |
 | MCP と音声ブレイン | Meetmate の MCP サーバーは `join` / `leave` / `status` のコントロールプレーンです。音声ブレインは別物で、あなたの本物のエージェントは OpenClaw または別の OpenAI 互換ゲートウェイの裏側で動き、会議で話します。 |
 
 ## 必要なもの

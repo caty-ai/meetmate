@@ -2437,6 +2437,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
               apiKey: config.llm.openaiCompatible?.apiKey,
               emptyResponseRetry: config.llm.openaiCompatible?.emptyResponseRetry,
               trustedAgentTools: config.llm.openaiCompatible?.trustedAgentTools,
+              sessionHeader: config.llm.openaiCompatible?.sessionHeader,
               streamingEquivalentEnabled: config.llm.openaiCompatible?.streamingEquivalentEnabled,
             } : {}),
             signal: abort.signal,

@@ -218,6 +218,7 @@ test("standalone provider receives the exact session user contract and optional 
           apiKey: options.apiKey,
           emptyResponseRetry: options.emptyResponseRetry,
           trustedAgentTools: options.trustedAgentTools,
+          sessionHeader: options.sessionHeader,
           streamingEquivalentEnabled: options.streamingEquivalentEnabled,
         },
       });
@@ -232,6 +233,7 @@ test("standalone provider receives the exact session user contract and optional 
       apiKey: "key",
       emptyResponseRetry: false,
       trustedAgentTools: true,
+      sessionHeader: "X-Hermes-Session-Id",
       streamingEquivalentEnabled: false,
     },
   }, async (pipeline) => {
@@ -256,6 +258,7 @@ test("standalone provider receives the exact session user contract and optional 
   ]);
   assert.deepEqual(calls.map((call) => call.options.emptyResponseRetry), [false, false]);
   assert.deepEqual(calls.map((call) => call.options.trustedAgentTools), [true, true]);
+  assert.deepEqual(calls.map((call) => call.options.sessionHeader), ["X-Hermes-Session-Id", "X-Hermes-Session-Id"]);
   assert.deepEqual(calls.map((call) => call.options.streamingEquivalentEnabled), [false, false]);
   assert.deepEqual(calls.map((call) => [call.options.baseUrl, call.options.apiKey]), [
     ["http://llm.test/v1", "key"],
