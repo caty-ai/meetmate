@@ -733,7 +733,9 @@ test("T12-06 gate connection tests keep Slack at 501 while Discord follows the i
       host: "localhost:5005", origin: "http://localhost:5005", "sec-fetch-site": "same-origin", "content-type": "application/json",
     }, JSON.stringify({ revision: state.revision })), response);
     assert.equal(response.status, 200, `${provider}: ${response.body}`);
-    assert.equal(JSON.parse(response.body).code, "NOT_CONFIGURED");
+    assert.deepEqual(JSON.parse(response.body), {
+      ok: false, provider, code: "NOT_CONFIGURED", message: "Connection is not configured", durationMs: 0,
+    });
   }
   const response = settingsResponse();
   await handler(settingsRequest("POST", "/api/settings/connections/slack/test", {

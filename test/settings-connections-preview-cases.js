@@ -324,6 +324,42 @@ test("unset keys avoid vendor calls while Discord is implemented and Slack remai
   assert.equal(slackStale.status, 501);
 });
 
+test("discord connection routes keep the canned success message and preserve allowlist mismatch failures", async (t) => {
+  const successFixture = fixture(t, {
+    discord: { botToken: SENTINEL, guildAllowlist: ["11111111111111111"] },
+  }, {
+    connections: {
+      minIntervalMs: 0,
+      fetchFn: async (url) => (String(url).includes("/guilds")
+        ? new Response(JSON.stringify([{ id: "11111111111111111" }]), { status: 200, headers: { "Content-Type": "application/json" } })
+        : new Response("{}", { status: 200 })),
+    },
+  });
+  const success = await invoke(successFixture.handler, "POST", "/api/settings/connections/discord/test", {
+    revision: successFixture.state.revision,
+  });
+  assert.equal(success.status, 200, success.bytes.toString());
+  assert.equal(success.json.code, "CONNECTED");
+  assert.equal(success.json.message, "Connection succeeded");
+
+  const failureFixture = fixture(t, {
+    discord: { botToken: SENTINEL, guildAllowlist: ["11111111111111111"] },
+  }, {
+    connections: {
+      minIntervalMs: 0,
+      fetchFn: async (url) => (String(url).includes("/guilds")
+        ? new Response(JSON.stringify([{ id: "99999999999999999" }]), { status: 200, headers: { "Content-Type": "application/json" } })
+        : new Response("{}", { status: 200 })),
+    },
+  });
+  const failure = await invoke(failureFixture.handler, "POST", "/api/settings/connections/discord/test", {
+    revision: failureFixture.state.revision,
+  });
+  assert.equal(failure.status, 200, failure.bytes.toString());
+  assert.equal(failure.json.code, "ALLOWLIST_MISMATCH");
+  assert.equal(failure.json.message, "Bot が許可済みの Discord サーバーに参加していません");
+});
+
 test("connection timeout is five seconds and maps to TIMEOUT", { timeout: 7_000 }, async (t) => {
   const { state } = fixture(t, { stt: { sonioxApiKey: SENTINEL } });
   const startedAt = Date.now();

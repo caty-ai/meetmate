@@ -166,6 +166,7 @@ function createReadinessController(options = {}) {
       ? selectedTts
       : "fish-audio";
     // Discord is intentionally excluded from the main readiness gate by issue #132.
+    // /info.ready remains context-free here per issue #129 residual 2.
     return [stt === "deepgram" ? "deepgram" : "soniox", tts, "attendee", "llm", "tunnel"];
   }
 

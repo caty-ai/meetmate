@@ -7,6 +7,7 @@ const { canonicalHostname } = require("../url-utils");
 
 const DEFAULT_FETCH_TIMEOUT_MS = 5_000;
 const LLM_TIMEOUT_MS = 15_000;
+const DISCORD_GUILDS_PAGE_SIZE = 200;
 
 const DESCRIPTORS = Object.freeze({
   soniox: Object.freeze({
@@ -299,8 +300,27 @@ async function tunnelProbe(options = {}) {
     : result("MISMATCH", "公開URLは別の meetmate インスタンスを指しています");
 }
 
+function remainingTimeoutMs(startedAt, timeoutMs, now) {
+  return timeoutMs - Math.max(0, now() - startedAt);
+}
+
+function buildDiscordGuildsEndpoint(endpoint, after) {
+  const url = new URL(endpoint);
+  url.searchParams.set("limit", String(DISCORD_GUILDS_PAGE_SIZE));
+  if (after) url.searchParams.set("after", after);
+  else url.searchParams.delete("after");
+  return url.toString();
+}
+
 async function discordProbe(options = {}) {
-  const authenticated = await withFetchProbeResponse("discord", options, {}, async (response) => {
+  const now = options.now || Date.now;
+  const timeoutMs = options.timeoutMs ?? DESCRIPTORS.discord.timeoutMs;
+  const startedAt = now();
+  const authTimeoutMs = remainingTimeoutMs(startedAt, timeoutMs, now);
+  if (authTimeoutMs <= 0) return result("TIMEOUT");
+  const authenticated = await withFetchProbeResponse("discord", options, {
+    timeoutMs: authTimeoutMs,
+  }, async (response) => {
     const classified = classifyStatus(response.status, { system: "discord" });
     await cancelBody(response);
     return classified;
@@ -314,29 +334,45 @@ async function discordProbe(options = {}) {
   )];
   if (allowlist.length === 0) return result("CONNECTED");
 
-  return withFetchProbeResponse("discord", options, {
-    endpointKey: "discordGuilds",
-    endpoint: "https://discord.com/api/v10/users/@me/guilds",
-  }, async (response, context) => {
-    const guildsStatus = classifyStatus(response.status, { system: "discord" });
-    if (!guildsStatus.ok) {
-      await cancelBody(response);
-      return guildsStatus;
-    }
-    let guilds;
-    try {
-      guilds = await response.json();
-    } catch (error) {
-      return parseFetchJsonError(error, context);
-    }
-    if (!Array.isArray(guilds)) return result("PROVIDER_ERROR");
+  const baseEndpoint = options.endpoints?.discordGuilds || "https://discord.com/api/v10/users/@me/guilds";
+  const seenCursors = new Set();
+  let after = "";
+  while (true) {
+    const remainingMs = remainingTimeoutMs(startedAt, timeoutMs, now);
+    if (remainingMs <= 0) return result("TIMEOUT");
+    // Discord guild listings cap pages at 200 entries; traverse with `after`
+    // while the single wall-clock probe budget still has time remaining.
+    const page = await withFetchProbeResponse("discord", options, {
+      endpointKey: "__discordGuildsPage",
+      endpoint: buildDiscordGuildsEndpoint(baseEndpoint, after),
+      timeoutMs: remainingMs,
+    }, async (response, context) => {
+      const guildsStatus = classifyStatus(response.status, { system: "discord" });
+      if (!guildsStatus.ok) {
+        await cancelBody(response);
+        return guildsStatus;
+      }
+      let guilds;
+      try {
+        guilds = await response.json();
+      } catch (error) {
+        return parseFetchJsonError(error, context);
+      }
+      if (!Array.isArray(guilds)) return result("PROVIDER_ERROR");
+      return { ok: true, code: "CONNECTED", guilds };
+    });
+    if (!page.ok) return page;
+    const guilds = page.guilds;
     const presentGuildIds = new Set(guilds.map((entry) => String(entry?.id || "")).filter(Boolean));
-    const matchedGuildCount = allowlist.filter((guildId) => presentGuildIds.has(guildId)).length;
-    if (matchedGuildCount === 0) {
+    if (allowlist.some((guildId) => presentGuildIds.has(guildId))) return result("CONNECTED");
+    if (guilds.length < DISCORD_GUILDS_PAGE_SIZE) {
       return result("ALLOWLIST_MISMATCH", "Bot が許可済みの Discord サーバーに参加していません");
     }
-    return result("CONNECTED", `許可済みサーバーを ${matchedGuildCount} 件確認しました`);
-  });
+    const nextAfter = String(guilds.at(-1)?.id || "").trim();
+    if (!nextAfter || seenCursors.has(nextAfter)) return result("PROVIDER_ERROR");
+    seenCursors.add(nextAfter);
+    after = nextAfter;
+  }
 }
 
 function normalizedHost(value) {
@@ -376,5 +412,5 @@ module.exports = {
   fetchHealth,
   networkCode,
   probeSystem,
-  _test: { llmProbe, normalizedHost, tunnelProbe },
+  _test: { buildDiscordGuildsEndpoint, discordProbe, llmProbe, normalizedHost, remainingTimeoutMs, tunnelProbe },
 };

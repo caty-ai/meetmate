@@ -275,15 +275,16 @@ test("stt mux evicts only on utterance_end for the current LRU slot, preserves s
   });
 });
 
-test("stt mux releaseSpeaker closes a departed speaker slot and admits a new speaker immediately at cap", { concurrency: false }, async () => {
+test("stt mux releaseSpeaker closes a departed speaker slot, normalizes ids, and admits a new speaker immediately at cap", { concurrency: false }, async () => {
   await withMuxHarness(async ({ pipeline, sttInstances }) => {
     const chunk = pcmWindow(500);
-    for (const id of ["a", "b", "c", "d"]) {
-      pipeline.sendAudio(chunk, { speaker: speaker(id) });
-    }
+    pipeline.sendAudio(chunk, { speaker: speaker("a") });
+    pipeline.sendAudio(chunk, { speaker: speaker(202, "202") });
+    pipeline.sendAudio(chunk, { speaker: speaker("c") });
+    pipeline.sendAudio(chunk, { speaker: speaker("d") });
     const [, , slotB] = sttInstances;
 
-    assert.equal(pipeline.releaseSpeaker("b"), true);
+    assert.equal(pipeline.releaseSpeaker("202"), true);
     assert.equal(slotB.closeCalls, 1);
     assert.deepEqual(pipeline._test.getSttMuxState().slots, ["a", "c", "d"]);
 

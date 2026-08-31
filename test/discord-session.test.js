@@ -309,8 +309,13 @@ test("discord join succeeds only after announce, then creates pipeline with supp
   assert.equal(harness.notifierCalls.some((item) => item.type === "start"), true);
   const activeStatus = harness.manager.getStatus();
   assert.equal(activeStatus.session.sessionId, result.body.sessionId);
+  assert.equal(activeStatus.session.startedAt, "2024-08-30T06:40:00.000Z");
+  assert.equal(activeStatus.session.connectionReady, false);
   assert.equal(Object.hasOwn(activeStatus.session, "guildId"), false);
   assert.equal(Object.hasOwn(activeStatus.session, "channelId"), false);
+  harness.connection.emit("stateChange", { status: "connecting" }, { status: "ready" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(harness.manager.getStatus().session.connectionReady, true);
   assert.deepEqual(harness.phaseStates, [
     { step: "login", state: "initiating" },
     { step: "voice-connect", state: "initiating" },
@@ -580,7 +585,7 @@ test("discord voiceStateUpdate left transitions release the departed speaker slo
   assert.deepEqual(released, [HUMAN_ID]);
 });
 
-test("discord voiceStateUpdate does not release slots for bot movement or other-channel leaves", async () => {
+test("discord voiceStateUpdate does not release slots for bot movement, other bots, or other-channel leaves", async () => {
   const otherChannelHarness = createHarness();
   const otherChannelResult = await otherChannelHarness.manager.join({ guildId: GUILD_ID, channelId: CHANNEL_ID });
   assert.equal(otherChannelResult.status, 200);
@@ -603,6 +608,29 @@ test("discord voiceStateUpdate does not release slots for bot movement or other-
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(otherChannelReleased, []);
   assert.deepEqual(otherChannelHarness.audioInUnsubscriptions, []);
+
+  const otherBotHarness = createHarness();
+  const otherBotResult = await otherBotHarness.manager.join({ guildId: GUILD_ID, channelId: CHANNEL_ID });
+  assert.equal(otherBotResult.status, 200);
+  const otherBotReleased = [];
+  otherBotHarness.createdPipelines[0].releaseSpeaker = (userId) => {
+    otherBotReleased.push(userId);
+    return true;
+  };
+  otherBotHarness.client.emit(
+    "voiceStateUpdate",
+    {
+      channelId: CHANNEL_ID,
+      member: { user: { id: "55555555555555555", bot: true }, displayName: "Other Bot" },
+    },
+    {
+      channelId: null,
+      member: { user: { id: "55555555555555555", bot: true }, displayName: "Other Bot" },
+    }
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(otherBotReleased, []);
+  assert.deepEqual(otherBotHarness.audioInUnsubscriptions, []);
 
   const botHarness = createHarness();
   const botResult = await botHarness.manager.join({ guildId: GUILD_ID, channelId: CHANNEL_ID });

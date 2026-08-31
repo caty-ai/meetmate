@@ -401,7 +401,9 @@ test("connection routes retain all providers, including implemented Discord, and
     const res = response();
     await handler(request("POST", `/api/settings/connections/${provider}/test`, { revision: configState.revision }), res);
     assert.equal(res.status, 200, `${provider} ${res.body}`);
-    assert.equal(JSON.parse(res.body).code, "NOT_CONFIGURED");
+    assert.deepEqual(JSON.parse(res.body), {
+      ok: false, provider, code: "NOT_CONFIGURED", message: "Connection is not configured", durationMs: 0,
+    });
   }
   const slack = response();
   await handler(request("POST", "/api/settings/connections/slack/test", { revision: configState.revision }), slack);

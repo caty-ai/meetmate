@@ -277,7 +277,7 @@ function connectionResult(provider, code, durationMs, message) {
     ok: code === "CONNECTED",
     provider,
     code,
-    message: message || messages[code] || code,
+    message: code === "CONNECTED" ? messages.CONNECTED : (message || messages[code] || code),
     durationMs: Math.max(0, Math.round(durationMs)),
   };
 }

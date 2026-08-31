@@ -8,6 +8,9 @@ const test = require("node:test");
 const {
   buildDiscordJoinBody,
   buildMeetJoinFormData,
+  discordReadinessAllowsJoin,
+  discordStatusFetchLine,
+  discordTargetStatus,
   formatDiscordStatusLine,
   discordJoinErrorMessage,
   isDiscordSnowflake,
@@ -31,15 +34,75 @@ test("Discord join helper emits the exact guild/channel request shape", () => {
   );
 });
 
-test("Discord join errors map known codes, preserve unknown codes, and local-only 404s use the hint", () => {
+test("Discord target helper reports idle, invalid, partial, and detected states", () => {
+  assert.deepEqual(
+    discordTargetStatus("", ""),
+    { ready: false, state: "idle", text: "入力待機中...", className: "field-status" },
+  );
+  assert.deepEqual(
+    discordTargetStatus("bad", ""),
+    {
+      ready: false,
+      state: "invalid",
+      text: "Guild ID / Channel ID は 17-20 桁の数字で入力してください",
+      className: "field-status notfound",
+    },
+  );
+  assert.deepEqual(
+    discordTargetStatus("12345678901234567", ""),
+    {
+      ready: false,
+      state: "partial",
+      text: "Guild ID と Channel ID を入力してください",
+      className: "field-status",
+    },
+  );
+  assert.deepEqual(
+    discordTargetStatus("12345678901234567", "23456789012345678"),
+    {
+      ready: true,
+      state: "detected",
+      text: "検出済み: Guild 12345678901234567 / Channel 23456789012345678",
+      className: "field-status detected",
+    },
+  );
+});
+
+test("Discord join errors map known codes, preserve unknown codes, and distinguish JSON 404 envelopes from local-only 404s", () => {
   assert.equal(discordJoinErrorMessage("DISCORD_SETUP_REQUIRED"), "Discord 設定を確認してください");
   assert.equal(discordJoinErrorMessage("DISCORD_JOIN_UNKNOWN"), "DISCORD_JOIN_UNKNOWN");
   assert.equal(parseDiscordJoinErrorText('{"code":"DISCORD_MUTEX_BUSY"}', 409), "別の通話が動作中です");
   assert.equal(parseDiscordJoinErrorText('{"code":"DISCORD_SOMETHING_NEW"}', 500), "DISCORD_SOMETHING_NEW");
+  assert.equal(
+    parseDiscordJoinErrorText('{"code":"DISCORD_SESSION_NOT_FOUND","message":"Discord セッションはありません"}', 404),
+    "Discord セッションはありません",
+  );
   assert.equal(parseDiscordJoinErrorText("Not Found", 404), "Discord 参加はローカルアクセス時のみ利用できます。");
-  assert.equal(parseDiscordJoinErrorText('{"message":"secret-ish vendor text"}', 500), "Discord への参加に失敗しました");
-  assert.equal(parseDiscordJoinErrorText('{"error":{"message":"vendor detail"}}', 500), "Discord への参加に失敗しました");
+  assert.equal(parseDiscordJoinErrorText('{"message":"vendor detail"}', 500), "vendor detail");
+  assert.equal(parseDiscordJoinErrorText('{"error":{"message":"vendor detail"}}', 500), "vendor detail");
   assert.equal(parseDiscordJoinErrorText("plain text upstream failure", 500), "Discord への参加に失敗しました");
+});
+
+test("Discord status poll failure lines distinguish local-only 404s from generic fetch failures", () => {
+  assert.equal(discordStatusFetchLine(404), "Discord 参加はローカルアクセス時のみ利用できます。");
+  assert.equal(discordStatusFetchLine(503), "Discord 接続状態: 取得失敗");
+  assert.equal(discordStatusFetchLine(0), "Discord 接続状態: 取得失敗");
+});
+
+test("Discord readiness gate ignores only attendee/tunnel blockers and otherwise fails closed", () => {
+  assert.equal(discordReadinessAllowsJoin({ ready: true, blockers: [] }), true);
+  assert.equal(discordReadinessAllowsJoin({
+    ready: false,
+    blockers: [{ system: "attendee", code: "NOT_CONFIGURED" }, { system: "tunnel", code: "UNREACHABLE" }],
+  }), true);
+  assert.equal(discordReadinessAllowsJoin({
+    ready: false,
+    blockers: [{ system: "stt", code: "AUTH_FAILED" }],
+  }), false);
+  assert.equal(discordReadinessAllowsJoin({
+    ready: false,
+    blockers: [{ fieldId: "soniox_api_key", code: "AUTH_FAILED" }],
+  }), false);
 });
 
 test("Meet default join payload preserves the pre-Discord parameter set and ordering", () => {
@@ -57,6 +120,7 @@ test("Meet default join payload preserves the pre-Discord parameter set and orde
   const html = fs.readFileSync(path.join(__dirname, "..", "public", "index.html"), "utf8");
   assert.match(html, /id="joinForm"/);
   assert.match(html, /id="meetingText"[\s\S]*name="meetingText"/);
+  assert.match(html, /<input type="radio" name="joinTransport" value="meet" checked>/);
 });
 
 test("poll decision preserves an existing Meet banner on transient /active-session failure", () => {

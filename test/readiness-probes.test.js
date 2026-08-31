@@ -234,29 +234,27 @@ test("discord probe uses Bot auth, short-circuits without a token, and keeps the
   assert.equal(JSON.stringify(connected).includes("discord.fixture.value"), false);
 });
 
-test("discord probe enforces the allowlist tier against /users/@me/guilds", async () => {
+test("discord probe enforces the allowlist tier, returns value-free success, and fails when no allowlisted guild is present", async () => {
   const guildId = "11111111111111111";
   initialize({ discord: { botToken: "discord.fixture.value", guildAllowlist: [guildId, "22222222222222222"] } });
   const calls = [];
   const matched = await probes.probeSystem("discord", {
     fetchFn: async (url, options) => {
       calls.push({ url: String(url), authorization: options.headers.Authorization });
-      return String(url).endsWith("/guilds")
+      return String(url).includes("/guilds")
         ? new Response(JSON.stringify([{ id: guildId }, { id: "99999999999999999" }]), { status: 200, headers: { "Content-Type": "application/json" } })
         : new Response("{}", { status: 200 });
     },
   });
-  assert.equal(matched.ok, true);
-  assert.equal(matched.code, "CONNECTED");
-  assert.match(matched.message, /1 件/);
+  assert.deepEqual(matched, { ok: true, code: "CONNECTED" });
   assert.deepEqual(calls.map((entry) => entry.url), [
     "https://discord.com/api/v10/users/@me",
-    "https://discord.com/api/v10/users/@me/guilds",
+    "https://discord.com/api/v10/users/@me/guilds?limit=200",
   ]);
   assert.equal(calls.every((entry) => entry.authorization === "Bot discord.fixture.value"), true);
 
   const missing = await probes.probeSystem("discord", {
-    fetchFn: async (url) => (String(url).endsWith("/guilds")
+    fetchFn: async (url) => (String(url).includes("/guilds")
       ? new Response(JSON.stringify([{ id: "99999999999999999" }]), { status: 200, headers: { "Content-Type": "application/json" } })
       : new Response("{}", { status: 200 })),
   });
@@ -266,7 +264,7 @@ test("discord probe enforces the allowlist tier against /users/@me/guilds", asyn
   assert.equal(JSON.stringify(missing).includes("discord.fixture.value"), false);
 });
 
-test("discord probe honors injected discordGuilds endpoints and keeps auth on both tiers", async () => {
+test("discord probe paginates guild lookup to a second page under the shared budget", async () => {
   initialize({ discord: { botToken: "discord.fixture.value", guildAllowlist: ["11111111111111111"] } });
   const calls = [];
   const outcome = await probes.probeSystem("discord", {
@@ -276,15 +274,24 @@ test("discord probe honors injected discordGuilds endpoints and keeps auth on bo
     },
     fetchFn: async (url, options) => {
       calls.push({ url: String(url), authorization: options.headers.Authorization });
-      return String(url).endsWith("/guilds")
-        ? new Response(JSON.stringify([{ id: "11111111111111111" }]), { status: 200, headers: { "Content-Type": "application/json" } })
-        : new Response("{}", { status: 200 });
+      if (!String(url).includes("/guilds")) return new Response("{}", { status: 200 });
+      if (!String(url).includes("after=")) {
+        return new Response(JSON.stringify(Array.from({ length: 200 }, (_, index) => ({ id: String(20000000000000000n + BigInt(index)) }))), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify([{ id: "11111111111111111" }]), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
     },
   });
-  assert.equal(outcome.code, "CONNECTED");
+  assert.deepEqual(outcome, { ok: true, code: "CONNECTED" });
   assert.deepEqual(calls, [
     { url: "https://probe.example/users/@me", authorization: "Bot discord.fixture.value" },
-    { url: "https://probe.example/users/@me/guilds", authorization: "Bot discord.fixture.value" },
+    { url: "https://probe.example/users/@me/guilds?limit=200", authorization: "Bot discord.fixture.value" },
+    { url: "https://probe.example/users/@me/guilds?limit=200&after=20000000000000199", authorization: "Bot discord.fixture.value" },
   ]);
 });
 
@@ -307,27 +314,70 @@ test("discord probe maps auth failures and abort-driven deadlines without leakin
   assert.equal(JSON.stringify(timedOut).includes("discord.fixture.value"), false);
 });
 
-test("discord guild-list body reads remain under the active probe timeout", async () => {
+test("discord probe stops after a short first guild page with an allowlist mismatch", async () => {
   initialize({ discord: { botToken: "discord.fixture.value", guildAllowlist: ["11111111111111111"] } });
-  let guildSignal;
-  const startedAt = Date.now();
-  const timedOut = await probes.probeSystem("discord", {
-    timeoutMs: 5,
+  const calls = [];
+  const missing = await probes.probeSystem("discord", {
     fetchFn: async (url, options) => {
-      if (!String(url).endsWith("/guilds")) return new Response("{}", { status: 200 });
-      guildSignal = options.signal;
-      return {
-        status: 200,
-        async json() {
-          return new Promise((_resolve, reject) => {
-            options.signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
-          });
-        },
-      };
+      calls.push({ url: String(url), authorization: options.headers.Authorization });
+      return String(url).includes("/guilds")
+        ? new Response(JSON.stringify([{ id: "99999999999999999" }]), { status: 200, headers: { "Content-Type": "application/json" } })
+        : new Response("{}", { status: 200 });
+    },
+  });
+  assert.equal(missing.code, "ALLOWLIST_MISMATCH");
+  assert.deepEqual(calls.map((entry) => entry.url), [
+    "https://discord.com/api/v10/users/@me",
+    "https://discord.com/api/v10/users/@me/guilds?limit=200",
+  ]);
+});
+
+test("discord probe shares one wall-clock timeout budget across auth and guild pagination", async (t) => {
+  initialize({ discord: { botToken: "discord.fixture.value", guildAllowlist: ["11111111111111111"] } });
+  const startedAt = Date.now();
+  const outcome = await probes.probeSystem("discord", {
+    timeoutMs: 40,
+    fetchFn: async (url, options) => {
+      if (!String(url).includes("/guilds")) {
+        await new Promise((resolve) => setTimeout(resolve, 35));
+        return new Response("{}", { status: 200 });
+      }
+      return new Promise((_resolve, reject) => {
+        options.signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+      });
     },
   });
   const elapsed = Date.now() - startedAt;
-  assert.deepEqual(timedOut, { ok: false, code: "TIMEOUT" });
-  assert.equal(guildSignal?.aborted, true);
-  assert.ok(elapsed >= 4 && elapsed < 250, `elapsed=${elapsed}`);
+  t.diagnostic(`shared-budget elapsedMs=${elapsed}`);
+  assert.deepEqual(outcome, { ok: false, code: "TIMEOUT" });
+  assert.ok(elapsed >= 20 && elapsed < 250, `elapsed=${elapsed}`);
+});
+
+test("discord probe times out mid-pagination when the shared budget is exhausted", async () => {
+  initialize({ discord: { botToken: "discord.fixture.value", guildAllowlist: ["11111111111111111"] } });
+  let fakeNow = 0;
+  let guildCalls = 0;
+  const outcome = await probes.probeSystem("discord", {
+    timeoutMs: 60,
+    now: () => fakeNow,
+    fetchFn: async (url, options) => {
+      if (!String(url).includes("/guilds")) {
+        fakeNow = 10;
+        return new Response("{}", { status: 200 });
+      }
+      guildCalls += 1;
+      if (guildCalls === 1) {
+        fakeNow = 45;
+        return new Response(JSON.stringify(Array.from({ length: 200 }, (_, index) => ({ id: String(30000000000000000n + BigInt(index)) }))), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Promise((_resolve, reject) => {
+        options.signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+      });
+    },
+  });
+  assert.deepEqual(outcome, { ok: false, code: "TIMEOUT" });
+  assert.equal(guildCalls, 2);
 });
