@@ -1,3 +1,139 @@
+const DISCORD_SNOWFLAKE_RE = /^[0-9]{17,20}$/;
+const DISCORD_LOCAL_ONLY_HINT = "Discord 参加はローカルアクセス時のみ利用できます。";
+const DISCORD_ERROR_MESSAGES = Object.freeze({
+  DISCORD_SETUP_REQUIRED: "Discord 設定を確認してください",
+  DISCORD_ALLOWLIST_REQUIRED: "Discord サーバー許可リストを設定してください",
+  DISCORD_GUILD_NOT_ALLOWED: "この Discord サーバーは許可されていません",
+  DISCORD_DEPENDENCY_MISSING: "Discord 連携の依存パッケージを確認してください",
+  DISCORD_UNSUPPORTED_TTS_RATE: "Discord 用の音声サンプルレートを確認してください",
+  DISCORD_MUTEX_BUSY: "別の通話が動作中です",
+  DISCORD_JOIN_FAILED: "Discord への参加に失敗しました",
+});
+
+function isDiscordSnowflake(value) {
+  return DISCORD_SNOWFLAKE_RE.test(String(value || "").trim());
+}
+
+function discordTargetStatus(guildId, channelId) {
+  const normalizedGuildId = String(guildId || "").trim();
+  const normalizedChannelId = String(channelId || "").trim();
+  if (!normalizedGuildId && !normalizedChannelId) {
+    return { ready: false, state: "idle", text: "入力待機中...", className: "field-status" };
+  }
+  if (
+    (normalizedGuildId && !isDiscordSnowflake(normalizedGuildId))
+    || (normalizedChannelId && !isDiscordSnowflake(normalizedChannelId))
+  ) {
+    return {
+      ready: false,
+      state: "invalid",
+      text: "Guild ID / Channel ID は 17-20 桁の数字で入力してください",
+      className: "field-status notfound",
+    };
+  }
+  if (!normalizedGuildId || !normalizedChannelId) {
+    return {
+      ready: false,
+      state: "partial",
+      text: "Guild ID と Channel ID を入力してください",
+      className: "field-status",
+    };
+  }
+  return {
+    ready: true,
+    state: "detected",
+    text: `検出済み: Guild ${normalizedGuildId} / Channel ${normalizedChannelId}`,
+    className: "field-status detected",
+  };
+}
+
+function buildMeetJoinFormData({ meetingUrl, availableAgents, wsUrl, avatarExperiment }) {
+  const selectedAgentIds = availableAgents.map((agent) => agent.id);
+  const botName = availableAgents.length
+    ? `${availableAgents[0].id} (${availableAgents[0].displayName})`
+    : "Agent";
+  const formData = new URLSearchParams({
+    meetingUrl,
+    botName,
+    wsUrl,
+    conversationMode: "group",
+    agentIds: selectedAgentIds.join(","),
+  });
+  appendAvatarExperiment(formData, avatarExperiment);
+  return formData;
+}
+
+function buildDiscordJoinBody({ guildId, channelId }) {
+  return {
+    guildId: String(guildId || "").trim(),
+    channelId: String(channelId || "").trim(),
+  };
+}
+
+function discordJoinErrorMessage(code) {
+  return DISCORD_ERROR_MESSAGES[code] || code;
+}
+
+function parseDiscordJoinErrorText(text, status) {
+  if (status === 404) return DISCORD_LOCAL_ONLY_HINT;
+  let payload;
+  try { payload = JSON.parse(String(text || "")); } catch { return discordJoinErrorMessage("DISCORD_JOIN_FAILED"); }
+  const code = payload?.code || payload?.error?.code;
+  if (typeof code === "string" && code) return discordJoinErrorMessage(code);
+  return discordJoinErrorMessage("DISCORD_JOIN_FAILED");
+}
+
+function firstActiveSession(sessions) {
+  return Array.isArray(sessions) && sessions.length > 0 ? sessions[0] : null;
+}
+
+function discordConnectionReadyValue(status) {
+  if (typeof status?.connectionReady === "boolean") return status.connectionReady;
+  if (typeof status?.session?.connectionReady === "boolean") return status.session.connectionReady;
+  return null;
+}
+
+function formatDiscordStatusLine(status) {
+  if (!status || typeof status !== "object") return "Discord 接続状態: 未確認";
+  const sessionState = status.session
+    ? `${status.session.state || "未取得"} / ${status.session.lifecycle || "未取得"}`
+    : "なし";
+  const connectionReady = discordConnectionReadyValue(status);
+  const connectionText = connectionReady === true
+    ? "OK"
+    : connectionReady === false
+      ? "未接続"
+      : "未取得";
+  return `Discord 接続状態: ok=${status.ok === false ? "NG" : "OK"} / configured=${status.configured ? "完了" : "未完了"} / session=${sessionState} / connectionReady=${connectionText}`;
+}
+
+function pollBannerDecision(currentState, snapshot) {
+  const meetSession = firstActiveSession(snapshot?.meetSessions);
+  const discordSession = snapshot?.discordAvailable === true ? snapshot?.discordStatus?.session || null : null;
+  const discordKnownOrPending = currentState?.hasDiscordSession === true
+    || currentState?.discordStatusExpected === true
+    || currentState?.activeTransport === "discord";
+
+  if (discordSession) return { action: "discord", clearDiscordTracking: false };
+  if (meetSession) {
+    return {
+      action: "meet",
+      clearDiscordTracking: snapshot?.discordAttempted === true && snapshot?.discordAvailable === true,
+    };
+  }
+  if (snapshot?.discordAttempted === true && snapshot?.discordAvailable !== true && discordKnownOrPending) {
+    return { action: "preserve", clearDiscordTracking: false };
+  }
+  if (snapshot?.discordAttempted === true && snapshot?.discordAvailable === true) {
+    if (currentState?.hasActiveSession === true && currentState?.activeTransport === "meet" && snapshot?.meetAvailable !== true) {
+      return { action: "preserve", clearDiscordTracking: true };
+    }
+    return { action: "clear", clearDiscordTracking: true };
+  }
+  if (snapshot?.meetAvailable === true) return { action: "clear", clearDiscordTracking: false };
+  return { action: "preserve", clearDiscordTracking: false };
+}
+
 function parseJoinErrorText(text) {
   let payload;
   try { payload = JSON.parse(String(text || "")); } catch { return String(text || ""); }
@@ -78,7 +214,17 @@ function appendAvatarExperiment(parameters, selection) {
 if (typeof module !== "undefined" && module.exports) module.exports = {
   appendAvatarExperiment,
   avatarExperimentLabel,
+  buildDiscordJoinBody,
+  buildMeetJoinFormData,
+  discordConnectionReadyValue,
+  discordJoinErrorMessage,
+  discordTargetStatus,
+  formatDiscordStatusLine,
+  firstActiveSession,
+  isDiscordSnowflake,
   localSettingsUrlFor,
+  pollBannerDecision,
+  parseDiscordJoinErrorText,
   parseJoinErrorText,
   readinessDisplayRows,
   settingsPortFromReadiness,
@@ -90,8 +236,15 @@ if (typeof document !== "undefined") (function () {
   const statusEl = document.getElementById("status");
   const submitBtn = document.getElementById("joinBtn");
   const submitLabel = submitBtn.querySelector(".btn-label");
+  const transportEls = [...form.querySelectorAll('input[name="joinTransport"]')];
+  const meetingLabelEl = form.querySelector('label[for="meetingText"]');
   const meetingTextEl = document.getElementById("meetingText");
   const meetingUrlStatusEl = document.getElementById("meetingUrlStatus");
+  const discordJoinFieldsEl = document.getElementById("discordJoinFields");
+  const discordGuildIdEl = document.getElementById("discordGuildId");
+  const discordChannelIdEl = document.getElementById("discordChannelId");
+  const discordTargetStatusEl = document.getElementById("discordTargetStatus");
+  const discordConnectionStatusEl = document.getElementById("discordConnectionStatus");
   const activeCard = document.getElementById("activeCard");
   const activeLabelEl = document.getElementById("activeLabel");
   const activeUrlEl = document.getElementById("activeUrl");
@@ -120,6 +273,8 @@ if (typeof document !== "undefined") (function () {
   const readinessLines = document.getElementById("readinessLines");
   const readinessRecheck = document.getElementById("readinessRecheck");
   const avatarExperimentEl = document.getElementById("avatarExperiment");
+  const meetingStatusWrapEl = meetingUrlStatusEl.parentElement;
+  const avatarExperimentWrapEl = avatarExperimentEl.closest(".join-option");
 
   const INSTALL_DISMISSED_KEY = "aiMeetParticipantInstallDismissed";
 
@@ -127,6 +282,8 @@ if (typeof document !== "undefined") (function () {
   let isSubmitting = false;
   let isLeaving = false;
   let hasActiveSession = false;
+  let hasDiscordSession = false;
+  let activeTransport = "meet";
   let activeSessionId = null;
   let activeStartedAtMs = null;
   let pollTimer = null;
@@ -140,6 +297,10 @@ if (typeof document !== "undefined") (function () {
   let deferredInstallPrompt = null;
   let readinessState = null;
   let readinessChecking = false;
+  let lastDiscordTargetState = "";
+  let lastDiscordTarget = null;
+  let discordStatusExpected = false;
+  let lastDiscordStatusLine = "Discord 接続状態: 未確認";
 
   function getStoredTheme() {
     try {
@@ -287,15 +448,46 @@ if (typeof document !== "undefined") (function () {
     el.classList.add("animate-in");
   }
 
+  function selectedTransport() {
+    return transportEls.find((input) => input.checked)?.value === "discord" ? "discord" : "meet";
+  }
+
+  function discordJoinReady() {
+    return discordTargetStatus(discordGuildIdEl.value, discordChannelIdEl.value).ready;
+  }
+
+  function applyTransportVisibility() {
+    const discordSelected = selectedTransport() === "discord";
+    meetingLabelEl.hidden = discordSelected;
+    meetingTextEl.hidden = discordSelected;
+    meetingTextEl.disabled = discordSelected;
+    meetingTextEl.required = !discordSelected;
+    meetingStatusWrapEl.hidden = discordSelected;
+    agentInfoEl.hidden = discordSelected;
+    discordJoinFieldsEl.classList.toggle("is-hidden", !discordSelected);
+    discordGuildIdEl.disabled = !discordSelected;
+    discordChannelIdEl.disabled = !discordSelected;
+    avatarExperimentWrapEl.hidden = discordSelected;
+    readinessPanel.classList.toggle("is-hidden", discordSelected || readinessLines.children.length === 0);
+  }
+
+  function renderDiscordStatusLine(text) {
+    lastDiscordStatusLine = text || lastDiscordStatusLine;
+    discordConnectionStatusEl.textContent = lastDiscordStatusLine;
+  }
+
   function updateSubmitButtonState() {
-    const canSubmit = Boolean(extractedMeetingUrl) && readinessState?.ready === true && !isSubmitting && !hasActiveSession;
+    const discordSelected = selectedTransport() === "discord";
+    const canSubmit = discordSelected
+      ? discordJoinReady() && !isSubmitting && !hasActiveSession
+      : Boolean(extractedMeetingUrl) && readinessState?.ready === true && !isSubmitting && !hasActiveSession;
     submitBtn.disabled = !canSubmit;
     if (hasActiveSession) {
       submitLabel.textContent = "通話中（退出してから再参加）";
     } else if (isSubmitting) {
-      submitLabel.textContent = "起動中...";
+      submitLabel.textContent = discordSelected ? "参加中..." : "起動中...";
     } else {
-      submitLabel.textContent = "Meet に参加させる";
+      submitLabel.textContent = discordSelected ? "Discord に参加させる" : "Meet に参加させる";
     }
   }
 
@@ -336,8 +528,8 @@ if (typeof document !== "undefined") (function () {
   function renderReadiness() {
     readinessLines.replaceChildren();
     for (const row of readinessDisplayRows(readinessState)) appendReadinessLine(row.kind, row.text, row.fieldId);
-    readinessPanel.classList.toggle("is-hidden", readinessLines.children.length === 0);
     readinessRecheck.disabled = readinessChecking;
+    applyTransportVisibility();
     updateSubmitButtonState();
   }
 
@@ -384,6 +576,22 @@ if (typeof document !== "undefined") (function () {
       unknown: "🟡 接続中...",
     };
     return labels[state] || `🟡 ${state}`;
+  }
+
+  function discordSessionLabel(state) {
+    const labels = {
+      initiating: "🔄 Discord に参加中...",
+      "in-progress": "🟢 Discord 通話中",
+      completed: "✅ Discord 通話終了",
+      failed: "⚠️ Discord 接続終了",
+    };
+    return labels[state] || `🟡 Discord: ${state || "unknown"}`;
+  }
+
+  function discordConnectionLine(status) {
+    if (status?.connectionReady === true || status?.session?.connectionReady === true) return "接続状態: ボイス接続 OK";
+    if (status?.session) return "接続状態: ボイス接続を確立中";
+    return `接続状態: ${status?.configured ? "設定済み" : "未設定"}`;
   }
 
   async function loadAgentsFromServer() {
@@ -440,51 +648,130 @@ if (typeof document !== "undefined") (function () {
     elapsedTimerEl.textContent = "00:00";
   }
 
-  function updateActiveBanner(sessions) {
-    if (sessions && sessions.length > 0) {
-      const s = sessions[0];
-      const startedAtMs = parseStartedAt(s.startedAt);
-      hasActiveSession = true;
-      activeSessionId = s.sessionId;
-      activeLabelEl.textContent = "通話中";
-      activeUrlEl.textContent = s.meetingUrl || "";
-      activeStateEl.textContent = stateLabel(s.state);
-      activeWsEl.textContent = s.hasConnection ? "WS 接続 OK" : "WS 未接続";
-      const fallbackName = availableAgents.length ? availableAgents[0].displayName : "エージェント";
-      const names = Array.isArray(s.agentDisplayNames) && s.agentDisplayNames.length
-        ? s.agentDisplayNames.join(", ")
-        : fallbackName;
-      activeAgentsEl.textContent = `エージェント: ${names}`;
-      activeCard.classList.remove("is-hidden", "ended");
-      startElapsedTimer(startedAtMs);
-      endedShownUntilMs = 0;
-      leaveBtn.classList.remove("is-hidden");
-    } else {
-      hasActiveSession = false;
-      activeSessionId = null;
-      activeAgentsEl.textContent = "エージェント: -";
-      stopElapsedTimer();
-      if (Date.now() < endedShownUntilMs) {
-        // keep showing the "call ended" state until the timeout expires
-      } else {
-        activeCard.classList.add("is-hidden");
-        activeCard.classList.remove("ended");
-        leaveBtn.classList.remove("is-hidden");
-      }
+  function clearActiveBanner() {
+    hasActiveSession = false;
+    activeTransport = selectedTransport();
+    activeSessionId = null;
+    activeAgentsEl.textContent = "エージェント: -";
+    stopElapsedTimer();
+    if (Date.now() < endedShownUntilMs) return;
+    activeCard.classList.add("is-hidden");
+    activeCard.classList.remove("ended");
+    leaveBtn.classList.remove("is-hidden");
+  }
+
+  function renderMeetActiveBanner(session) {
+    const startedAtMs = parseStartedAt(session.startedAt);
+    hasActiveSession = true;
+    hasDiscordSession = false;
+    activeTransport = "meet";
+    activeSessionId = session.sessionId;
+    activeLabelEl.textContent = "通話中";
+    activeUrlEl.textContent = session.meetingUrl || "";
+    activeStateEl.textContent = stateLabel(session.state);
+    activeWsEl.textContent = session.hasConnection ? "WS 接続 OK" : "WS 未接続";
+    const fallbackName = availableAgents.length ? availableAgents[0].displayName : "エージェント";
+    const names = Array.isArray(session.agentDisplayNames) && session.agentDisplayNames.length
+      ? session.agentDisplayNames.join(", ")
+      : fallbackName;
+    activeAgentsEl.textContent = `エージェント: ${names}`;
+    activeCard.classList.remove("is-hidden", "ended");
+    startElapsedTimer(startedAtMs);
+    endedShownUntilMs = 0;
+    leaveBtn.classList.remove("is-hidden");
+  }
+
+  function clearDiscordTracking() {
+    hasDiscordSession = false;
+    discordStatusExpected = false;
+    lastDiscordTarget = null;
+  }
+
+  function renderDiscordActiveBanner(status) {
+    const session = status?.session || null;
+    if (!session) {
+      hasDiscordSession = false;
+      if (!hasActiveSession || activeTransport === "discord") clearActiveBanner();
+      return;
+    }
+    const previousTransport = activeTransport;
+    hasActiveSession = true;
+    hasDiscordSession = true;
+    discordStatusExpected = true;
+    activeTransport = "discord";
+    activeSessionId = session.sessionId || null;
+    activeLabelEl.textContent = "Discord 通話中";
+    activeUrlEl.textContent = lastDiscordTarget
+      ? `discord://${lastDiscordTarget.guildId}/${lastDiscordTarget.channelId}`
+      : "Discord ボイスセッション";
+    activeStateEl.textContent = discordSessionLabel(session.state || session.lifecycle);
+    activeWsEl.textContent = discordConnectionLine(status);
+    activeAgentsEl.textContent = `Discord 状態: ${status?.ok === false ? "エラー" : "OK"} / 設定: ${status?.configured ? "完了" : "未完了"}`;
+    activeCard.classList.remove("is-hidden", "ended");
+    if (previousTransport !== "discord" || activeStartedAtMs === null) startElapsedTimer(Date.now());
+    endedShownUntilMs = 0;
+    leaveBtn.classList.remove("is-hidden");
+  }
+
+  function updateActiveBanner(snapshot) {
+    const decision = pollBannerDecision({
+      hasActiveSession,
+      hasDiscordSession,
+      activeTransport,
+      discordStatusExpected,
+    }, snapshot);
+    if (decision.clearDiscordTracking) clearDiscordTracking();
+    if (decision.action === "discord") {
+      renderDiscordActiveBanner(snapshot.discordStatus);
+    } else if (decision.action === "meet") {
+      renderMeetActiveBanner(firstActiveSession(snapshot.meetSessions));
+    } else if (decision.action === "clear") {
+      clearActiveBanner();
     }
     updateSubmitButtonState();
   }
 
+  async function loadDiscordStatus() {
+    try {
+      const response = await fetch("/api/discord/status", { headers: { Accept: "application/json" } });
+      if (!response.ok) return { available: false, status: null };
+      const status = await response.json();
+      renderDiscordStatusLine(formatDiscordStatusLine(status));
+      return { available: true, status };
+    } catch {
+      return { available: false, status: null };
+    }
+  }
+
   async function pollActiveSession() {
     const epoch = pollEpoch;
+    let meetAvailable = false;
+    let sessions = [];
+    let discordAttempted = false;
+    let discordAvailable = false;
+    let discordStatus = null;
     try {
       const res = await fetch("/active-session");
       const data = await res.json();
-      if (epoch !== pollEpoch) return;
-      updateActiveBanner(data.sessions);
+      meetAvailable = true;
+      sessions = Array.isArray(data.sessions) ? data.sessions : [];
     } catch {
       // ignore polling errors
     }
+    if (selectedTransport() === "discord" || hasDiscordSession || discordStatusExpected) {
+      discordAttempted = true;
+      const discordResult = await loadDiscordStatus();
+      discordAvailable = discordResult.available === true;
+      discordStatus = discordResult.status;
+    }
+    if (epoch !== pollEpoch) return;
+    updateActiveBanner({
+      meetAvailable,
+      meetSessions: sessions,
+      discordAttempted,
+      discordAvailable,
+      discordStatus,
+    });
     await loadReadiness();
   }
 
@@ -500,6 +787,18 @@ if (typeof document !== "undefined") (function () {
     }
   }
 
+  function showEndedState(message) {
+    endedShownUntilMs = Date.now() + 5000;
+    activeCard.classList.add("ended");
+    activeLabelEl.textContent = "通話終了";
+    activeStateEl.textContent = message;
+    activeWsEl.textContent = "";
+    stopElapsedTimer();
+    leaveBtn.classList.add("is-hidden");
+    pollEpoch += 1;
+    setTimeout(pollActiveSession, 1000);
+  }
+
   async function leaveMeeting() {
     if (isLeaving) return;
     isLeaving = true;
@@ -507,25 +806,33 @@ if (typeof document !== "undefined") (function () {
     leaveBtn.textContent = "退出中...";
 
     try {
-      const body = new URLSearchParams({
-        sessionId: activeSessionId || "",
-      });
-      const res = await fetch("/leave-meeting", { method: "POST", body });
-      const text = await res.text();
-
-      if (res.ok) {
-        setStatus("success", `退出しました: ${text}`);
-        endedShownUntilMs = Date.now() + 5000;
-        activeCard.classList.add("ended");
-        activeLabelEl.textContent = "通話終了";
-        activeStateEl.textContent = "セッションは正常に終了しました";
-        activeWsEl.textContent = "";
-        stopElapsedTimer();
-        leaveBtn.classList.add("is-hidden");
-        pollEpoch += 1;
-        setTimeout(pollActiveSession, 1000);
+      if (activeTransport === "discord") {
+        const res = await fetch("/api/discord/leave", {
+          method: "POST",
+          headers: { Accept: "application/json", "Content-Type": "application/json" },
+          body: "{}",
+        });
+        const text = await res.text();
+        if (res.ok) {
+          setStatus("success", "Discord から退出しました");
+          clearDiscordTracking();
+          showEndedState("Discord セッションは正常に終了しました");
+        } else {
+          setStatus("error", parseDiscordJoinErrorText(text, res.status));
+        }
       } else {
-        setStatus("error", `退出エラー: ${text}`);
+        const body = new URLSearchParams({
+          sessionId: activeSessionId || "",
+        });
+        const res = await fetch("/leave-meeting", { method: "POST", body });
+        const text = await res.text();
+
+        if (res.ok) {
+          setStatus("success", `退出しました: ${text}`);
+          showEndedState("セッションは正常に終了しました");
+        } else {
+          setStatus("error", `退出エラー: ${text}`);
+        }
       }
     } catch (err) {
       setStatus("error", `退出エラー: ${err.message}`);
@@ -614,6 +921,17 @@ if (typeof document !== "undefined") (function () {
       triggerReveal(meetingUrlStatusEl);
     }
     lastUrlState = nextState;
+    updateSubmitButtonState();
+  }
+
+  function updateDiscordTargetStatus() {
+    const next = discordTargetStatus(discordGuildIdEl.value, discordChannelIdEl.value);
+    discordTargetStatusEl.textContent = next.text;
+    discordTargetStatusEl.className = next.className;
+    if (next.state !== lastDiscordTargetState && ["detected", "invalid"].includes(next.state)) {
+      triggerReveal(discordTargetStatusEl);
+    }
+    lastDiscordTargetState = next.state;
     updateSubmitButtonState();
   }
 
@@ -740,56 +1058,83 @@ if (typeof document !== "undefined") (function () {
     }
   }
 
+  function setTransport(nextTransport) {
+    for (const input of transportEls) input.checked = input.value === nextTransport;
+    activeTransport = hasActiveSession ? activeTransport : nextTransport;
+    clearStatus();
+    applyTransportVisibility();
+    if (nextTransport === "discord") {
+      updateDiscordTargetStatus();
+    } else {
+      updateMeetingUrlStatus();
+    }
+  }
+
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
-
-    updateMeetingUrlStatus();
-    if (!extractedMeetingUrl || readinessState?.ready !== true || isSubmitting || hasActiveSession) {
-      if (hasActiveSession) {
-        setStatus("error", "既にアクティブなセッションがあります。退出してから再参加してください。");
-      } else if (!extractedMeetingUrl) {
-        setStatus("error", "Meet / Zoom URLが見つかりません");
-      } else if (readinessState?.ready !== true) {
-        setStatus("error", "接続確認が完了するまでお待ちください。設定が必要な項目は上の案内を確認してください。");
-      }
+    const transport = selectedTransport();
+    if (transport === "discord") updateDiscordTargetStatus();
+    else updateMeetingUrlStatus();
+    if (isSubmitting || hasActiveSession) {
+      setStatus("error", "既にアクティブなセッションがあります。退出してから再参加してください。");
       return;
     }
-
+    if (transport === "meet" && !extractedMeetingUrl) {
+      setStatus("error", "Meet / Zoom URLが見つかりません");
+      return;
+    }
+    if (transport === "meet" && readinessState?.ready !== true) {
+      setStatus("error", "接続確認が完了するまでお待ちください。設定が必要な項目は上の案内を確認してください。");
+      return;
+    }
+    if (transport === "discord" && !discordJoinReady()) {
+      setStatus("error", discordTargetStatus(discordGuildIdEl.value, discordChannelIdEl.value).text);
+      return;
+    }
     isSubmitting = true;
     updateSubmitButtonState();
-    setStatus("loading", "Botを起動中...");
+    setStatus("loading", transport === "discord" ? "Discord に参加中..." : "Botを起動中...");
 
     try {
-      const wsUrl = getAutoWsUrl();
-      const conversationMode = "group";
-      const selectedAgentIds = availableAgents.map((a) => a.id);
-      const botName = availableAgents.length
-        ? `${availableAgents[0].id} (${availableAgents[0].displayName})`
-        : "Agent";
-
-      const formData = new URLSearchParams({
-        meetingUrl: extractedMeetingUrl,
-        botName,
-        wsUrl,
-        conversationMode,
-        agentIds: selectedAgentIds.join(","),
-      });
-      appendAvatarExperiment(formData, avatarExperimentEl.value);
-
-      const response = await fetch("/join-meeting", {
-        method: "POST",
-        body: formData,
-      });
-
-      const text = await response.text();
-      if (response.ok) {
-        setStatus("success", `参加リクエストを送信しました。ミーティング画面でBotの参加を確認してください。${text ? ` ${text}` : ""}`);
-        setTimeout(pollActiveSession, 500);
+      if (transport === "discord") {
+        const payload = buildDiscordJoinBody({
+          guildId: discordGuildIdEl.value,
+          channelId: discordChannelIdEl.value,
+        });
+        const response = await fetch("/api/discord/join", {
+          method: "POST",
+          headers: { Accept: "application/json", "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const text = await response.text();
+        if (response.ok) {
+          lastDiscordTarget = payload;
+          discordStatusExpected = true;
+          setStatus("success", "参加リクエストを送信しました。Discord で Bot の参加を確認してください。");
+          setTimeout(pollActiveSession, 500);
+        } else {
+          setStatus("error", parseDiscordJoinErrorText(text, response.status));
+        }
       } else {
-        setStatus("error", parseJoinErrorText(text));
+        const response = await fetch("/join-meeting", {
+          method: "POST",
+          body: buildMeetJoinFormData({
+            meetingUrl: extractedMeetingUrl,
+            availableAgents,
+            wsUrl: getAutoWsUrl(),
+            avatarExperiment: avatarExperimentEl.value,
+          }),
+        });
+        const text = await response.text();
+        if (response.ok) {
+          setStatus("success", `参加リクエストを送信しました。ミーティング画面でBotの参加を確認してください。${text ? ` ${text}` : ""}`);
+          setTimeout(pollActiveSession, 500);
+        } else {
+          setStatus("error", parseJoinErrorText(text));
+        }
       }
     } catch (err) {
-      setStatus("error", `接続エラー: ${err.message}`);
+      setStatus("error", transport === "discord" ? "接続エラー: Discord への参加に失敗しました" : `接続エラー: ${err.message}`);
     } finally {
       isSubmitting = false;
       updateSubmitButtonState();
@@ -803,10 +1148,24 @@ if (typeof document !== "undefined") (function () {
   meetingTextEl.addEventListener("paste", () => {
     setTimeout(updateMeetingUrlStatus, 0);
   });
+  for (const input of transportEls) {
+    input.addEventListener("change", () => setTransport(input.value));
+  }
+  discordGuildIdEl.addEventListener("input", () => {
+    clearStatus();
+    updateDiscordTargetStatus();
+  });
+  discordChannelIdEl.addEventListener("input", () => {
+    clearStatus();
+    updateDiscordTargetStatus();
+  });
   leaveBtn.addEventListener("click", leaveMeeting);
   readinessRecheck.addEventListener("click", recheckReadiness);
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") loadReadiness();
+    if (document.visibilityState === "visible") {
+      loadReadiness();
+      if (selectedTransport() === "discord" || hasDiscordSession) pollActiveSession();
+    }
   });
   window.addEventListener("beforeunload", () => {
     stopPolling();
@@ -822,6 +1181,9 @@ if (typeof document !== "undefined") (function () {
   loadAvatarExperimentDefault();
   loadReadiness();
   updateMeetingUrlStatus();
+  updateDiscordTargetStatus();
+  renderDiscordStatusLine(lastDiscordStatusLine);
+  setTransport("meet");
   startPolling();
 
   window.__aiMeetParticipant = {

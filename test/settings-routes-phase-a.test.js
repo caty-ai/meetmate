@@ -387,9 +387,9 @@ test("Phase A handler mutation proof covers conflict, import reports, and live e
   assert.equal(envelope.restartRequired.includes("agent_emotion_tags"), false);
 });
 
-test("connection routes retain all providers and require a SHA-256 revision", async (t) => {
+test("connection routes retain all providers, including implemented Discord, and require a SHA-256 revision", async (t) => {
   const { handler, configState } = fixture(t, {});
-  for (const provider of ["soniox", "fish-audio"]) {
+  for (const provider of ["soniox", "fish-audio", "discord"]) {
     const res = response();
     await handler(request("POST", `/api/settings/connections/${provider}/test`, { revision: configState.revision }), res);
     assert.equal(res.status, 200, `${provider} ${res.body}`);
@@ -403,20 +403,26 @@ test("connection routes retain all providers and require a SHA-256 revision", as
     assert.equal(res.status, 200, `${provider} ${res.body}`);
     assert.equal(JSON.parse(res.body).code, "NOT_CONFIGURED");
   }
-  for (const provider of ["slack", "discord"]) {
-    const res = response();
-    await handler(request("POST", `/api/settings/connections/${provider}/test`, { revision: configState.revision }), res);
-    assert.equal(res.status, 501, `${provider} ${res.body}`);
-    const error = JSON.parse(res.body).error;
-    assert.deepEqual(Object.keys(error).sort(), ["code", "message", "requestId"]);
-    assert.equal(error.code, "TEST_NOT_IMPLEMENTED");
-    assert.equal(error.message, "Settings feature is not implemented");
-    assert.equal(typeof error.requestId, "string");
+  const slack = response();
+  await handler(request("POST", "/api/settings/connections/slack/test", { revision: configState.revision }), slack);
+  assert.equal(slack.status, 501, slack.body);
+  const error = JSON.parse(slack.body).error;
+  assert.deepEqual(Object.keys(error).sort(), ["code", "message", "requestId"]);
+  assert.equal(error.code, "TEST_NOT_IMPLEMENTED");
+  assert.equal(error.message, "Settings feature is not implemented");
+  assert.equal(typeof error.requestId, "string");
+
+  for (const provider of ["soniox", "discord"]) {
+    for (const revision of ["bootstrap", "A".repeat(64), "a".repeat(63)]) {
+      const res = response();
+      await handler(request("POST", `/api/settings/connections/${provider}/test`, { revision }), res);
+      assert.equal(res.status, 422, `${provider} ${revision} ${res.body}`);
+    }
   }
 
   for (const revision of ["bootstrap", "A".repeat(64), "a".repeat(63)]) {
     const res = response();
-    await handler(request("POST", "/api/settings/connections/soniox/test", { revision }), res);
+    await handler(request("POST", "/api/settings/connections/slack/test", { revision }), res);
     assert.equal(res.status, 422, `${revision} ${res.body}`);
   }
 

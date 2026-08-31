@@ -287,12 +287,12 @@ test("connection failure matrix is finite and vendor bodies and credentials stay
   assert.equal(lateReset.code, "PROVIDER_ERROR");
 });
 
-test("unset keys avoid vendor calls and optional Slack/Discord remain exact 501", async (t) => {
+test("unset keys avoid vendor calls while Discord is implemented and Slack remains exact 501", async (t) => {
   let calls = 0;
   const { handler, state } = fixture(t, {}, {
     connections: { fetchFn: async () => { calls += 1; throw new Error("must not call"); }, minIntervalMs: 0 },
   });
-  for (const provider of ["soniox", "fish-audio"]) {
+  for (const provider of ["soniox", "fish-audio", "discord"]) {
     const res = await invoke(handler, "POST", `/api/settings/connections/${provider}/test`, { revision: state.revision });
     assert.deepEqual(res.json, {
       ok: false, provider, code: "NOT_CONFIGURED", message: "Connection is not configured", durationMs: 0,
@@ -311,13 +311,17 @@ test("unset keys avoid vendor calls and optional Slack/Discord remain exact 501"
     const stale = await invoke(handler, "POST", `/api/settings/connections/${provider}/test`, { revision: "a".repeat(64) });
     assert.equal(stale.status, 409);
   }
-  for (const provider of ["slack", "discord"]) {
-    const res = await invoke(handler, "POST", `/api/settings/connections/${provider}/test`, { revision: state.revision });
-    assert.equal(res.status, 501);
-    assert.equal(res.json.error.code, "TEST_NOT_IMPLEMENTED");
-    const stale = await invoke(handler, "POST", `/api/settings/connections/${provider}/test`, { revision: "a".repeat(64) });
-    assert.equal(stale.status, 501);
-  }
+  const discordInvalid = await invoke(handler, "POST", "/api/settings/connections/discord/test", { revision: "not-a-revision" });
+  assert.equal(discordInvalid.status, 422);
+  assert.equal(discordInvalid.json.error.code, "SETTINGS_VALIDATION_FAILED");
+  const discordStale = await invoke(handler, "POST", "/api/settings/connections/discord/test", { revision: "a".repeat(64) });
+  assert.equal(discordStale.status, 409);
+
+  const slack = await invoke(handler, "POST", "/api/settings/connections/slack/test", { revision: state.revision });
+  assert.equal(slack.status, 501);
+  assert.equal(slack.json.error.code, "TEST_NOT_IMPLEMENTED");
+  const slackStale = await invoke(handler, "POST", "/api/settings/connections/slack/test", { revision: "a".repeat(64) });
+  assert.equal(slackStale.status, 501);
 });
 
 test("connection timeout is five seconds and maps to TIMEOUT", { timeout: 7_000 }, async (t) => {

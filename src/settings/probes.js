@@ -91,6 +91,15 @@ const DESCRIPTORS = Object.freeze({
     timeoutMs: DEFAULT_FETCH_TIMEOUT_MS,
     transport: "fetchFn",
   }),
+  discord: Object.freeze({
+    endpoint: "https://discord.com/api/v10/users/@me",
+    method: "GET",
+    credentialId: "discord_bot_token",
+    authScheme: "Bot",
+    headers: Object.freeze({ Accept: "application/json" }),
+    timeoutMs: DEFAULT_FETCH_TIMEOUT_MS,
+    transport: "fetchFn",
+  }),
 });
 
 function result(code, message) {
@@ -99,7 +108,7 @@ function result(code, message) {
 
 function classifyStatus(status, options = {}) {
   if (status >= 200 && status < 300) return result("CONNECTED");
-  if (status === 401 || (status === 403 && options.system === "attendee")) return result("AUTH_FAILED");
+  if (status === 401 || (status === 403 && ["attendee", "discord"].includes(options.system))) return result("AUTH_FAILED");
   if (status === 402) return result("PAYMENT_REQUIRED");
   if (status === 429) return result("RATE_LIMITED");
   if (status === 404 && options.system === "llm") {
@@ -132,48 +141,74 @@ async function cancelBody(response) {
   try { await response?.body?.cancel?.(); } catch { /* response bodies are never retained */ }
 }
 
-async function fetchProbe(system, options = {}) {
+function parseFetchJsonError(error, context = {}) {
+  if (context.signal?.reason === context.timeoutReason && isAbortError(error)) throw error;
+  return result("PROVIDER_ERROR");
+}
+
+function buildFetchProbeRequest(system, options = {}, override = {}) {
   const descriptor = DESCRIPTORS[system];
-  const credential = getPublishedValue(descriptor.credentialId);
+  const credential = descriptor?.credentialId ? getPublishedValue(descriptor.credentialId) : null;
   const openAiTtsBaseUrl = getPublishedValue("openai_compatible_tts_base_url");
   if (system === "openai-compatible") {
     const hostname = canonicalHostname(openAiTtsBaseUrl);
-    if (!hostname) return result("NOT_CONFIGURED");
-    if (hostname === "api.openai.com" && !meaningful(credential)) return result("NOT_CONFIGURED");
-  } else if (!meaningful(credential)) {
-    return result("NOT_CONFIGURED");
+    if (!hostname) return { outcome: result("NOT_CONFIGURED") };
+    if (hostname === "api.openai.com" && !meaningful(credential)) return { outcome: result("NOT_CONFIGURED") };
+  } else if (descriptor?.credentialId && !meaningful(credential)) {
+    return { outcome: result("NOT_CONFIGURED") };
   }
 
+  const endpointContext = {
+    attendeeBaseUrl: getPublishedValue("attendee_base_url"),
+    openAiTtsBaseUrl,
+  };
+  const endpoint = options.endpoints?.[override.endpointKey || system]
+    || override.endpoint
+    || (typeof descriptor.endpoint === "function" ? descriptor.endpoint(endpointContext) : descriptor.endpoint);
+  const headers = { ...descriptor.headers };
+  if (meaningful(credential)) {
+    const authHeader = descriptor.authHeader || "Authorization";
+    headers[authHeader] = descriptor.authScheme ? `${descriptor.authScheme} ${credential}` : credential;
+  }
+  return {
+    endpoint,
+    method: override.method || descriptor.method,
+    headers,
+    timeoutMs: override.timeoutMs ?? options.timeoutMs ?? descriptor.timeoutMs,
+  };
+}
+
+async function withFetchProbeResponse(system, options = {}, override = {}, consume = async (response) => response) {
+  const request = buildFetchProbeRequest(system, options, override);
+  if (request.outcome) return request.outcome;
   const controller = new AbortController();
   const timeoutReason = new Error(`${system} probe timeout`);
-  const timer = setTimeout(() => controller.abort(timeoutReason), options.timeoutMs ?? descriptor.timeoutMs);
+  const timer = setTimeout(() => controller.abort(timeoutReason), request.timeoutMs);
   timer.unref?.();
   try {
-    const endpointContext = {
-      attendeeBaseUrl: getPublishedValue("attendee_base_url"),
-      openAiTtsBaseUrl,
-    };
-    const endpoint = options.endpoints?.[system]
-      || (typeof descriptor.endpoint === "function" ? descriptor.endpoint(endpointContext) : descriptor.endpoint);
-    const headers = { ...descriptor.headers };
-    if (meaningful(credential)) {
-      const authHeader = descriptor.authHeader || "Authorization";
-      headers[authHeader] = descriptor.authScheme ? `${descriptor.authScheme} ${credential}` : credential;
-    }
-    const response = await (options.fetchFn || globalThis.fetch)(endpoint, {
-      method: descriptor.method,
-      headers,
+    const response = await (options.fetchFn || globalThis.fetch)(request.endpoint, {
+      method: request.method,
+      headers: request.headers,
       redirect: "error",
       signal: controller.signal,
     });
-    await cancelBody(response);
-    return classifyStatus(response.status, { system });
+    return await consume(response, {
+      signal: controller.signal,
+      timeoutReason,
+    });
   } catch (error) {
     const timedOut = error === timeoutReason || (controller.signal.reason === timeoutReason && isAbortError(error));
     return result(networkCode(error, timedOut));
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function fetchProbe(system, options = {}) {
+  return withFetchProbeResponse(system, options, {}, async (response) => {
+    await cancelBody(response);
+    return classifyStatus(response.status, { system });
+  });
 }
 
 function llmConnection(provider) {
@@ -264,6 +299,46 @@ async function tunnelProbe(options = {}) {
     : result("MISMATCH", "公開URLは別の meetmate インスタンスを指しています");
 }
 
+async function discordProbe(options = {}) {
+  const authenticated = await withFetchProbeResponse("discord", options, {}, async (response) => {
+    const classified = classifyStatus(response.status, { system: "discord" });
+    await cancelBody(response);
+    return classified;
+  });
+  if (!authenticated.ok) return authenticated;
+
+  const allowlist = [...new Set(
+    (Array.isArray(getPublishedValue("discord_guild_allowlist")) ? getPublishedValue("discord_guild_allowlist") : [])
+      .map((entry) => String(entry || "").trim())
+      .filter(Boolean)
+  )];
+  if (allowlist.length === 0) return result("CONNECTED");
+
+  return withFetchProbeResponse("discord", options, {
+    endpointKey: "discordGuilds",
+    endpoint: "https://discord.com/api/v10/users/@me/guilds",
+  }, async (response, context) => {
+    const guildsStatus = classifyStatus(response.status, { system: "discord" });
+    if (!guildsStatus.ok) {
+      await cancelBody(response);
+      return guildsStatus;
+    }
+    let guilds;
+    try {
+      guilds = await response.json();
+    } catch (error) {
+      return parseFetchJsonError(error, context);
+    }
+    if (!Array.isArray(guilds)) return result("PROVIDER_ERROR");
+    const presentGuildIds = new Set(guilds.map((entry) => String(entry?.id || "")).filter(Boolean));
+    const matchedGuildCount = allowlist.filter((guildId) => presentGuildIds.has(guildId)).length;
+    if (matchedGuildCount === 0) {
+      return result("ALLOWLIST_MISMATCH", "Bot が許可済みの Discord サーバーに参加していません");
+    }
+    return result("CONNECTED", `許可済みサーバーを ${matchedGuildCount} 件確認しました`);
+  });
+}
+
 function normalizedHost(value) {
   try { return new URL(value).host.toLowerCase(); } catch { return ""; }
 }
@@ -290,6 +365,7 @@ async function probeSystem(system, options = {}) {
   if (!Object.prototype.hasOwnProperty.call(DESCRIPTORS, system)) return result("PROVIDER_ERROR");
   if (system === "llm") return llmProbe(options);
   if (system === "tunnel") return tunnelProbe(options);
+  if (system === "discord") return discordProbe(options);
   return fetchProbe(system, options);
 }
 

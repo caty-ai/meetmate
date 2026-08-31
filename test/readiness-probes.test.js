@@ -205,3 +205,129 @@ test("submitted wsUrl identity check has exact match, configured mismatch, and o
   assert.match(outside.message, /設定と一致しません/);
   assert.equal(calls, 1, "a non-config-derived host must never be fetched");
 });
+
+test("discord probe uses Bot auth, short-circuits without a token, and keeps the token out of results", async () => {
+  initialize({ discord: { guildAllowlist: ["11111111111111111"] } });
+  let calls = 0;
+  const notConfigured = await probes.probeSystem("discord", {
+    fetchFn: async () => {
+      calls += 1;
+      return new Response("{}", { status: 200 });
+    },
+  });
+  assert.deepEqual(notConfigured, { ok: false, code: "NOT_CONFIGURED" });
+  assert.equal(calls, 0);
+
+  initialize({ discord: { botToken: "discord.fixture.value", guildAllowlist: [] } });
+  const requests = [];
+  const connected = await probes.probeSystem("discord", {
+    fetchFn: async (url, options) => {
+      requests.push({ url: String(url), authorization: options.headers.Authorization });
+      return new Response("{}", { status: 200 });
+    },
+  });
+  assert.deepEqual(connected, { ok: true, code: "CONNECTED" });
+  assert.deepEqual(requests, [{
+    url: "https://discord.com/api/v10/users/@me",
+    authorization: "Bot discord.fixture.value",
+  }]);
+  assert.equal(JSON.stringify(connected).includes("discord.fixture.value"), false);
+});
+
+test("discord probe enforces the allowlist tier against /users/@me/guilds", async () => {
+  const guildId = "11111111111111111";
+  initialize({ discord: { botToken: "discord.fixture.value", guildAllowlist: [guildId, "22222222222222222"] } });
+  const calls = [];
+  const matched = await probes.probeSystem("discord", {
+    fetchFn: async (url, options) => {
+      calls.push({ url: String(url), authorization: options.headers.Authorization });
+      return String(url).endsWith("/guilds")
+        ? new Response(JSON.stringify([{ id: guildId }, { id: "99999999999999999" }]), { status: 200, headers: { "Content-Type": "application/json" } })
+        : new Response("{}", { status: 200 });
+    },
+  });
+  assert.equal(matched.ok, true);
+  assert.equal(matched.code, "CONNECTED");
+  assert.match(matched.message, /1 件/);
+  assert.deepEqual(calls.map((entry) => entry.url), [
+    "https://discord.com/api/v10/users/@me",
+    "https://discord.com/api/v10/users/@me/guilds",
+  ]);
+  assert.equal(calls.every((entry) => entry.authorization === "Bot discord.fixture.value"), true);
+
+  const missing = await probes.probeSystem("discord", {
+    fetchFn: async (url) => (String(url).endsWith("/guilds")
+      ? new Response(JSON.stringify([{ id: "99999999999999999" }]), { status: 200, headers: { "Content-Type": "application/json" } })
+      : new Response("{}", { status: 200 })),
+  });
+  assert.equal(missing.ok, false);
+  assert.equal(missing.code, "ALLOWLIST_MISMATCH");
+  assert.match(missing.message, /許可済み/);
+  assert.equal(JSON.stringify(missing).includes("discord.fixture.value"), false);
+});
+
+test("discord probe honors injected discordGuilds endpoints and keeps auth on both tiers", async () => {
+  initialize({ discord: { botToken: "discord.fixture.value", guildAllowlist: ["11111111111111111"] } });
+  const calls = [];
+  const outcome = await probes.probeSystem("discord", {
+    endpoints: {
+      discord: "https://probe.example/users/@me",
+      discordGuilds: "https://probe.example/users/@me/guilds",
+    },
+    fetchFn: async (url, options) => {
+      calls.push({ url: String(url), authorization: options.headers.Authorization });
+      return String(url).endsWith("/guilds")
+        ? new Response(JSON.stringify([{ id: "11111111111111111" }]), { status: 200, headers: { "Content-Type": "application/json" } })
+        : new Response("{}", { status: 200 });
+    },
+  });
+  assert.equal(outcome.code, "CONNECTED");
+  assert.deepEqual(calls, [
+    { url: "https://probe.example/users/@me", authorization: "Bot discord.fixture.value" },
+    { url: "https://probe.example/users/@me/guilds", authorization: "Bot discord.fixture.value" },
+  ]);
+});
+
+test("discord probe maps auth failures and abort-driven deadlines without leaking credentials", async () => {
+  initialize({ discord: { botToken: "discord.fixture.value", guildAllowlist: ["11111111111111111"] } });
+  for (const status of [401, 403]) {
+    const denied = await probes.probeSystem("discord", {
+      fetchFn: async () => new Response("denied", { status }),
+    });
+    assert.deepEqual(denied, { ok: false, code: "AUTH_FAILED" });
+  }
+
+  const timedOut = await probes.probeSystem("discord", {
+    timeoutMs: 5,
+    fetchFn: async (_url, options) => new Promise((_resolve, reject) => {
+      options.signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+    }),
+  });
+  assert.deepEqual(timedOut, { ok: false, code: "TIMEOUT" });
+  assert.equal(JSON.stringify(timedOut).includes("discord.fixture.value"), false);
+});
+
+test("discord guild-list body reads remain under the active probe timeout", async () => {
+  initialize({ discord: { botToken: "discord.fixture.value", guildAllowlist: ["11111111111111111"] } });
+  let guildSignal;
+  const startedAt = Date.now();
+  const timedOut = await probes.probeSystem("discord", {
+    timeoutMs: 5,
+    fetchFn: async (url, options) => {
+      if (!String(url).endsWith("/guilds")) return new Response("{}", { status: 200 });
+      guildSignal = options.signal;
+      return {
+        status: 200,
+        async json() {
+          return new Promise((_resolve, reject) => {
+            options.signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+          });
+        },
+      };
+    },
+  });
+  const elapsed = Date.now() - startedAt;
+  assert.deepEqual(timedOut, { ok: false, code: "TIMEOUT" });
+  assert.equal(guildSignal?.aborted, true);
+  assert.ok(elapsed >= 4 && elapsed < 250, `elapsed=${elapsed}`);
+});

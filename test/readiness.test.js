@@ -281,3 +281,15 @@ test("probeOne refuses billing dispatch unless allowBilling is explicitly grante
   });
   assert.deepEqual(calls, ["fish-audio"]);
 });
+
+test("Discord readiness field mapping is present while the main gate list stays transport-unaware", () => {
+  initialize({ ...document(), discord: { botToken: "discord-token", guildAllowlist: ["11111111111111111"], lcmIngestEnabled: false } });
+  assert.deepEqual(readiness.FIELD_SYSTEMS.discord_bot_token, ["discord"]);
+  assert.deepEqual(readiness.FIELD_SYSTEMS.discord_guild_allowlist, ["discord"]);
+  assert.deepEqual(readiness.FIELD_SYSTEMS.discord_lcm_ingest_enabled, ["discord"]);
+  assert.equal(readiness._test.fieldFor("discord", "AUTH_FAILED"), "discord_bot_token");
+  assert.equal(readiness._test.fieldFor("discord", "ALLOWLIST_MISMATCH"), "discord_guild_allowlist");
+  const controller = readiness.createReadinessController();
+  assert.deepEqual(controller.gateSystems(), ["soniox", "fish-audio", "attendee", "llm", "tunnel"]);
+  assert.equal(controller.gateSystems().includes("discord"), false);
+});
