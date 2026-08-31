@@ -4,7 +4,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
-const { validators } = require("./registry");
+const { SETTINGS_REGISTRY, validators } = require("./registry");
 const { audioMetadataSchema, parseStrict } = require("./schemas");
 const { readConfigState, saveAudioClips, settingsError } = require("./store");
 const { parseMultipart: parseSharedMultipart } = require("./multipart");
@@ -365,9 +365,18 @@ function ffmpegExecutable(options, startup) {
 
 const PREVIEW_TIMEOUT_MS = 30_000;
 const PREVIEW_DURATION_MS = 15_000;
+const PREVIEW_TTS_CREDENTIAL_IDS = Object.freeze(Object.fromEntries(
+  SETTINGS_REGISTRY
+    .filter((entry) => entry.credential === "class-1" && entry.visibleWhen?.id === "tts_provider")
+    .map((entry) => [entry.visibleWhen.value, entry.id])
+));
 
 function previewError(code, status = 500) {
   return settingsError(code, "TTS preview failed", status);
+}
+
+function previewDurationLimitError() {
+  return previewError("SETTINGS_PREVIEW_DURATION_LIMIT", 422);
 }
 
 function wavFromPcm(pcm, sampleRate) {
@@ -400,11 +409,7 @@ async function previewTts({ revision, text }, options = {}) {
   const { getEffectiveValue, getRuntime, getStatus } = require("./resolver");
   assertCommittedRevision(getRuntime().startup.configPath, revision);
   const provider = getEffectiveValue("tts_provider") || "fish-audio";
-  const credentialId = {
-    "fish-audio": "fish_audio_api_key",
-    elevenlabs: "elevenlabs_api_key",
-    "openai-compatible": "openai_compatible_tts_api_key",
-  }[provider];
+  const credentialId = PREVIEW_TTS_CREDENTIAL_IDS[provider];
   const credential = credentialId ? getEffectiveValue(credentialId) : null;
   const missingCredential = provider === "openai-compatible"
     ? getStatus().issues.some((issue) => issue.fieldId === credentialId && issue.code === "VALUE_REQUIRED")
@@ -446,11 +451,16 @@ async function previewTts({ revision, text }, options = {}) {
       speed,
       signal: controller.signal,
       ...(options.fetchFn ? { fetchFn: options.fetchFn } : {}),
+      onDurationCapExceeded() {
+        durationLimit = durationLimit || previewDurationLimitError();
+        controller.abort(durationLimit);
+        return durationLimit;
+      },
       onAudio(chunk) {
         if (durationLimit) return;
         const bytes = Buffer.from(chunk);
         if (pcmBytes + bytes.length > maxPcmBytes) {
-          durationLimit = previewError("SETTINGS_PREVIEW_DURATION_LIMIT", 422);
+          durationLimit = durationLimit || previewDurationLimitError();
           controller.abort(durationLimit);
           return;
         }

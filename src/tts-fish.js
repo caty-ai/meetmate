@@ -65,6 +65,15 @@ function abortableSleep(ms, signal) {
   });
 }
 
+function durationCapError(options, details) {
+  if (typeof options.onDurationCapExceeded !== "function") return null;
+  try {
+    return options.onDurationCapExceeded(details) || new Error("Fish Audio TTS duration limit exceeded");
+  } catch (error) {
+    return error;
+  }
+}
+
 /**
  * Synthesize text to PCM audio via Fish Audio REST API.
  * Returns audio chunks via callback (streaming). Retries on 429 / 5xx
@@ -240,6 +249,20 @@ async function _synthesizeOnce(text, options = {}) {
           if (data.length > 0) {
             // Check duration cap BEFORE sending audio
             if (totalBytesReceived + data.length > maxBytes) {
+              const capError = durationCapError(options, {
+                maxBytes,
+                maxDurationMs: MAX_AUDIO_DURATION_MS,
+                totalBytesReceived,
+                chunkBytes: data.length,
+              });
+              if (capError) {
+                console.warn(
+                  `⚠️  TTS duration cap hit: ${MAX_AUDIO_DURATION_MS}ms (${maxBytes} bytes) for text: "${requestText.slice(0, 60)}…" — rejecting`
+                );
+                res.destroy();
+                finish(capError);
+                return;
+              }
               // Trim to max and stop
               const remaining = maxBytes - totalBytesReceived;
               if (remaining > 0) {

@@ -4,6 +4,15 @@ const MAX_AUDIO_DURATION_MS = 15_000;
 const STALL_TIMEOUT_MS = 5_000;
 const REQUEST_TIMEOUT_MS = 30_000;
 
+function durationCapError(options, serviceName, details) {
+  if (typeof options.onDurationCapExceeded !== "function") return null;
+  try {
+    return options.onDurationCapExceeded(details) || new Error(`${serviceName} TTS duration limit exceeded`);
+  } catch (error) {
+    return error;
+  }
+}
+
 async function readPcmBody(response, options, controller, serviceName, missingBodyMessage = `${serviceName} returned no audio stream`) {
   if (!response.body) throw new Error(missingBodyMessage);
   const sampleRate = options.sampleRate || 24_000;
@@ -40,6 +49,17 @@ async function readPcmBody(response, options, controller, serviceName, missingBo
         chunk = chunk.subarray(0, chunk.length - 1);
       }
       if (totalBytes + chunk.length > maxBytes) {
+        const capError = durationCapError(options, serviceName, {
+          maxBytes,
+          maxDurationMs: MAX_AUDIO_DURATION_MS,
+          totalBytesReceived: totalBytes,
+          chunkBytes: chunk.length,
+        });
+        if (capError) {
+          controller.abort(capError);
+          await reader.cancel();
+          throw capError;
+        }
         const remaining = Math.max(0, maxBytes - totalBytes) & ~1;
         if (remaining > 0) options.onAudio(chunk.subarray(0, remaining));
         await reader.cancel();

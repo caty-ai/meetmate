@@ -86,6 +86,29 @@ async function localVendor(t, listener, fallbackFetch) {
   return { baseUrl: `http://127.0.0.1:${server.address().port}`, fetchFn: globalThis.fetch };
 }
 
+function mockFishRequest(t, { chunks, onRequest, statusCode = 200, headers = {} }) {
+  const originalRequest = https.request;
+  https.request = (requestOptions, callback) => {
+    const body = [];
+    const req = new EventEmitter();
+    req.setTimeout = () => req;
+    req.destroy = (error) => { if (error) req.emit("error", error); };
+    req.write = (chunk) => { body.push(Buffer.from(chunk)); };
+    req.end = () => process.nextTick(() => {
+      onRequest?.({ headers: requestOptions.headers, body: Buffer.concat(body) });
+      const response = new EventEmitter();
+      response.statusCode = statusCode;
+      response.headers = headers;
+      response.destroy = () => {};
+      callback(response);
+      for (const chunk of chunks) response.emit("data", chunk);
+      response.emit("end");
+    });
+    return req;
+  };
+  t.after(() => { https.request = originalRequest; });
+}
+
 test("Soniox and Fish tests use effective credentials and return exact value-free success shapes", async (t) => {
   const credentials = { soniox: "boot-soniox-33", "fish-audio": "boot-fish-33" };
   const calls = [];
@@ -356,26 +379,10 @@ test("loopback manual recheck bypasses readiness failure backoff", async (t) => 
 test("TTS preview buffers Fish PCM, strips disabled emotion tags, and returns a valid WAV without mutation", async (t) => {
   const vendorCalls = [];
   const pcm = Buffer.from([0, 0, 1, 0, 255, 255, 2, 0]);
-  const originalRequest = https.request;
-  https.request = (requestOptions, callback) => {
-    const body = [];
-    const req = new EventEmitter();
-    req.setTimeout = () => req;
-    req.destroy = (error) => { if (error) req.emit("error", error); };
-    req.write = (chunk) => { body.push(Buffer.from(chunk)); };
-    req.end = () => process.nextTick(() => {
-      vendorCalls.push({ headers: requestOptions.headers, body: Buffer.concat(body) });
-      const response = new EventEmitter();
-      response.statusCode = 200;
-      response.headers = {};
-      response.destroy = () => {};
-      callback(response);
-      response.emit("data", pcm);
-      response.emit("end");
-    });
-    return req;
-  };
-  t.after(() => { https.request = originalRequest; });
+  mockFishRequest(t, {
+    chunks: [pcm],
+    onRequest(call) { vendorCalls.push(call); },
+  });
   const logs = [];
   const { handler, state, directory } = fixture(t, {
     agent: { emotionTags: false },
@@ -412,6 +419,27 @@ test("TTS preview buffers Fish PCM, strips disabled emotion tags, and returns a 
   assert.deepEqual(Object.keys(JSON.parse(logs[0])).sort(), ["byteCount", "durationMs", "outcomeCode", "requestId"]);
   assert.equal(logs.join("\n").includes(SENTINEL), false);
   assert.equal(logs.join("\n").includes("接続確認"), false);
+});
+
+test("TTS preview rejects over-cap Fish synthesis via the real dispatcher", async (t) => {
+  const vendorCalls = [];
+  mockFishRequest(t, {
+    chunks: [Buffer.alloc(8_000 * 2 * 15 + 2)],
+    onRequest(call) { vendorCalls.push(call); },
+  });
+  const { handler, state } = fixture(t, {
+    tts: { apiKey: SENTINEL, voiceId: "voice-33", model: "s2-pro", sampleRate: 8_000, speed: 1 },
+  }, { logger: { info() {} } });
+
+  const res = await invoke(handler, "POST", "/api/settings/tts-preview", {
+    revision: state.revision, text: "fish over cap",
+  });
+
+  assert.equal(res.status, 422, res.bytes.toString());
+  assert.equal(res.json.error.code, "SETTINGS_PREVIEW_DURATION_LIMIT");
+  assert.equal(res.bytes.subarray(0, 4).toString("ascii") === "RIFF", false);
+  assert.equal(vendorCalls.length, 1);
+  assert.equal(vendorCalls[0].headers.Authorization || vendorCalls[0].headers.authorization, `Bearer ${SENTINEL}`);
 });
 
 test("TTS preview dispatches ElevenLabs and OpenAI-compatible synthesis with provider settings", async (t) => {
@@ -468,6 +496,37 @@ test("TTS preview dispatches ElevenLabs and OpenAI-compatible synthesis with pro
     assert.deepEqual(res.bytes.subarray(44), pcm);
     assert.equal(calls, 1);
   }
+});
+
+test("TTS preview rejects over-cap ElevenLabs synthesis via the real dispatcher", async (t) => {
+  let calls = 0;
+  const overLimit = Buffer.alloc(24_000 * 2 * 15 + 2);
+  const { handler, state } = fixture(t, {
+    tts: {
+      provider: "elevenlabs",
+      sampleRate: 24_000,
+      elevenlabs: { apiKey: "eleven-preview-key", voiceId: "eleven-preview-voice", model: "eleven-preview-model" },
+    },
+  }, {
+    preview: {
+      fetchFn: async (url, options) => {
+        calls += 1;
+        assert.equal(url, "https://api.elevenlabs.io/v1/text-to-speech/eleven-preview-voice?output_format=pcm_24000");
+        assert.equal(options.headers["xi-api-key"], "eleven-preview-key");
+        return new Response(overLimit, { status: 200 });
+      },
+    },
+    logger: { info() {} },
+  });
+
+  const res = await invoke(handler, "POST", "/api/settings/tts-preview", {
+    revision: state.revision, text: "provider over cap",
+  });
+
+  assert.equal(res.status, 422, res.bytes.toString());
+  assert.equal(res.json.error.code, "SETTINGS_PREVIEW_DURATION_LIMIT");
+  assert.equal(res.bytes.subarray(0, 4).toString("ascii") === "RIFF", false);
+  assert.equal(calls, 1);
 });
 
 test("TTS preview configuration gating follows the selected provider and hosted OpenAI key rule", async (t) => {
@@ -584,11 +643,10 @@ test("invalid and not-configured previews do not consume the billable preview al
   assert.equal(calls, 0);
 });
 
-test("preview enforces strict schema, committed revision, and the 15-second byte cap without partial WAV", async (t) => {
-  const overLimit = Buffer.alloc(8_000 * 2 * 15 + 2);
+test("preview enforces strict schema and the committed revision", async (t) => {
   const { handler, state } = fixture(t, {
     tts: { apiKey: SENTINEL, sampleRate: 8_000 },
-  }, { preview: { synthesizeFn: async (_text, options) => options.onAudio(overLimit) }, logger: { info() {} } });
+  }, { preview: { synthesizeFn: async () => {} }, logger: { info() {} } });
 
   const longText = await invoke(handler, "POST", "/api/settings/tts-preview", {
     revision: state.revision, text: "あ".repeat(501),
@@ -600,11 +658,6 @@ test("preview enforces strict schema, committed revision, and the 15-second byte
   assert.equal(badRevision.status, 422);
   const staleRevision = await invoke(handler, "POST", "/api/settings/tts-preview", { revision: "a".repeat(64), text: "test" });
   assert.equal(staleRevision.status, 409);
-
-  const capped = await invoke(handler, "POST", "/api/settings/tts-preview", { revision: state.revision, text: "test" });
-  assert.equal(capped.status, 422);
-  assert.equal(capped.json.error.code, "SETTINGS_PREVIEW_DURATION_LIMIT");
-  assert.equal(capped.bytes.subarray(0, 4).toString("ascii") === "RIFF", false);
 });
 
 test("one preview AbortSignal spans retries and timeout returns a value-free 504 with no partial audio", async (t) => {
