@@ -48,6 +48,14 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function waitUntil(predicate, timeoutMs = 1_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error("timed out waiting for predicate");
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+}
+
 function staticSettings(overrides = {}) {
   return {
     agent: { id: "caty", name: "Caty", displayName: "Caty", wakeWords: ["ケイティ"] },
@@ -108,7 +116,7 @@ function unavailableNgrokHttpGet() {
   return request;
 }
 
-async function requestHttp(routes, method, url, formData = null, headers = {}) {
+async function requestHttp(routes, method, url, formData = null, headers = {}, options = {}) {
   const req = new EventEmitter();
   req.method = method;
   req.url = url;
@@ -116,12 +124,17 @@ async function requestHttp(routes, method, url, formData = null, headers = {}) {
   req.socket = { remoteAddress: "127.0.0.1", localAddress: "127.0.0.1", localPort: 5005 };
   req.destroy = () => {};
   const result = { statusCode: null, headers: null, text: "", body: null };
+  let responseEndThrown = false;
   const res = {
     writeHead(statusCode, responseHeaders) {
       result.statusCode = statusCode;
       result.headers = responseHeaders;
     },
     end(body = "") {
+      if (options.throwOnFirstSuccessEnd && result.statusCode === 200 && !responseEndThrown) {
+        responseEndThrown = true;
+        throw new Error("response write failed after bot launch");
+      }
       result.text += Buffer.isBuffer(body) ? body.toString("utf8") : String(body);
       try {
         result.body = JSON.parse(result.text);
@@ -181,6 +194,9 @@ async function withMeetRoutes(fn, options = {}) {
     "gateway-session-tracker.js",
     "ui-routes.js",
     "paths.js",
+    "llm-provider.js",
+    "session-coordinator.js",
+    "session-user.js",
   ].map((name) => path.join(src, name));
   const cachePaths = [routesPath, ...mockPaths];
   const previousCache = new Map(cachePaths.map((file) => [require.resolve(file), require.cache[require.resolve(file)]]));
@@ -203,7 +219,46 @@ async function withMeetRoutes(fn, options = {}) {
   const httpsRequests = [];
   const consoleOutput = [];
   const retainedSessionIds = new Set();
+  const warmups = [];
+  const lcmCompleteCalls = [];
+  const sessionUserCalls = [];
+  const operations = [];
   let trackedSessions = null;
+
+  const coordinatorState = {
+    lease: options.initialLease || null,
+    tryAcquireCalls: [],
+    releaseCalls: [],
+    releaseSnapshots: [],
+  };
+  const coordinator = options.coordinator || {
+    active() {
+      return coordinatorState.lease
+        ? { transport: coordinatorState.lease.transport, sessionId: coordinatorState.lease.sessionId }
+        : null;
+    },
+    tryAcquire(transport, sessionId) {
+      coordinatorState.tryAcquireCalls.push({ transport, sessionId });
+      operations.push(`acquire:${transport}:${sessionId}`);
+      if (options.acquireError) throw options.acquireError;
+      if (coordinatorState.lease) {
+        return coordinatorState.lease.transport === transport && coordinatorState.lease.sessionId === sessionId
+          ? coordinatorState.lease
+          : null;
+      }
+      coordinatorState.lease = Object.freeze({ transport, sessionId });
+      return coordinatorState.lease;
+    },
+    release(lease) {
+      coordinatorState.releaseCalls.push(lease);
+      coordinatorState.releaseSnapshots.push({
+        sessionId: lease?.sessionId,
+        registryHasSession: trackedSessions?.has(lease?.sessionId) === true,
+      });
+      operations.push(`release:${lease?.sessionId || "none"}`);
+      if (lease && lease === coordinatorState.lease) coordinatorState.lease = null;
+    },
+  };
 
   const originalHttpsRequest = https.request;
   const originalHttpGet = http.get;
@@ -211,6 +266,8 @@ async function withMeetRoutes(fn, options = {}) {
   const originalRandomBytes = crypto.randomBytes;
   const originalLoad = Module._load;
   const originalConsole = { log: console.log, warn: console.warn, error: console.error };
+  const NativeMap = global.Map;
+  let lifecycleRegistry = null;
 
   const recordingSessionEvents = {
     ...realSessionEvents,
@@ -225,6 +282,13 @@ async function withMeetRoutes(fn, options = {}) {
       }
     },
   };
+  class ObservableMap extends NativeMap {
+    set(key, value) {
+      const result = super.set(key, value);
+      if (value instanceof recordingSessionEvents.SessionLifecycle) lifecycleRegistry = this;
+      return result;
+    }
+  }
 
   installMock(path.join(src, "config.js"), {
     SAMPLE_RATE: 16_000,
@@ -234,7 +298,11 @@ async function withMeetRoutes(fn, options = {}) {
     resolveMessages: () => ({ delegation: {}, prompts: { summary: "summary" } }),
     getPipelineConfig: (overrides = {}) => ({
       stt: { provider: "soniox", sampleRate: 16_000 },
-      llm: { provider: "test", model: "test-model", gateway: { url: "http://gateway.invalid", token: "test" } },
+      llm: {
+        provider: options.enableLcm ? "openclaw" : "test",
+        model: "test-model",
+        gateway: { url: "http://gateway.invalid", token: "test" },
+      },
       tts: { sampleRate: 24_000, referenceId: "voice-id" },
       gatewayEvents: { enabled: false },
       greeting: overrides.greeting || "",
@@ -279,7 +347,7 @@ async function withMeetRoutes(fn, options = {}) {
     },
   });
   installMock(path.join(src, "gateway-warmup.js"), {
-    warmUpGatewaySession: () => {},
+    warmUpGatewaySession: (...args) => { warmups.push(args); },
     warmUpMultipleAgents: () => {},
   });
   installMock(path.join(src, "session-events.js"), recordingSessionEvents);
@@ -332,6 +400,21 @@ async function withMeetRoutes(fn, options = {}) {
     bundledAssetPath: (name) => path.join(homeDir, name),
     bundledPublicDir: () => homeDir,
   });
+  installMock(path.join(src, "llm-provider.js"), {
+    createLlmProvider: () => ({
+      async complete(messages, completeOptions) {
+        lcmCompleteCalls.push({ messages, options: completeOptions });
+        return { statusCode: 200, text: "{}" };
+      },
+    }),
+  });
+  installMock(path.join(src, "session-coordinator.js"), coordinator);
+  installMock(path.join(src, "session-user.js"), {
+    sessionUserFor(transport, sessionId, agentId) {
+      sessionUserCalls.push([transport, sessionId, agentId]);
+      return sessionUserFor(transport, sessionId, agentId);
+    },
+  });
 
   Module._load = function patchedLoad(request, parent, isMain) {
     if (request === "@deepgram/sdk") {
@@ -348,9 +431,18 @@ async function withMeetRoutes(fn, options = {}) {
     const record = { options: requestOptions, body: "" };
     httpsRequests.push(record);
     request.setTimeout = () => request;
-    request.destroy = () => {};
+    request.destroy = (error) => {
+      record.destroyError = error || null;
+      if (error) request.emit("error", error);
+    };
     request.write = (chunk) => { record.body += String(chunk); };
     request.end = () => {
+      operations.push(`https:${requestOptions.path}`);
+      if (options.leaveRequestError && requestOptions.path.endsWith("/leave")) {
+        queueMicrotask(() => request.emit("error", new Error("leave request failed")));
+        return;
+      }
+      if (options.stallLeaveRequest && requestOptions.path.endsWith("/leave")) return;
       const response = new EventEmitter();
       if (requestOptions.path === "/api/v1/bots") {
         response.statusCode = options.attendeeCreateStatus || 201;
@@ -358,7 +450,7 @@ async function withMeetRoutes(fn, options = {}) {
         response.statusCode = 200;
       }
       callback(response);
-      queueMicrotask(() => {
+      const finishResponse = () => queueMicrotask(() => {
         if (requestOptions.path === "/api/v1/bots") {
           const responseBody = options.attendeeCreateBody || '{"id":"bot-char-99"}';
           record.responseBody = responseBody;
@@ -368,7 +460,13 @@ async function withMeetRoutes(fn, options = {}) {
           response.emit("data", "{}");
         }
         response.emit("end");
+        operations.push(`https-end:${requestOptions.path}`);
       });
+      if (options.leaveResponseGate && requestOptions.path.endsWith("/leave")) {
+        options.leaveResponseGate.then(finishResponse);
+      } else {
+        finishResponse();
+      }
     };
     return request;
   };
@@ -380,7 +478,13 @@ async function withMeetRoutes(fn, options = {}) {
   console.error = (...args) => { consoleOutput.push(args.map(String).join(" ")); };
 
   try {
-    const routes = require(routesPath);
+    let routes;
+    global.Map = ObservableMap;
+    try {
+      routes = require(routesPath);
+    } finally {
+      global.Map = NativeMap;
+    }
     await routes.init({
       detectNgrok: false,
       loadAvatar: false,
@@ -402,14 +506,22 @@ async function withMeetRoutes(fn, options = {}) {
       lifecycles: createdLifecycles,
       httpsRequests,
       consoleOutput,
+      warmups,
+      lcmCompleteCalls,
+      sessionUserCalls,
+      operations,
+      coordinator: { api: coordinator, state: coordinatorState },
       trackedSessions: () => trackedSessions,
-      join(form = {}, headers = {}) {
+      lifecycleRegistryHas(sessionId = FIXED_SESSION_ID) {
+        return lifecycleRegistry?.has(sessionId) === true;
+      },
+      join(form = {}, headers = {}, requestOptions = {}) {
         return requestHttp(routes, "POST", "/join-meeting", {
           meetingUrl: "https://meet.google.com/abc-defg-hij",
           wsUrl: "wss://meetmate.example/realtime",
           conversationMode: "one_to_one",
           ...form,
-        }, headers);
+        }, headers, requestOptions);
       },
       activeSession() {
         return requestHttp(routes, "GET", "/active-session");
@@ -445,6 +557,7 @@ async function withMeetRoutes(fn, options = {}) {
     crypto.randomUUID = originalRandomUUID;
     crypto.randomBytes = originalRandomBytes;
     Module._load = originalLoad;
+    global.Map = NativeMap;
     Object.assign(console, originalConsole);
     restoreEnv();
     readiness.reset();
@@ -481,12 +594,22 @@ test("join guard order stays 503 then 409 then 400, and retention keeps the 409 
   }, { setupIncomplete: true });
 
   await withMeetRoutes(async (harness) => {
+    const missingOrigin = await harness.join({
+      avatarExperiment: "hybrid-local-l0",
+    });
+    assert.equal(missingOrigin.statusCode, 400);
+    assert.equal(missingOrigin.text, "hybrid-local-l0 には公開 HTTPS origin が必要です。");
+    assert.equal(harness.coordinator.state.tryAcquireCalls.length, 0);
+  }, { settingsOverrides: { server: { ngrokDomain: "" } } });
+
+  await withMeetRoutes(async (harness) => {
     const invalidUrl = await harness.join({
       meetingUrl: "https://example.com/not-meet",
       wsUrl: "wss://meetmate.example/realtime",
     });
     assert.equal(invalidUrl.statusCode, 400);
     assert.equal(invalidUrl.text, "meetingUrl が Google Meet または Zoom の URL 形式ではありません。");
+    assert.equal(harness.coordinator.state.tryAcquireCalls.length, 0);
 
     const joined = await harness.join();
     assert.equal(joined.statusCode, 200);
@@ -505,6 +628,7 @@ test("join guard order stays 503 then 409 then 400, and retention keeps the 409 
     harness.retainSession();
     const leave = await harness.leave();
     assert.equal(leave.statusCode, 200);
+    assert.equal(harness.coordinator.state.releaseCalls.length, 0);
 
     const retained = await harness.join();
     assert.equal(retained.statusCode, 409);
@@ -574,6 +698,11 @@ test("Attendee join/connect/leave keeps the observed meet collapse, lifecycle pa
 
     const leave = await harness.leave();
     assert.equal(leave.statusCode, 200);
+    assert.equal(harness.coordinator.state.releaseCalls.length, 1);
+    assert.deepEqual(harness.coordinator.state.releaseSnapshots, [{
+      sessionId: FIXED_SESSION_ID,
+      registryHasSession: false,
+    }]);
     assert.deepEqual(client.closed, [{ code: 1000, reason: "leave_requested" }]);
     assert.deepEqual(lifecycle.toJSON().history.map((item) => item.state), [
       "idle",
@@ -609,9 +738,166 @@ test("bot launch failure stays initiating -> failed with bot_launch_failed metad
     assert.equal(lastStateChange.meta.reason, "bot_launch_failed");
     assert.equal(lastStateChange.meta.statusCode, 502);
     assert.equal(findLastEvent(lifecycle, "session_end").state, "failed");
+    assert.equal(harness.coordinator.state.releaseCalls.length, 1);
+    assert.deepEqual(harness.coordinator.state.releaseSnapshots, [{
+      sessionId: FIXED_SESSION_ID,
+      registryHasSession: false,
+    }]);
+    assert.equal((await harness.activeSession()).body.active, false);
+    assert.equal(harness.httpsRequests.some((request) => request.options.path.endsWith("/leave")), false);
   }, {
     attendeeCreateStatus: 502,
     attendeeCreateBody: '{"error":"upstream failed"}',
+  });
+});
+
+test("Attendee coordinator failures stay fail-closed with the exact cross-transport 409 before vendor launch", { concurrency: false }, async () => {
+  await withMeetRoutes(async (harness) => {
+    const refused = await harness.join();
+    assert.equal(refused.statusCode, 503);
+    assert.equal(refused.text, "Session coordinator unavailable: missing required methods");
+    assert.equal(harness.httpsRequests.length, 0);
+  }, { coordinator: {} });
+
+  await withMeetRoutes(async (harness) => {
+    const refused = await harness.join();
+    assert.equal(refused.statusCode, 503);
+    assert.equal(refused.text, "Session coordinator unavailable: coordinator offline");
+    assert.equal(harness.httpsRequests.length, 0);
+  }, { acquireError: new Error("coordinator offline") });
+
+  await withMeetRoutes(async (harness) => {
+    const refused = await harness.join();
+    assert.equal(refused.statusCode, 409);
+    assert.equal(
+      refused.text,
+      "既にアクティブなセッションがあります（dc-existing）。退出してから再度参加してください。"
+    );
+    assert.deepEqual(harness.coordinator.state.tryAcquireCalls, [{
+      transport: "meet",
+      sessionId: FIXED_SESSION_ID,
+    }]);
+    assert.equal(harness.httpsRequests.length, 0);
+  }, { initialLease: Object.freeze({ transport: "discord", sessionId: "dc-existing" }) });
+});
+
+test("Attendee catch rollback waits for launched-bot leave, then deletes before releasing even when leave errors", { concurrency: false }, async () => {
+  let releaseLeave;
+  const leaveResponseGate = new Promise((resolve) => { releaseLeave = resolve; });
+  await withMeetRoutes(async (harness) => {
+    const pending = harness.join({}, {}, { throwOnFirstSuccessEnd: true });
+    await waitUntil(() => harness.httpsRequests.some((request) => request.options.path.endsWith("/leave")));
+
+    const leaveRequest = harness.httpsRequests.find((request) => request.options.path.endsWith("/leave"));
+    assert.equal(leaveRequest.options.path, "/api/v1/bots/bot-char-99/leave");
+    assert.equal(leaveRequest.options.headers.Authorization, "Token attendee-secret");
+    assert.equal(leaveRequest.body, "{}");
+    assert.equal(harness.coordinator.state.releaseCalls.length, 0);
+
+    releaseLeave();
+    const failed = await pending;
+    assert.equal(failed.statusCode, 500);
+    assert.equal(failed.text, "join-meeting エラー: response write failed after bot launch");
+    assert.equal(harness.coordinator.state.releaseCalls.length, 1);
+    assert.deepEqual(harness.coordinator.state.releaseSnapshots, [{
+      sessionId: FIXED_SESSION_ID,
+      registryHasSession: false,
+    }]);
+    assert.equal(harness.lifecycleRegistryHas(), false);
+    const leaveEndIndex = harness.operations.indexOf("https-end:/api/v1/bots/bot-char-99/leave");
+    const releaseIndex = harness.operations.indexOf(`release:${FIXED_SESSION_ID}`);
+    assert.notEqual(leaveEndIndex, -1);
+    assert.notEqual(releaseIndex, -1);
+    assert.ok(leaveEndIndex < releaseIndex);
+    assert.equal((await harness.activeSession()).body.active, false);
+  }, { leaveResponseGate });
+
+  await withMeetRoutes(async (harness) => {
+    const failed = await harness.join({}, {}, { throwOnFirstSuccessEnd: true });
+    assert.equal(failed.statusCode, 500);
+    assert.equal(harness.coordinator.state.releaseCalls.length, 1);
+    assert.equal((await harness.activeSession()).body.active, false);
+  }, { leaveRequestError: true });
+
+  await withMeetRoutes(async (harness) => {
+    const guard = Symbol("rollback deadline guard");
+    let guardTimer;
+    const failed = await Promise.race([
+      harness.join({}, {}, { throwOnFirstSuccessEnd: true }),
+      new Promise((resolve) => {
+        guardTimer = setTimeout(() => resolve(guard), 2_750);
+      }),
+    ]);
+    clearTimeout(guardTimer);
+    assert.notEqual(failed, guard);
+    assert.equal(failed.statusCode, 500);
+    assert.equal(harness.coordinator.state.releaseCalls.length, 1);
+    assert.equal((await harness.activeSession()).body.active, false);
+    const leaveRequest = harness.httpsRequests.find((request) => request.options.path.endsWith("/leave"));
+    assert.match(leaveRequest.destroyError?.message || "", /leave timeout/);
+  }, { stallLeaveRequest: true });
+});
+
+test("Attendee reused-lease rollback removes its new registry entry without releasing the existing owner", { concurrency: false }, async () => {
+  const reusedLease = Object.freeze({ transport: "meet", sessionId: FIXED_SESSION_ID });
+  await withMeetRoutes(async (harness) => {
+    const failed = await harness.join();
+    assert.equal(failed.statusCode, 502);
+    assert.equal(harness.coordinator.state.releaseCalls.length, 0);
+    assert.deepEqual(harness.coordinator.api.active(), {
+      transport: "meet",
+      sessionId: FIXED_SESSION_ID,
+    });
+    assert.equal((await harness.activeSession()).body.active, false);
+  }, {
+    initialLease: reusedLease,
+    attendeeCreateStatus: 502,
+    attendeeCreateBody: '{"error":"upstream failed"}',
+  });
+});
+
+test("Meet warmup and LCM ingest both call sessionUserFor with the canonical transport tuple", { concurrency: false }, async () => {
+  await withMeetRoutes(async (harness) => {
+    const joined = await harness.join();
+    assert.equal(joined.statusCode, 200);
+    assert.equal(harness.warmups.length, 1);
+    assert.equal(harness.warmups[0][0], `meet-${FIXED_SESSION_ID}-caty`);
+    assert.deepEqual(harness.sessionUserCalls[0], ["meet", FIXED_SESSION_ID, "caty"]);
+
+    harness.connect();
+    harness.pipelines[0].session.conversationLog.push({ role: "user", content: "hello" });
+    const leave = await harness.leave();
+    assert.equal(leave.statusCode, 200);
+    await waitUntil(() => harness.lcmCompleteCalls.length === 1);
+
+    assert.equal(harness.lcmCompleteCalls[0].options.user, `meet-${FIXED_SESSION_ID}-caty`);
+    assert.deepEqual(harness.sessionUserCalls, [
+      ["meet", FIXED_SESSION_ID, "caty"],
+      ["meet", FIXED_SESSION_ID, "caty"],
+    ]);
+  }, { enableLcm: true });
+});
+
+test("meet-routes exports the shared byte-identical plain-response producer", { concurrency: false }, async () => {
+  await withMeetRoutes(async ({ routes }) => {
+    assert.equal(typeof routes._test.finalizeSessionIfInactive, "function");
+    assert.equal(typeof routes._test.deleteSessionAndRelease, "function");
+    assert.equal(typeof routes._test.rollbackJoinAttempt, "function");
+    const observed = { statusCode: null, headers: null, body: "" };
+    routes.writePlainResponse({
+      writeHead(statusCode, headers) {
+        observed.statusCode = statusCode;
+        observed.headers = headers;
+      },
+      end(body) {
+        observed.body = String(body);
+      },
+    }, 404, "Not Found");
+    assert.deepEqual(observed, {
+      statusCode: 404,
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+      body: "Not Found",
+    });
   });
 });
 
@@ -681,6 +967,11 @@ test("ws_close, supersede, and reconnect-inside-finalize window keep the observe
     assert.equal(finalStateChanges.at(-1).event, supersededCloseTransition);
     assert.equal((await harness.activeSession()).body.active, false);
     assert.equal(findLastEvent(lifecycle, "state_change").meta.reason, "ws_close");
+    assert.equal(harness.coordinator.state.releaseCalls.length, 1);
+    assert.deepEqual(harness.coordinator.state.releaseSnapshots, [{
+      sessionId: FIXED_SESSION_ID,
+      registryHasSession: false,
+    }]);
   });
 });
 
