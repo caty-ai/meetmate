@@ -4,6 +4,7 @@ const { getStartup } = require("./bootstrap");
 const path = require("node:path");
 const { MASK, ENV_DIAGNOSTICS, SETTINGS_REGISTRY, REGISTRY_BY_ID } = require("./registry");
 const { scanLegacyClass2 } = require("./class2-migration");
+const { canonicalHostname } = require("../url-utils");
 
 const PLACEHOLDER = /^\$\{[A-Z][A-Z0-9_]*\}$/;
 const SENTINELS = new Set([
@@ -24,6 +25,7 @@ const BOOLEAN_IDS = new Set([
 const ARRAY_IDS = new Set(["agent_wake_words", "agent_keyterms", "agent_stt_wake_variants", "agent_ack_variants", "agent_progress_pings"]);
 const BASE10_NUMBER = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
 const CACHE_INVALIDATORS = new Set();
+const ELEVENLABS_PCM_SAMPLE_RATES = new Set([8_000, 16_000, 22_050, 24_000, 44_100]);
 const DIAGNOSTICS_BY_ID = new Map(ENV_DIAGNOSTICS.map((entry) => [entry.id, entry]));
 let currentRuntime = null;
 
@@ -247,13 +249,18 @@ function buildIssues(runtime) {
   for (const entry of SETTINGS_REGISTRY.filter((item) => item.requiredAtMeetingStart)) {
     if (entry.visibleWhen && values[entry.visibleWhen.id] !== entry.visibleWhen.value) continue;
     if (entry.id === "openai_compatible_tts_api_key") {
-      try {
-        if (new URL(values.openai_compatible_tts_base_url).hostname.toLowerCase() !== "api.openai.com") continue;
-      } catch { /* the base URL field reports its own validation issue */ }
+      const hostname = canonicalHostname(values.openai_compatible_tts_base_url);
+      if (hostname && hostname !== "api.openai.com") continue;
     }
     if (!meaningful(values[entry.id]) || (Array.isArray(values[entry.id]) && values[entry.id].length === 0)) {
       add(entry.id, "VALUE_REQUIRED");
     }
+  }
+  if (values.tts_provider === "openai-compatible" && values.tts_sample_rate !== 24_000) {
+    add("tts_sample_rate", "VALUE_INVALID");
+  }
+  if (values.tts_provider === "elevenlabs" && !ELEVENLABS_PCM_SAMPLE_RATES.has(values.tts_sample_rate)) {
+    add("tts_sample_rate", "VALUE_INVALID");
   }
   const connectionReady = values.llm_provider === "openai-compatible"
     ? meaningful(runtime.startup.connection.openaiApiKey) && meaningful(values.openai_base_url) && meaningful(values.llm_model)

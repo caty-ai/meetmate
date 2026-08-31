@@ -68,6 +68,9 @@ test("client field sets deep-match registry UI metadata", () => {
     ["OPENAI_FIELDS", { id: "llm_provider", value: "openai-compatible" }],
     ["SONIOX_FIELDS", { id: "stt_provider", value: "soniox" }],
     ["DEEPGRAM_FIELDS", { id: "stt_provider", value: "deepgram" }],
+    ["FISH_TTS_FIELDS", { id: "tts_provider", value: "fish-audio" }],
+    ["ELEVENLABS_TTS_FIELDS", { id: "tts_provider", value: "elevenlabs" }],
+    ["OPENAI_COMPATIBLE_TTS_FIELDS", { id: "tts_provider", value: "openai-compatible" }],
   ]) {
     assert.deepEqual(ids(CLIENT_FIELD_SETS[setName]), SETTINGS_REGISTRY
       .filter((entry) => JSON.stringify(entry.visibleWhen) === JSON.stringify(condition))
@@ -76,6 +79,12 @@ test("client field sets deep-match registry UI metadata", () => {
   assert.deepEqual(ids(CLIENT_FIELD_SETS.AVATAR_FIELDS), SETTINGS_REGISTRY
     .filter((entry) => entry.path?.startsWith("avatar."))
     .map((entry) => entry.id).sort());
+
+  const source = require("node:fs").readFileSync(require.resolve("../public/settings.js"), "utf8");
+  assert.match(source, /currentProvider\("tts_provider", loadedValues\.tts_provider\)/);
+  assert.match(source, /FISH_TTS_FIELDS\.has\(entry\.id\) && tts !== "fish-audio"/);
+  assert.match(source, /ELEVENLABS_TTS_FIELDS\.has\(entry\.id\) && tts !== "elevenlabs"/);
+  assert.match(source, /OPENAI_COMPATIBLE_TTS_FIELDS\.has\(entry\.id\) && tts !== "openai-compatible"/);
 });
 
 test("Hermes session header setting is default-off and visible only for OpenAI-compatible providers", () => {

@@ -32,6 +32,16 @@ const SONIOX_FIELDS = new Set([
   "soniox_max_endpoint_delay_ms", "soniox_endpoint_latency_level",
 ]);
 const DEEPGRAM_FIELDS = new Set(["deepgram_api_key"]);
+const FISH_TTS_FIELDS = new Set([
+  "fish_audio_api_key", "fish_audio_voice_id", "fish_audio_model", "fish_audio_speed", "fish_audio_latency",
+]);
+const ELEVENLABS_TTS_FIELDS = new Set([
+  "elevenlabs_api_key", "elevenlabs_voice_id", "elevenlabs_model",
+]);
+const OPENAI_COMPATIBLE_TTS_FIELDS = new Set([
+  "openai_compatible_tts_api_key", "openai_compatible_tts_base_url",
+  "openai_compatible_tts_model", "openai_compatible_tts_voice",
+]);
 const ARRAY_FIELDS = new Set([
   "agent_wake_words", "agent_keyterms", "agent_stt_wake_variants", "agent_ack_variants", "agent_progress_pings",
 ]);
@@ -104,7 +114,8 @@ function readinessSummary(data) {
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     CLIENT_FIELD_SETS: {
-      OPENAI_FIELDS, SONIOX_FIELDS, DEEPGRAM_FIELDS, NULLABLE_NUMBER_FIELDS, TEXTAREA_FIELDS, AVATAR_FIELDS, VOICE_FIELDS,
+      OPENAI_FIELDS, SONIOX_FIELDS, DEEPGRAM_FIELDS, FISH_TTS_FIELDS, ELEVENLABS_TTS_FIELDS,
+      OPENAI_COMPATIBLE_TTS_FIELDS, NULLABLE_NUMBER_FIELDS, TEXTAREA_FIELDS, AVATAR_FIELDS, VOICE_FIELDS,
     },
     clipMatchesCurrentText,
     diffFields,
@@ -635,12 +646,16 @@ if (typeof document !== "undefined") {
     function updateConditionalVisibility() {
       const llm = currentProvider("llm_provider", loadedValues.llm_provider);
       const stt = currentProvider("stt_provider", loadedValues.stt_provider);
+      const tts = currentProvider("tts_provider", loadedValues.tts_provider);
       for (const entry of manifest) {
         const field = document.querySelector(`[data-field-id="${entry.id}"]`);
         if (!field) continue;
         const hidden = (OPENAI_FIELDS.has(entry.id) && llm !== "openai-compatible")
           || (SONIOX_FIELDS.has(entry.id) && stt !== "soniox")
-          || (DEEPGRAM_FIELDS.has(entry.id) && stt !== "deepgram");
+          || (DEEPGRAM_FIELDS.has(entry.id) && stt !== "deepgram")
+          || (FISH_TTS_FIELDS.has(entry.id) && tts !== "fish-audio")
+          || (ELEVENLABS_TTS_FIELDS.has(entry.id) && tts !== "elevenlabs")
+          || (OPENAI_COMPATIBLE_TTS_FIELDS.has(entry.id) && tts !== "openai-compatible");
         field.classList.toggle("is-hidden", hidden);
       }
     }

@@ -10,6 +10,7 @@ const path = require("node:path");
 const { ttsCacheDir } = require("./paths");
 const { stripCanonicalEmotionTags } = require("./messages");
 const { getEffectiveValue } = require("./settings/resolver");
+const { canonicalBaseUrl } = require("./url-utils");
 
 const DEFAULT_SAMPLE_RATE = 24_000;
 const CHUNK_MS = 100;
@@ -19,7 +20,6 @@ function defaultCacheDir() {
 }
 
 function normalizeSpeed(speed) {
-  if (speed === undefined || speed === null || speed === "") return null;
   const n = Number(speed);
   return Number.isFinite(n) ? n : null;
 }
@@ -29,7 +29,7 @@ function synthesisIdentity(options = {}) {
   if (provider === "elevenlabs") {
     return {
       provider,
-      voiceId: options.voiceId || getEffectiveValue("elevenlabs_voice_id") || null,
+      voiceId: options.referenceId || options.voiceId || getEffectiveValue("elevenlabs_voice_id") || null,
       model: options.model || getEffectiveValue("elevenlabs_model"),
       sampleRate: options.sampleRate || DEFAULT_SAMPLE_RATE,
       speed: null,
@@ -38,15 +38,15 @@ function synthesisIdentity(options = {}) {
   if (provider === "openai-compatible") {
     return {
       provider,
-      voiceId: options.voice || options.voiceId || getEffectiveValue("openai_compatible_tts_voice") || null,
+      baseUrl: canonicalBaseUrl(options.baseUrl || getEffectiveValue("openai_compatible_tts_base_url")),
+      voiceId: options.referenceId || options.voice || options.voiceId || getEffectiveValue("openai_compatible_tts_voice") || null,
       model: options.model || getEffectiveValue("openai_compatible_tts_model"),
       sampleRate: options.sampleRate || DEFAULT_SAMPLE_RATE,
       speed: null,
     };
   }
   return {
-    provider: "fish-audio",
-    voiceId: options.referenceId || options.voiceId || null,
+    referenceId: options.referenceId || null,
     model: options.model || getEffectiveValue("fish_audio_model"),
     sampleRate: options.sampleRate || DEFAULT_SAMPLE_RATE,
     speed: normalizeSpeed(options.speed),
@@ -138,11 +138,12 @@ function createTtsCache({ dir = defaultCacheDir(), synthesizeFn } = {}) {
     if (!effectiveText) return;
 
     const identity = synthesisIdentity(options);
-    const managed = identity.provider === "fish-audio"
+    const provider = options.provider || getEffectiveValue("tts_provider") || "fish-audio";
+    const managed = provider === "fish-audio"
       ? require("./settings/audio").lookupManagedPcm({
           role: options.role,
           text: effectiveText,
-          referenceId: identity.voiceId,
+          referenceId: identity.referenceId,
           model: identity.model,
           sampleRate: identity.sampleRate,
           speed: identity.speed,
@@ -163,7 +164,7 @@ function createTtsCache({ dir = defaultCacheDir(), synthesizeFn } = {}) {
       return delegate(effectiveText, options);
     }
 
-    const file = fileFor(effectiveText, identity);
+    const file = fileFor(effectiveText, { ...identity, speed: options.speed });
     if (fs.existsSync(file)) {
       try {
         const stat = fs.statSync(file);

@@ -3,6 +3,7 @@
 const { complete: requestOpenClaw } = require("../llm-openclaw");
 const { complete: requestOpenAi } = require("../llm-openai");
 const { getPublishedValue, getRuntime, meaningful } = require("./resolver");
+const { canonicalHostname } = require("../url-utils");
 
 const DEFAULT_FETCH_TIMEOUT_MS = 5_000;
 const LLM_TIMEOUT_MS = 15_000;
@@ -106,6 +107,9 @@ function classifyStatus(status, options = {}) {
       ? result("NOT_ENABLED", "OpenClaw 側で gateway.http.endpoints.chatCompletions.enabled を有効にしてください")
       : result("PROVIDER_ERROR", "ベースURL/モデル名を確認してください");
   }
+  if ((status === 404 || status === 405) && options.system === "openai-compatible") {
+    return result("CONNECTED", "The optional /v1/models probe endpoint is not implemented");
+  }
   return result("PROVIDER_ERROR");
 }
 
@@ -133,9 +137,9 @@ async function fetchProbe(system, options = {}) {
   const credential = getPublishedValue(descriptor.credentialId);
   const openAiTtsBaseUrl = getPublishedValue("openai_compatible_tts_base_url");
   if (system === "openai-compatible") {
-    let hosted = false;
-    try { hosted = new URL(openAiTtsBaseUrl).hostname.toLowerCase() === "api.openai.com"; } catch { return result("NOT_CONFIGURED"); }
-    if (hosted && !meaningful(credential)) return result("NOT_CONFIGURED");
+    const hostname = canonicalHostname(openAiTtsBaseUrl);
+    if (!hostname) return result("NOT_CONFIGURED");
+    if (hostname === "api.openai.com" && !meaningful(credential)) return result("NOT_CONFIGURED");
   } else if (!meaningful(credential)) {
     return result("NOT_CONFIGURED");
   }

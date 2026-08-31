@@ -464,6 +464,61 @@ test("T12-07 setup issues are registry-derived, semantic, provider-aware, and ab
   assert.equal(buildEnvelope().issues.some((issue) => issue.code === "LEGACY_CONNECTION_CONFIG_PRESENT"), true);
 });
 
+test("TTS setup issues reject provider-incompatible sample rates and canonicalize the hosted OpenAI hostname", () => {
+  const base = {
+    agent: { id: "alpha", displayName: "Alpha", wakeWords: ["alpha"] },
+    stt: { provider: "soniox", sonioxApiKey: "soniox" },
+    attendee: { apiKey: "attendee" },
+  };
+  const issuesFor = (tts) => {
+    resetRuntimeForTest();
+    initializeRuntime({ state: state({ ...base, tts }), startup: startup() });
+    return buildEnvelope().issues;
+  };
+
+  assert.deepEqual(
+    issuesFor({
+      provider: "openai-compatible",
+      sampleRate: 48_000,
+      openaiCompatibleTts: { baseUrl: "http://127.0.0.1:8080", model: "local", voice: "voice" },
+    }).find((issue) => issue.fieldId === "tts_sample_rate"),
+    { fieldId: "tts_sample_rate", code: "VALUE_INVALID" },
+  );
+  assert.equal(
+    issuesFor({ provider: "fish-audio", apiKey: "fish", voiceId: "voice", sampleRate: 48_000 })
+      .some((issue) => issue.fieldId === "tts_sample_rate"),
+    false,
+  );
+  assert.deepEqual(
+    issuesFor({
+      provider: "elevenlabs",
+      sampleRate: 48_000,
+      elevenlabs: { apiKey: "key", voiceId: "voice", model: "model" },
+    }).find((issue) => issue.fieldId === "tts_sample_rate"),
+    { fieldId: "tts_sample_rate", code: "VALUE_INVALID" },
+  );
+  assert.equal(
+    issuesFor({
+      provider: "elevenlabs",
+      sampleRate: 8_000,
+      elevenlabs: { apiKey: "key", voiceId: "voice", model: "model" },
+    }).some((issue) => issue.fieldId === "tts_sample_rate"),
+    false,
+  );
+
+  for (const baseUrl of ["https://api.openai.com.", "https://API.OPENAI.COM"]) {
+    assert.deepEqual(
+      issuesFor({
+        provider: "openai-compatible",
+        sampleRate: 24_000,
+        openaiCompatibleTts: { baseUrl, model: "model", voice: "voice" },
+      }).find((issue) => issue.fieldId === "openai_compatible_tts_api_key"),
+      { fieldId: "openai_compatible_tts_api_key", code: "VALUE_REQUIRED" },
+      baseUrl,
+    );
+  }
+});
+
 test("TTS meeting-start requirements apply only to the selected provider", () => {
   const base = {
     agent: { id: "alpha", displayName: "Alpha", wakeWords: ["alpha"] },

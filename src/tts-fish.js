@@ -12,6 +12,8 @@ const https = require("https");
 const { stripCanonicalEmotionTags } = require("./messages");
 const { getEffectiveValue } = require("./settings/resolver");
 
+const PIPELINE_TTS_PROVIDERS = new Set(["fish-audio", "elevenlabs", "openai-compatible"]);
+
 // Max audio duration per sentence: 15 seconds at any sample rate
 // (a single sentence should never produce more than this)
 const MAX_AUDIO_DURATION_MS = 15_000;
@@ -306,7 +308,7 @@ async function synthesize(text, options = {}) {
     return require("./tts-elevenlabs").synthesize(text, {
       ...options,
       apiKey: getEffectiveValue("elevenlabs_api_key"),
-      voiceId: getEffectiveValue("elevenlabs_voice_id"),
+      voiceId: options.referenceId || options.voiceId || getEffectiveValue("elevenlabs_voice_id"),
       modelId: getEffectiveValue("elevenlabs_model"),
     });
   }
@@ -316,10 +318,10 @@ async function synthesize(text, options = {}) {
       apiKey: getEffectiveValue("openai_compatible_tts_api_key"),
       baseUrl: getEffectiveValue("openai_compatible_tts_base_url"),
       model: getEffectiveValue("openai_compatible_tts_model"),
-      voice: getEffectiveValue("openai_compatible_tts_voice"),
+      voice: options.referenceId || options.voice || options.voiceId || getEffectiveValue("openai_compatible_tts_voice"),
     });
   }
   throw new Error(`Unsupported TTS provider: ${provider}`);
 }
 
-module.exports = { synthesize, _test: { synthesizeFish } };
+module.exports = { PIPELINE_TTS_PROVIDERS, synthesize, _test: { synthesizeFish } };

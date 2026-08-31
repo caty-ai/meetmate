@@ -86,13 +86,37 @@ test("ElevenLabs and OpenAI-compatible TTS probes use provider-specific auth and
   assert.equal(calls[1].url, "http://127.0.0.1:8080/v1/models");
   assert.equal(Object.prototype.hasOwnProperty.call(calls[1].headers, "Authorization"), false);
 
-  initialize({ tts: { openaiCompatibleTts: { baseUrl: "https://api.openai.com" } } });
-  let fetched = false;
-  const hosted = await probes.probeSystem("openai-compatible", {
-    fetchFn: async () => { fetched = true; return new Response("{}", { status: 200 }); },
+  for (const baseUrl of ["https://api.openai.com.", "https://API.OPENAI.COM"]) {
+    initialize({ tts: { openaiCompatibleTts: { baseUrl } } });
+    let fetched = false;
+    const hosted = await probes.probeSystem("openai-compatible", {
+      fetchFn: async () => { fetched = true; return new Response("{}", { status: 200 }); },
+    });
+    assert.equal(hosted.code, "NOT_CONFIGURED", baseUrl);
+    assert.equal(fetched, false, baseUrl);
+  }
+});
+
+test("OpenAI-compatible TTS model-probe 404 and 405 are inconclusive successes", async () => {
+  initialize({ tts: { openaiCompatibleTts: { baseUrl: "http://127.0.0.1:8080" } } });
+  for (const status of [404, 405]) {
+    const outcome = await probes.probeSystem("openai-compatible", {
+      fetchFn: async () => new Response("missing optional endpoint", { status }),
+    });
+    assert.equal(outcome.ok, true, String(status));
+    assert.equal(outcome.code, "CONNECTED", String(status));
+    assert.match(outcome.message, /optional \/v1\/models/);
+  }
+  const unauthorized = await probes.probeSystem("openai-compatible", {
+    fetchFn: async () => new Response("denied", { status: 401 }),
   });
-  assert.equal(hosted.code, "NOT_CONFIGURED");
-  assert.equal(fetched, false);
+  assert.deepEqual(unauthorized, { ok: false, code: "AUTH_FAILED" });
+  const refused = new Error("connection refused");
+  refused.code = "ECONNREFUSED";
+  const unreachable = await probes.probeSystem("openai-compatible", {
+    fetchFn: async () => { throw refused; },
+  });
+  assert.deepEqual(unreachable, { ok: false, code: "UNREACHABLE" });
 });
 
 test("LLM requestFn uses the production model and fixed non-streaming ping body", async () => {

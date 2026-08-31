@@ -92,7 +92,7 @@ test("legacy facade dispatches Fish, ElevenLabs, and OpenAI-compatible from reso
 
   assert.deepEqual(calls, [
     "https://api.fish.audio/v1/tts",
-    "https://api.elevenlabs.io/v1/text-to-speech/eleven-voice",
+    "https://api.elevenlabs.io/v1/text-to-speech/eleven-voice?output_format=pcm_24000",
     "http://127.0.0.1:7777/v1/audio/speech",
   ]);
 });
@@ -111,11 +111,14 @@ test("ElevenLabs adapter maps request fields, streams PCM, and never places its 
     fetchFn: async (url, options) => { captured = { url: String(url), options }; return pcmResponse([1, 2, 3]); },
   });
   assert.equal(returned, undefined);
-  assert.equal(captured.url, "https://api.elevenlabs.io/v1/text-to-speech/voice%2Fid");
-  assert.deepEqual(captured.options.headers, { "Content-Type": "application/json", "xi-api-key": "eleven-secret" });
-  assert.deepEqual(JSON.parse(captured.options.body), {
-    text: "hello", model_id: "eleven_multilingual_v2", output_format: "pcm_24000",
+  assert.equal(captured.url, "https://api.elevenlabs.io/v1/text-to-speech/voice%2Fid?output_format=pcm_24000");
+  assert.deepEqual(captured.options.headers, {
+    Accept: "audio/*", "Content-Type": "application/json", "xi-api-key": "eleven-secret",
   });
+  assert.deepEqual(JSON.parse(captured.options.body), {
+    text: "hello", model_id: "eleven_multilingual_v2",
+  });
+  assert.equal(Object.prototype.hasOwnProperty.call(JSON.parse(captured.options.body), "output_format"), false);
   assert.deepEqual(Buffer.concat(audio), Buffer.from([1, 2, 3, 0]));
 
   await assert.rejects(
@@ -156,18 +159,65 @@ test("OpenAI-compatible adapter maps hosted auth, permits keyless local servers,
   });
   assert.equal(calls[1].url, "http://127.0.0.1:8080/tts/v1/audio/speech");
   assert.equal(Object.prototype.hasOwnProperty.call(calls[1].options.headers, "Authorization"), false);
-  await assert.rejects(
-    () => synthesize("no key", {
-      baseUrl: "https://api.openai.com", model: "model", voice: "voice", onAudio: () => {},
-    }),
-    /API_KEY is required for api\.openai\.com/,
-  );
+  for (const baseUrl of ["https://api.openai.com.", "https://API.OPENAI.COM"]) {
+    await assert.rejects(
+      () => synthesize("no key", { baseUrl, model: "model", voice: "voice", onAudio: () => {} }),
+      /API_KEY is required for api\.openai\.com/,
+      baseUrl,
+    );
+  }
   await assert.rejects(
     () => synthesize("bad rate", {
       baseUrl: "http://localhost:9000", model: "model", voice: "voice", sampleRate: 16_000, onAudio: () => {},
     }),
     /24000 Hz/,
   );
+});
+
+test("dispatcher maps per-agent voice overrides onto ElevenLabs and OpenAI-compatible requests", async () => {
+  const { synthesize } = require("../src/tts-fish");
+  initialize({
+    provider: "elevenlabs",
+    elevenlabs: { apiKey: "eleven", voiceId: "global-eleven", model: "eleven-model" },
+  });
+  let elevenUrl;
+  await synthesize("eleven override", {
+    referenceId: "agent/eleven",
+    onAudio: () => {},
+    fetchFn: async (url) => { elevenUrl = String(url); return pcmResponse(); },
+  });
+  assert.equal(elevenUrl, "https://api.elevenlabs.io/v1/text-to-speech/agent%2Feleven?output_format=pcm_24000");
+
+  initialize({
+    provider: "openai-compatible",
+    openaiCompatibleTts: { baseUrl: "http://127.0.0.1:7777", model: "local-model", voice: "global-openai" },
+  });
+  let openaiBody;
+  await synthesize("openai override", {
+    referenceId: "agent-openai",
+    onAudio: () => {},
+    fetchFn: async (_url, options) => { openaiBody = JSON.parse(options.body); return pcmResponse(); },
+  });
+  assert.equal(openaiBody.voice, "agent-openai");
+});
+
+test("pipeline config reports the selected TTS provider", () => {
+  initialize({
+    provider: "elevenlabs",
+    elevenlabs: { apiKey: "eleven", voiceId: "voice", model: "model" },
+  });
+  const configPath = require.resolve("../src/config");
+  const previous = require.cache[configPath];
+  const originalError = console.error;
+  delete require.cache[configPath];
+  console.error = () => {};
+  try {
+    assert.equal(require("../src/config").getPipelineConfig().tts.provider, "elevenlabs");
+  } finally {
+    console.error = originalError;
+    delete require.cache[configPath];
+    if (previous) require.cache[configPath] = previous;
+  }
 });
 
 test("new adapters classify 402 with the same PAYMENT_REQUIRED readiness code as Fish", async () => {

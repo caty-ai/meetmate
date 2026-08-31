@@ -215,7 +215,7 @@
     {
       "name": "ECHO_GATE_CLOSED_BYPASS",
       "references": [
-        "src/transport-meet/meet-routes.js:51"
+        "src/transport-meet/meet-routes.js:52"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -226,7 +226,7 @@
       "name": "ECHO_LOOP_COOLDOWN_MS",
       "references": [
         "src/config.js:52",
-        "src/transport-meet/meet-routes.js:50"
+        "src/transport-meet/meet-routes.js:51"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -320,8 +320,8 @@
     {
       "name": "FISH_AUDIO_RETRY_MAX",
       "references": [
-        "src/tts-fish.js:33",
-        "src/tts-fish.js:34"
+        "src/tts-fish.js:35",
+        "src/tts-fish.js:36"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -365,7 +365,7 @@
     {
       "name": "JOIN_SHARED_TOKEN",
       "references": [
-        "src/transport-meet/meet-routes.js:52"
+        "src/transport-meet/meet-routes.js:53"
       ],
       "ux": "hidden",
       "credentialClass": "class-3-internal-control",
@@ -554,7 +554,7 @@
     {
       "name": "OPENCLAW_WORKSPACE",
       "references": [
-        "src/transport-meet/meet-routes.js:572"
+        "src/transport-meet/meet-routes.js:573"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -612,8 +612,8 @@
     {
       "name": "PUBLIC_WSS_URL",
       "references": [
-        "src/transport-meet/meet-routes.js:985",
-        "src/transport-meet/meet-routes.js:986"
+        "src/transport-meet/meet-routes.js:986",
+        "src/transport-meet/meet-routes.js:987"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -633,7 +633,7 @@
     {
       "name": "SESSION_GRACE_CLOSE_MS",
       "references": [
-        "src/transport-meet/meet-routes.js:49"
+        "src/transport-meet/meet-routes.js:50"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -887,7 +887,7 @@
     {
       "name": "WS_SHARED_TOKEN",
       "references": [
-        "src/transport-meet/meet-routes.js:53"
+        "src/transport-meet/meet-routes.js:54"
       ],
       "ux": "hidden",
       "credentialClass": "class-3-internal-control",
@@ -973,8 +973,8 @@
       "expression": "runtime.startup.{preDotenvEnv,dotenvSeeds}[name]",
       "helper": "per-agent Slack token compatibility lookup",
       "references": [
-        "src/settings/resolver.js:352",
-        "src/settings/resolver.js:354"
+        "src/settings/resolver.js:359",
+        "src/settings/resolver.js:361"
       ],
       "pattern": "^[A-Z0-9_-]+_SLACK_BOT_TOKEN$",
       "names": [],

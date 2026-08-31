@@ -95,7 +95,7 @@ Settings UI: http://localhost:<port>/settings
 設定 UI の **音声合成プロバイダー** では次の3つだけを選べる。変更後は保存して Meetmate を再起動する。
 
 - `fish-audio`（既定）: 既存の `tts.apiKey` / `tts.voiceId` / `tts.model` をそのまま使う。既存設定の編集は不要
-- `elevenlabs`: API key、Voice ID、モデルを入力する。`tts_sample_rate` は ElevenLabs の PCM 対応値（16000 / 22050 / 24000 / 44100 Hz）を指定する
+- `elevenlabs`: API key、Voice ID、モデルを入力する。`tts_sample_rate` は ElevenLabs の PCM 対応値（8000 / 16000 / 22050 / 24000 / 44100 Hz）を指定する
 - `openai-compatible`: Base URL、モデル、Voice を入力し、`tts_sample_rate` は `24000` にする。`api.openai.com` では API key が必須。既定外の Base URL では key を省略できる
 
 ローカル OpenAI 互換サーバー（例: Irodori-TTS）を key なしで使う `config.json` の例:
@@ -545,8 +545,8 @@ Linux では `~/.config/systemd/user/ai-meet.<agent-name>.service` が生成さ�
 ### Bot は参加するが音声応答しない
 - 設定 UI の基本タブで **音声合成プロバイダー** が意図した `fish-audio` / `elevenlabs` / `openai-compatible` になっているか確認
 - 選択したプロバイダーの API キー・Voice ID・モデル・Base URL を確認（接続テストタブでも確認できる）
-- サーバーログに `🐟 Fish Audio パイプラインモード` が表示されているか確認
-  - `🔊 Deepgram Voice Agent モード` が出ていたら音声合成プロバイダーの設定が間違っている
+- サーバーログに選択したプロバイダー名の `TTS パイプラインモード` が表示されているか確認
+  - `🔊 Deepgram Voice Agent モード` は、3つの対応プロバイダー以外の従来値を明示した場合だけ使われる。設定を対応値へ戻して再起動する
 
 ### Gateway warm-up がタイムアウトする
 - openai-compatible では join 時に Gateway warm-up エラーがログに出る既知問題あり（無害・修正は #140）。

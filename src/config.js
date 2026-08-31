@@ -396,7 +396,7 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
       openclawSystemAddendum: llmAddendum,
     },
     tts: {
-      provider: "fish-audio",
+      provider: TTS_PROVIDER,
       referenceId: ttsReferenceId,
       sampleRate: TTS_SAMPLE_RATE,
       latency: getEffectiveValue("fish_audio_latency"),
