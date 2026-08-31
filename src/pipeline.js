@@ -1984,6 +1984,15 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
           } catch (error) {
             console.warn("⚠️  farewell floor acquire failed:", error.code || error.message || error);
           }
+        } else if (
+          verdict?.kind === "assigned"
+          && !floorTurn?.cancelled
+          && !isFloorAssignmentCurrent(verdict.assignment)
+        ) {
+          console.warn(
+            `⚠️  stale farewell floor assignment ignored round=${verdict.assignment?.roundId}`
+            + ` latestRoundSequence=${floorClient.latestRoundSequence} memberId=${floorClient.memberId}`,
+          );
         } else if (["verdict_timeout", "degraded"].includes(verdict?.kind) && !floorTurn?.cancelled) {
           const delayMs = verdict.kind === "verdict_timeout"
             ? floorClient.fallbackDelayMs()
@@ -2018,6 +2027,11 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
             await reopenGateAndRescan("floor_acquire_failed");
             return;
           }
+        } else if (verdict?.kind === "assigned" && !isFloorAssignmentCurrent(verdict.assignment)) {
+          console.warn(
+            `⚠️  stale floor assignment ignored round=${verdict.assignment?.roundId}`
+            + ` latestRoundSequence=${floorClient.latestRoundSequence} memberId=${floorClient.memberId}`,
+          );
         } else if (["verdict_timeout", "degraded"].includes(verdict?.kind)) {
           const delayMs = verdict.kind === "verdict_timeout"
             ? floorClient.fallbackDelayMs()

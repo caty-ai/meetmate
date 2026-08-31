@@ -140,66 +140,125 @@ function spawnFloorHubStdio({ hubDir, token }) {
     });
     process.once('SIGTERM', () => process.exit(0));
   `;
-  const child = spawn(process.execPath, ["-e", bridgeSource], {
-    cwd: hubDir,
-    env: { ...process.env, HUB_SHARED_TOKEN: token },
-    stdio: ["pipe", "pipe", "pipe"],
-  });
   let nextClientId = 0;
-  let stdout = "";
   const sockets = new Map();
+  let child = null;
+  let restartRequest = null;
+  let stopPromise = null;
+  let stopResolve = null;
+
+  function writeToChild(command) {
+    const target = child;
+    if (!target || target.exitCode !== null || target.stdin.destroyed) return false;
+    try {
+      target.stdin.write(`${JSON.stringify(command)}\n`);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function closeTrackedSockets() {
+    const tracked = [...sockets.values()];
+    sockets.clear();
+    for (const socket of tracked) {
+      socket.readyState = 3;
+      socket.emit("close", 1006, "hub exited");
+    }
+  }
+
+  function spawnChild() {
+    const spawned = spawn(process.execPath, ["-e", bridgeSource], {
+      cwd: hubDir,
+      env: { ...process.env, HUB_SHARED_TOKEN: token },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    spawned.stdin.on("error", () => {});
+    spawned.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+      let newline;
+      while ((newline = stdout.indexOf("\n")) >= 0) {
+        const line = stdout.slice(0, newline);
+        stdout = stdout.slice(newline + 1);
+        let record;
+        try { record = JSON.parse(line); } catch { continue; }
+        const socket = sockets.get(record.clientId);
+        if (!socket) continue;
+        if (record.event === "open") {
+          socket.readyState = 1;
+          socket.emit("open");
+        } else if (record.event === "close") {
+          socket.readyState = 3;
+          sockets.delete(record.clientId);
+          socket.emit("close", 1000, "closed");
+        } else if (record.message) {
+          socket.emit("message", Buffer.from(JSON.stringify(record.message)));
+        }
+      }
+    });
+    spawned.once("exit", () => {
+      if (spawned !== child) return;
+      const pendingRestart = restartRequest;
+      restartRequest = null;
+      if (pendingRestart) child = spawnChild();
+      closeTrackedSockets();
+      if (pendingRestart) pendingRestart.resolve();
+      if (stopResolve) {
+        stopResolve();
+        stopResolve = null;
+      }
+    });
+    return spawned;
+  }
+
+  child = spawnChild();
   class StdioWebSocket extends EventEmitter {
     constructor() {
       super();
       this.readyState = 0;
       this.clientId = `stdio-${++nextClientId}`;
       sockets.set(this.clientId, this);
-      child.stdin.write(`${JSON.stringify({ op: "connect", clientId: this.clientId })}\n`);
+      writeToChild({ op: "connect", clientId: this.clientId });
     }
     send(raw) {
-      child.stdin.write(`${JSON.stringify({ op: "message", clientId: this.clientId, message: JSON.parse(raw) })}\n`);
+      writeToChild({ op: "message", clientId: this.clientId, message: JSON.parse(raw) });
     }
     close() {
       if (this.readyState === 3) return;
-      child.stdin.write(`${JSON.stringify({ op: "close", clientId: this.clientId })}\n`);
+      writeToChild({ op: "close", clientId: this.clientId });
     }
   }
   StdioWebSocket.OPEN = 1;
-  child.stdout.on("data", (chunk) => {
-    stdout += chunk.toString();
-    let newline;
-    while ((newline = stdout.indexOf("\n")) >= 0) {
-      const line = stdout.slice(0, newline);
-      stdout = stdout.slice(newline + 1);
-      let record;
-      try { record = JSON.parse(line); } catch { continue; }
-      const socket = sockets.get(record.clientId);
-      if (!socket) continue;
-      if (record.event === "open") {
-        socket.readyState = 1;
-        socket.emit("open");
-      } else if (record.event === "close") {
-        socket.readyState = 3;
-        sockets.delete(record.clientId);
-        socket.emit("close", 1000, "closed");
-      } else if (record.message) {
-        socket.emit("message", Buffer.from(JSON.stringify(record.message)));
-      }
-    }
-  });
-  return Promise.resolve({
-    child,
+  const handle = {
+    get child() { return child; },
     hubDir,
     token,
     url: "ws://stdio.floor-hub",
     WebSocketImpl: StdioWebSocket,
     transport: "stdio",
-    stop: () => new Promise((resolve) => {
-      if (child.exitCode !== null) return resolve();
-      child.once("exit", () => resolve());
+    restart: () => {
+      if (restartRequest) return restartRequest.promise;
+      if (!child || child.exitCode !== null) return Promise.reject(new Error("floor hub is not running"));
+      let resolveRestart;
+      const promise = new Promise((resolve) => { resolveRestart = resolve; });
+      restartRequest = { promise, resolve: resolveRestart };
       child.kill("SIGTERM");
-    }),
-  });
+      return promise;
+    },
+    stop: () => {
+      if (stopPromise) return stopPromise;
+      stopPromise = new Promise((resolve) => { stopResolve = resolve; });
+      if (!child || child.exitCode !== null) {
+        stopResolve();
+        stopResolve = null;
+      } else {
+        child.kill("SIGTERM");
+      }
+      return stopPromise;
+    },
+  };
+  return Promise.resolve(handle);
 }
 
 function sha256(value) {

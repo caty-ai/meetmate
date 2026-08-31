@@ -639,6 +639,7 @@ class FloorClient extends EventEmitter {
     this.socket = null;
     this.connectionEpoch = null;
     this.grant = null;
+    this.latestRoundSequence = null;
     const degradedDelayMs = this.fallbackDelayMs();
     for (const report of this.reports.values()) {
       if (report.timer !== null) this.timers.clearTimeout(report.timer);
