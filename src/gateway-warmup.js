@@ -4,6 +4,7 @@
 const { URL } = require("url");
 const { DEFAULT_MESSAGES } = require("./messages");
 const { getEffectiveValue } = require("./settings/resolver");
+const { sessionUserFor } = require("./session-user");
 
 const DEFAULT_WARMUP_TIMEOUT_MS = 8_000;
 
@@ -144,7 +145,7 @@ function warmUpGatewaySession(sessionId, config, briefing = null) {
   });
 }
 
-function warmUpMultipleAgents(sessionId, agents, selectedAgentIds, baseConfig, briefing = null) {
+function warmUpMultipleAgents(sessionId, agents, selectedAgentIds, baseConfig, briefing = null, transport = "meet") {
   const ids = Array.isArray(selectedAgentIds) ? selectedAgentIds : [];
   if (!sessionId || ids.length === 0) return;
 
@@ -161,7 +162,7 @@ function warmUpMultipleAgents(sessionId, agents, selectedAgentIds, baseConfig, b
         model: agent.model || baseConfig?.llm?.model,
       },
     };
-    return warmUpGatewaySession(`meet-${sessionId}-${agentId}`, agentConfig, briefing);
+    return warmUpGatewaySession(sessionUserFor(transport, sessionId, agentId), agentConfig, briefing);
   });
 
   Promise.all(promises).catch(() => {
