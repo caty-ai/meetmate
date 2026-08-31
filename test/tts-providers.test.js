@@ -9,13 +9,13 @@ const readiness = require("../src/settings/readiness");
 const resolver = require("../src/settings/resolver");
 const { REGISTRY_BY_ID } = require("../src/settings/registry");
 
-function initialize(tts = {}) {
+function initialize(tts = {}, config = {}) {
   resolver.resetRuntimeForTest();
   resolver.initializeRuntime({
     state: {
       exists: true,
       valid: true,
-      parsed: { tts },
+      parsed: { ...config, tts },
       revision: "a".repeat(64),
       fingerprint: "tts-providers",
     },
@@ -199,6 +199,135 @@ test("dispatcher maps per-agent voice overrides onto ElevenLabs and OpenAI-compa
     fetchFn: async (_url, options) => { openaiBody = JSON.parse(options.body); return pcmResponse(); },
   });
   assert.equal(openaiBody.voice, "agent-openai");
+});
+
+test("pipeline voice resolution isolates provider defaults while preserving agent overrides and Fish cache identity", async (t) => {
+  const configPath = require.resolve("../src/config");
+  const profilePath = require.resolve("../src/agent-profile");
+  const previousConfig = require.cache[configPath];
+  const previousProfile = require.cache[profilePath];
+  const { synthesize } = require("../src/tts-fish");
+  const cache = require("../src/tts-cache")._test;
+  const originalRequest = https.request;
+  const originalError = console.error;
+  let fishBody;
+
+  t.after(() => {
+    https.request = originalRequest;
+    console.error = originalError;
+    delete require.cache[configPath];
+    delete require.cache[profilePath];
+    if (previousConfig) require.cache[configPath] = previousConfig;
+    if (previousProfile) require.cache[profilePath] = previousProfile;
+  });
+
+  console.error = () => {};
+
+  https.request = (_options, callback) => {
+    const req = new EventEmitter();
+    req.setTimeout = () => req;
+    req.destroy = (error) => error && req.emit("error", error);
+    req.write = (body) => { fishBody = JSON.parse(body); };
+    req.end = () => process.nextTick(() => {
+      const response = new EventEmitter();
+      response.statusCode = 200;
+      response.headers = {};
+      response.destroy = () => {};
+      callback(response);
+      response.emit("data", Buffer.from([1, 2]));
+      response.emit("end");
+    });
+    return req;
+  };
+
+  function productionVoiceContext(tts) {
+    const configJson = { agent: { id: "alpha" }, tts };
+    initialize(tts, configJson);
+    delete require.cache[profilePath];
+    delete require.cache[configPath];
+    const pipelineConfig = require("../src/config").getPipelineConfig({}, null, null, configJson);
+    const profileModule = require("../src/agent-profile");
+    profileModule.clearProfileCache();
+    const profile = profileModule.resolveAgentProfile();
+    return {
+      pipelineConfig,
+      profile,
+      referenceId: profile.voiceId || pipelineConfig.tts.referenceId || null,
+    };
+  }
+
+  const eleven = productionVoiceContext({
+    provider: "elevenlabs",
+    voiceId: "leftover-fish",
+    elevenlabs: { apiKey: "eleven", voiceId: "eleven-default", model: "eleven-model" },
+  });
+  assert.equal(eleven.pipelineConfig.tts.referenceId, null);
+  assert.equal(eleven.profile.voiceId, null);
+  let elevenUrl;
+  await synthesize("eleven default", {
+    referenceId: eleven.referenceId,
+    onAudio: () => {},
+    fetchFn: async (url) => { elevenUrl = String(url); return pcmResponse(); },
+  });
+  assert.equal(elevenUrl, "https://api.elevenlabs.io/v1/text-to-speech/eleven-default?output_format=pcm_24000");
+  assert.equal(cache.synthesisIdentity({ referenceId: eleven.referenceId }).voiceId, "eleven-default");
+  const elevenDefaultKey = cache.cacheKey("same text", { referenceId: eleven.referenceId });
+  let elevenOverrideUrl;
+  await synthesize("eleven override", {
+    referenceId: "agent-eleven",
+    onAudio: () => {},
+    fetchFn: async (url) => { elevenOverrideUrl = String(url); return pcmResponse(); },
+  });
+  assert.equal(elevenOverrideUrl, "https://api.elevenlabs.io/v1/text-to-speech/agent-eleven?output_format=pcm_24000");
+  assert.equal(cache.synthesisIdentity({ referenceId: "agent-eleven" }).voiceId, "agent-eleven");
+  assert.notEqual(cache.cacheKey("same text", { referenceId: "agent-eleven" }), elevenDefaultKey);
+
+  const openai = productionVoiceContext({
+    provider: "openai-compatible",
+    voiceId: "leftover-fish",
+    openaiCompatibleTts: { baseUrl: "http://127.0.0.1:7777", model: "local-model", voice: "openai-default" },
+  });
+  assert.equal(openai.pipelineConfig.tts.referenceId, null);
+  assert.equal(openai.profile.voiceId, null);
+  let openaiBody;
+  await synthesize("openai default", {
+    referenceId: openai.referenceId,
+    onAudio: () => {},
+    fetchFn: async (_url, options) => { openaiBody = JSON.parse(options.body); return pcmResponse(); },
+  });
+  assert.equal(openaiBody.voice, "openai-default");
+  assert.equal(cache.synthesisIdentity({ referenceId: openai.referenceId }).voiceId, "openai-default");
+  const openaiDefaultKey = cache.cacheKey("same text", { referenceId: openai.referenceId });
+  await synthesize("openai override", {
+    referenceId: "agent-openai",
+    onAudio: () => {},
+    fetchFn: async (_url, options) => { openaiBody = JSON.parse(options.body); return pcmResponse(); },
+  });
+  assert.equal(openaiBody.voice, "agent-openai");
+  assert.equal(cache.synthesisIdentity({ referenceId: "agent-openai" }).voiceId, "agent-openai");
+  assert.notEqual(cache.cacheKey("same text", { referenceId: "agent-openai" }), openaiDefaultKey);
+
+  const fish = productionVoiceContext({ provider: "fish-audio", apiKey: "fish", voiceId: "legacy-voice", model: "s2-pro", speed: 1 });
+  assert.equal(fish.pipelineConfig.tts.referenceId, "legacy-voice");
+  assert.equal(fish.profile.voiceId, "legacy-voice");
+  await synthesize("fish default", {
+    referenceId: fish.referenceId,
+    sampleRate: fish.pipelineConfig.tts.sampleRate,
+    speed: fish.pipelineConfig.tts.speed,
+    onAudio: () => {},
+  });
+  assert.equal(fishBody.reference_id, "legacy-voice");
+  assert.equal(cache.synthesisIdentity({
+    referenceId: fish.referenceId,
+    sampleRate: fish.pipelineConfig.tts.sampleRate,
+    speed: fish.pipelineConfig.tts.speed,
+  }).referenceId, "legacy-voice");
+  assert.equal(cache.cacheKey("upgrade-compatible fish", {
+    referenceId: fish.referenceId,
+    model: "s2-pro",
+    sampleRate: fish.pipelineConfig.tts.sampleRate,
+    speed: fish.pipelineConfig.tts.speed,
+  }), "d0c7d1ce3f61be2ca68d3b5e288532b194157cbe676d2b3f110b82a3031e61b6");
 });
 
 test("pipeline config reports the selected TTS provider", () => {

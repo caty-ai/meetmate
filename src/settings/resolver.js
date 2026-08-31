@@ -5,6 +5,7 @@ const path = require("node:path");
 const { MASK, ENV_DIAGNOSTICS, SETTINGS_REGISTRY, REGISTRY_BY_ID } = require("./registry");
 const { scanLegacyClass2 } = require("./class2-migration");
 const { canonicalHostname } = require("../url-utils");
+const { PCM_SAMPLE_RATES: ELEVENLABS_PCM_SAMPLE_RATES } = require("../tts-elevenlabs");
 
 const PLACEHOLDER = /^\$\{[A-Z][A-Z0-9_]*\}$/;
 const SENTINELS = new Set([
@@ -25,7 +26,6 @@ const BOOLEAN_IDS = new Set([
 const ARRAY_IDS = new Set(["agent_wake_words", "agent_keyterms", "agent_stt_wake_variants", "agent_ack_variants", "agent_progress_pings"]);
 const BASE10_NUMBER = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
 const CACHE_INVALIDATORS = new Set();
-const ELEVENLABS_PCM_SAMPLE_RATES = new Set([8_000, 16_000, 22_050, 24_000, 44_100]);
 const DIAGNOSTICS_BY_ID = new Map(ENV_DIAGNOSTICS.map((entry) => [entry.id, entry]));
 let currentRuntime = null;
 

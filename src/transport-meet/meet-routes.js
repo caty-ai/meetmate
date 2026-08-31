@@ -1176,7 +1176,7 @@ async function handleHttp(req, res) {
         return;
       }
       if (isLocalAvatarExperiment && !PIPELINE_TTS_PROVIDERS.has(TTS_PROVIDER)) {
-        writePlainResponse(res, 400, `${avatarExperiment} は Fish Audio 構成でのみ利用できます。`);
+        writePlainResponse(res, 400, `${avatarExperiment} はパイプライン TTS プロバイダー構成でのみ利用できます。`);
         return;
       }
 
@@ -1720,7 +1720,7 @@ const { HUB_CONFIG } = require("../config");
 
 function logLegacyMode(session) {
   console.log(`🔊  Deepgram Voice Agent モード (sid=${session.id})`);
-  if (HUB_CONFIG.enabled && !PIPELINE_TTS_PROVIDERS.has(TTS_PROVIDER)) console.warn("⚠️  HUB_* is configured, but floor arbitration requires a pipeline TTS provider; disabling hub integration in legacy Deepgram Voice Agent mode.");
+  if (HUB_CONFIG.enabled) console.warn("⚠️  HUB_* is configured, but floor arbitration requires a pipeline TTS provider; disabling hub integration in legacy Deepgram Voice Agent mode.");
 }
 const readinessProbes = require("../settings/probes");
 let readinessInstanceId = "";

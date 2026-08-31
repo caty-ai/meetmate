@@ -1,7 +1,6 @@
 "use strict";
 
 const { stripCanonicalEmotionTags } = require("./messages");
-const readiness = require("./settings/readiness");
 const { readPcmBody, withRequestTimeout } = require("./tts-pcm-stream");
 
 const PCM_SAMPLE_RATES = new Set([8_000, 16_000, 22_050, 24_000, 44_100]);
@@ -18,6 +17,7 @@ function outputFormat(sampleRate) {
 }
 
 async function synthesize(text, options = {}) {
+  const readiness = require("./settings/readiness");
   const apiKey = options.apiKey;
   const voiceId = options.voiceId;
   const modelId = options.modelId;
@@ -59,4 +59,4 @@ async function synthesize(text, options = {}) {
   }
 }
 
-module.exports = { synthesize, _test: { outputFormat } };
+module.exports = { PCM_SAMPLE_RATES, synthesize, _test: { outputFormat } };
