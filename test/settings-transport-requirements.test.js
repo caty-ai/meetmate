@@ -47,6 +47,7 @@ function completeConfig(overrides = {}) {
       apiKey: "attendee-key",
       ...(overrides.attendee || {}),
     },
+    ...(overrides.server ? { server: overrides.server } : {}),
     ...(overrides.slack ? { slack: overrides.slack } : {}),
     ...(overrides.discord ? { discord: overrides.discord } : {}),
   };
@@ -64,8 +65,8 @@ function issueIds(status) {
   return status.issues.filter((issue) => issue.code === "VALUE_REQUIRED").map((issue) => issue.fieldId).sort();
 }
 
-function request() {
-  const req = Readable.from([]);
+function request(body = "") {
+  const req = Readable.from(body ? [Buffer.from(body)] : []);
   Object.assign(req, {
     method: "POST",
     url: "/join-meeting",
@@ -109,6 +110,32 @@ test("T12-07 Attendee-plane status and the real join 503 stay byte-identical to 
     res.body,
     '{"error":{"code":"MEETING_SETUP_REQUIRED","message":"Meeting setup is incomplete","issues":[{"fieldId":"attendee_api_key","code":"VALUE_REQUIRED"}]}}',
   );
+});
+
+test("T12-07 the real join setup gate passes the derived Meet transport to readiness revalidation", { concurrency: false }, async (t) => {
+  initialize(completeConfig({ server: { ngrokDomain: "meetmate.example" } }));
+  readiness.reset();
+  for (const system of readiness.gateSystems()) readiness.setProbeObservation(system, { ok: true, code: "CONNECTED" });
+  readiness.setProbeObservation("fish-audio", { ok: false, code: "AUTH_FAILED" });
+  const observed = [];
+  const originalRevalidateForJoin = readiness.revalidateForJoin;
+  readiness.revalidateForJoin = async (options) => { observed.push(options); return originalRevalidateForJoin(options); };
+  t.after(() => {
+    readiness.revalidateForJoin = originalRevalidateForJoin;
+    readiness.reset();
+    resolver.resetRuntimeForTest();
+  });
+  assert.equal(resolver.getStatus({ transport: "meet" }).meetingReady, true);
+
+  const body = new URLSearchParams({
+    meetingUrl: "https://meet.google.com/abc-defg-hij",
+    wsUrl: "wss://meetmate.example/realtime",
+    conversationMode: "group",
+  }).toString();
+  const res = response();
+  await require("../src/transport-meet/meet-routes").handleHttp(request(body), res);
+  assert.deepEqual(observed, [{ transport: "meet" }]);
+  assert.equal(JSON.parse(res.body).error.code, "MEETING_NOT_READY");
 });
 
 test("T12-07 selected STT/TTS predicates preserve provider-only operators and resolver escapes", { concurrency: false }, (t) => {

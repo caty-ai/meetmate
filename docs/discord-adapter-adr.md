@@ -33,7 +33,7 @@ d("discord_bot_token", "discord.botToken", secret, { ux: "basic", credential: "c
 
 **Blast-radius caveat (recorded for checkpoint 2)**: a bot token is a **persistent identity with standing guild access** — unlike a per-meeting join credential, a leaked token is exploitable whenever the attacker wants, against every guild the bot is in, until rotated. This is why ADR-2 (rotation) and ADR-4 (intents minimization) are mandatory companions of this registration, not optional hygiene.
 
-**Placeholder sentinel**: `your_discord_bot_token` is added to the contract's exact, case-sensitive sentinel list (13 → 14 entries) **and** to the resolver's implementing `SENTINELS` set (`src/settings/resolver.js:9-13` — the set that actually runs; amending only the doc would leave a checked-in placeholder counting as a configured token at the meeting-start gate). `config.json.example` carries the `discord.botToken` path per the §8 template rule.
+**Placeholder sentinel**: `your_discord_bot_token` is added to the contract's exact, case-sensitive sentinel list (13 → 14 entries) **and** to the resolver's implementing `SENTINELS` set (`src/settings/resolver.js:11-15` — the set that actually runs; amending only the doc would leave a checked-in placeholder counting as a configured token at the meeting-start gate). `config.json.example` carries the `discord.botToken` path per the §8 template rule.
 
 **Unchanged by design**: no init-wizard change — `docs/cli-contract.md` stays frozen (r1 C4).
 
@@ -130,6 +130,8 @@ What the vocabulary deliberately does NOT cover: the per-agent dynamic Slack tok
 3. The meeting-start boundary (`503 MEETING_SETUP_REQUIRED`) re-evaluates predicates **for the requested transport** on every join; `/health` remaining coarse never substitutes for the join-time check.
 4. `/health.meetingReady` stays a backward-compatible context-free boolean: computed as today for the Attendee plane, with Discord-transport requirements joining the conjunction **only when Discord is configured** (meaningful `discord.botToken` or non-empty allowlist). An operator who never touches Discord fields sees exactly today's behavior. Per-transport readiness detail may be added **additively** (#0b's decision); `setupMode`/`settingsIssues` semantics unchanged.
 
+Context-free evaluation of a multi-transport predicate that includes `discord` is undefined in v1; adding one requires amending 7.3-4.
+
 ### 7.4 Migration matrix (exact — the boolean⇒predicate equivalence is NOT mechanical)
 
 `requiredAtMeetingStart: true ≡ requiredWhen: { always: true }` holds **only for entries that were unconditional at base `099c775`**. This matrix enumerates all 11 entries carrying the flag at `src/settings/registry.js:102-156`, the Slack resolver rule (12 pre-existing requirement rules total), and the new Discord entry. The applied registry therefore has 13 `requiredWhen` predicates, and applying the matrix drops no existing requirement:
@@ -145,6 +147,8 @@ What the vocabulary deliberately does NOT cover: the per-agent dynamic Slack tok
 | `soniox_api_key` | boolean true + resolver skip unless `stt_provider === "soniox"` | `requiredWhen: { setting: "stt_provider", equals: "soniox" }` |
 | `deepgram_api_key` | boolean true + resolver skip unless `stt_provider === "deepgram"` | `requiredWhen: { setting: "stt_provider", equals: "deepgram" }` |
 | `slack_bot_token` | resolver rule: enabled AND source not default/unset AND no dynamic token | `requiredWhen: { setting: "slack_notifications_enabled", equals: true, explicit: true }` — and the requirement is satisfied when `resolveDynamicSlackToken` yields a meaningful value (the resolver-owned escape of 7.2), preserving today's behavior byte-identically |
+
+Recorded ordering note: for a mixed-failure configuration with explicit Slack enabled, a missing Slack token, and a missing LLM connection, the issue array changes from `llm_provider` then `slack_bot_token` to `slack_bot_token` then `llm_provider`; set semantics are identical, and consumers key issues by `fieldId`.
 
 A mechanical `always: true` rewrite would newly block Deepgram-only operators (both STT keys demanded), non-Fish TTS operators, and every default configuration (Slack default is `true` with source `default`) — the matrix above is therefore normative, not illustrative.
 
@@ -180,7 +184,7 @@ The complete, owner-approval-scoped (checkpoint 2) amendment. Child #2a applies 
 
 **A-3. Connection-test enum — three pinned sites, all amended**: (i) the **§6 route table** row for `POST /api/settings/connections/:provider/test` — provider set becomes `soniox|deepgram|fish-audio|attendee|slack|discord`; (ii) the **§6 prose sentence** "The five provider literals `soniox|deepgram|fish-audio|attendee|slack` remain the complete endpoint enum in v1" → "The six provider literals `soniox|deepgram|fish-audio|attendee|slack|discord` remain the complete endpoint enum in v1", and the optional-tier sentence becomes "Deepgram, Attendee, Slack, and Discord are optional compatibility/integration tests" (same `501 TEST_NOT_IMPLEMENTED` semantics); (iii) **T12-14** — "lock the six-provider route enum"; 501 permitted for Deepgram/Attendee/Slack/Discord.
 
-**A-4. Sentinels — all four sites**: (i) §3's "13 exact, case-sensitive checked-in sentinels" → "14 …", adding `your_discord_bot_token`; (ii) **T12-13**'s "the 13 exact case-sensitive placeholder sentinels" → 14; (iii) the implementing `SENTINELS` set in `src/settings/resolver.js`; (iv) `config.json.example` gains the `discord.*` registry paths with the new sentinel as the `discord.botToken` placeholder (§8 template rule; template tests updated accordingly).
+**A-4. Sentinels — all five sites**: (i) §3's "13 exact, case-sensitive checked-in sentinels" → "14 …", adding `your_discord_bot_token`; (ii) **T12-13**'s "the 13 exact case-sensitive placeholder sentinels" → 14; (iii) the implementing `SENTINELS` set in `src/settings/resolver.js`; (iv) `config.json.example` gains the `discord.*` registry paths with the new sentinel as the `discord.botToken` placeholder (§8 template rule; template tests updated accordingly); and (v) the `src/settings/class2-migration.js` legacy-scan `SENTINELS` set.
 
 **A-5. §7 meeting-start requirements — quoted replacement.** The §7 requirement sentence
 

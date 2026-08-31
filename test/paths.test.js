@@ -274,6 +274,18 @@ test("T12-02 environment inventory lock recognizes every retained direct read an
   }
 });
 
+test("T12-02/T12-13/T12-14 contract and template pins stay synchronized", () => {
+  const contract = fs.readFileSync(path.join(__dirname, "..", "docs", "settings-contract.md"), "utf8");
+  const template = fs.readFileSync(path.join(__dirname, "..", "config.json.example"), "utf8");
+  assert.equal(contract.includes("14 exact, case-sensitive checked-in sentinels"), true);
+  assert.equal(contract.includes("has 99 unique direct names"), true);
+  assert.equal(contract.includes("the 99 direct names"), true);
+  assert.equal(contract.includes("covers 99 static names"), true);
+  assert.equal(contract.includes("locks 99 names"), true);
+  assert.equal(contract.includes("soniox|deepgram|fish-audio|attendee|slack|discord"), true);
+  assert.equal(JSON.parse(template).discord.botToken, "your_discord_bot_token");
+});
+
 test("T12-03 startup/bootstrap boundary allows exactly twelve settings modules", () => {
   const directory = path.join(__dirname, "..", "src", "settings");
   const files = fs.readdirSync(directory).filter((name) => name.endsWith(".js")).sort();
@@ -380,9 +392,7 @@ test("T12-05/T12-13 sentinel semantics and class-2 scan stay exact and value-fre
   ];
   for (const sentinel of sentinels) {
     assert.equal(meaningful(sentinel), false, sentinel);
-    if (sentinel !== "your_discord_bot_token") {
-      assert.deepEqual(scanLegacyClass2({ gateway: { token: sentinel } }), [], sentinel);
-    }
+    assert.deepEqual(scanLegacyClass2({ gateway: { token: sentinel } }), [], sentinel);
   }
   assert.equal(meaningful("your-agent-ID"), true);
   assert.equal(scanLegacyClass2({ gateway: { token: "your-agent-ID" } }).length, 1);

@@ -231,6 +231,12 @@ test("T12-01 registry metadata and generated mutation/effective surfaces deep-ma
   assert.equal(REGISTRY_BY_ID.audio_clips.schema.safeParse([{ ...clip, createdAt: "2026-08-27T07:00:00+07:00" }]).success, false);
 });
 
+test("T12-07 Discord transport predicates stay context-free unambiguous", () => {
+  for (const entry of SETTINGS_REGISTRY.filter((item) => item.requiredWhen?.transport)) {
+    assert.equal(!entry.requiredWhen.transport.includes("discord") || JSON.stringify(entry.requiredWhen.transport) === '["discord"]', true, entry.id);
+  }
+});
+
 function tokenize(source) {
   const tokens = [];
   let index = 0;
