@@ -9,6 +9,7 @@ const { readConfigState } = require("./settings/store");
 const { getEffectiveValue, initializeRuntime, getStatus, setServerPort } = require("./settings/resolver");
 const { warnLegacyClass2 } = require("./settings/class2-migration");
 const { createSettingsHandler } = require("./settings/routes");
+const adapterRegistry = require("./adapter-registry");
 
 let initialSettingsState;
 try {
@@ -29,6 +30,7 @@ initializeRuntime({ state: initialSettingsState, startup });
 if (initialSettingsState.valid) warnLegacyClass2(initialSettingsState.parsed);
 
 const meetRoutes = require("./transport-meet/meet-routes");
+const { createDiscordAdapter } = require("./transport-discord");
 const { handleCalibrate, handleCalibrateWs } = require("./wake-calibrate/calibrate-routes");
 const { loadConfig } = require("./config");
 const { resolveAgentProfile } = require("./agent-profile");
@@ -55,6 +57,15 @@ function writeJson(res, status, body) {
 
 async function bootstrap() {
   await meetRoutes.init({ detectNgrok: true, loadAvatar: true, instanceId: INSTANCE_ID });
+
+  try {
+    adapterRegistry.register(createDiscordAdapter({
+      writePlainResponse: meetRoutes.writePlainResponse,
+      getDiscordConfig: () => null,
+    }));
+  } catch (error) {
+    console.warn(`Discord adapter bootstrap skipped: ${error.message}`);
+  }
 
   let server;
   const handleSettings = createSettingsHandler({ port: () => server?.address()?.port || PORT });
@@ -95,6 +106,21 @@ async function bootstrap() {
       return;
     }
 
+    const adapter = adapterRegistry.match(pathname);
+    if (adapter) {
+      try {
+        await adapter.handleHttp(req, res, new URL(req.url || "/", "http://localhost"));
+      } catch (error) {
+        console.error(`Adapter HTTP handler failed (${adapter.transport || "unknown"}):`, error);
+        if (res.headersSent) {
+          res.destroy?.();
+        } else {
+          writeJson(res, 500, { ok: false, code: "ADAPTER_INTERNAL_ERROR" });
+        }
+      }
+      return;
+    }
+
     meetRoutes.handleHttp(req, res);
   });
 
@@ -127,6 +153,16 @@ async function bootstrap() {
       calibrateWss.handleUpgrade(req, socket, head, (ws) => {
         calibrateWss.emit("connection", ws, req);
       });
+      return;
+    }
+
+    const adapter = adapterRegistry.match(pathname);
+    if (adapter) {
+      if (typeof adapter.handleUpgrade === "function") {
+        adapter.handleUpgrade(req, socket, head);
+      } else {
+        socket.destroy();
+      }
       return;
     }
 

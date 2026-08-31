@@ -1044,6 +1044,41 @@ test("wake+cancel emits synchronously and exactly once", { concurrency: false },
   });
 });
 
+test("wake+cancel on the Meet path stays fire-and-forget while the utterance chain is busy", { concurrency: false }, async () => {
+  let llmCalls = 0;
+  let releaseCancelAck;
+  const cancelAckGate = new Promise((resolve) => { releaseCancelAck = resolve; });
+  await withPipeline({
+    config: { cancelAck: "停止しました。" },
+    llm: {
+      streamChat: async function* (_messages, { signal }) {
+        llmCalls += 1;
+        if (llmCalls === 1) {
+          await new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true }));
+          return;
+        }
+        yield "次の応答です。";
+      },
+    },
+    synthesize: async (text, { onAudio }) => {
+      if (text === "停止しました。") await cancelAckGate;
+      onAudio(Buffer.from([1, 0]));
+    },
+  }, async ({ pipeline, stt }) => {
+    const events = collectCancellationEvents(pipeline);
+    stt.emit("utterance_end", "ケイティ、長時間の処理");
+    await waitUntil(() => pipeline._test.getCurrentAbortController());
+
+    stt.emit("utterance_end", "ケイティ、ストップ");
+    assertCancellation(events, "wake_cancel", 0);
+    stt.emit("utterance_end", "ケイティ、次の依頼");
+
+    await waitUntil(() => llmCalls === 2);
+    releaseCancelAck();
+    await waitUntil(() => pipeline._test.getCurrentAbortController() === null);
+  });
+});
+
 test("interim barge-in emits synchronously and exactly once", { concurrency: false }, async () => {
   await withPipeline({
     config: { greeting: "こんにちは。" },

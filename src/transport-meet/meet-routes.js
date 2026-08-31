@@ -272,7 +272,7 @@ async function sendLcmIngest(lifecycle) {
   }
 
   // Build sessionUser to match the session key used during the meeting.
-  const sessionUser = `meet-${sid}-${agentId}`;
+  const sessionUser = sessionUserFor("meet", sid, agentId);
 
   const ingestStart = Date.now();
   console.log(`📝  Sending LCM ingest (background) — session=${sessionUser}, entries=${log.length}`);
@@ -640,33 +640,33 @@ function appendToMemory(session) {
 
 /**
  * Request bot to leave the meeting via Attendee API (POST /api/v1/bots/{id}/leave).
- * Fire-and-forget — logs result but does not throw.
+ * Resolves on response/error/timeout; unordered callers may ignore the fulfilled promise.
  */
-function requestBotLeave(botId, reason, attendeeKey) {
-  const apiKey = attendeeKey || ATTENDEE_API_KEY;
-  const body = JSON.stringify({});
-  const options = {
-    hostname: ATTENDEE_API_BASE_URL,
-    port: 443,
-    path: `/api/v1/bots/${botId}/leave`,
-    method: "POST",
-    headers: {
-      Authorization: `Token ${apiKey}`,
-      "Content-Type": "application/json",
-      "Content-Length": Buffer.byteLength(body),
-    },
-  };
-  const req = https.request(options, (res) => {
-    let data = "";
-    res.on("data", (c) => (data += c));
-    res.on("end", () => {
-      console.log(`🚪  Attendee bot leave (${reason}): ${botId} → ${res.statusCode} ${data.slice(0, 200)}`);
-    });
+function requestBotLeave(botId, reason, attendeeKey, timeoutMs = 10_000) {
+  return new Promise((resolve) => {
+    let settled = false;
+    let req = null;
+    let timer = null;
+    const apiKey = attendeeKey || ATTENDEE_API_KEY;
+    const finish = (result) => { if (!settled) { settled = true; clearTimeout(timer); resolve(result); } };
+    const body = JSON.stringify({});
+    const options = { hostname: ATTENDEE_API_BASE_URL, port: 443, path: `/api/v1/bots/${botId}/leave`, method: "POST",
+      headers: { Authorization: `Token ${apiKey}`, "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) } };
+    timer = setTimeout(() => { const error = new Error("leave timeout"); req?.destroy?.(error); finish({ ok: false, error }); }, timeoutMs);
+    timer.unref?.();
+    try {
+      req = https.request(options, (res) => {
+        let data = "";
+        res.on("data", (c) => (data += c));
+        res.on("error", (error) => finish({ ok: false, error }));
+        res.on("end", () => { console.log(`🚪  Attendee bot leave (${reason}): ${botId} → ${res.statusCode} ${data.slice(0, 200)}`); finish({ ok: true, statusCode: res.statusCode }); });
+      });
+      req.on("error", (error) => { console.error(`❌  Attendee bot leave error (${reason}): ${error.message}`); finish({ ok: false, error }); });
+      req.setTimeout(timeoutMs, () => { const error = new Error(`Attendee bot leave timeout after ${timeoutMs}ms`); req.destroy?.(error); finish({ ok: false, error }); });
+      req.write(body);
+      req.end();
+    } catch (error) { console.error(`❌  Attendee bot leave error (${reason}): ${error.message}`); finish({ ok: false, error }); }
   });
-  req.on("error", (err) => console.error(`❌  Attendee bot leave error (${reason}): ${err.message}`));
-  req.setTimeout(10_000, () => req.destroy());
-  req.write(body);
-  req.end();
 }
 
 function sendAttendeeChatMessage(botId, message, attendeeKey) {
@@ -684,7 +684,7 @@ function finalizeSessionIfInactive(sessionId) {
   closeLocalAvatarSession(session, "session_end");
   sessionBotIds.delete(sessionId);
   const retained = untrackGatewaySession(sessionId, { retainIfDelegations: true });
-  if (!retained) meetingSessions.delete(sessionId);
+  if (!retained) deleteSessionAndRelease(sessionId);
   leavingSessionIds.delete(sessionId);
   console.log(`🧹  Session closed: ${sessionId}`);
 }
@@ -1126,7 +1126,7 @@ async function handleHttp(req, res) {
         saveConversationLog(session);
         sessionBotIds.delete(sid);
         const retained = untrackGatewaySession(sid, { retainIfDelegations: true });
-        if (!retained) meetingSessions.delete(sid);
+        if (!retained) deleteSessionAndRelease(sid);
         console.log(`🧹  Session closed (leave): ${sid}`);
       }
 
@@ -1141,6 +1141,13 @@ async function handleHttp(req, res) {
 
   if (req.method === "POST" && url.pathname === "/join-meeting") {
     let localAvatarSession = null;
+    let sessionId = null;
+    let lease = null;
+    let leaseCreated = false;
+    let sessionInserted = false;
+    let lifecycleCreated = false;
+    let launchedBotId = null;
+    let launchedBotAttendeeKey = null;
     try {
       const status = getStatus();
       if (!status.meetingReady) {
@@ -1268,7 +1275,7 @@ async function handleHttp(req, res) {
         return;
       }
 
-      const sessionId = crypto.randomUUID();
+      sessionId = crypto.randomUUID();
       const startedAt = new Date().toISOString();
       const session = {
         id: sessionId,
@@ -1294,15 +1301,44 @@ async function handleHttp(req, res) {
       };
 
       let localAvatarLaunchUrl = null;
+      let localAvatarPublicOrigin = null;
       if (isLocalAvatarExperiment) {
-        const publicOrigin = resolveLocalAvatarPublicOrigin();
-        if (!publicOrigin) {
+        localAvatarPublicOrigin = resolveLocalAvatarPublicOrigin();
+        if (!localAvatarPublicOrigin) {
           writePlainResponse(res, 400, `${avatarExperiment} には公開 HTTPS origin が必要です。`);
           return;
         }
+      }
+
+      if (
+        !sessionCoordinator
+        || typeof sessionCoordinator.active !== "function"
+        || typeof sessionCoordinator.tryAcquire !== "function"
+        || typeof sessionCoordinator.release !== "function"
+      ) {
+        writePlainResponse(res, 503, "Session coordinator unavailable: missing required methods");
+        return;
+      }
+
+      const activeBeforeAcquire = sessionCoordinator.active();
+      try {
+        lease = sessionCoordinator.tryAcquire("meet", sessionId);
+      } catch (error) {
+        writePlainResponse(res, 503, `Session coordinator unavailable: ${error.message}`);
+        return;
+      }
+      if (!lease) {
+        const active = sessionCoordinator.active() || activeBeforeAcquire;
+        const activeSids = active?.sessionId ? [active.sessionId] : [];
+        writePlainResponse(res, 409, `既にアクティブなセッションがあります（${activeSids.join(", ")}）。退出してから再度参加してください。`);
+        return;
+      }
+      leaseCreated = !activeBeforeAcquire;
+
+      if (isLocalAvatarExperiment) {
         const { createLocalAvatarSession, FRAMES_HTML_ROUTE } = require("./local-avatar-session");
         const issued = createLocalAvatarSession({
-          publicOrigin,
+          publicOrigin: localAvatarPublicOrigin,
           htmlRoute: avatarExperiment === LOCAL_AVATAR_FRAMES_EXPERIMENT ? FRAMES_HTML_ROUTE : undefined,
           background: {
             mode: getEffectiveValue("avatar_rig_background_mode"),
@@ -1314,7 +1350,9 @@ async function handleHttp(req, res) {
         session.localAvatarSession = localAvatarSession;
       }
 
+      session.lease = lease;
       meetingSessions.set(sessionId, session);
+      sessionInserted = true;
 
       const lifecycle = new SessionLifecycle(sessionId, "meet", {
         meetingUrl,
@@ -1325,6 +1363,7 @@ async function handleHttp(req, res) {
       lifecycle.on("session_end", () => handleMeetSessionEnd(lifecycle));
       lifecycle.transition("initiating");
       meetLifecycles.set(sessionId, lifecycle);
+      lifecycleCreated = true;
       getMeetSlackNotifier().postStatus(lifecycle).catch(() => {});
 
       const warmupConfig = getPipelineConfig({
@@ -1337,7 +1376,7 @@ async function handleHttp(req, res) {
       // `meet-${sessionId}-${agentId}` (see switchAgent in pipeline.js).
       // Warming the bare `meet-${sessionId}` key left the agent session
       // cold and contributed to first-turn latency / timeout fallbacks.
-      warmUpGatewaySession(`meet-${sessionId}-${profile.agentId}`, warmupConfig, briefing);
+      warmUpGatewaySession(sessionUserFor("meet", sessionId, profile.agentId), warmupConfig, briefing);
 
       const wsWithSession = buildWsUrlWithSession(wsUrl, sessionId);
       console.log("📹  Meeting URL:", meetingUrl);
@@ -1382,12 +1421,14 @@ async function handleHttp(req, res) {
       const attendeePayload = JSON.stringify(botPayload);
       const attendeeResult = await createAttendeeBotWithRetry(attendeePayload, agentAttendeeKey);
       if (attendeeResult.statusCode >= 200 && attendeeResult.statusCode < 300) {
+        launchedBotAttendeeKey = agentAttendeeKey;
         let parsedBotId = null;
         try {
           const botData = JSON.parse(attendeeResult.body);
           if (typeof botData.id === "string" || typeof botData.id === "number") parsedBotId = botData.id;
           if (botData.id) sessionBotIds.set(sessionId, { botId: botData.id, attendeeKey: agentAttendeeKey });
         } catch { /* ignore parse errors */ }
+        launchedBotId = parsedBotId;
         console.log("✅  Bot起動成功:", { statusCode: attendeeResult.statusCode, botId: parsedBotId });
         writePlainResponse(
           res,
@@ -1404,11 +1445,26 @@ async function handleHttp(req, res) {
       if (failedLifecycle && !failedLifecycle.isTerminal) {
         failedLifecycle.transition("failed", { reason: "bot_launch_failed", statusCode: attendeeResult.statusCode });
       }
-      meetingSessions.delete(sessionId);
+      await rollbackJoinAttempt({
+        sessionId,
+        lease,
+        leaseCreated,
+        sessionInserted,
+        lifecycleCreated,
+      });
       writePlainResponse(res, 502, `Bot起動エラー: ${attendeeResult.statusCode} - ${attendeeResult.body}`);
       return;
     } catch (err) {
       try { localAvatarSession?.close("join_failed"); } catch { /* visual cleanup is best-effort */ }
+      await rollbackJoinAttempt({
+        sessionId,
+        lease,
+        leaseCreated,
+        sessionInserted,
+        lifecycleCreated,
+        botId: launchedBotId,
+        attendeeKey: launchedBotAttendeeKey,
+      });
       console.error("❌  /join-meeting error:", err);
       writePlainResponse(res, 500, `join-meeting エラー: ${err.message}`);
       return;
@@ -1416,6 +1472,43 @@ async function handleHttp(req, res) {
   }
 
   writePlainResponse(res, 404, "Not Found");
+}
+
+// Keep additions below handleHttp: direct process.env reads above are
+// line-pinned by docs/settings-env-inventory.json.
+const sessionCoordinator = require("../session-coordinator");
+const { sessionUserFor } = require("../session-user");
+
+function deleteSessionAndRelease(sessionId) {
+  const session = meetingSessions.get(sessionId);
+  if (!session) return false;
+  meetingSessions.delete(sessionId);
+  sessionCoordinator.release(session.lease);
+  return true;
+}
+
+async function rollbackJoinAttempt({ sessionId, lease, leaseCreated, sessionInserted, lifecycleCreated, botId, attendeeKey }) {
+  if (!leaseCreated) {
+    if (sessionInserted) {
+      sessionBotIds.delete(sessionId);
+      if (lifecycleCreated) meetLifecycles.delete(sessionId);
+      meetingSessions.delete(sessionId);
+    }
+    return;
+  }
+  try {
+    if (botId) {
+      await requestBotLeave(botId, "join_failed", attendeeKey, 2_000);
+    }
+  } finally {
+    sessionBotIds.delete(sessionId);
+    if (lifecycleCreated) meetLifecycles.delete(sessionId);
+    if (sessionInserted) {
+      deleteSessionAndRelease(sessionId);
+    } else {
+      sessionCoordinator.release(lease);
+    }
+  }
 }
 
 function writeJsonResponse(res, status, body, headers = {}) {
@@ -1731,11 +1824,15 @@ module.exports = {
   startReadinessBootstrap,
   handleHttp,
   handleWsConnection,
+  writePlainResponse,
   _test: {
     appendToMemory,
     buildConfiguredDelegationResultsSection,
     configuredSummaryPrompt: () => _resolvedMessages.prompts.summary,
     configureReadinessForTest,
+    finalizeSessionIfInactive,
+    deleteSessionAndRelease,
+    rollbackJoinAttempt,
     runtimeDiagnostics,
     refreshNgrokDetection,
     resolvePublicOrigin,
