@@ -204,10 +204,10 @@ function settingsRequest(method, url, headers = {}, body = "") {
 }
 
 test("T12-01 registry/schema/type lock keeps the write allowlist strict", () => {
-  assert.equal(SETTINGS_REGISTRY.length, 72);
+  assert.equal(SETTINGS_REGISTRY.length, 75);
   assert.equal(ENV_DIAGNOSTICS.length, 59);
   assert.equal(new Set(SETTINGS_REGISTRY.map((entry) => entry.id)).size, SETTINGS_REGISTRY.length);
-  assert.equal(SETTINGS_REGISTRY.filter((entry) => entry.credential === "class-1").length, 7);
+  assert.equal(SETTINGS_REGISTRY.filter((entry) => entry.credential === "class-1").length, 8);
   assert.deepEqual(SETTINGS_REGISTRY.filter((entry) => entry.writeSurface === "audio-only").map((entry) => entry.id), ["audio_clips"]);
   const visible = JSON.stringify(SETTINGS_REGISTRY.map(({ id, path: configPath }) => ({ id, path: configPath })));
   for (const forbidden of ["gateway.token", "gateway.url", "openaiCompatible.apiKey", "WS_SHARED_TOKEN", "JOIN_SHARED_TOKEN"]) {
@@ -248,9 +248,9 @@ test("T12-02 environment inventory lock recognizes every retained direct read an
   assert.equal(bytes.endsWith("\n"), true);
   assert.equal(bytes.endsWith("\n\n"), false);
   const inventory = JSON.parse(bytes);
-  assert.equal(inventory.baselineUniqueDirectCount, 98);
-  assert.equal(inventory.directReferences.length, 98);
-  assert.equal(new Set(inventory.directReferences.map((entry) => entry.name)).size, 98);
+  assert.equal(inventory.baselineUniqueDirectCount, 99);
+  assert.equal(inventory.directReferences.length, 99);
+  assert.equal(new Set(inventory.directReferences.map((entry) => entry.name)).size, 99);
   const known = new Set(inventory.directReferences.map((entry) => entry.name));
   const productionFiles = [];
   function collect(directory) {
@@ -375,12 +375,14 @@ test("T12-05 bootstrap revision recovers absent and parse-invalid documents", (t
 test("T12-05/T12-13 sentinel semantics and class-2 scan stay exact and value-free", () => {
   const sentinels = [
     "your_gateway_token_here", "your_deepgram_key", "your_soniox_key", "your_attendee_key",
-    "your_fish_audio_key", "your_voice_id", "your_slack_bot_token", "your-model-id",
+    "your_fish_audio_key", "your_voice_id", "your_slack_bot_token", "your_discord_bot_token", "your-model-id",
     "your_openai_compatible_key", "your-agent-id", "YourAgent", "your-agent", "エージェント名",
   ];
   for (const sentinel of sentinels) {
     assert.equal(meaningful(sentinel), false, sentinel);
-    assert.deepEqual(scanLegacyClass2({ gateway: { token: sentinel } }), [], sentinel);
+    if (sentinel !== "your_discord_bot_token") {
+      assert.deepEqual(scanLegacyClass2({ gateway: { token: sentinel } }), [], sentinel);
+    }
   }
   assert.equal(meaningful("your-agent-ID"), true);
   assert.equal(scanLegacyClass2({ gateway: { token: "your-agent-ID" } }).length, 1);
@@ -704,7 +706,7 @@ test("T12-05 bootstrap PUT materializes registry defaults and captured .env clas
   assert.equal(response.body.includes("bootstrap-seed-key"), false);
 });
 
-test("T12-06 gate connection tests are implemented while Slack remains an exact value-free 501", async (t) => {
+test("T12-06 gate connection tests are implemented while Slack and Discord remain exact value-free 501s", async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-settings-optional-tests-"));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const configPath = path.join(directory, "config.json");
@@ -721,9 +723,9 @@ test("T12-06 gate connection tests are implemented while Slack remains an exact 
     assert.equal(response.status, 200, `${provider}: ${response.body}`);
     assert.equal(JSON.parse(response.body).code, "NOT_CONFIGURED");
   }
-  for (const [method, url, headers, body] of [
-    ["POST", "/api/settings/connections/slack/test", { "content-type": "application/json" }, JSON.stringify({ revision: state.revision })],
-  ]) {
+  for (const [method, url, headers, body] of ["slack", "discord"].map((provider) => [
+    "POST", `/api/settings/connections/${provider}/test`, { "content-type": "application/json" }, JSON.stringify({ revision: state.revision }),
+  ])) {
     const response = settingsResponse();
     await handler(settingsRequest(method, url, {
       host: "localhost:5005",

@@ -16,6 +16,7 @@ const {
   resolveMessages,
 } = require("../config");
 const { createPipeline } = require("../pipeline");
+const { deriveTransportForAuth } = require("../adapter-registry");
 const { PIPELINE_TTS_PROVIDERS } = require("../tts-fish");
 const { warmUpGatewaySession, warmUpMultipleAgents } = require("../gateway-warmup");
 const { SessionLifecycle } = require("../session-events");
@@ -1141,6 +1142,7 @@ async function handleHttp(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/join-meeting") {
+    const joinTransport = deriveTransportForAuth(url.pathname);
     let localAvatarSession = null;
     let sessionId = null;
     let lease = null;
@@ -1150,7 +1152,7 @@ async function handleHttp(req, res) {
     let launchedBotId = null;
     let launchedBotAttendeeKey = null;
     try {
-      const status = getStatus();
+      const status = getStatus({ transport: joinTransport });
       if (!status.meetingReady) {
         res.writeHead(503, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
         res.end(JSON.stringify({ error: { code: "MEETING_SETUP_REQUIRED", message: "Meeting setup is incomplete", issues: status.issues } }));
@@ -1229,14 +1231,14 @@ async function handleHttp(req, res) {
       const allowance = takePublicReadinessAllowance(req.socket?.remoteAddress);
       let identity = { ok: true, code: "CONNECTED" };
       if (allowance.allowed) {
-        await readiness.revalidateForJoin();
+        await readiness.revalidateForJoin({ transport: joinTransport });
         identity = await readinessProbes.checkWsUrlIdentity(wsUrl, {
           ...readinessProbeOptions,
           instanceId: readinessInstanceId,
           resolvePublicOrigin: (identityOptions) => resolvePublicOrigin({ ...readinessProbeOptions, ...identityOptions }),
         });
       }
-      const readinessState = readiness.getReadiness();
+      const readinessState = readiness.getReadiness({ transport: joinTransport });
       const identityBlocker = identity.code === "MISMATCH"
         ? {
             system: "tunnel",

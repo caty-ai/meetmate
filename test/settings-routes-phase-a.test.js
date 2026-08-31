@@ -403,7 +403,7 @@ test("connection routes retain all providers and require a SHA-256 revision", as
     assert.equal(res.status, 200, `${provider} ${res.body}`);
     assert.equal(JSON.parse(res.body).code, "NOT_CONFIGURED");
   }
-  for (const provider of ["slack"]) {
+  for (const provider of ["slack", "discord"]) {
     const res = response();
     await handler(request("POST", `/api/settings/connections/${provider}/test`, { revision: configState.revision }), res);
     assert.equal(res.status, 501, `${provider} ${res.body}`);
