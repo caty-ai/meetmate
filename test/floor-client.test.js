@@ -403,6 +403,62 @@ test("newer assignment fences an already-resolved but unstarted older turn", asy
   assert.equal(sent(socket, "request_floor").length, 0);
 });
 
+test("reconnect accepts reset round sequences without weakening same-connection supersede", async () => {
+  const harness = createHarness();
+  const socket = connectReady(harness);
+  socket.receive({
+    type: "turn_assign",
+    roundId: "r9",
+    memberId: "m2",
+    chainDepth: 0,
+    consumedReportIds: [],
+  });
+  assert.equal(harness.client.latestRoundSequence, 9);
+
+  socket.drop();
+  assert.equal(harness.client.latestRoundSequence, null);
+  harness.timers.advance(250);
+  const replacement = harness.wire.sockets.at(-1);
+  replacement.open();
+  welcome(replacement, { connectionEpoch: 2 });
+
+  const verdict = harness.client.reportWake(["m1"]);
+  const report = sent(replacement, "wake_report").at(-1);
+  replacement.receive({
+    type: "turn_assign",
+    roundId: "r1",
+    memberId: "m1",
+    chainDepth: 0,
+    consumedReportIds: [report.reportId],
+  });
+  const result = await verdict;
+  assert.equal(result.kind, "assigned");
+  const assignment = result.assignment;
+  assert.equal(harness.client.isAssignmentCurrent(assignment), true);
+
+  const acquire = harness.client.acquire(assignment.roundId);
+  const request = sent(replacement, "request_floor").at(-1);
+  assert.deepEqual(request, {
+    type: "request_floor",
+    reqId: "instance-caty:req:2",
+    roundId: "r1",
+  });
+  replacement.receive({ type: "granted", reqId: request.reqId, grantId: "g1", leaseMs: 15_000 });
+  await acquire;
+  harness.client.release("completed");
+
+  replacement.receive({
+    type: "turn_assign",
+    roundId: "r2",
+    memberId: "m2",
+    chainDepth: 0,
+    consumedReportIds: [],
+  });
+  assert.equal(harness.client.isAssignmentCurrent({ roundId: "r1" }), false);
+  await assert.rejects(harness.client.acquire("r1"), { code: "superseded" });
+  assert.equal(sent(replacement, "request_floor").length, 1);
+});
+
 test("grant and connection epoch form a real fence across revoke and reconnect", async () => {
   const harness = createHarness();
   const socket = connectReady(harness);
