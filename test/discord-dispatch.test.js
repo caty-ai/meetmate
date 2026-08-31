@@ -76,16 +76,30 @@ test("adapter-registry derives auth transport from explicit paths and validate-a
   });
 
   assert.equal(adapterRegistry.deriveTransportForAuth("/health"), null);
+  assert.equal(adapterRegistry.deriveTransportForAuth("/settings"), null);
+  assert.equal(adapterRegistry.deriveTransportForAuth("/settings/audio"), null);
+  assert.equal(adapterRegistry.deriveTransportForAuth("/settingsX"), adapterRegistry.AUTH_VALIDATE_ALL);
   assert.equal(adapterRegistry.deriveTransportForAuth("/calibrate"), null);
   assert.equal(adapterRegistry.deriveTransportForAuth("/calibrate/custom"), null);
   assert.equal(adapterRegistry.deriveTransportForAuth("/calibrateX"), adapterRegistry.AUTH_VALIDATE_ALL);
   assert.equal(adapterRegistry.deriveTransportForAuth("/api/settings"), null);
   assert.equal(adapterRegistry.deriveTransportForAuth("/api/settings/profile"), null);
   assert.equal(adapterRegistry.deriveTransportForAuth("/api/settingsX"), adapterRegistry.AUTH_VALIDATE_ALL);
+  assert.equal(adapterRegistry.deriveTransportForAuth("/settings-assets"), null);
+  assert.equal(adapterRegistry.deriveTransportForAuth("/settings-assets/settings.js"), null);
+  assert.equal(adapterRegistry.deriveTransportForAuth("/settings-assetsX"), adapterRegistry.AUTH_VALIDATE_ALL);
+  assert.equal(adapterRegistry.deriveTransportForAuth("/"), "meet");
   assert.equal(adapterRegistry.deriveTransportForAuth("/join-meeting"), "meet");
+  assert.equal(adapterRegistry.deriveTransportForAuth("/active-session"), "meet");
+  assert.equal(adapterRegistry.deriveTransportForAuth("/leave-meeting"), "meet");
+  assert.equal(adapterRegistry.deriveTransportForAuth("/agents"), "meet");
+  assert.equal(adapterRegistry.deriveTransportForAuth("/info"), "meet");
   assert.equal(adapterRegistry.deriveTransportForAuth("/readiness"), "meet");
+  assert.equal(adapterRegistry.deriveTransportForAuth("/readiness/tunnel"), "meet");
   assert.equal(adapterRegistry.deriveTransportForAuth("/realtime"), adapterRegistry.AUTH_VALIDATE_ALL);
+  assert.equal(adapterRegistry.deriveTransportForAuth("/api/discord"), "discord");
   assert.equal(adapterRegistry.deriveTransportForAuth("/api/discord/join"), "discord");
+  assert.equal(adapterRegistry.deriveTransportForAuth("/api/discordX"), adapterRegistry.AUTH_VALIDATE_ALL);
   assert.equal(adapterRegistry.deriveTransportForAuth("/unknown-path"), adapterRegistry.AUTH_VALIDATE_ALL);
 });
 
