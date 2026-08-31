@@ -290,12 +290,13 @@ async function withMeetRoutesHarness(fn, options = {}) {
       throw new Error("leave request failed");
     }
     const request = new EventEmitter();
-    const record = { options: requestOptions, body: "" };
+    const record = { options: requestOptions, body: "", destroyCalls: 0 };
     httpsRequests.push(record);
     request.setTimeout = () => request;
-    request.destroy = () => {};
+    request.destroy = () => { record.destroyCalls += 1; };
     request.write = (chunk) => { record.body += String(chunk); };
     request.end = () => {
+      if (options.stallLeaveRequest && requestOptions.path?.includes("/leave")) return;
       const response = new EventEmitter();
       response.statusCode = requestOptions.path === "/api/v1/bots" ? 201 : 200;
       callback(response);
@@ -660,6 +661,31 @@ test("vendor-aware catch rollback requests bot leave and still clears lifecycle 
     assert.equal(failed.statusCode, 500);
     assert.equal(harness.coordinator.api.active(), null);
   }, { leaveResponseGate });
+});
+
+test("wall-clock leave deadline completes rollback when the request never reaches a socket", async () => {
+  await withMeetRoutesHarness(async (harness) => {
+    const guard = Symbol("wall-clock guard");
+    let guardTimer;
+    const startedAt = Date.now();
+    const failed = await Promise.race([
+      harness.join({}, { throwOnFirstSuccessEnd: true }),
+      new Promise((resolve) => {
+        guardTimer = setTimeout(() => resolve(guard), 2_750);
+      }),
+    ]);
+    clearTimeout(guardTimer);
+
+    assert.notEqual(failed, guard, "rollback exceeded the independent wall-clock cap");
+    assert.equal(failed.statusCode, 500);
+    assert.equal(Date.now() - startedAt < 2_750, true);
+    assert.equal(harness.coordinator.state.releaseCalls, 1);
+    assert.equal(harness.coordinator.api.active(), null);
+    const active = await harness.activeSession();
+    assert.equal(active.text.includes(FIXED_SESSION_ID), false);
+    const leaveRequest = harness.httpsRequests.find((item) => String(item.options.path || "").includes("/leave"));
+    assert.equal(leaveRequest.destroyCalls, 1);
+  }, { stallLeaveRequest: true });
 });
 
 test("real join reuse rollback removes its fresh registry entry without releasing the pre-existing coordinator lease", async () => {

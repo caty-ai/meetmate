@@ -645,26 +645,26 @@ function appendToMemory(session) {
 function requestBotLeave(botId, reason, attendeeKey, timeoutMs = 10_000) {
   return new Promise((resolve) => {
     let settled = false;
-    const finish = (result) => { if (!settled) { settled = true; resolve(result); } }; const apiKey = attendeeKey || ATTENDEE_API_KEY;
+    let req = null;
+    let timer = null;
+    const apiKey = attendeeKey || ATTENDEE_API_KEY;
+    const finish = (result) => { if (!settled) { settled = true; clearTimeout(timer); resolve(result); } };
     const body = JSON.stringify({});
     const options = { hostname: ATTENDEE_API_BASE_URL, port: 443, path: `/api/v1/bots/${botId}/leave`, method: "POST",
       headers: { Authorization: `Token ${apiKey}`, "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) } };
+    timer = setTimeout(() => { const error = new Error("leave timeout"); req?.destroy?.(error); finish({ ok: false, error }); }, timeoutMs);
+    timer.unref?.();
     try {
-      const req = https.request(options, (res) => {
+      req = https.request(options, (res) => {
         let data = "";
         res.on("data", (c) => (data += c));
         res.on("error", (error) => finish({ ok: false, error }));
-        res.on("end", () => {
-          console.log(`🚪  Attendee bot leave (${reason}): ${botId} → ${res.statusCode} ${data.slice(0, 200)}`);
-          finish({ ok: true, statusCode: res.statusCode });
-        });
+        res.on("end", () => { console.log(`🚪  Attendee bot leave (${reason}): ${botId} → ${res.statusCode} ${data.slice(0, 200)}`); finish({ ok: true, statusCode: res.statusCode }); });
       });
       req.on("error", (error) => { console.error(`❌  Attendee bot leave error (${reason}): ${error.message}`); finish({ ok: false, error }); });
-      req.setTimeout(timeoutMs, () => {
-        const error = new Error(`Attendee bot leave timeout after ${timeoutMs}ms`);
-        req.destroy?.(error); finish({ ok: false, error });
-      });
-      req.write(body); req.end();
+      req.setTimeout(timeoutMs, () => { const error = new Error(`Attendee bot leave timeout after ${timeoutMs}ms`); req.destroy?.(error); finish({ ok: false, error }); });
+      req.write(body);
+      req.end();
     } catch (error) { console.error(`❌  Attendee bot leave error (${reason}): ${error.message}`); finish({ ok: false, error }); }
   });
 }
@@ -1504,9 +1504,10 @@ async function rollbackJoinAttempt({ sessionId, lease, leaseCreated, sessionInse
     sessionBotIds.delete(sessionId);
     if (lifecycleCreated) meetLifecycles.delete(sessionId);
     if (sessionInserted) {
-      meetingSessions.delete(sessionId);
+      deleteSessionAndRelease(sessionId);
+    } else {
+      sessionCoordinator.release(lease);
     }
-    sessionCoordinator.release(lease);
   }
 }
 

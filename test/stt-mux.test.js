@@ -251,6 +251,9 @@ test("stt mux evicts only on utterance_end for the current LRU slot, preserves s
     const [, slotA, slotB] = sttInstances;
 
     pipeline.sendAudio(chunk, { speaker: speaker("a") });
+    slotA.emit("utterance_end", "");
+    await delay(5);
+    assert.equal(slotA.closeCalls, 0, "a non-LRU utterance_end must not evict its slot");
     slotB.emit("transcript", "発話中", true, 0.99);
     await delay(5);
     assert.deepEqual(pipeline._test.getSttMuxState().slots, ["a", "b", "c", "d"]);

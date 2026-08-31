@@ -118,6 +118,7 @@ test("discord http routes conceal non-local and forwarded requests behind the sh
   for (const request of [
     createRequest({ remoteAddress: "::ffff:10.0.0.1" }),
     createRequest({ headers: { "x-forwarded-host": "public.example" } }),
+    createRequest({ headers: { "x-forwarded-proto": "https" } }),
   ]) {
     const denied = await runHttp(handler, request);
     assert.equal(denied.statusCode, 404);

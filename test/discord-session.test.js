@@ -431,6 +431,22 @@ test("discord join failure modes after acquire release the lease and avoid pipel
   }
 });
 
+test("discord announce rejects an error before a sufficient-duration Idle transition", async () => {
+  const harness = createHarness({
+    synthesize: async ({ options, player }) => {
+      options.onAudio(Buffer.alloc(24000));
+      emitVendorPlayback(player, { duration: 900, error: new Error("independent player error") });
+    },
+  });
+
+  const result = await harness.manager.join({ guildId: GUILD_ID, channelId: CHANNEL_ID });
+  assert.equal(result.status, 502);
+  assert.equal(harness.coordinatorState.releaseCalls, 1);
+  assert.equal(harness.createdPipelines.length, 0);
+  assert.equal(harness.player.listenerCount("stateChange"), 0);
+  assert.equal(harness.player.listenerCount("error"), 0);
+});
+
 test("discord join releases lease on identify failure and live allowlist mismatch", async () => {
   const identifyFailure = createHarness({ loginError: new Error("429 identify") });
   const identifyResult = await identifyFailure.manager.join({ guildId: GUILD_ID, channelId: CHANNEL_ID });
@@ -592,9 +608,14 @@ test("discord voiceStateUpdate is transition-only, announce-safe, and partial-st
 test("discord gateway completion routes through the gateway events client", async () => {
   const completionListeners = [];
   const handled = [];
+  const startedConfigs = [];
+  const builtKeys = [];
   const gatewayEvents = {
-    buildSessionKey(user, agentId) { return `agent:${agentId}:openai-user:${user}`; },
-    start() {},
+    buildSessionKey(user, agentId) {
+      builtKeys.push({ user, agentId });
+      return `agent:${agentId}:openai-user:${user}`;
+    },
+    start(config) { startedConfigs.push(config); },
     stop() {},
     verifySessionKey: async () => true,
     onSubagentSpawn() { return () => {}; },
@@ -604,12 +625,16 @@ test("discord gateway completion routes through the gateway events client", asyn
   };
   const harness = createHarness({
     gatewayEvents,
-    getGatewayConfigForProfile: () => ({
-      enabled: true,
-      name: "openclaw",
-      agentId: "main",
-      openclawUrl: "https://gateway.example",
-      openclawToken: "gateway.value",
+    getPipelineConfig: () => ({
+      systemPrompt: "system",
+      greeting: "hello",
+      fishKey: "fish-key",
+      gatewayEvents: { enabled: true, agentId: "main" },
+      llm: { model: "gpt-test", provider: "openclaw", gateway: { url: "https://gateway.example", token: "gateway.value" } },
+      tts: { sampleRate: 24000, referenceId: "voice", latency: "balanced", speed: 1 },
+      slack: { enabled: false, channelId: "", statusChannelId: "", summaryChannelId: "", notifyTarget: "dm", dmUserId: "", labels: {} },
+      summary: { prompt: "summary" },
+      briefing: "briefing",
     }),
     handleGatewaySubagentCompletion(event) {
       handled.push(event);
@@ -620,6 +645,14 @@ test("discord gateway completion routes through the gateway events client", asyn
   const joined = await harness.manager.join({ guildId: GUILD_ID, channelId: CHANNEL_ID });
   assert.equal(joined.status, 200);
   assert.equal(completionListeners.length, 1);
+  assert.equal(startedConfigs.length, 1);
+  assert.equal(startedConfigs[0].enabled, true);
+  assert.equal(startedConfigs[0].agentId, "main");
+  assert.equal(startedConfigs[0].name, "openclaw");
+  assert.deepEqual(builtKeys, [
+    { user: `discord-${joined.body.sessionId}-caty`, agentId: "main" },
+    { user: `discord-${joined.body.sessionId}-caty-delegate`, agentId: "main" },
+  ]);
   const parentSessionKey = `agent:main:openai-user:discord-${joined.body.sessionId}-caty`;
   await completionListeners[0]({ parentSessionKey, childKey: "child-1", resultText: "done" });
   assert.equal(handled.length, 1);
