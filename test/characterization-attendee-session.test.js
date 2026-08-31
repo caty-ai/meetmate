@@ -266,6 +266,8 @@ async function withMeetRoutes(fn, options = {}) {
   const originalRandomBytes = crypto.randomBytes;
   const originalLoad = Module._load;
   const originalConsole = { log: console.log, warn: console.warn, error: console.error };
+  const NativeMap = global.Map;
+  let lifecycleRegistry = null;
 
   const recordingSessionEvents = {
     ...realSessionEvents,
@@ -280,6 +282,13 @@ async function withMeetRoutes(fn, options = {}) {
       }
     },
   };
+  class ObservableMap extends NativeMap {
+    set(key, value) {
+      const result = super.set(key, value);
+      if (value instanceof recordingSessionEvents.SessionLifecycle) lifecycleRegistry = this;
+      return result;
+    }
+  }
 
   installMock(path.join(src, "config.js"), {
     SAMPLE_RATE: 16_000,
@@ -469,7 +478,13 @@ async function withMeetRoutes(fn, options = {}) {
   console.error = (...args) => { consoleOutput.push(args.map(String).join(" ")); };
 
   try {
-    const routes = require(routesPath);
+    let routes;
+    global.Map = ObservableMap;
+    try {
+      routes = require(routesPath);
+    } finally {
+      global.Map = NativeMap;
+    }
     await routes.init({
       detectNgrok: false,
       loadAvatar: false,
@@ -497,6 +512,9 @@ async function withMeetRoutes(fn, options = {}) {
       operations,
       coordinator: { api: coordinator, state: coordinatorState },
       trackedSessions: () => trackedSessions,
+      lifecycleRegistryHas(sessionId = FIXED_SESSION_ID) {
+        return lifecycleRegistry?.has(sessionId) === true;
+      },
       join(form = {}, headers = {}, requestOptions = {}) {
         return requestHttp(routes, "POST", "/join-meeting", {
           meetingUrl: "https://meet.google.com/abc-defg-hij",
@@ -539,6 +557,7 @@ async function withMeetRoutes(fn, options = {}) {
     crypto.randomUUID = originalRandomUUID;
     crypto.randomBytes = originalRandomBytes;
     Module._load = originalLoad;
+    global.Map = NativeMap;
     Object.assign(console, originalConsole);
     restoreEnv();
     readiness.reset();
@@ -573,6 +592,15 @@ test("join guard order stays 503 then 409 then 400, and retention keeps the 409 
     assert.equal(blocked.body.error.code, "MEETING_SETUP_REQUIRED");
     assert.equal(harness.httpsRequests.length, 0);
   }, { setupIncomplete: true });
+
+  await withMeetRoutes(async (harness) => {
+    const missingOrigin = await harness.join({
+      avatarExperiment: "hybrid-local-l0",
+    });
+    assert.equal(missingOrigin.statusCode, 400);
+    assert.equal(missingOrigin.text, "hybrid-local-l0 には公開 HTTPS origin が必要です。");
+    assert.equal(harness.coordinator.state.tryAcquireCalls.length, 0);
+  }, { settingsOverrides: { server: { ngrokDomain: "" } } });
 
   await withMeetRoutes(async (harness) => {
     const invalidUrl = await harness.join({
@@ -775,6 +803,7 @@ test("Attendee catch rollback waits for launched-bot leave, then deletes before 
       sessionId: FIXED_SESSION_ID,
       registryHasSession: false,
     }]);
+    assert.equal(harness.lifecycleRegistryHas(), false);
     const leaveEndIndex = harness.operations.indexOf("https-end:/api/v1/bots/bot-char-99/leave");
     const releaseIndex = harness.operations.indexOf(`release:${FIXED_SESSION_ID}`);
     assert.notEqual(leaveEndIndex, -1);
