@@ -36,7 +36,7 @@ npx meetmate start    # サーバーを起動し、設定 UI の URL を表示�
 
 ## 何ができるのか
 
-- **議事録ボットではなく、参加者です。** 参加者グリッドに自分のアバターで並び、部屋の会話を聞き、声で話します。ウェイクワード検出とバージイン対応（話しかぶせると、ちゃんと黙ります）。
+- **議事録ボットではなく、参加者です。** 参加者グリッドに自分のアバターで並び、部屋の会話を聞き、声で話します。ウェイクワード検出とバージイン対応（話しかぶせると、ちゃんと黙ります。バージインは Meet/Zoom のみ — Discord 経路には含まれません）。
 - **「あなたの」エージェントが来ます。** ふだん使っているエージェントを、記憶も性格もスキルもそのままに接続（OpenClaw Gateway 経由）。チームが知っている「いつものあの子」が、そのまま会議室に入ってくる。だから Meetmate は一台ごとに個性が違います。（Gateway がなくても、任意の OpenAI 互換エンドポイントで動きます — 素の LLM+組み込みペルソナのシンプル構成。詳細は [LLM providers](https://github.com/caty-ai/meetmate/blob/main/docs/TECHNICAL.md#llm-providers)）
 - **その場で頼めます。** 「今の議論まとめてチャンネルに投稿しといて」——重い作業は自動でバックグラウンドのセッションに委譲されるので、エージェントは会話に残ったままタスクが進みます。
 - **「普通にできる」が製品です。** プッシュトゥトーク不要、特別なコマンド不要、気まずい沈黙もなし。同僚に話しかけるのと同じように話す——それが当たり前に感じられることこそ、磨いた部分です。
@@ -106,7 +106,7 @@ Meetmate: [warm] 変更点は2つです——年間割引が15%になったの�
 |---|---|
 | Google Meet | メインの対応パス。まずはここから。 |
 | Zoom | 自分がホスト/管理する会議では現状動作します。外部主催の Zoom 会議・OBF・管理された OAuth 設定への対応はまだ想定しないでください。 |
-| Discord のボイスチャンネル | この初回リリースでは**自分が管理するサーバーのみ**。公式 Bot API（discord.js）を使用 — Attendee もトンネルも不要（bot が外向きに接続します）。ギルドの allowlist は fail-closed（空の場合は全ての参加を拒否）、intents/permissions は最小構成が前提です。参加時は音声キャプチャの前に必ず自己アナウンスします。退出はダッシュボードのボタンから行ってください — Discord 上の音声退出コマンドは現在検証中です([#139](https://github.com/caty-ai/meetmate/issues/139))。バージイン(話しかぶせによる割り込み停止)は、このリリースでは Discord 経路には含まれません。セットアップ: [セットアップガイドの Discord bot セクション](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#discord-ボット音声チャンネル参加)。 |
+| Discord のボイスチャンネル | この初回リリースでは**自分が管理するサーバーのみ**。公式 Bot API（discord.js）を使用 — Attendee もトンネルも不要（bot が外向きに接続します）。ギルドの allowlist は fail-closed（空の場合は全ての参加を拒否）、intents/permissions は最小構成が前提です。参加時は音声キャプチャの前に必ず自己アナウンスします。退出はダッシュボードのボタンから行ってください — Discord 上の音声退出コマンドは現在検証中です([#139](https://github.com/caty-ai/meetmate/issues/139))。バージイン(話しかぶせによる割り込み停止)は、このリリースでは Discord 経路には含まれません。Discord 経路は現時点で Fish Audio TTS が必須です。*（リリース前の注記: server 側の設定配線は [#142](https://github.com/caty-ai/meetmate/issues/142) で接続予定 — リリースは #142 完了が条件で、merge までは本番起動からの join はできません。）* セットアップ: [セットアップガイドの Discord bot セクション](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#discord-ボット音声チャンネル参加)。 |
 | サーバー OS と自動起動 | Windows（WSL2 経由）・macOS・Linux でサーバーを動かせます。常駐サービスの登録はインストーラ1本: `scripts/install-service.sh` が macOS では launchd、Linux/WSL2 では systemd user unit を設定します（WSL2 は `/etc/wsl.conf` に `systemd=true` が必要。ngrok は WSL2 の中で動かすか、`server.ngrokDomain` を明示してください）。詳細: [セットアップガイド — 常駐サービス](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#常駐サービス自動起動)。 |
 | MCP と音声ブレイン | Meetmate の MCP サーバーは `join` / `leave` / `status` のコントロールプレーンです。音声ブレインは別物で、あなたの本物のエージェントは OpenClaw または別の OpenAI 互換ゲートウェイの裏側で動き、会議で話します。 |
 

@@ -286,18 +286,21 @@ Meetmate は Google Meet / Zoom に加えて、**Discord の音声チャンネ�
 
 ### Token を保存する
 
-- 入力先は **設定 UI の `Discord Bot Token`（masked フィールド）**。保存先は `config.json`（パーミッション 0600）で、設定エクスポートには**含まれない**。
-- 環境変数 `DISCORD_BOT_TOKEN` は起動時の `.env` シードとしてのみ有効。**設定 UI に値がある場合でも、環境変数側が優先される**ので、ローテーション時は残さないこと（下記）。
+- 入力先は **設定 UI の `Discord Bot token`（masked フィールド）**。保存先は `config.json`（パーミッション 0600）で、設定エクスポートには**含まれない**。
+- 環境変数 `DISCORD_BOT_TOKEN` の効き方は設定の4段優先（起動環境変数 → 設定ストア → `.env` シード → 既定値）に従う: **起動時のシェル環境変数は設定 UI の保存値より優先される**が、**`.env` の行は設定 UI に値があれば効かない**（ストアが空のときのシードとしてのみ働く）。どちらもローテーション時は掃除しておくこと（下記）。
 - ⚠️ Bot token は**常在の身分証**: 会議ごとの参加キーと違い、漏れると次のローテーションまで「いつでも・Bot が居る全サーバーに対して」悪用できる。画面共有・ログ・Issue に貼らない。
 
 ### 参加を許可するサーバー（guild allowlist）
 
-- 設定 UI の **Guild Allowlist** に、参加を許可するサーバー（guild）の ID を追加する。**空のままだと全ての join を拒否する**（安全側の既定）。
+- 設定 UI の **Discord サーバー許可リスト**（`discord_guild_allowlist`）に、参加を許可するサーバー（guild）の ID を追加する。**空のままだと全ての join を拒否する**（安全側の既定）。
 - ID の取得: Discord クライアントの 設定 → 詳細設定 → **開発者モード** を ON → サーバー名/チャンネル名を右クリック → **ID をコピー**。
 
 ### 参加する・退出する
 
+> ⚠️ **現時点の注意（[#142](https://github.com/caty-ai/meetmate/issues/142)）**: server 側の設定配線が未接続のため、現行ブランチの本番起動からの Discord join は必ず 503（`DISCORD_SETUP_REQUIRED`）を返す。リリースは #142 の完了が条件で、この注意書きは #142 のレーンで撤去される。
+
 - ダッシュボード（`/`）で transport に **Discord** を選び、**guild ID と voice channel ID** を入力して **Join**。参加すると Bot は**最初に必ず入室アナウンス**を行い、アナウンス完了までは音声のキャプチャを開始しない。
+- **TTS プロバイダの制約**: Discord 経路は現時点で **Fish Audio 前提**（他プロバイダ選択時は join が 503 になる）。TTS 出力レートも 24000 / 48000 Hz のみ対応。
 - 退出は **Leave ボタン（`POST /api/discord/leave`）が確実な経路**。音声での退出コマンドの Discord 対応は現在確認中（[#139](https://github.com/caty-ai/meetmate/issues/139)）。
 - `/api/discord/*` はセキュリティ上 **loopback（同一マシン）からのみ**受け付ける。ssh の `-L` 転送や素通しのプロキシは loopback に見えるため、Bot 操作 UI を他人と共有しない。
 
@@ -305,7 +308,7 @@ Meetmate は Google Meet / Zoom に加えて、**Discord の音声チャンネ�
 
 - **入室アナウンスは常に ON**（v1 では OFF にできない）。「wake word で応答する Bot であること・応答のために音声を文字起こしすること」を入室時に必ず伝える設計。
 - 文字起こしの保持は既存の会議 transcript と同じ扱い。Slack サマリーも既存の `summary_enabled` 設定に従う。
-- 長期記憶への取り込み（LCM ingest）は **Discord では既定 OFF**（`discord_lcm_ingest_enabled` で明示的に opt-in）。
+- 長期記憶への取り込み（LCM ingest）は **Discord では行われない**（取り込み機能自体が Discord 経路では未実装。`discord_lcm_ingest_enabled` は将来の opt-in 用の予約フラグで既定 OFF — 現時点で ON にしても何も有効にならない）。
 - Bot は**セッション単位で参加・退出**し、待機のために音声チャンネルに居座ることはない。
 - 会話の途中から入ってきた人には、メンバー一覧の Bot 表示と入室済みアナウンスがその場の告知になる。**気になる場で使うときは、参加者に一言伝えてから使うこと。**
 
@@ -313,7 +316,7 @@ Meetmate は Google Meet / Zoom に加えて、**Discord の音声チャンネ�
 
 1. Developer Portal → Bot → **Reset Token**（この瞬間から旧 token は無効 = Bot は停止扱い）。
 2. 新しい token を設定 UI の masked フィールドに貼って保存。
-3. **環境変数のコピーを消す**: 起動環境や `.env` に `DISCORD_BOT_TOKEN` が残っていると、再起動後もそちら（無効または漏えいした旧値）が優先されてしまう。Meetmate は `.env` を書き換えないので、この削除は手作業。
+3. **環境変数のコピーを消す**: 起動環境（シェル）に `DISCORD_BOT_TOKEN` が残っていると、再起動後もそちら（無効または漏えいした旧値）が設定 UI の新値より優先されてしまう。`.env` の行は設定 UI に値がある限り効かないが、将来ストアを空にしたときに古い値が復活しないよう、同時に消しておく。Meetmate は `.env` を書き換えないので、この削除は手作業。
 4. Meetmate を再起動する（token の反映には再起動が必要）。
 5. `discord` の接続テスト、または allowlist 済みサーバーで Bot がオンラインになることで確認。
 6. 漏えい疑いでのローテーションなら、Portal 側で Bot の参加サーバー一覧も点検して、身に覚えのないサーバーからは退出させる（allowlist があるので勝手に稼働はしないが、membership 自体も掃除する）。
@@ -460,7 +463,7 @@ Legacy connection settings were ignored and must be supplied through the environ
 
 ### 接続テスト
 
-**接続テスト** タブには Soniox / Deepgram / Fish Audio / ElevenLabs / OpenAI-compatible TTS / Attendee / LLM / Tunnel / Slack のテストボタンがある。Slack 以外は実装済みで、TTS は選択前でも保存済みの接続情報を個別に確認できる。
+**接続テスト** タブには Soniox / Deepgram / Fish Audio / ElevenLabs / OpenAI-compatible TTS / Attendee / LLM / Tunnel / Slack / Discord のテストボタンがある。Slack 以外は実装済みで、TTS は選択前でも保存済みの接続情報を個別に確認できる。
 
 - タイムアウト: 5秒
 - 結果表示: `<サービス名>: <コード> — <説明> (<n> ms)`（コードは `CONNECTED` / `NOT_CONFIGURED` / `AUTH_FAILED` / `UNREACHABLE` / `TIMEOUT` / `RATE_LIMITED` / `PROVIDER_ERROR` のいずれか）

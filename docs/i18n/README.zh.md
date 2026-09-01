@@ -36,7 +36,7 @@ npx meetmate start    # 启动服务器并打印设置界面 URL
 
 ## 它能做什么
 
-- **它是参会者,不是会议纪要机器人。** 你的智能体带着自己的头像出现在参会者网格里,听会场讨论,开口说话——支持唤醒词检测和插话打断(你直接盖过它说话,它就会乖乖停下来)。
+- **它是参会者,不是会议纪要机器人。** 你的智能体带着自己的头像出现在参会者网格里,听会场讨论,开口说话——支持唤醒词检测和插话打断(你直接盖过它说话,它就会乖乖停下来；插话打断仅限 Meet/Zoom——不适用于 Discord 路径)。
 - **它是“你的”智能体。** 通过 OpenClaw Gateway,接入你已经在用的那个智能体——连同它的记忆、性格和技能。团队熟悉的那个“老搭档”,就这样走进会议室,所以没有两个 Meetmate 说话是一个味儿的。(没有 Gateway?任何 OpenAI 兼容端点也能用,作为更简单的基线:普通 LLM + 内置人设——见 [LLM providers](https://github.com/caty-ai/meetmate/blob/main/docs/TECHNICAL.md#llm-providers)。)
 - **当场就能派活。** “把刚才讨论的结论总结一下,发到频道里。”重活会自动委派给后台会话,所以智能体一边继续参与对话,任务一边推进。
 - **“平平无奇”正是卖点。** 不用按键发言,没有特殊命令,没有尴尬的沉默。你像跟同事说话一样跟它说话——这种“没什么特别”的感觉,本身就是产品。
@@ -106,7 +106,7 @@ Meetmate: [warm] 有两处变化——年度折扣改成了 15%，还新增了�
 |---|---|
 | Google Meet | 主路径。请从这里开始。 |
 | Zoom | 目前适用于你自己主持/管理的会议。暂不要假设支持外部主办的 Zoom 会议、OBF,或托管式 OAuth 设置。 |
-| Discord 语音频道 | 本次首发版本**仅支持你自己管理的服务器**。使用官方 Bot API(discord.js)——不需要 Attendee，也不需要隧道；机器人主动向外连接。服务器（guild）白名单为 fail-closed（为空时拒绝所有加入请求），intents/permissions 按最小化设计，机器人在采集任何音频之前都会先自我宣告。退出请使用仪表盘按钮——Discord 上的语音退出指令仍在验证中([#139](https://github.com/caty-ai/meetmate/issues/139))。本版本中 barge-in（打断）功能不适用于 Discord 路径。安装：[安装指南的 Discord 机器人小节](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#discord-ボット音声チャンネル参加)。 |
+| Discord 语音频道 | 本次首发版本**仅支持你自己管理的服务器**。使用官方 Bot API(discord.js)——不需要 Attendee，也不需要隧道；机器人主动向外连接。服务器（guild）白名单为 fail-closed（为空时拒绝所有加入请求），intents/permissions 按最小化设计，机器人在采集任何音频之前都会先自我宣告。退出请使用仪表盘按钮——Discord 上的语音退出指令仍在验证中([#139](https://github.com/caty-ai/meetmate/issues/139))。本版本中 barge-in（打断）功能不适用于 Discord 路径。Discord 路径目前要求使用 Fish Audio TTS。*（发布前注记：服务器端设置接线将在 [#142](https://github.com/caty-ai/meetmate/issues/142) 中完成——发布以 #142 为前提；在其合并之前，生产启动无法加入。）* 安装：[安装指南的 Discord 机器人小节](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#discord-ボット音声チャンネル参加)。 |
 | 服务器操作系统与自启动 | Windows(通过 WSL2)、macOS 和 Linux 都能运行服务器。常驻服务只需一个安装脚本:`scripts/install-service.sh` 在 macOS 上配置 launchd,在 Linux/WSL2 上配置 systemd user unit(WSL2 需要在 `/etc/wsl.conf` 中设置 `systemd=true`;ngrok 请在 WSL2 内运行,或显式设置 `server.ngrokDomain`)。详情:[安装指南 — 常驻服务](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#常駐サービス自動起動)。 |
 | MCP 与语音大脑 | Meetmate 的 MCP 服务器是 `join` / `leave` / `status` 的控制平面。语音大脑是独立的:你真正的智能体运行在 OpenClaw 或另一个 OpenAI 兼容网关背后,并在会议中开口说话。 |
 
