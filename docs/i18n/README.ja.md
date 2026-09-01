@@ -8,7 +8,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/caty-ai/meetmate/blob/main/LICENSE)
 [![npm](https://img.shields.io/npm/v/meetmate?logo=npm&label=npm)](https://www.npmjs.com/package/meetmate)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D26-blue?logo=node.js&logoColor=white)](https://nodejs.org/)
-[![Meetings](https://img.shields.io/badge/works%20in-Google%20Meet%20%7C%20Zoom-blue)](#何ができるのか)
+[![Meetings](https://img.shields.io/badge/works%20in-Google%20Meet%20%7C%20Zoom%20%7C%20Discord-blue)](#何ができるのか)
 [![Server](https://img.shields.io/badge/runs%20on-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](#クイックスタート)
 
 <picture>
@@ -16,13 +16,13 @@
   <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/hero-light.svg" alt="Meetmate — 会議のグリッドに、あなたのAIエージェントが本物の参加者として座っている" width="100%">
 </picture>
 
-**あなたのAIエージェントを、Google Meet にも Zoom にも。声で話せる、本物の参加者として。**
+**あなたのAIエージェントを、Google Meet にも Zoom にも Discord のボイスチャンネルにも。声で話せる、本物の参加者として。**
 
 Meetmate がやることはひとつだけ。**あなたの**エージェントに、会議の席を用意することです。顔と声を持った参加者として入室し、名前を呼べば答え、頼めばやってくれる。あえてそれ以上のことはせず、そのひとつを徹底的に磨きました。
 
 ## クイックスタート
 
-**必要なもの:** [Node.js](https://nodejs.org/) ≥ 26 ・ [Attendee](https://attendee.dev/) アカウント ・ 音声認識用の [Soniox](https://soniox.com/)（または [Deepgram](https://deepgram.com/)） ・ TTS プロバイダー（[Fish Audio](https://fish.audio/)・ElevenLabs・OpenAI 互換のいずれか） ・ LLM エンドポイント（[OpenClaw Gateway](https://openclaw.ai/) または任意の OpenAI 互換） ・ 通常は [ngrok](https://ngrok.com/) か [Tailscale](https://tailscale.com/) ・ そして Google Meet はボットの入室許可を求めてきます。サードパーティサービスは有料の場合があります。
+**必要なもの:** [Node.js](https://nodejs.org/) ≥ 26 ・ [Attendee](https://attendee.dev/) アカウント（Meet/Zoom 用）または [Discord bot token](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#discord-ボット音声チャンネル参加)（Discord — Attendee もトンネルも不要） ・ 音声認識用の [Soniox](https://soniox.com/)（または [Deepgram](https://deepgram.com/)） ・ TTS プロバイダー（[Fish Audio](https://fish.audio/)・ElevenLabs・OpenAI 互換のいずれか） ・ LLM エンドポイント（[OpenClaw Gateway](https://openclaw.ai/) または任意の OpenAI 互換） ・ 通常は [ngrok](https://ngrok.com/) か [Tailscale](https://tailscale.com/)（Meet/Zoom 用） ・ そして Google Meet はボットの入室許可を求めてきます。サードパーティサービスは有料の場合があります。
 
 空のフォルダーで:
 
@@ -32,7 +32,7 @@ npx meetmate init     # ウィザードが API キー・ボイスID・LLM エン
 npx meetmate start    # サーバーを起動し、設定 UI の URL を表示します
 ```
 
-表示された URL を開きます。これは設定 UI であり、まだダッシュボードではありません。必須項目が空のまま（あるいは `init` を丸ごとスキップした）場合でもサーバーは起動しますが、「セットアップ中」というバナーが足りないものを教えてくれます。埋めて **変更を保存** をクリックし、再起動してください。1つだけブラウザから埋められない例外があります — LLM 接続情報（Gateway の URL/Token、または OpenAI互換キー）は環境変数専用で、`init` ウィザードが `.env` に書き込みます。`init` を飛ばした場合は `.env` に自分で追加してください。読み込みが終わったら、同じホストの `/` でダッシュボードを開き、Meet または Zoom の URL を貼り付けて **「Meet に参加させる」** をクリックします（[実際の画面はこちら](#画面はこんな感じ)）。Meet 側でボットの「参加をリクエスト」を承認してから、ウェイクワードで呼びかけて話し始めてください。ngrok/Tailscale と Meet の入室承認は手動のままです。詳しい手順はウィザードの締めのメッセージと[セットアップガイド](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md)で確認できます。
+表示された URL を開きます。これは設定 UI であり、まだダッシュボードではありません。必須項目が空のまま（あるいは `init` を丸ごとスキップした）場合でもサーバーは起動しますが、「セットアップ中」というバナーが足りないものを教えてくれます。埋めて **変更を保存** をクリックし、再起動してください。1つだけブラウザから埋められない例外があります — LLM 接続情報（Gateway の URL/Token、または OpenAI互換キー）は環境変数専用で、`init` ウィザードが `.env` に書き込みます。`init` を飛ばした場合は `.env` に自分で追加してください。読み込みが終わったら、同じホストの `/` でダッシュボードを開き、Meet または Zoom の URL を貼り付けて **「Meet に参加させる」** をクリックします（[実際の画面はこちら](#画面はこんな感じ)）。Meet 側でボットの「参加をリクエスト」を承認してから、ウェイクワードで呼びかけて話し始めてください。（Discord は URL ではなく、同じダッシュボードで Discord transport を選んでサーバー ID とボイスチャンネル ID を入力する — bot の作成は[セットアップガイドの Discord セクション](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#discord-ボット音声チャンネル参加)を参照。）ngrok/Tailscale と Meet の入室承認は手動のままです。詳しい手順はウィザードの締めのメッセージと[セットアップガイド](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md)で確認できます。
 
 ## 何ができるのか
 
@@ -40,7 +40,7 @@ npx meetmate start    # サーバーを起動し、設定 UI の URL を表示�
 - **「あなたの」エージェントが来ます。** ふだん使っているエージェントを、記憶も性格もスキルもそのままに接続（OpenClaw Gateway 経由）。チームが知っている「いつものあの子」が、そのまま会議室に入ってくる。だから Meetmate は一台ごとに個性が違います。（Gateway がなくても、任意の OpenAI 互換エンドポイントで動きます — 素の LLM+組み込みペルソナのシンプル構成。詳細は [LLM providers](https://github.com/caty-ai/meetmate/blob/main/docs/TECHNICAL.md#llm-providers)）
 - **その場で頼めます。** 「今の議論まとめてチャンネルに投稿しといて」——重い作業は自動でバックグラウンドのセッションに委譲されるので、エージェントは会話に残ったままタスクが進みます。
 - **「普通にできる」が製品です。** プッシュトゥトーク不要、特別なコマンド不要、気まずい沈黙もなし。同僚に話しかけるのと同じように話す——それが当たり前に感じられることこそ、磨いた部分です。
-- **会議はどこでも、サーバーもどこでも。** 会議側は Google Meet と Zoom、サーバー側は Windows / macOS / Linux。設定ファイルと API キーを用意して、コマンド1発（アバター画像はお好みで差し替え可能）。
+- **会議はどこでも、サーバーもどこでも。** 会議側は Google Meet・Zoom・Discord のボイスチャンネル、サーバー側は Windows / macOS / Linux。設定ファイルと API キーを用意して、コマンド1発（アバター画像はお好みで差し替え可能）。
 
 ## 画面はこんな感じ
 
@@ -106,6 +106,7 @@ Meetmate: [warm] 変更点は2つです——年間割引が15%になったの�
 |---|---|
 | Google Meet | メインの対応パス。まずはここから。 |
 | Zoom | 自分がホスト/管理する会議では現状動作します。外部主催の Zoom 会議・OBF・管理された OAuth 設定への対応はまだ想定しないでください。 |
+| Discord のボイスチャンネル | この初回リリースでは**自分が管理するサーバーのみ**。公式 Bot API（discord.js）を使用 — Attendee もトンネルも不要（bot が外向きに接続します）。ギルドの allowlist は fail-closed（空の場合は全ての参加を拒否）、intents/permissions は最小構成が前提です。参加時は音声キャプチャの前に必ず自己アナウンスします。退出はダッシュボードのボタンから行ってください — Discord 上の音声退出コマンドは現在検証中です([#139](https://github.com/caty-ai/meetmate/issues/139))。バージイン(話しかぶせによる割り込み停止)は、このリリースでは Discord 経路には含まれません。セットアップ: [セットアップガイドの Discord bot セクション](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#discord-ボット音声チャンネル参加)。 |
 | サーバー OS と自動起動 | Windows（WSL2 経由）・macOS・Linux でサーバーを動かせます。常駐サービスの登録はインストーラ1本: `scripts/install-service.sh` が macOS では launchd、Linux/WSL2 では systemd user unit を設定します（WSL2 は `/etc/wsl.conf` に `systemd=true` が必要。ngrok は WSL2 の中で動かすか、`server.ngrokDomain` を明示してください）。詳細: [セットアップガイド — 常駐サービス](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#常駐サービス自動起動)。 |
 | MCP と音声ブレイン | Meetmate の MCP サーバーは `join` / `leave` / `status` のコントロールプレーンです。音声ブレインは別物で、あなたの本物のエージェントは OpenClaw または別の OpenAI 互換ゲートウェイの裏側で動き、会議で話します。 |
 
@@ -116,7 +117,8 @@ Meetmate: [warm] 変更点は2つです——年間割引が15%になったの�
 | 項目 | 目的 | 設定名 | 必要なタイミング | 備考 |
 |---|---|---|---|---|
 | [Node.js](https://nodejs.org/) 26+ | サーバーを実行 | `node`, `npm` | 常に | 必須。 |
-| [Attendee](https://attendee.dev/) アカウント + API キー | 会議ボットの参加/退出 + 音声入出力 | `ATTENDEE_API_KEY` | 常に | ホスティングサービス。現在の無料/有料プランの提供状況を確認してください。 |
+| [Attendee](https://attendee.dev/) アカウント + API キー | 会議ボットの参加/退出 + 音声入出力 | `ATTENDEE_API_KEY` | Meet / Zoom | ホスティングサービス。現在の無料/有料プランの提供状況を確認してください。Discord 経路では未使用。 |
+| Discord bot token | ボイスチャンネル用 bot の識別情報 | `discord_bot_token`(設定 UI、マスク表示) / `DISCORD_BOT_TOKEN` | Discord | [Developer Portal](https://discord.com/developers/applications) で最小限の intents/permissions で bot を作成してください。bot のアバターもここで設定します。[セットアップガイド](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#discord-ボット音声チャンネル参加)。 |
 | [Soniox](https://console.soniox.com/) アカウント + API キー | デフォルトの音声認識 | `STT_PROVIDER=soniox`, `SONIOX_API_KEY` | 通常 | デフォルトの経路。料金・トライアル条件は変わることがあります。 |
 | [Deepgram](https://console.deepgram.com/signup) アカウント + API キー | 代替の音声認識（任意） | `STT_PROVIDER=deepgram`, `DEEPGRAM_API_KEY` | 任意 | Soniox から切り替える場合のみ。 |
 | [Fish Audio](https://fish.audio/) アカウント + ボイス | 既定の音声合成 | `TTS_PROVIDER=fish-audio`, `FISH_AUDIO_API_KEY`, `FISH_AUDIO_VOICE_ID` | 既定 | 既存設定は変更なしでこのプロバイダーを使い続けます。 |
