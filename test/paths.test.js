@@ -718,7 +718,7 @@ test("T12-05 bootstrap PUT materializes registry defaults and captured .env clas
   assert.equal(response.body.includes("bootstrap-seed-key"), false);
 });
 
-test("T12-06 gate connection tests are implemented while Slack and Discord remain exact value-free 501s", async (t) => {
+test("T12-06 gate connection tests keep Slack at 501 while Discord follows the implemented probe path", async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-settings-optional-tests-"));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const configPath = path.join(directory, "config.json");
@@ -727,26 +727,27 @@ test("T12-06 gate connection tests are implemented while Slack and Discord remai
   resetRuntimeForTest();
   initializeRuntime({ state, startup: settingsStartup({ configPath, resolvedHome: directory }), serverPort: 5005 });
   const handler = createSettingsHandler({ port: 5005 });
-  for (const provider of ["deepgram", "attendee", "llm", "tunnel"]) {
+  for (const provider of ["deepgram", "attendee", "llm", "tunnel", "discord"]) {
     const response = settingsResponse();
     await handler(settingsRequest("POST", `/api/settings/connections/${provider}/test`, {
       host: "localhost:5005", origin: "http://localhost:5005", "sec-fetch-site": "same-origin", "content-type": "application/json",
     }, JSON.stringify({ revision: state.revision })), response);
     assert.equal(response.status, 200, `${provider}: ${response.body}`);
-    assert.equal(JSON.parse(response.body).code, "NOT_CONFIGURED");
+    const { durationMs, ...body } = JSON.parse(response.body);
+    assert.equal(Number.isInteger(durationMs) && durationMs >= 0, true, `${provider}: durationMs=${durationMs}`);
+    assert.deepEqual(body, {
+      ok: false, provider, code: "NOT_CONFIGURED", message: "Connection is not configured",
+    });
   }
-  for (const [method, url, headers, body] of ["slack", "discord"].map((provider) => [
-    "POST", `/api/settings/connections/${provider}/test`, { "content-type": "application/json" }, JSON.stringify({ revision: state.revision }),
-  ])) {
-    const response = settingsResponse();
-    await handler(settingsRequest(method, url, {
-      host: "localhost:5005",
-      ...(method === "GET" ? {} : { origin: "http://localhost:5005", "sec-fetch-site": "same-origin" }),
-      ...headers,
-    }, body), response);
-    assert.equal(response.status, 501, `${method} ${url}: ${response.body}`);
-    assert.equal(JSON.parse(response.body).error.code, "TEST_NOT_IMPLEMENTED");
-  }
+  const response = settingsResponse();
+  await handler(settingsRequest("POST", "/api/settings/connections/slack/test", {
+    host: "localhost:5005",
+    origin: "http://localhost:5005",
+    "sec-fetch-site": "same-origin",
+    "content-type": "application/json",
+  }, JSON.stringify({ revision: state.revision })), response);
+  assert.equal(response.status, 501, response.body);
+  assert.equal(JSON.parse(response.body).error.code, "TEST_NOT_IMPLEMENTED");
 });
 
 test("T12-19 Appendix A cardinality is 15 Epic rows and 23 child rows", () => {

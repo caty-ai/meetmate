@@ -515,7 +515,9 @@ function resolvePipelineCapabilities(capabilities) {
 function isAcceptedAudioMeta(meta) {
   if (meta === undefined) return true;
   const speaker = meta && typeof meta === "object" ? meta.speaker : null;
-  return typeof speaker?.id === "string" && speaker.id.length > 0 && typeof speaker.isBot === "boolean";
+  return (typeof speaker?.id === "string" || typeof speaker?.id === "number")
+    && String(speaker.id).length > 0
+    && typeof speaker.isBot === "boolean";
 }
 
 const MAX_ATTRIBUTED_STT = 4;
@@ -524,9 +526,11 @@ const MIXED_STT_WINDOW_MS = 20;
 
 function cloneSpeakerMeta(speaker) {
   if (!speaker || typeof speaker !== "object") return null;
+  const speakerId = String(speaker.id ?? "");
+  if (!speakerId) return null;
   const cloned = {
     platform: speaker.platform,
-    id: speaker.id,
+    id: speakerId,
     isBot: speaker.isBot,
   };
   if (typeof speaker.displayName === "string" && speaker.displayName.length > 0) {
@@ -546,7 +550,7 @@ function cloneSpeakerMeta(speaker) {
  * @param {"meet"|"zoom"|"discord"} [options.transport] - Canonical transport literal for sessionUser names
  * @param {{ chat?: boolean, perSpeakerAudio?: boolean, avatarStream?: boolean, supportsFlush?: boolean, echoesOwnOutput?: boolean }} [options.capabilities]
  * @param {boolean} [options.suppressGreeting] - Skip pipeline-owned greeting while preserving default-agent switch side effects
- * @returns {{ sendAudio(buf: Buffer, meta?: { speaker?: { platform: string, id: string, displayName?: string, isBot: boolean } }): void, close(): void }}
+ * @returns {{ sendAudio(buf: Buffer, meta?: { speaker?: { platform: string, id: string, displayName?: string, isBot: boolean } }): void, releaseSpeaker(speakerId: string): boolean, close(): void }}
  */
 function createPipeline(session, turnState, onAudio, config, options = {}) {
   const pipelineTimers = options.timers || globalThis;
@@ -1902,7 +1906,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       lastArrivalSeq: ++slotArrivalSeq,
       closed: false,
     };
-    speakerSlots.set(slot.speaker.id, slot);
+    speakerSlots.set(String(slot.speaker.id), slot);
     attachSttListeners(slot.stt, () => cloneSpeakerMeta(slot.speaker), slot);
     return slot;
   }
@@ -3132,6 +3136,18 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         return;
       }
       routeAttributedAudio(buffer, meta.speaker);
+    },
+    releaseSpeaker(speakerId) {
+      if (!perSpeakerAudioEnabled) return false;
+      try {
+        const slot = speakerSlots.get(String(speakerId));
+        const current = currentSlotFor(slot);
+        if (!current) return false;
+        closeSpeakerSlot(current);
+        return true;
+      } catch {
+        return false;
+      }
     },
     close() {
       stopped = true;

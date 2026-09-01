@@ -39,6 +39,18 @@
           <p class="card-sub" id="launchSub">カレンダーや Slack の招待文をそのまま貼り付けてください</p>
 
           <form id="joinForm">
+            <div class="join-option">
+              <span class="field-label">参加先 / Transport</span>
+              <label>
+                <input type="radio" name="joinTransport" value="meet" checked>
+                Meet/Zoom URL
+              </label>
+              <label>
+                <input type="radio" name="joinTransport" value="discord">
+                Discord
+              </label>
+            </div>
+
             <label class="field-label" for="meetingText">会議情報を貼り付け</label>
             <textarea
               id="meetingText"
@@ -52,6 +64,32 @@
               <div class="field-status" id="meetingUrlStatus">貼り付け待機中...</div>
             </div>
             <span class="field-hint" id="agentInfoDisplay">Google Meet / Zoom の URL を自動検出します</span>
+
+            <div class="join-option is-hidden" id="discordJoinFields">
+              <label class="field-label" for="discordGuildId">Discord サーバー ID</label>
+              <input
+                id="discordGuildId"
+                type="text"
+                inputmode="numeric"
+                autocomplete="off"
+                placeholder="例）12345678901234567"
+              >
+              <label class="field-label" for="discordChannelId">Discord チャンネル ID</label>
+              <input
+                id="discordChannelId"
+                type="text"
+                inputmode="numeric"
+                autocomplete="off"
+                placeholder="例）23456789012345678"
+              >
+              <div class="field-status-wrap">
+                <div class="field-status" id="discordTargetStatus">入力待機中...</div>
+              </div>
+              <div class="field-status-wrap">
+                <div class="field-status" id="discordConnectionStatus">Discord 接続状態: 未確認</div>
+              </div>
+              <span class="field-hint">Discord 参加はローカルアクセス時のみ利用できます。</span>
+            </div>
 
             <div class="join-option">
               <label class="field-label" for="avatarExperiment">アバター表示</label>

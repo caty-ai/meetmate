@@ -141,6 +141,7 @@ function createDiscordSessionManager(options = {}) {
   }
 
   function getStatus() {
+    const startedAt = active?.startedAt || active?.session?.startedAt || null;
     return {
       ok: true,
       transport: TRANSPORT,
@@ -150,6 +151,8 @@ function createDiscordSessionManager(options = {}) {
             sessionId: active.id,
             state: active.lifecycle.state,
             lifecycle: active.lifecycle.state,
+            startedAt,
+            connectionReady: Boolean(active.connectionReady),
           }
         : null,
     };
@@ -282,6 +285,9 @@ function createDiscordSessionManager(options = {}) {
 
       if (left && oldUserId && oldState.member.user.bot !== true && session.audioIn) {
         session.audioIn.unsubscribeUser(String(oldUserId));
+        if (typeof session.pipeline?.releaseSpeaker === "function") {
+          session.pipeline.releaseSpeaker(String(oldUserId));
+        }
       }
     });
   }
@@ -469,16 +475,18 @@ function createDiscordSessionManager(options = {}) {
     let sessionRecord = null;
     let client;
     try {
+      const startedAt = new Date(now()).toISOString();
       sessionRecord = {
         id: sessionId,
+        startedAt,
         lease,
         guildId,
         channelId,
         allowlist,
         session: {
           id: sessionId,
-          createdAt: new Date(now()).toISOString(),
-          startedAt: new Date(now()).toISOString(),
+          createdAt: startedAt,
+          startedAt,
           meetingUrl: `discord://${guildId}/${channelId}`,
           config: {
             prompt: pipelineConfig.systemPrompt || null,

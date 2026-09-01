@@ -275,6 +275,45 @@ test("stt mux evicts only on utterance_end for the current LRU slot, preserves s
   });
 });
 
+test("stt mux releaseSpeaker closes a departed speaker slot, normalizes ids, and admits a new speaker immediately at cap", { concurrency: false }, async () => {
+  await withMuxHarness(async ({ pipeline, sttInstances }) => {
+    const chunk = pcmWindow(500);
+    pipeline.sendAudio(chunk, { speaker: speaker("a") });
+    pipeline.sendAudio(chunk, { speaker: speaker(202, "202") });
+    pipeline.sendAudio(chunk, { speaker: speaker("c") });
+    pipeline.sendAudio(chunk, { speaker: speaker("d") });
+    const [, , slotB] = sttInstances;
+
+    assert.equal(pipeline.releaseSpeaker("202"), true);
+    assert.equal(slotB.closeCalls, 1);
+    assert.deepEqual(pipeline._test.getSttMuxState().slots, ["a", "c", "d"]);
+
+    pipeline.sendAudio(chunk, { speaker: speaker("e") });
+
+    assert.equal(sttInstances.length, 6);
+    assert.equal(sttInstances[0].sent.length, 0);
+    assert.deepEqual(pipeline._test.getSttMuxState().slots, ["a", "c", "d", "e"]);
+  });
+});
+
+test("stt mux releaseSpeaker is a safe no-op for unknown and stale speaker ids", { concurrency: false }, async () => {
+  await withMuxHarness(async ({ pipeline, sttInstances }) => {
+    const chunk = pcmWindow(500);
+    pipeline.sendAudio(chunk, { speaker: speaker("a") });
+    const [, slotA] = sttInstances;
+
+    assert.equal(pipeline.releaseSpeaker("missing"), false);
+    assert.equal(slotA.closeCalls, 0);
+
+    assert.equal(pipeline.releaseSpeaker("a"), true);
+    assert.equal(slotA.closeCalls, 1);
+    assert.deepEqual(pipeline._test.getSttMuxState().slots, []);
+
+    assert.equal(pipeline.releaseSpeaker("a"), false);
+    assert.equal(slotA.closeCalls, 1);
+  });
+});
+
 test("queued late finals from an evicted slot are skipped by the shared utterance chain", { concurrency: false }, async () => {
   let releaseFirstTurn = null;
   const firstTurnGate = new Promise((resolve) => {
@@ -312,6 +351,31 @@ test("queued late finals from an evicted slot are skipped by the shared utteranc
       yield "通常応答です。";
     },
   });
+});
+
+test("stt mux releaseSpeaker drops late finals from a closed vendor stream without resurrecting slots", { concurrency: false }, async () => {
+  const unhandled = [];
+  const onUnhandled = (error) => unhandled.push(error);
+  process.on("unhandledRejection", onUnhandled);
+  try {
+    await withMuxHarness(async ({ pipeline, sttInstances, llmCalls, session }) => {
+      const chunk = pcmWindow(650);
+      pipeline.sendAudio(chunk, { speaker: speaker("a", "Alice") });
+      const [, slotA] = sttInstances;
+
+      assert.equal(pipeline.releaseSpeaker("a"), true);
+      slotA.emit("transcript", "遅いfinal", true, 0.99);
+      slotA.emit("utterance_end", "ケイティ、遅い依頼");
+      await delay(20);
+
+      assert.deepEqual(unhandled, []);
+      assert.equal(llmCalls.length, 0);
+      assert.deepEqual(pipeline._test.getSttMuxState().slots, []);
+      assert.equal(session.conversationLog.some((entry) => String(entry.content).includes("遅い依頼")), false);
+    });
+  } finally {
+    process.off("unhandledRejection", onUnhandled);
+  }
 });
 
 test("distinct speaker finals serialize through the shared utterance chain one at a time", { concurrency: false }, async () => {
@@ -423,6 +487,7 @@ test("perSpeakerAudio false ignores speaker metadata and never creates slots", {
 
     pipeline.sendAudio(chunk, { speaker: speaker("a") });
     pipeline.sendAudio(chunk);
+    assert.equal(pipeline.releaseSpeaker("a"), false);
 
     assert.equal(sttInstances.length, 1);
     assert.deepEqual(sttInstances[0].sent, [chunk, chunk]);
