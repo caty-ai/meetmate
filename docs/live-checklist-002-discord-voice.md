@@ -41,7 +41,8 @@ Create a 0700 work dir and start the server with stdout run through a timestampi
 WORKDIR=$(mktemp -d)            # 0700 by default; keep logs out of world-readable /tmp
 cd <gateway home>
 set -a; . ./.env; set +a        # load token/env silently — never echo values
-printf 'Authorization: Bot %s\n' "$DISCORD_TOKEN" > "$WORKDIR/auth.hdr"; chmod 600 "$WORKDIR/auth.hdr"
+printf 'Authorization: Bot %s\n' "$DISCORD_BOT_TOKEN" > "$WORKDIR/auth.hdr"; chmod 600 "$WORKDIR/auth.hdr"
+# DISCORD_BOT_TOKEN = the product envAlias (src/settings/registry.js:173)
 npm start 2>&1 | perl -e '$|=1; use Time::HiRes qw(time); while (<STDIN>) { printf "[%.3f] %s", time, $_ }' | tee "$WORKDIR/live.log"
 ```
 
@@ -118,7 +119,8 @@ it. Pair each trial's anchors by the quoted transcript text, not by adjacency.
 Hypothesis from #115: per-user clean audio makes end-of-utterance detection fire earlier than in
 Meet, so the ack lands while the human is still talking (threshold itself is the frozen Meet value).
 
-Procedure: two blocks of ≥5 wake exchanges using **deliberately long wake utterances** (2+ clauses,
+Procedure: two blocks of **6 wake exchanges each** (trial 1 discarded per the carve-out below →
+5 scored trials per block) using **deliberately long wake utterances** (2+ clauses,
 e.g. 「アルファ、今日の予定を整理したいんだけど、まず午前の分から教えて」):
 
 - Block A: launch default (`ENABLE_IMMEDIATE_ACK` unset → ON). Same session as Check 2 is fine.
