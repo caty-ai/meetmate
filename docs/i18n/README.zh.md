@@ -8,7 +8,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/caty-ai/meetmate/blob/main/LICENSE)
 [![npm](https://img.shields.io/npm/v/meetmate?logo=npm&label=npm)](https://www.npmjs.com/package/meetmate)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D26-blue?logo=node.js&logoColor=white)](https://nodejs.org/)
-[![Meetings](https://img.shields.io/badge/works%20in-Google%20Meet%20%7C%20Zoom-blue)](#它能做什么)
+[![Meetings](https://img.shields.io/badge/works%20in-Google%20Meet%20%7C%20Zoom%20%7C%20Discord-blue)](#它能做什么)
 [![Server](https://img.shields.io/badge/runs%20on-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](#快速上手)
 
 <picture>
@@ -16,13 +16,13 @@
   <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/hero-light.svg" alt="Meetmate —— 你的 AI 智能体作为一名真正的参会者,坐在会议网格中" width="100%">
 </picture>
 
-**把你的 AI 智能体带进 Google Meet 和 Zoom —— 作为一名真正能开口说话的参会者。**
+**把你的 AI 智能体带进 Google Meet、Zoom 和 Discord 语音频道 —— 作为一名真正能开口说话的参会者。**
 
 Meetmate 只做一件事:给*你的* AI 智能体在会议里留一个座位。它以有头像、有声音的参会者身份加入——你叫它的名字,它会回应;你交代事情,它会办妥。我们刻意把范围收得这么小,然后把这一件事打磨到极致。
 
 ## 快速上手
 
-**你需要准备:** [Node.js](https://nodejs.org/) ≥ 26 · [Attendee](https://attendee.dev/) 账号 · 用于语音转文字的 [Soniox](https://soniox.com/)(或 [Deepgram](https://deepgram.com/)) · 一个 TTS 服务商（[Fish Audio](https://fish.audio/)、ElevenLabs 或 OpenAI 兼容服务） · 一个 LLM 端点([OpenClaw Gateway](https://openclaw.ai/) 或任意 OpenAI 兼容端点) · 通常还需要 [ngrok](https://ngrok.com/) 或 [Tailscale](https://tailscale.com/) · 另外 Google Meet 会要求你批准机器人加入。第三方服务可能需要付费。
+**你需要准备:** [Node.js](https://nodejs.org/) ≥ 26 · [Attendee](https://attendee.dev/) 账号（Meet/Zoom 用）*或* [Discord bot token](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#discord-ボット音声チャンネル参加)（Discord —— 不需要 Attendee，也不需要隧道） · 用于语音转文字的 [Soniox](https://soniox.com/)(或 [Deepgram](https://deepgram.com/)) · 一个 TTS 服务商（[Fish Audio](https://fish.audio/)、ElevenLabs 或 OpenAI 兼容服务） · 一个 LLM 端点([OpenClaw Gateway](https://openclaw.ai/) 或任意 OpenAI 兼容端点) · 通常还需要 [ngrok](https://ngrok.com/) 或 [Tailscale](https://tailscale.com/)（用于 Meet/Zoom） · 另外 Google Meet 会要求你批准机器人加入。第三方服务可能需要付费。
 
 在一个空文件夹中:
 
@@ -32,15 +32,15 @@ npx meetmate init     # 向导会收集你的 API 密钥、语音 ID 和 LLM 端
 npx meetmate start    # 启动服务器并打印设置界面 URL
 ```
 
-打开打印出来的 URL——这是设置界面,还不是仪表盘。如果还有必填项为空(或者你完全跳过了 `init`——服务器仍会启动,只是进入设置模式),你会看到一条「セットアップ中」（即“设置中”）横幅,提示缺少什么;填好后点击「変更を保存」（即“保存更改”）,再重启。有一个例外无法在浏览器里填写:LLM 连接值（网关 URL/Token,或 OpenAI 兼容密钥）只能来自环境变量——`init` 向导会替你写进 `.env`;如果你跳过了 `init`,请自行把它们加到 `.env`。加载完成后,打开同一主机的 `/` 进入仪表盘,粘贴 Meet 或 Zoom 链接,点击 **Join**（[界面预览见这里](#界面长什么样)）。在 Meet 中批准机器人的“Ask to join”请求——然后叫它的唤醒词,开始说话。ngrok/Tailscale 和 Meet 的入会批准步骤仍需手动完成;向导结束时的提示和[安装指南](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md)会带你走完这些步骤。
+打开打印出来的 URL——这是设置界面,还不是仪表盘。如果还有必填项为空(或者你完全跳过了 `init`——服务器仍会启动,只是进入设置模式),你会看到一条「セットアップ中」（即“设置中”）横幅,提示缺少什么;填好后点击「変更を保存」（即“保存更改”）,再重启。有一个例外无法在浏览器里填写:LLM 连接值（网关 URL/Token,或 OpenAI 兼容密钥）只能来自环境变量——`init` 向导会替你写进 `.env`;如果你跳过了 `init`,请自行把它们加到 `.env`。加载完成后,打开同一主机的 `/` 进入仪表盘,粘贴 Meet 或 Zoom 链接,点击 **Join**（[界面预览见这里](#界面长什么样)）。在 Meet 中批准机器人的“Ask to join”请求——然后叫它的唤醒词,开始说话。(对 Discord 来说没有 URL:在同一个仪表盘上选择 Discord transport,输入服务器 ID 和语音频道 ID 即可——先创建机器人的步骤见[安装指南的 Discord 小节](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#discord-ボット音声チャンネル参加)。)ngrok/Tailscale 和 Meet 的入会批准步骤仍需手动完成;向导结束时的提示和[安装指南](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md)会带你走完这些步骤。
 
 ## 它能做什么
 
-- **它是参会者,不是会议纪要机器人。** 你的智能体带着自己的头像出现在参会者网格里,听会场讨论,开口说话——支持唤醒词检测和插话打断(你直接盖过它说话,它就会乖乖停下来)。
+- **它是参会者,不是会议纪要机器人。** 你的智能体带着自己的头像出现在参会者网格里,听会场讨论,开口说话——支持唤醒词检测和插话打断(你直接盖过它说话,它就会乖乖停下来；插话打断仅限 Meet/Zoom——不适用于 Discord 路径)。
 - **它是“你的”智能体。** 通过 OpenClaw Gateway,接入你已经在用的那个智能体——连同它的记忆、性格和技能。团队熟悉的那个“老搭档”,就这样走进会议室,所以没有两个 Meetmate 说话是一个味儿的。(没有 Gateway?任何 OpenAI 兼容端点也能用,作为更简单的基线:普通 LLM + 内置人设——见 [LLM providers](https://github.com/caty-ai/meetmate/blob/main/docs/TECHNICAL.md#llm-providers)。)
 - **当场就能派活。** “把刚才讨论的结论总结一下,发到频道里。”重活会自动委派给后台会话,所以智能体一边继续参与对话,任务一边推进。
 - **“平平无奇”正是卖点。** 不用按键发言,没有特殊命令,没有尴尬的沉默。你像跟同事说话一样跟它说话——这种“没什么特别”的感觉,本身就是产品。
-- **在哪开会都行,在哪运行都行。** 会议侧支持 Google Meet 和 Zoom;服务器侧支持 Windows、macOS 和 Linux。一份配置、几个 API 密钥、一条命令——头像图片想换就换。
+- **在哪开会都行,在哪运行都行。** 会议侧支持 Google Meet、Zoom 和 Discord 语音频道;服务器侧支持 Windows、macOS 和 Linux。一份配置、几个 API 密钥、一条命令——头像图片想换就换。
 
 ## 界面长什么样
 
@@ -106,6 +106,7 @@ Meetmate: [warm] 有两处变化——年度折扣改成了 15%，还新增了�
 |---|---|
 | Google Meet | 主路径。请从这里开始。 |
 | Zoom | 目前适用于你自己主持/管理的会议。暂不要假设支持外部主办的 Zoom 会议、OBF,或托管式 OAuth 设置。 |
+| Discord 语音频道 | 本次首发版本**仅支持你自己管理的服务器**。使用官方 Bot API(discord.js)——不需要 Attendee，也不需要隧道；机器人主动向外连接。服务器（guild）白名单为 fail-closed（为空时拒绝所有加入请求），intents/permissions 按最小化设计，机器人在采集任何音频之前都会先自我宣告。退出请使用仪表盘按钮——Discord 上的语音退出指令仍在验证中([#139](https://github.com/caty-ai/meetmate/issues/139))。本版本中 barge-in（打断）功能不适用于 Discord 路径。Discord 路径目前要求使用 Fish Audio TTS。*（发布前注记：服务器端设置接线将在 [#142](https://github.com/caty-ai/meetmate/issues/142) 中完成——发布以 #142 为前提；在其合并之前，生产启动无法加入。）* 安装：[安装指南的 Discord 机器人小节](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#discord-ボット音声チャンネル参加)。 |
 | 服务器操作系统与自启动 | Windows(通过 WSL2)、macOS 和 Linux 都能运行服务器。常驻服务只需一个安装脚本:`scripts/install-service.sh` 在 macOS 上配置 launchd,在 Linux/WSL2 上配置 systemd user unit(WSL2 需要在 `/etc/wsl.conf` 中设置 `systemd=true`;ngrok 请在 WSL2 内运行,或显式设置 `server.ngrokDomain`)。详情:[安装指南 — 常驻服务](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#常駐サービス自動起動)。 |
 | MCP 与语音大脑 | Meetmate 的 MCP 服务器是 `join` / `leave` / `status` 的控制平面。语音大脑是独立的:你真正的智能体运行在 OpenClaw 或另一个 OpenAI 兼容网关背后,并在会议中开口说话。 |
 
@@ -116,7 +117,8 @@ Meetmate: [warm] 有两处变化——年度折扣改成了 15%，还新增了�
 | 项目 | 用途 | 设置名称 | 何时需要 | 备注 |
 |---|---|---|---|---|
 | [Node.js](https://nodejs.org/) 26+ | 运行服务器 | `node`, `npm` | 始终 | 必需。 |
-| [Attendee](https://attendee.dev/) 账号 + API 密钥 | 会议机器人加入/离开 + 音频收发 | `ATTENDEE_API_KEY` | 始终 | 托管服务;请确认当前的免费/付费可用情况。 |
+| [Attendee](https://attendee.dev/) 账号 + API 密钥 | 会议机器人加入/离开 + 音频收发 | `ATTENDEE_API_KEY` | Meet / Zoom | 托管服务;请确认当前的免费/付费可用情况。Discord 路径不使用此项。 |
+| Discord bot token | 语音频道机器人身份 | `discord_bot_token`(设置界面，掩码显示) / `DISCORD_BOT_TOKEN` | Discord | 在 [Developer Portal](https://discord.com/developers/applications) 中以最小化的 intents/permissions 创建机器人；机器人的头像也在这里设置。[安装指南](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#discord-ボット音声チャンネル参加)。 |
 | [Soniox](https://console.soniox.com/) 账号 + API 密钥 | 默认语音转文字 | `STT_PROVIDER=soniox`, `SONIOX_API_KEY` | 通常 | 默认路径。价格/试用条款可能变化。 |
 | [Deepgram](https://console.deepgram.com/signup) 账号 + API 密钥 | 可选的替代语音转文字 | `STT_PROVIDER=deepgram`, `DEEPGRAM_API_KEY` | 可选 | 仅在你切换出 Soniox 时需要。 |
 | [Fish Audio](https://fish.audio/) 账号 + 语音 | 默认文字转语音 | `TTS_PROVIDER=fish-audio`, `FISH_AUDIO_API_KEY`, `FISH_AUDIO_VOICE_ID` | 默认 | 现有配置无需修改，仍会使用此服务商。 |
