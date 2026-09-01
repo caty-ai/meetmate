@@ -297,8 +297,6 @@ Meetmate は Google Meet / Zoom に加えて、**Discord の音声チャンネ�
 
 ### 参加する・退出する
 
-> ⚠️ **現時点の注意（[#142](https://github.com/caty-ai/meetmate/issues/142)）**: server 側の設定配線が未接続のため、現行ブランチの本番起動からの Discord join は必ず 503（`DISCORD_SETUP_REQUIRED`）を返す。リリースは #142 の完了が条件で、この注意書きは #142 のレーンで撤去される。
-
 - ダッシュボード（`/`）で transport に **Discord** を選び、**guild ID と voice channel ID** を入力して **Join**。参加すると Bot は**最初に必ず入室アナウンス**を行い、アナウンス完了までは音声のキャプチャを開始しない。
 - **TTS プロバイダの制約**: Discord 経路は現時点で **Fish Audio 前提**（他プロバイダ選択時は join が 503 になる）。TTS 出力レートも 24000 / 48000 Hz のみ対応。
 - 退出は **Leave ボタン（`POST /api/discord/leave`）が確実な経路**。音声での退出コマンドの Discord 対応は現在確認中（[#139](https://github.com/caty-ai/meetmate/issues/139)）。

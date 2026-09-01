@@ -61,7 +61,14 @@ async function bootstrap() {
   try {
     adapterRegistry.register(createDiscordAdapter({
       writePlainResponse: meetRoutes.writePlainResponse,
-      getDiscordConfig: () => null,
+      getDiscordConfig: () => {
+        const token = getEffectiveValue("discord_bot_token");
+        if (!token) return null;
+        return {
+          token,
+          guildAllowlist: getEffectiveValue("discord_guild_allowlist") || [],
+        };
+      },
     }));
   } catch (error) {
     console.warn(`Discord adapter bootstrap skipped: ${error.message}`);

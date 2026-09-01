@@ -106,7 +106,7 @@ Meetmate: [warm] 有两处变化——年度折扣改成了 15%，还新增了�
 |---|---|
 | Google Meet | 主路径。请从这里开始。 |
 | Zoom | 目前适用于你自己主持/管理的会议。暂不要假设支持外部主办的 Zoom 会议、OBF,或托管式 OAuth 设置。 |
-| Discord 语音频道 | 本次首发版本**仅支持你自己管理的服务器**。使用官方 Bot API(discord.js)——不需要 Attendee，也不需要隧道；机器人主动向外连接。服务器（guild）白名单为 fail-closed（为空时拒绝所有加入请求），intents/permissions 按最小化设计，机器人在采集任何音频之前都会先自我宣告。退出请使用仪表盘按钮——Discord 上的语音退出指令仍在验证中([#139](https://github.com/caty-ai/meetmate/issues/139))。本版本中 barge-in（打断）功能不适用于 Discord 路径。Discord 路径目前要求使用 Fish Audio TTS。*（发布前注记：服务器端设置接线将在 [#142](https://github.com/caty-ai/meetmate/issues/142) 中完成——发布以 #142 为前提；在其合并之前，生产启动无法加入。）* 安装：[安装指南的 Discord 机器人小节](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#discord-ボット音声チャンネル参加)。 |
+| Discord 语音频道 | 本次首发版本**仅支持你自己管理的服务器**。使用官方 Bot API(discord.js)——不需要 Attendee，也不需要隧道；机器人主动向外连接。服务器（guild）白名单为 fail-closed（为空时拒绝所有加入请求），intents/permissions 按最小化设计，机器人在采集任何音频之前都会先自我宣告。退出请使用仪表盘按钮——Discord 上的语音退出指令仍在验证中([#139](https://github.com/caty-ai/meetmate/issues/139))。本版本中 barge-in（打断）功能不适用于 Discord 路径。Discord 路径目前要求使用 Fish Audio TTS。 安装：[安装指南的 Discord 机器人小节](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#discord-ボット音声チャンネル参加)。 |
 | 服务器操作系统与自启动 | Windows(通过 WSL2)、macOS 和 Linux 都能运行服务器。常驻服务只需一个安装脚本:`scripts/install-service.sh` 在 macOS 上配置 launchd,在 Linux/WSL2 上配置 systemd user unit(WSL2 需要在 `/etc/wsl.conf` 中设置 `systemd=true`;ngrok 请在 WSL2 内运行,或显式设置 `server.ngrokDomain`)。详情:[安装指南 — 常驻服务](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#常駐サービス自動起動)。 |
 | MCP 与语音大脑 | Meetmate 的 MCP 服务器是 `join` / `leave` / `status` 的控制平面。语音大脑是独立的:你真正的智能体运行在 OpenClaw 或另一个 OpenAI 兼容网关背后,并在会议中开口说话。 |
 
