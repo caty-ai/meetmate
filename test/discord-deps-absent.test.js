@@ -77,7 +77,7 @@ test("discord join refuses missing optional runtime dependencies before acquire"
     const result = await manager.join({ guildId: GUILD_ID, channelId: CHANNEL_ID });
     assert.equal(result.status, 503, scenario.name);
     assert.equal(result.body.code, "DISCORD_DEPENDENCY_MISSING", scenario.name);
-    assert.match(result.body.message, /Cannot find module/, scenario.name);
+    assert.equal(result.body.message, "Discord voice libraries are not installed; see the server log", scenario.name);
     assert.equal(acquireCalls, 0, scenario.name);
     assert.equal(releaseCalls, 0, scenario.name);
   }

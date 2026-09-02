@@ -554,7 +554,7 @@ test("discord announce rejects an error before a sufficient-duration Idle transi
 
   const result = await harness.manager.join({ guildId: GUILD_ID, channelId: CHANNEL_ID });
   assert.equal(result.status, 502);
-  assert.equal(result.body.message, "Discord announce failed: player_error");
+  assert.equal(result.body.message, "Discord join failed; see the server log");
   assert.equal(harness.coordinatorState.releaseCalls, 1);
   assert.equal(harness.createdPipelines.length, 0);
   assert.equal(harness.player.listenerCount("stateChange"), 0);
@@ -963,10 +963,11 @@ test("discord join failure responses and operator log never carry the configured
     assert.equal(result.body.code, "DISCORD_JOIN_FAILED");
     const serialized = JSON.stringify(result.body);
     assert.equal(serialized.includes(token), false, serialized);
-    assert.match(result.body.message, /vendor rejected token=\[REDACTED\]/);
+    assert.equal(result.body.message, "Discord join failed; see the server log");
     const joinLogs = errors.filter((line) => line.includes("Discord join failed"));
     assert.equal(joinLogs.length, 1, JSON.stringify(errors));
     assert.equal(joinLogs[0].includes(token), false, joinLogs[0]);
+    assert.match(joinLogs[0], /vendor rejected token=\[REDACTED\] \(Authorization: Bot \[REDACTED\]\)/);
     assert.equal(harness.coordinatorState.releaseCalls, 1);
   } finally {
     console.error = originalConsoleError;
@@ -985,6 +986,10 @@ test("scrubJoinErrorMessage strips the secret and generic token pairs without to
   assert.equal(scrubJoinErrorMessage("Authorization: Bot fallback-secret", ""), "Authorization: Bot [REDACTED]");
   assert.equal(scrubJoinErrorMessage("authorization=Bearer abc.def", ""), "authorization=Bearer [REDACTED]");
   assert.equal(scrubJoinErrorMessage("429 identify", ""), "429 identify");
+  // bare scheme credentials and JSON-quoted pairs
+  assert.equal(scrubJoinErrorMessage("Bearer fallback-secret", ""), "Bearer [REDACTED]");
+  assert.equal(scrubJoinErrorMessage("rejected Bot zzz) now", ""), "rejected Bot [REDACTED]) now");
+  assert.equal(scrubJoinErrorMessage('{"token":"abc123","authorization":"Bearer x.y"}', ""), '{"token":"[REDACTED]","authorization":"[REDACTED]"}');
 });
 
 test("discord join failure scrubs a short configured token and scheme-prefixed credentials", async () => {
@@ -999,11 +1004,30 @@ test("discord join failure scrubs a short configured token and scheme-prefixed c
     });
     const result = await harness.manager.join({ guildId: GUILD_ID, channelId: CHANNEL_ID });
     assert.equal(result.status, 502);
-    assert.equal(result.body.message, "vendor rejected [REDACTED] (Authorization: Bot [REDACTED])");
+    assert.equal(result.body.message, "Discord join failed; see the server log");
     const joinLogs = errors.filter((line) => line.includes("Discord join failed"));
     assert.equal(joinLogs.length, 1);
+    assert.match(joinLogs[0], /vendor rejected \[REDACTED\] \(Authorization: Bot \[REDACTED\]\)/);
     assert.equal(joinLogs[0].includes("fallback-secret"), false, joinLogs[0]);
     assert.equal(/\babc\b/.test(joinLogs[0]), false, joinLogs[0]);
+  } finally {
+    console.error = originalConsoleError;
+  }
+});
+
+test("discord join failure bodies are fixed per code and never carry vendor text", async () => {
+  const { JOIN_FAILURE_MESSAGES } = require("../src/transport-discord/discord-session");
+  const originalConsoleError = console.error;
+  console.error = () => {};
+  try {
+    const harness = createHarness({
+      discordConfig: { token: "cfg-secret", guildAllowlist: [GUILD_ID] },
+      loginError: new Error("Bearer fallback-secret"),
+    });
+    const result = await harness.manager.join({ guildId: GUILD_ID, channelId: CHANNEL_ID });
+    assert.equal(result.status, 502);
+    assert.deepEqual(result.body, { ok: false, code: "DISCORD_JOIN_FAILED", message: JOIN_FAILURE_MESSAGES.DISCORD_JOIN_FAILED });
+    assert.equal(JSON.stringify(result.body).includes("fallback-secret"), false);
   } finally {
     console.error = originalConsoleError;
   }
