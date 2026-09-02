@@ -28,6 +28,14 @@ function emitVendorPlayback(player, { duration = 900, error = null, idle = true 
   });
 }
 
+async function waitFor(predicate, message, attempts = 50) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (predicate()) return;
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.fail(message);
+}
+
 function createHarness(overrides = {}) {
   let manager = null;
   const phaseStates = [];
@@ -369,6 +377,58 @@ test("discord sessions relay generic pipeline audio, post summaries on terminal 
 
   const source = fs.readFileSync(path.join(__dirname, "..", "src", "transport-discord", "discord-session.js"), "utf8");
   assert.equal(source.includes("sendLcmIngest"), false);
+});
+
+test("discord exit_requested ends the active voice session through the leave teardown path", async () => {
+  const harness = createHarness();
+  const joined = await harness.manager.join({ guildId: GUILD_ID, channelId: CHANNEL_ID });
+  assert.equal(joined.status, 200);
+
+  const session = harness.manager._test.getActiveSession();
+  session.session.conversationLog.push({ role: "user", content: "さようなら" });
+  harness.createdPipelines[0].emit("exit_requested", {
+    sessionId: joined.body.sessionId,
+    trigger: "voice_command",
+    text: "さようなら",
+  });
+
+  await waitFor(
+    () => harness.manager._test.getActiveSession() === null
+      && harness.notifierCalls.some((item) => item.type === "summary"),
+    "exit_requested did not complete Discord session teardown"
+  );
+  assert.equal(session.lifecycle.state, "completed");
+  assert.equal(session.lifecycle.isTerminal, true);
+  assert.equal(harness.connection.destroyCalls, 1);
+  assert.equal(harness.createdPipelines[0].closeCalls, 1);
+  assert.equal(harness.audioInSubscriptions.at(-1), "closed");
+  assert.equal(harness.notifierCalls.some((item) => item.type === "summary"), true);
+
+  const leftAgain = await harness.manager.leave();
+  assert.equal(leftAgain.status, 404);
+  assert.equal(leftAgain.body.code, "DISCORD_SESSION_NOT_FOUND");
+});
+
+test("discord ignores exit_requested from an already-left stale pipeline", async () => {
+  const harness = createHarness();
+  assert.equal((await harness.manager.join({ guildId: GUILD_ID, channelId: CHANNEL_ID })).status, 200);
+  const stalePipeline = harness.createdPipelines[0];
+  assert.equal((await harness.manager.leave()).status, 200);
+
+  assert.equal((await harness.manager.join({ guildId: GUILD_ID, channelId: CHANNEL_ID })).status, 200);
+  const currentSession = harness.manager._test.getActiveSession();
+  const destroyCalls = harness.connection.destroyCalls;
+  assert.doesNotThrow(() => {
+    stalePipeline.emit("exit_requested", { trigger: "voice_command" });
+    stalePipeline.emit("exit_requested", { trigger: "voice_command" });
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(harness.manager._test.getActiveSession(), currentSession);
+  assert.equal(harness.connection.destroyCalls, destroyCalls);
+  assert.equal(harness.createdPipelines[1].closeCalls, 0);
+  assert.equal(harness.coordinatorState.releaseCalls, 1);
+  await harness.manager.leave();
 });
 
 test("discord join failure modes after acquire release the lease and avoid pipeline startup", async () => {
