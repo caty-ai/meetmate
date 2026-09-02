@@ -100,6 +100,7 @@ function createAudioIn(options = {}) {
   const codec = codecLoader();
   const createDecoder = options.createDecoder || (() => codec.createDecoder());
   const subscribeStream = options.subscribeStream || createSubscriptionFactory(options.loadVoiceModule);
+  const releaseSpeaker = options.releaseSpeaker;
   const subscriptions = new Map();
   const states = new Map();
   let closed = false;
@@ -135,7 +136,7 @@ function createAudioIn(options = {}) {
         console.warn(`Discord Opus decode failed for user ${userId}; dropping packet: ${error.message || error}`);
       }
       if (state.consecutiveDecodeFailures >= MAX_CONSECUTIVE_DECODE_FAILURES) {
-        unsubscribeUser(userId);
+        retireUser(userId);
       }
       return;
     }
@@ -154,6 +155,17 @@ function createAudioIn(options = {}) {
     }
   }
 
+  function retireUser(userId) {
+    const wasTracked = subscriptions.has(userId) || states.has(userId);
+    unsubscribeUser(userId);
+    if (!wasTracked || typeof releaseSpeaker !== "function") return;
+    try {
+      releaseSpeaker(String(userId));
+    } catch {
+      // Pipeline speaker cleanup is best-effort.
+    }
+  }
+
   function subscribeUser(receiver, speaker) {
     if (closed) return null;
     if (!receiver || !speaker || !speaker.id || speaker.isBot === true) return null;
@@ -167,7 +179,7 @@ function createAudioIn(options = {}) {
         console.error(`Discord audio receive failed for user ${speaker.id}: ${error.message || error}`);
       }
     };
-    const onClose = () => unsubscribeUser(speaker.id);
+    const onClose = () => retireUser(speaker.id);
     stream.on("data", onData);
     stream.once("close", onClose);
     stream.once("error", onClose);

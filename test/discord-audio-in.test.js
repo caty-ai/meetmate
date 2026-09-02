@@ -201,8 +201,12 @@ test("audio-in keeps duplicate subscriptions stable and retires only after five 
   stream.destroyCalls = 0;
   stream.destroy = () => { stream.destroyCalls += 1; };
   let subscribeCalls = 0;
+  const releasedSpeakers = [];
   const audioIn = createAudioIn({
     sendAudio() {},
+    releaseSpeaker(userId) {
+      releasedSpeakers.push(userId);
+    },
     subscribeStream() {
       subscribeCalls += 1;
       return stream;
@@ -221,19 +225,156 @@ test("audio-in keeps duplicate subscriptions stable and retires only after five 
       };
     },
   });
-  const speaker = { id: "speaker-1", displayName: "Speaker", isBot: false };
+  const speaker = { id: 202, displayName: "Speaker", isBot: false };
 
   assert.equal(audioIn.subscribeUser({}, speaker), stream);
   assert.equal(audioIn.subscribeUser({}, speaker), stream);
   assert.equal(subscribeCalls, 1);
 
   for (let index = 0; index < 4; index += 1) stream.emit("data", Buffer.from([0]));
-  assert.deepEqual(audioIn._test.getTrackedUserIds(), ["speaker-1"]);
+  assert.deepEqual(audioIn._test.getTrackedUserIds(), [202]);
+  assert.deepEqual(releasedSpeakers, []);
   stream.emit("data", Buffer.from([1]));
+  assert.deepEqual(releasedSpeakers, []);
   for (let index = 0; index < 4; index += 1) stream.emit("data", Buffer.from([0]));
-  assert.deepEqual(audioIn._test.getTrackedUserIds(), ["speaker-1"]);
+  assert.deepEqual(audioIn._test.getTrackedUserIds(), [202]);
+  assert.deepEqual(releasedSpeakers, []);
 
   stream.emit("data", Buffer.from([0]));
   assert.deepEqual(audioIn._test.getTrackedUserIds(), []);
   assert.equal(stream.destroyCalls, 1);
+  assert.deepEqual(releasedSpeakers, ["202"]);
+});
+
+test("audio-in stream error and close retire a speaker only once", () => {
+  const stream = new EventEmitter();
+  stream.destroy = () => {};
+  const releasedSpeakers = [];
+  const audioIn = createAudioIn({
+    sendAudio() {},
+    releaseSpeaker(userId) {
+      releasedSpeakers.push(userId);
+    },
+    subscribeStream() {
+      return stream;
+    },
+    codecLoader() {
+      return {
+        implementation: "stream-retire",
+        createDecoder() {
+          return { decode: () => Buffer.alloc(3840) };
+        },
+      };
+    },
+  });
+
+  audioIn.subscribeUser({}, { id: "speaker-1", displayName: "Speaker", isBot: false });
+  stream.emit("error", new Error("receive failed"));
+  stream.emit("close");
+
+  assert.deepEqual(audioIn._test.getTrackedUserIds(), []);
+  assert.deepEqual(releasedSpeakers, ["speaker-1"]);
+});
+
+test("audio-in explicit unsubscribe and close do not release pipeline speakers", () => {
+  const streams = new Map();
+  const releasedSpeakers = [];
+  const audioIn = createAudioIn({
+    sendAudio() {},
+    releaseSpeaker(userId) {
+      releasedSpeakers.push(userId);
+    },
+    subscribeStream(_receiver, userId) {
+      const stream = new EventEmitter();
+      stream.destroy = () => {};
+      streams.set(userId, stream);
+      return stream;
+    },
+    codecLoader() {
+      return {
+        implementation: "explicit-cleanup",
+        createDecoder() {
+          return { decode: () => Buffer.alloc(3840) };
+        },
+      };
+    },
+  });
+
+  audioIn.subscribeUser({}, { id: "speaker-1", displayName: "One", isBot: false });
+  audioIn.subscribeUser({}, { id: "speaker-2", displayName: "Two", isBot: false });
+  audioIn.unsubscribeUser("speaker-1");
+  audioIn.close();
+
+  assert.equal(streams.size, 2);
+  assert.deepEqual(releasedSpeakers, []);
+});
+
+test("audio-in decode retirement keeps working without a releaseSpeaker option", () => {
+  const stream = new EventEmitter();
+  stream.destroyCalls = 0;
+  stream.destroy = () => { stream.destroyCalls += 1; };
+  const audioIn = createAudioIn({
+    sendAudio() {},
+    subscribeStream() {
+      return stream;
+    },
+    codecLoader() {
+      return {
+        implementation: "no-release-hook",
+        createDecoder() {
+          return {
+            decode() {
+              throw new Error("bad opus");
+            },
+          };
+        },
+      };
+    },
+  });
+
+  audioIn.subscribeUser({}, { id: "speaker-1", displayName: "Speaker", isBot: false });
+  assert.doesNotThrow(() => {
+    for (let index = 0; index < 5; index += 1) stream.emit("data", Buffer.from([0]));
+  });
+
+  assert.deepEqual(audioIn._test.getTrackedUserIds(), []);
+  assert.equal(stream.destroyCalls, 1);
+});
+
+test("audio-in contains releaseSpeaker failures and continues receiving other users", () => {
+  const streams = new Map();
+  const audioIn = createAudioIn({
+    sendAudio() {},
+    releaseSpeaker() {
+      throw new Error("pipeline cleanup failed");
+    },
+    subscribeStream(_receiver, userId) {
+      const stream = new EventEmitter();
+      stream.destroy = () => {};
+      streams.set(userId, stream);
+      return stream;
+    },
+    codecLoader() {
+      return {
+        implementation: "throwing-release-hook",
+        createDecoder() {
+          return {
+            decode(packet) {
+              if (packet[0] === 0) throw new Error("bad opus");
+              return Buffer.alloc(3840);
+            },
+          };
+        },
+      };
+    },
+  });
+
+  audioIn.subscribeUser({}, { id: "speaker-1", displayName: "One", isBot: false });
+  assert.doesNotThrow(() => {
+    for (let index = 0; index < 5; index += 1) streams.get("speaker-1").emit("data", Buffer.from([0]));
+  });
+
+  const nextStream = audioIn.subscribeUser({}, { id: "speaker-2", displayName: "Two", isBot: false });
+  assert.equal(nextStream, streams.get("speaker-2"));
+  assert.deepEqual(audioIn._test.getTrackedUserIds(), ["speaker-2"]);
 });
