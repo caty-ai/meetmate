@@ -619,6 +619,9 @@ function createDiscordSessionManager(options = {}) {
       gatewayTracker.trackGatewaySession(sessionRecord.session, profile, TRANSPORT);
       sessionRecord.audioIn = createAudioInImpl({
         sendAudio: sessionRecord.pipeline.sendAudio.bind(sessionRecord.pipeline),
+        releaseSpeaker: typeof sessionRecord.pipeline.releaseSpeaker === "function"
+          ? sessionRecord.pipeline.releaseSpeaker.bind(sessionRecord.pipeline)
+          : undefined,
         loadVoiceModule: () => voice,
       });
       subscribeExistingHumans(sessionRecord);

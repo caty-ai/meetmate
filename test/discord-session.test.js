@@ -333,6 +333,54 @@ test("discord join succeeds only after announce, then creates pipeline with supp
   ]);
 });
 
+test("join wires the pipeline releaseSpeaker into audio-in (feature-detected)", async () => {
+  const audioInOptions = [];
+  const stubAudioIn = () => ({ subscribeUser() {}, unsubscribeUser() {}, close() {} });
+
+  const legacy = createHarness({
+    createAudioIn: (options) => {
+      audioInOptions.push({ kind: "legacy", options });
+      return stubAudioIn();
+    },
+  });
+  assert.equal((await legacy.manager.join({ guildId: GUILD_ID, channelId: CHANNEL_ID })).status, 200);
+  assert.equal(audioInOptions[0].options.releaseSpeaker, undefined);
+
+  const releaseCalls = [];
+  let wiredPipeline;
+  const wired = createHarness({
+    createAudioIn: (options) => {
+      audioInOptions.push({ kind: "wired", options });
+      return stubAudioIn();
+    },
+    createPipeline: (session, turnState, onAudio, config, options) => {
+      const pipeline = new EventEmitter();
+      Object.assign(pipeline, {
+        session,
+        turnState,
+        config,
+        options,
+        closeCalls: 0,
+        sendAudio() {},
+        close() { pipeline.closeCalls += 1; },
+      });
+      pipeline.releaseSpeaker = function releaseSpeaker(id) {
+        releaseCalls.push({ self: this, id });
+        return true;
+      };
+      wiredPipeline = pipeline;
+      return pipeline;
+    },
+  });
+  assert.equal((await wired.manager.join({ guildId: GUILD_ID, channelId: CHANNEL_ID })).status, 200);
+  const wiredOptions = audioInOptions.find((entry) => entry.kind === "wired").options;
+  assert.equal(typeof wiredOptions.releaseSpeaker, "function");
+  assert.equal(wiredOptions.releaseSpeaker("42"), true);
+  assert.equal(releaseCalls.length, 1);
+  assert.equal(releaseCalls[0].id, "42");
+  assert.equal(releaseCalls[0].self, wiredPipeline);
+});
+
 test("discord sessions relay generic pipeline audio, post summaries on terminal leave, and never import LCM ingest", async () => {
   const summaryCalls = [];
   const harness = createHarness({
