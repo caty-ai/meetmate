@@ -27,8 +27,11 @@ const { createAudioOut } = require("./audio-out");
 // together with any `token=` / `authorization:` pair, before it leaves this module.
 function scrubJoinErrorMessage(message, secret) {
   let text = String(message ?? "");
-  if (typeof secret === "string" && secret.length >= 8) text = text.split(secret).join("[REDACTED]");
-  return text.replace(/((?:token|authorization)\s*[:=]\s*)[^\s,}]+/gi, "$1[REDACTED]");
+  // The settings schema accepts any non-empty string as the class-1 token, so there is no length
+  // floor here: a short configured secret is still scrubbed (over-redaction is the safe direction).
+  if (typeof secret === "string" && secret.length > 0) text = text.split(secret).join("[REDACTED]");
+  // Generic credential pairs, including scheme-prefixed forms (`Authorization: Bot <x>`, `Bearer <x>`).
+  return text.replace(/((?:token|authorization)\s*[:=]\s*(?:(?:bot|bearer|basic)\s+)?)[^\s,})]+/gi, "$1[REDACTED]");
 }
 
 function createDiscordClientFactory(loadDiscordModule = () => require("discord.js")) {

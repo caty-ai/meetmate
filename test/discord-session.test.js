@@ -979,4 +979,32 @@ test("scrubJoinErrorMessage strips the secret and generic token pairs without to
   assert.equal(scrubJoinErrorMessage("bad dsc-secret-x here", "dsc-secret-x"), "bad [REDACTED] here");
   assert.equal(scrubJoinErrorMessage("token: abc.def.ghi", ""), "token: [REDACTED]");
   assert.equal(scrubJoinErrorMessage(undefined, "x"), "");
+  // no length floor: a short configured secret is still scrubbed
+  assert.equal(scrubJoinErrorMessage("vendor rejected abc", "abc"), "vendor rejected [REDACTED]");
+  // scheme-prefixed credential pairs lose the credential, not just the scheme word
+  assert.equal(scrubJoinErrorMessage("Authorization: Bot fallback-secret", ""), "Authorization: Bot [REDACTED]");
+  assert.equal(scrubJoinErrorMessage("authorization=Bearer abc.def", ""), "authorization=Bearer [REDACTED]");
+  assert.equal(scrubJoinErrorMessage("429 identify", ""), "429 identify");
+});
+
+test("discord join failure scrubs a short configured token and scheme-prefixed credentials", async () => {
+  const token = "abc";
+  const originalConsoleError = console.error;
+  const errors = [];
+  console.error = (...args) => errors.push(args.map(String).join(" "));
+  try {
+    const harness = createHarness({
+      discordConfig: { token, guildAllowlist: [GUILD_ID] },
+      loginError: new Error("vendor rejected abc (Authorization: Bot fallback-secret)"),
+    });
+    const result = await harness.manager.join({ guildId: GUILD_ID, channelId: CHANNEL_ID });
+    assert.equal(result.status, 502);
+    assert.equal(result.body.message, "vendor rejected [REDACTED] (Authorization: Bot [REDACTED])");
+    const joinLogs = errors.filter((line) => line.includes("Discord join failed"));
+    assert.equal(joinLogs.length, 1);
+    assert.equal(joinLogs[0].includes("fallback-secret"), false, joinLogs[0]);
+    assert.equal(/\babc\b/.test(joinLogs[0]), false, joinLogs[0]);
+  } finally {
+    console.error = originalConsoleError;
+  }
 });
