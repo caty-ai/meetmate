@@ -244,15 +244,25 @@ test("a failed probe replaces runtime success while runtime failures remain stic
   assert.equal(controller.getReadiness().blockers.some((entry) => entry.system === "soniox"), true);
 });
 
-test("Slack-only setup issues keep blockers empty while readiness honestly reports setup required", () => {
+test("Slack-only issues stay diagnostic while meeting-required static issues gate without blockers", () => {
   const withSlackIssue = document();
   withSlackIssue.slack.notifications.enabled = true;
   initialize(withSlackIssue);
   const controller = readiness.createReadinessController();
-  assert.equal(resolver.getStatus().issues.some((issue) => issue.fieldId === "slack_bot_token"), true);
+  const slackStatus = resolver.getStatus();
+  assert.equal(slackStatus.issues.some((issue) => issue.fieldId === "slack_bot_token"), true);
+  assert.equal(slackStatus.meetingIssues.some((issue) => issue.fieldId === "slack_bot_token"), false);
   for (const system of controller.gateSystems()) {
     controller.setProbeObservation(system, { ok: true, code: "CONNECTED" });
   }
+  assert.equal(controller.getReadiness().ready, true);
+  assert.equal(controller.getReadiness().setupRequired, false);
+  assert.deepEqual(controller.getReadiness().blockers, []);
+
+  const withMeetingIssue = document();
+  delete withMeetingIssue.agent.displayName;
+  initialize(withMeetingIssue);
+  assert.equal(resolver.getStatus().meetingIssues.some((issue) => issue.fieldId === "agent_display_name"), true);
   assert.equal(controller.getReadiness().ready, false);
   assert.equal(controller.getReadiness().setupRequired, true);
   assert.deepEqual(controller.getReadiness().blockers, []);

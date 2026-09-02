@@ -51,7 +51,12 @@ function initialize(options = {}) {
       revision: "a".repeat(64),
       fingerprint: "a".repeat(64),
       parsed: {
-        agent: { id: "caty", name: "Caty", displayName: "Caty", wakeWords: ["ケイティ"] },
+        agent: {
+          id: "caty",
+          name: "Caty",
+          ...(options.missingDisplayName ? {} : { displayName: "Caty" }),
+          wakeWords: ["ケイティ"],
+        },
         llm: { provider: "openclaw", model: "main" },
         stt: { provider: "soniox", sonioxApiKey: "soniox-secret" },
         tts: { provider: "fish-audio", apiKey: "fish-secret", voiceId: "voice-id" },
@@ -96,6 +101,36 @@ async function invoke(routes, method, url, form, address, headers) {
   await routes.handleHttp(request(method, url, form, address, headers), res);
   try { output.body = JSON.parse(output.text); } catch { output.body = null; }
   return output;
+}
+
+async function initializeConnectedRoutes(t, options = {}) {
+  initialize(options);
+  readiness.reset();
+  for (const system of readiness.gateSystems()) {
+    readiness.setProbeObservation(system, { ok: true, code: "CONNECTED" });
+  }
+
+  const previousJoinToken = process.env.JOIN_SHARED_TOKEN;
+  process.env.JOIN_SHARED_TOKEN = "join-secret";
+  delete require.cache[routesPath];
+  const routes = require(routesPath);
+  await routes.init({
+    detectNgrok: false,
+    loadAvatar: false,
+    readinessProbeOptions: {
+      fetchFn: unavailableFetch,
+      requestFn: unavailableRequest,
+      httpGet: unavailableNgrokHttpGet,
+    },
+  });
+  t.after(() => {
+    delete require.cache[routesPath];
+    if (previousJoinToken === undefined) delete process.env.JOIN_SHARED_TOKEN;
+    else process.env["JOIN_SHARED_TOKEN"] = previousJoinToken;
+    readiness.reset();
+    resolver.resetRuntimeForTest();
+  });
+  return routes;
 }
 
 async function withCountingReadinessRoutes(options, run) {
@@ -183,27 +218,7 @@ test("public recheck cannot probe a stale billing cache", { concurrency: false }
 });
 
 test("readiness payload reports setupRequired without turning legacy setup issues into blockers", { concurrency: false }, async (t) => {
-  initialize({ slackEnabled: true });
-  readiness.reset();
-  for (const system of readiness.gateSystems()) {
-    readiness.setProbeObservation(system, { ok: true, code: "CONNECTED" });
-  }
-  delete require.cache[routesPath];
-  const routes = require(routesPath);
-  await routes.init({
-    detectNgrok: false,
-    loadAvatar: false,
-    readinessProbeOptions: {
-      fetchFn: unavailableFetch,
-      requestFn: unavailableRequest,
-      httpGet: unavailableNgrokHttpGet,
-    },
-  });
-  t.after(() => {
-    delete require.cache[routesPath];
-    readiness.reset();
-    resolver.resetRuntimeForTest();
-  });
+  const routes = await initializeConnectedRoutes(t, { missingDisplayName: true });
 
   const setupRequired = await invoke(routes, "GET", "/readiness");
   assert.equal(setupRequired.status, 200);
@@ -211,11 +226,79 @@ test("readiness payload reports setupRequired without turning legacy setup issue
   assert.equal(setupRequired.body.setupRequired, true);
   assert.deepEqual(setupRequired.body.blockers, []);
 
+  initialize({ slackEnabled: true });
+  const slackOnly = await invoke(routes, "GET", "/readiness");
+  assert.equal(slackOnly.body.ready, true);
+  assert.equal(slackOnly.body.setupRequired, false);
+  assert.deepEqual(slackOnly.body.blockers, []);
+
   initialize();
   const complete = await invoke(routes, "GET", "/readiness");
   assert.equal(complete.body.ready, true);
   assert.equal(complete.body.setupRequired, false);
   assert.deepEqual(complete.body.blockers, []);
+});
+
+test("Slack-only setup issues never gate joining or mark readiness setupRequired", { concurrency: false }, async (t) => {
+  const routes = await initializeConnectedRoutes(t, { slackEnabled: true });
+  const status = resolver.getStatus();
+  assert.equal(status.setupMode, true);
+  assert.equal(status.meetingReady, true);
+  assert.deepEqual(status.issues, [{ fieldId: "slack_bot_token", code: "VALUE_REQUIRED" }]);
+  assert.deepEqual(status.meetingIssues, []);
+
+  const readinessResponse = await invoke(routes, "GET", "/readiness");
+  assert.equal(readinessResponse.status, 200);
+  assert.equal(readinessResponse.body.setupRequired, false);
+  assert.deepEqual(readinessResponse.body.blockers, []);
+
+  const join = await invoke(routes, "POST", "/join-meeting", {
+    meetingUrl: "https://example.com/not-a-meeting",
+    wsUrl: "wss://meetmate.example/realtime",
+    joinToken: "join-secret",
+  }, undefined, { "x-join-token": "join-secret" });
+  assert.equal(join.status, 400);
+});
+
+test("meeting setup gate reports only meeting-required issues", { concurrency: false }, async (t) => {
+  const routes = await initializeConnectedRoutes(t, { missingDisplayName: true, slackEnabled: true });
+
+  const join = await invoke(routes, "POST", "/join-meeting", {
+    meetingUrl: "https://meet.google.com/abc-defg-hij",
+    wsUrl: "wss://meetmate.example/realtime",
+    joinToken: "join-secret",
+  }, undefined, { "x-join-token": "join-secret" });
+  assert.equal(join.status, 503);
+  assert.deepEqual(join.headers, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "no-store",
+  });
+  assert.deepEqual(join.body, {
+    error: {
+      code: "MEETING_SETUP_REQUIRED",
+      message: "Meeting setup is incomplete",
+      issues: [{ fieldId: "agent_display_name", code: "VALUE_REQUIRED" }],
+    },
+  });
+
+  const readinessResponse = await invoke(routes, "GET", "/readiness");
+  assert.equal(readinessResponse.status, 200);
+  assert.equal(readinessResponse.body.setupRequired, true);
+});
+
+test("join authorization returns 401 before the meeting setup gate", { concurrency: false }, async (t) => {
+  const routes = await initializeConnectedRoutes(t, { missingDisplayName: true, slackEnabled: true });
+  const form = {
+    meetingUrl: "https://meet.google.com/abc-defg-hij",
+    wsUrl: "wss://meetmate.example/realtime",
+  };
+
+  const unauthorized = await invoke(routes, "POST", "/join-meeting", form, undefined, { "x-join-token": "wrong" });
+  assert.equal(unauthorized.status, 401);
+
+  const setupRequired = await invoke(routes, "POST", "/join-meeting", form, undefined, { "x-join-token": "join-secret" });
+  assert.equal(setupRequired.status, 503);
+  assert.equal(setupRequired.body.error.code, "MEETING_SETUP_REQUIRED");
 });
 
 test("join revalidation probes stale non-billing systems but never stale billing systems", { concurrency: false }, async () => {

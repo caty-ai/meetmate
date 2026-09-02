@@ -391,10 +391,21 @@ function getBootstrapSeedFields() {
     .map((entry) => [entry.id, clone(seeded[entry.id])]));
 }
 
+function isMeetingIssue(issue) {
+  const entry = REGISTRY_BY_ID[issue.fieldId];
+  return !(entry && String(entry.path || "").startsWith("slack."));
+}
+
 function getStatus() {
   const runtime = ensureRuntime();
   const issues = buildIssues(runtime);
-  return { setupMode: issues.length > 0, meetingReady: issues.length === 0, issues: clone(issues) };
+  const meetingIssues = issues.filter(isMeetingIssue);
+  return {
+    setupMode: issues.length > 0,
+    meetingReady: meetingIssues.length === 0,
+    issues: clone(issues),
+    meetingIssues: clone(meetingIssues),
+  };
 }
 
 function buildEnvelope() {
