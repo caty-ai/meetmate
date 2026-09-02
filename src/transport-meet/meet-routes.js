@@ -1143,16 +1143,16 @@ async function handleHttp(req, res) {
   if (req.method === "POST" && url.pathname === "/join-meeting") {
     let localAvatarSession = null;
     try {
-      const status = getStatus();
-      if (!status.meetingReady) {
-        res.writeHead(503, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
-        res.end(JSON.stringify({ error: { code: "MEETING_SETUP_REQUIRED", message: "Meeting setup is incomplete", issues: status.issues } }));
-        return;
-      }
       const formData = await parseRequestBody(req);
       const hasExternalToken = req.headers["x-join-token"];
       if (hasExternalToken && !checkJoinAuthorization(req, formData)) {
         writePlainResponse(res, 401, "Unauthorized: invalid join token");
+        return;
+      }
+      const status = getStatus();
+      if (!status.meetingReady) {
+        res.writeHead(503, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+        res.end(JSON.stringify({ error: { code: "MEETING_SETUP_REQUIRED", message: "Meeting setup is incomplete", issues: status.meetingIssues } }));
         return;
       }
 
