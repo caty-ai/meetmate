@@ -552,7 +552,7 @@
     {
       "name": "OPENCLAW_WORKSPACE",
       "references": [
-        "src/transport-meet/meet-routes.js:573"
+        "src/transport-meet/meet-routes.js:584"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -610,8 +610,8 @@
     {
       "name": "PUBLIC_WSS_URL",
       "references": [
-        "src/transport-meet/meet-routes.js:986",
-        "src/transport-meet/meet-routes.js:987"
+        "src/transport-meet/meet-routes.js:997",
+        "src/transport-meet/meet-routes.js:998"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
