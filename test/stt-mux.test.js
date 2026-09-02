@@ -5,6 +5,8 @@ const assert = require("node:assert/strict");
 const path = require("node:path");
 const { EventEmitter } = require("node:events");
 
+const { createAudioIn } = require("../src/transport-discord/audio-in");
+
 function cacheEntry(filename, exports) {
   return { id: filename, filename, loaded: true, exports, children: [], paths: [] };
 }
@@ -312,6 +314,70 @@ test("stt mux releaseSpeaker is a safe no-op for unknown and stale speaker ids",
     assert.equal(pipeline.releaseSpeaker("a"), false);
     assert.equal(slotA.closeCalls, 1);
   });
+});
+
+test("discord audio-in decode retirement releases its mux slot and avoids the permanent cap wedge", { concurrency: false }, async () => {
+  async function runScenario(withReleaseHook) {
+    await withMuxHarness(async ({ pipeline, sttInstances }) => {
+      const streams = new Map();
+      const audioIn = createAudioIn({
+        sendAudio: pipeline.sendAudio.bind(pipeline),
+        ...(withReleaseHook ? { releaseSpeaker: pipeline.releaseSpeaker.bind(pipeline) } : {}),
+        subscribeStream(_receiver, userId) {
+          const stream = new EventEmitter();
+          stream.destroy = () => {};
+          streams.set(userId, stream);
+          return stream;
+        },
+        codecLoader() {
+          return {
+            implementation: "mux-decode-retire",
+            createDecoder() {
+              return {
+                decode(packet) {
+                  if (packet[0] === 0) throw new Error("bad opus");
+                  return Buffer.alloc(3840);
+                },
+              };
+            },
+          };
+        },
+      });
+
+      for (const id of ["a", "b", "c", "d"]) {
+        audioIn.subscribeUser({}, speaker(id));
+        streams.get(id).emit("data", Buffer.from([1]));
+      }
+      const [, slotA] = sttInstances;
+      assert.equal(sttInstances.length, 5);
+      assert.deepEqual(pipeline._test.getSttMuxState().slots, ["a", "b", "c", "d"]);
+
+      for (let index = 0; index < 5; index += 1) {
+        streams.get("a").emit("data", Buffer.from([0]));
+      }
+
+      audioIn.subscribeUser({}, speaker("e"));
+      streams.get("e").emit("data", Buffer.from([1]));
+      await delay(35);
+
+      if (withReleaseHook) {
+        assert.equal(slotA.closeCalls, 1);
+        assert.equal(sttInstances.length, 6);
+        assert.deepEqual(pipeline._test.getSttMuxState().slots, ["b", "c", "d", "e"]);
+        assert.equal(sttInstances[0].sent.length, 0);
+      } else {
+        assert.equal(slotA.closeCalls, 0);
+        assert.equal(sttInstances.length, 5);
+        assert.deepEqual(pipeline._test.getSttMuxState().slots, ["a", "b", "c", "d"]);
+        assert.ok(sttInstances[0].sent.length > 0, "wedged cap degrades the new speaker to the mixed stream");
+      }
+
+      audioIn.close();
+    });
+  }
+
+  await runScenario(false);
+  await runScenario(true);
 });
 
 test("queued late finals from an evicted slot are skipped by the shared utterance chain", { concurrency: false }, async () => {
