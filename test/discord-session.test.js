@@ -947,3 +947,36 @@ test("discord post-acquire throw sites all release the lease and leave no active
     assert.equal(harness.manager._test.getActiveSession(), null, scenario.name);
   }
 });
+
+test("discord join failure responses and operator log never carry the configured bot token", async () => {
+  const token = "dsc-sentinel-41";
+  const originalConsoleError = console.error;
+  const errors = [];
+  console.error = (...args) => errors.push(args.map(String).join(" "));
+  try {
+    const harness = createHarness({
+      discordConfig: { token, guildAllowlist: [GUILD_ID] },
+      loginError: new Error(`vendor rejected token=${token} (Authorization: Bot ${token})`),
+    });
+    const result = await harness.manager.join({ guildId: GUILD_ID, channelId: CHANNEL_ID });
+    assert.equal(result.status, 502);
+    assert.equal(result.body.code, "DISCORD_JOIN_FAILED");
+    const serialized = JSON.stringify(result.body);
+    assert.equal(serialized.includes(token), false, serialized);
+    assert.match(result.body.message, /vendor rejected token=\[REDACTED\]/);
+    const joinLogs = errors.filter((line) => line.includes("Discord join failed"));
+    assert.equal(joinLogs.length, 1, JSON.stringify(errors));
+    assert.equal(joinLogs[0].includes(token), false, joinLogs[0]);
+    assert.equal(harness.coordinatorState.releaseCalls, 1);
+  } finally {
+    console.error = originalConsoleError;
+  }
+});
+
+test("scrubJoinErrorMessage strips the secret and generic token pairs without touching other text", () => {
+  const { scrubJoinErrorMessage } = require("../src/transport-discord/discord-session");
+  assert.equal(scrubJoinErrorMessage("429 identify", "dsc-secret-x"), "429 identify");
+  assert.equal(scrubJoinErrorMessage("bad dsc-secret-x here", "dsc-secret-x"), "bad [REDACTED] here");
+  assert.equal(scrubJoinErrorMessage("token: abc.def.ghi", ""), "token: [REDACTED]");
+  assert.equal(scrubJoinErrorMessage(undefined, "x"), "");
+});

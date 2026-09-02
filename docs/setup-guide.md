@@ -265,7 +265,7 @@ tailscale serve --https=443 http://127.0.0.1:<port>
 
 > **プレビュー（ライブ検証前）** — この章の Discord 経路は、実サーバーでのライブ E2E 検証（[#138](https://github.com/caty-ai/meetmate/issues/138)）より先に出荷している。未確認の項目: 音声の退出コマンドで実機がチャンネルを抜けるか（[#139](https://github.com/caty-ai/meetmate/issues/139)）、複数話者の帰属が画面上で見えるか（[#140](https://github.com/caty-ai/meetmate/issues/140)）。#138 が PASS した時点でこの注記は外す。
 
-Meetmate は Google Meet / Zoom に加えて、**Discord の音声チャンネルに Bot として参加**できる。公式 Bot API（discord.js）を使うので、ヘッドレスブラウザも Attendee も ngrok も不要（Bot 側から Discord へ外向きに接続する）。**第1弾の対象は自分が管理するサーバーのみ** — 公開サーバーでの運用は対象外。
+Meetmate は Google Meet / Zoom に加えて、**Discord の音声チャンネルに Bot として参加**できる。 Discord 用のライブラリ（discord.js / @discordjs/voice と native の Opus・sodium）は `optionalDependencies` として通常の `npm install meetmate` で入る。`--omit=optional` で入れた環境では Discord 経路が `503 DISCORD_DEPENDENCY_MISSING` になる（Meet/Zoom は影響なし）。公式 Bot API（discord.js）を使うので、ヘッドレスブラウザも Attendee も ngrok も不要（Bot 側から Discord へ外向きに接続する）。**第1弾の対象は自分が管理するサーバーのみ** — 公開サーバーでの運用は対象外。
 
 ### Bot を作成する（Developer Portal）
 
@@ -295,6 +295,7 @@ Meetmate は Google Meet / Zoom に加えて、**Discord の音声チャンネ�
 ### 参加を許可するサーバー（guild allowlist）
 
 - 設定 UI の **Discord サーバー許可リスト**（`discord_guild_allowlist`）に、参加を許可するサーバー（guild）の ID を追加する。**空のままだと全ての join を拒否する**（安全側の既定）。
+- 許可リストに ID を入れた時点で「Discord を使う設定」とみなされ、Bot token が空だとダッシュボードの `/health` と全体の readiness が setup mode になる（Meet/Zoom の join 自体は transport 別に判定されるので通る）。Discord をやめるときは許可リストも空に戻す。
 - ID の取得: Discord クライアントの 設定 → 詳細設定 → **開発者モード** を ON → サーバー名/チャンネル名を右クリック → **ID をコピー**。
 
 ### 参加する・退出する
@@ -466,7 +467,7 @@ Legacy connection settings were ignored and must be supplied through the environ
 **接続テスト** タブには Soniox / Deepgram / Fish Audio / ElevenLabs / OpenAI-compatible TTS / Attendee / LLM / Tunnel / Slack / Discord のテストボタンがある。Slack 以外は実装済みで、TTS は選択前でも保存済みの接続情報を個別に確認できる。
 
 - タイムアウト: 5秒
-- 結果表示: `<サービス名>: <コード> — <説明> (<n> ms)`（コードは `CONNECTED` / `NOT_CONFIGURED` / `AUTH_FAILED` / `UNREACHABLE` / `TIMEOUT` / `RATE_LIMITED` / `PROVIDER_ERROR` のいずれか）
+- 結果表示: `<サービス名>: <コード> — <説明> (<n> ms)`（コードは `CONNECTED` / `NOT_CONFIGURED` / `AUTH_FAILED` / `PAYMENT_REQUIRED` / `NOT_ENABLED` / `MISMATCH` / `RESTART_REQUIRED` / `UNREACHABLE` / `TIMEOUT` / `RATE_LIMITED` / `PROVIDER_ERROR` のいずれか。Discord のみ、Bot が許可リストのどのサーバーにも参加していないときに `ALLOWLIST_MISMATCH` が出る）
 - レート制限: 同じサービスに対して1秒に1回まで。連打すると「接続テストの間隔が短すぎます。少し待ってから再試行してください。」と出る
 
 ### Fish Audio プレビュー（試聴）

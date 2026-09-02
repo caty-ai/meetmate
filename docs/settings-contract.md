@@ -383,9 +383,12 @@ type ImportSuccess = SettingsEnvelope & {
 type ConnectionCode = "CONNECTED" | "NOT_CONFIGURED" | "AUTH_FAILED" | "PAYMENT_REQUIRED" |
                       "NOT_ENABLED" | "MISMATCH" | "RESTART_REQUIRED" | "UNREACHABLE" |
                       "TIMEOUT" | "RATE_LIMITED" | "PROVIDER_ERROR" | "ALLOWLIST_MISMATCH";
-// Exactly the key set of the `connectionResult` message map in `src/settings/routes.js`; the same twelve
-// literals are partitioned into the readiness hard/soft sets (`HARD_CODES` / `SOFT_CODES` in
-// `src/settings/readiness.js`) plus `CONNECTED`. A probe may not emit a code outside this union.
+// Exactly the key set of the `connectionResult` message map in `src/settings/routes.js`. Eleven of the
+// twelve literals are partitioned into the readiness hard/soft sets (`HARD_CODES` / `SOFT_CODES` in
+// `src/settings/readiness.js`) plus `CONNECTED`; `ALLOWLIST_MISMATCH` is emitted only by the `discord`
+// connection test (kept verbatim by `probeOne`) and is not a runtime-failure code — `reportRuntimeFailure`
+// would record it as `PROVIDER_ERROR`, which cannot occur because `discord` is not a gate system (#132).
+// A probe may not emit a code outside this union.
 // `RESTART_REQUIRED` is a readiness-blocker code; the manual route forces a fresh probe, so it never
 // appears in a connection-test response.
 ```
@@ -435,9 +438,9 @@ Connection tests perform one minimal provider-specific request with a five-secon
 | `llm` | optional gate | the configured agent/LLM connection (class-2 credentials read from the startup snapshot only, never from the settings store) | yes | #84 |
 | `tunnel` | optional gate | the public origin derived from `server_ngrok_domain`, checking that it answers as this instance (`MISMATCH` otherwise) | yes | #84 |
 | `slack` | optional, non-gate | Slack API with the class-1 token | no — exact `501 TEST_NOT_IMPLEMENTED` | v1 |
-| `discord` | optional gate — required for discord-transport session starts (§7) | Discord API with the class-1 bot token; verifies the bot is a member of at least one allowlisted guild when `discord_guild_allowlist` is non-empty (`ALLOWLIST_MISMATCH` otherwise) | yes | #123 / #132 (EPIC #41) |
+| `discord` | optional, non-gate (excluded from `gateSystems()` by #132; the class-1 bot token is instead a §7 join-time requirement for discord-transport session starts) | Discord API with the class-1 bot token; verifies the bot is a member of at least one allowlisted guild when `discord_guild_allowlist` is non-empty (`ALLOWLIST_MISMATCH` otherwise) | yes | #123 / #132 (EPIC #41) |
 
-"Gate" means the provider is one of the readiness gate systems (`gateSystems()` in `src/settings/readiness.js`: the selected STT provider, the selected TTS provider, `attendee`, `llm`, `tunnel`, and `discord` when Discord is configured); a gate provider that is not selected by the current `stt_provider` / `tts_provider` value still keeps its route and its implemented test. Fish Audio, ElevenLabs, OpenAI-compatible, and `llm` probes may incur vendor billing, so background readiness probing skips them unless billing is allowed; the manual route above always allows it. Until a not-yet-implemented test (`slack` only at this revision) is implemented, its route returns `501` with the standard error envelope and code `TEST_NOT_IMPLEMENTED`, without a vendor request and before revision checking. Once an optional test is implemented, it must use the same five-second, value-free contract and may not regress to `501` silently.
+"Gate" means the provider is one of the readiness gate systems (`gateSystems()` in `src/settings/readiness.js`: the selected STT provider, the selected TTS provider, `attendee`, `llm`, `tunnel` — `discord` is intentionally not a gate system, #132); a gate provider that is not selected by the current `stt_provider` / `tts_provider` value still keeps its route and its implemented test. Fish Audio, ElevenLabs, OpenAI-compatible, and `llm` probes may incur vendor billing, so background readiness probing skips them unless billing is allowed; the manual route above always allows it. Until a not-yet-implemented test (`slack` only at this revision) is implemented, its route returns `501` with the standard error envelope and code `TEST_NOT_IMPLEMENTED`, without a vendor request and before revision checking. Once an optional test is implemented, it must use the same five-second, value-free contract and may not regress to `501` silently.
 
 Completeness cross-check (docs track code, not the reverse): the provider table above must equal `PROVIDERS`, and the `TEST_NOT_IMPLEMENTED` tier must equal `PROVIDERS ∖ IMPLEMENTED_PROVIDERS`, both in `src/settings/routes.js`; `test/settings-connections-preview-cases.js` is the executable lock (the "only non-gate Slack remains exact 501" case covers `slack` → `501` and `deepgram|attendee|llm|tunnel` → `200`; the ElevenLabs / OpenAI-compatible cases cover the other two). Adding or removing a provider literal or a `ConnectionCode` literal is a contract amendment that updates this section, the route table, the `ConnectionCode` type, and T12-14 in the same change. Amendment applied by the EPIC #41 integration (this revision): the `discord` provider (#123) and the `ALLOWLIST_MISMATCH` code (#132) are appended to the provider table, the route table, the `ConnectionCode` type, and T12-14.
 

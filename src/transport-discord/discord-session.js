@@ -21,6 +21,16 @@ const { renderAnnounceText, runAnnounce } = require("./announce");
 const { createAudioIn } = require("./audio-in");
 const { createAudioOut } = require("./audio-out");
 
+// Join failures relay dependency/vendor error text to the loopback client and the operator log.
+// That text is not under our control (discord.js, @discordjs/voice, the network layer), so the
+// configured bot token — the only class-1 secret this transport holds — is scrubbed from it here,
+// together with any `token=` / `authorization:` pair, before it leaves this module.
+function scrubJoinErrorMessage(message, secret) {
+  let text = String(message ?? "");
+  if (typeof secret === "string" && secret.length >= 8) text = text.split(secret).join("[REDACTED]");
+  return text.replace(/((?:token|authorization)\s*[:=]\s*)[^\s,}]+/gi, "$1[REDACTED]");
+}
+
 function createDiscordClientFactory(loadDiscordModule = () => require("discord.js")) {
   return function createClient() {
     const discord = loadDiscordModule();
@@ -429,7 +439,7 @@ function createDiscordSessionManager(options = {}) {
         body: {
           ok: false,
           code: "DISCORD_DEPENDENCY_MISSING",
-          message: error.message,
+          message: scrubJoinErrorMessage(error.message, discordConfig.token),
         },
       };
     }
@@ -464,7 +474,7 @@ function createDiscordSessionManager(options = {}) {
         body: {
           ok: false,
           code: "DISCORD_COORDINATOR_UNAVAILABLE",
-          message: error.message,
+          message: scrubJoinErrorMessage(error.message, discordConfig.token),
         },
       };
     }
@@ -651,12 +661,15 @@ function createDiscordSessionManager(options = {}) {
         coordinator.release(lease);
         if (active?.id === sessionId) active = null;
       }
+      const failureCode = error.code === "aborted" ? "DISCORD_JOIN_ABORTED" : "DISCORD_JOIN_FAILED";
+      const failureMessage = scrubJoinErrorMessage(error.message, discordConfig.token);
+      console.error(`Discord join failed (${failureCode}): ${failureMessage}`);
       return {
         status: 502,
         body: {
           ok: false,
-          code: error.code === "aborted" ? "DISCORD_JOIN_ABORTED" : "DISCORD_JOIN_FAILED",
-          message: error.message,
+          code: failureCode,
+          message: failureMessage,
         },
       };
     }
@@ -706,6 +719,7 @@ function createDiscordSessionManager(options = {}) {
 }
 
 module.exports = {
+  scrubJoinErrorMessage,
   createDiscordSessionManager,
   _test: {
     buildNotifier,
