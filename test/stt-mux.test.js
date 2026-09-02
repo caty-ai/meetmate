@@ -358,6 +358,7 @@ test("discord audio-in decode retirement releases its mux slot and avoids the pe
 
       audioIn.subscribeUser({}, speaker("e"));
       streams.get("e").emit("data", Buffer.from([1]));
+      await delay(35);
 
       if (withReleaseHook) {
         assert.equal(slotA.closeCalls, 1);
@@ -368,6 +369,7 @@ test("discord audio-in decode retirement releases its mux slot and avoids the pe
         assert.equal(slotA.closeCalls, 0);
         assert.equal(sttInstances.length, 5);
         assert.deepEqual(pipeline._test.getSttMuxState().slots, ["a", "b", "c", "d"]);
+        assert.ok(sttInstances[0].sent.length > 0, "wedged cap degrades the new speaker to the mixed stream");
       }
 
       audioIn.close();
