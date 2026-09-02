@@ -180,6 +180,16 @@ function appendLateDelegationResult(sessionId, evt) {
   return true;
 }
 
+function deleteMeetingSession(sessionId) {
+  meetingSessions.delete(sessionId);
+}
+
+function releaseRetainedMeetingSession(sessionId, reason) {
+  if (activeConnections.has(sessionId)) return;
+  deleteMeetingSession(sessionId);
+  console.log(`🧹  Retained session released (${reason}): ${sessionId}`);
+}
+
 const gatewayTracker = createGatewaySessionTracker({
   gatewayEvents,
   recordEvent,
@@ -188,6 +198,7 @@ const gatewayTracker = createGatewaySessionTracker({
   getGatewayConfigForProfile,
   getDefaultAgentId: () => FIXED_AGENT_ID || "agent",
   appendLateResult: appendLateDelegationResult,
+  onRetentionReleased: releaseRetainedMeetingSession,
 });
 const { trackGatewaySession, untrackGatewaySession, findGatewayRoute } = gatewayTracker;
 
@@ -685,7 +696,7 @@ function finalizeSessionIfInactive(sessionId) {
   closeLocalAvatarSession(session, "session_end");
   sessionBotIds.delete(sessionId);
   const retained = untrackGatewaySession(sessionId, { retainIfDelegations: true });
-  if (!retained) meetingSessions.delete(sessionId);
+  if (!retained) deleteMeetingSession(sessionId);
   leavingSessionIds.delete(sessionId);
   console.log(`🧹  Session closed: ${sessionId}`);
 }
@@ -1127,7 +1138,7 @@ async function handleHttp(req, res) {
         saveConversationLog(session);
         sessionBotIds.delete(sid);
         const retained = untrackGatewaySession(sid, { retainIfDelegations: true });
-        if (!retained) meetingSessions.delete(sid);
+        if (!retained) deleteMeetingSession(sid);
         console.log(`🧹  Session closed (leave): ${sid}`);
       }
 
