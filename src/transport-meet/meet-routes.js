@@ -672,7 +672,7 @@ function requestBotLeave(botId, reason, attendeeKey) {
     let data = "";
     res.on("data", (c) => (data += c));
     res.on("end", () => {
-      console.log(`🚪  Attendee bot leave (${reason}): ${botId} → ${res.statusCode} ${data.slice(0, 200)}`);
+      console.log(`🚪  Attendee bot leave (${reason}): ${botId} → ${res.statusCode} ${require("./local-avatar-session").redactLogValue(data).slice(0, 200)}`);
     });
   });
   req.on("error", (err) => console.error(`❌  Attendee bot leave error (${reason}): ${err.message}`));
