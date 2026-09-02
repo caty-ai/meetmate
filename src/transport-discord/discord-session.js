@@ -338,6 +338,15 @@ function createDiscordSessionManager(options = {}) {
     }
   }
 
+  async function endSession(session, reason) {
+    if (!session || session.teardownStarted) return;
+    if (!session.lifecycle.isTerminal) {
+      const terminalState = session.lifecycle.state === "in-progress" ? "completed" : "failed";
+      session.lifecycle.transition(terminalState, { reason });
+    }
+    await teardownSession(session, { destroyConnection: true });
+  }
+
   async function join(body = {}) {
     const requestBody = body && typeof body === "object" && !Array.isArray(body) ? body : {};
     const guildId = typeof requestBody.guildId === "string" ? requestBody.guildId.trim() : "";
@@ -598,6 +607,11 @@ function createDiscordSessionManager(options = {}) {
       sessionRecord.pipeline.on?.("playback_cancelled", (event) => {
         sessionRecord.playbackEvents.emit("playback_cancelled", event);
       });
+      sessionRecord.pipeline.on?.("exit_requested", (event) => {
+        if (sessionRecord.teardownStarted || active !== sessionRecord) return;
+        console.log(`🚪  Discord exit requested for session ${sessionRecord.id}: ${event?.trigger || "unknown"}`);
+        endSession(sessionRecord, "exit_requested").catch(() => {});
+      });
       gatewaySessions.set(sessionId, sessionRecord.session);
       gatewayConnections.set(sessionId, { handler: sessionRecord.pipeline });
       gatewayTracker.trackGatewaySession(sessionRecord.session, profile, TRANSPORT);
@@ -656,11 +670,7 @@ function createDiscordSessionManager(options = {}) {
     }
 
     const session = active;
-    if (!session.lifecycle.isTerminal) {
-      const terminalState = session.lifecycle.state === "in-progress" ? "completed" : "failed";
-      session.lifecycle.transition(terminalState, { reason: "leave_requested" });
-    }
-    await teardownSession(session, { destroyConnection: true });
+    await endSession(session, "leave_requested");
     return {
       status: 200,
       body: {
