@@ -587,7 +587,7 @@ test("hub loss degrades pending reports with backoff, then arbitration resumes a
   socket.drop();
 
   assert.deepEqual(await interruptedVerdict, { kind: "degraded", delayMs: 500 });
-  assert.equal(harness.client.state, STATES.DEGRADED);
+  assert.equal(harness.client.state, STATES.CONNECTING);
 
   harness.timers.advance(250);
   const replacement = harness.wire.sockets.at(-1);
@@ -628,7 +628,56 @@ test("initial failures retry with exponential jitter and enter DEGRADED only aft
   assert.equal(harness.client.fallbackDelayMs(), 500);
 });
 
-test("holder disconnect is fail-closed while non-holder loss degrades with bounded fallback", async () => {
+test("reconnect starts a fresh READY grace window when an established connection is lost", () => {
+  const harness = createHarness({ readyGraceMs: 1_000 });
+  const socket = connectReady(harness);
+  harness.timers.advance(5_000);
+
+  socket.drop();
+  assert.equal(harness.client.state, STATES.CONNECTING);
+  assert.equal(harness.client.remainingReadyGraceMs(), 1_000);
+
+  harness.timers.advance(100);
+  assert.equal(harness.client.remainingReadyGraceMs(), 900);
+  assert.equal(harness.client.hasBeenReady, true);
+
+  harness.client.close();
+  assert.equal(harness.client.connectStartedAt, null);
+  assert.equal(harness.client.readyGraceTimer, null);
+});
+
+test("reconnect backoff attempts share one READY grace budget per outage", () => {
+  const harness = createHarness({ readyGraceMs: 1_000, random: () => 0.5 });
+  const socket = connectReady(harness);
+
+  socket.drop();
+  harness.timers.advance(250);
+  const firstRetry = harness.wire.sockets.at(-1);
+  harness.timers.advance(200);
+  firstRetry.drop();
+  harness.timers.advance(500);
+
+  assert.equal(harness.wire.sockets.length, 3);
+  assert.equal(harness.client.state, STATES.CONNECTING);
+  assert.equal(harness.client.remainingReadyGraceMs(), 50);
+});
+
+test("reconnect enters DEGRADED after its READY grace window elapses", () => {
+  const harness = createHarness({ readyGraceMs: 1_000 });
+  const degraded = [];
+  const socket = connectReady(harness);
+  harness.client.on("degraded", (event) => degraded.push(event));
+
+  socket.drop();
+  harness.timers.advance(999);
+  assert.equal(harness.client.state, STATES.CONNECTING);
+
+  harness.timers.advance(1);
+  assert.equal(harness.client.state, STATES.DEGRADED);
+  assert.deepEqual(degraded, [{ cause: "ready_timeout", delayMs: 500 }]);
+});
+
+test("holder disconnect is fail-closed while reconnect grace delays degradation", async () => {
   const holder = createHarness();
   const holderSocket = connectReady(holder);
   const acquire = holder.client.acquire("r1");
@@ -636,7 +685,7 @@ test("holder disconnect is fail-closed while non-holder loss degrades with bound
   holderSocket.receive({ type: "granted", reqId: request.reqId, grantId: "g1", leaseMs: 15_000 });
   await acquire;
   holderSocket.drop();
-  assert.equal(holder.client.state, STATES.DEGRADED);
+  assert.equal(holder.client.state, STATES.CONNECTING);
   assert.deepEqual(holder.aborts, [{ cause: "disconnect", grantId: "g1" }]);
 
   const listener = createHarness({ random: () => 0 });
@@ -644,9 +693,11 @@ test("holder disconnect is fail-closed while non-holder loss degrades with bound
   const degraded = [];
   listener.client.on("degraded", (event) => degraded.push(event));
   socket.drop();
+  assert.equal(listener.client.state, STATES.CONNECTING);
+  assert.deepEqual(degraded, []);
+  listener.timers.advance(15_000);
   assert.equal(listener.client.state, STATES.DEGRADED);
-  assert.equal(degraded[0].delayMs, 200);
-  assert.equal(degraded[0].holder, false);
+  assert.deepEqual(degraded, [{ cause: "ready_timeout", delayMs: 200 }]);
 });
 
 test("both hub fields absent disables all wire behavior", async () => {
