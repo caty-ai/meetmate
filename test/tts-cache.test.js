@@ -527,6 +527,10 @@ test("cached immediate ack keeps agent speaking until paced playback finishes", 
     TTS_CACHE_PREWARM: "false",
     WAKE_WORDS: "ケイティ",
   });
+  const settingsBootstrap = require("../src/settings/bootstrap");
+  const settingsResolver = require("../src/settings/resolver");
+  settingsBootstrap.resetStartupForTest();
+  settingsResolver.resetRuntimeForTest();
 
   const src = path.join(__dirname, "..", "src");
   const paths = [
@@ -627,7 +631,74 @@ test("cached immediate ack keeps agent speaking until paced playback finishes", 
       if (previous) require.cache[resolved] = previous;
     }
     restoreEnv(previousEnv);
+    settingsResolver.resetRuntimeForTest();
+    settingsBootstrap.resetStartupForTest();
   }
+});
+
+function withImmediateAckDecision({ launchEnv, seedEnv, postDotenvEnv }, assertion) {
+  const resolver = require("../src/settings/resolver");
+  const pipelinePath = require.resolve("../src/pipeline");
+  const previousEnv = process.env.ENABLE_IMMEDIATE_ACK;
+  delete process.env.ENABLE_IMMEDIATE_ACK;
+  delete require.cache[pipelinePath];
+  resolver.resetRuntimeForTest();
+  const { shouldSendImmediateAck } = require(pipelinePath)._test;
+  const resolvedHome = "/tmp/meetmate-immediate-ack-precedence";
+  resolver.initializeRuntime({
+    state: {
+      exists: true,
+      valid: true,
+      parsed: {},
+      revision: "a".repeat(64),
+      fingerprint: "test",
+    },
+    startup: Object.freeze({
+      preDotenvEnv: Object.freeze({ ...(launchEnv || {}) }),
+      dotenvSeeds: Object.freeze({ ...(seedEnv || {}) }),
+      resolvedHome,
+      configPath: path.join(resolvedHome, "config.json"),
+      connection: Object.freeze({ openclawUrl: "", openclawToken: "", openaiApiKey: "" }),
+    }),
+  });
+  try {
+    if (postDotenvEnv === undefined) delete process.env.ENABLE_IMMEDIATE_ACK;
+    else process.env.ENABLE_IMMEDIATE_ACK = postDotenvEnv;
+    assertion(shouldSendImmediateAck);
+  } finally {
+    resolver.resetRuntimeForTest();
+    delete require.cache[pipelinePath];
+    if (previousEnv === undefined) delete process.env.ENABLE_IMMEDIATE_ACK;
+    else process.env.ENABLE_IMMEDIATE_ACK = previousEnv;
+  }
+}
+
+test("ENABLE_IMMEDIATE_ACK=false at launch overrides a true dotenv seed", () => {
+  withImmediateAckDecision({
+    launchEnv: { ENABLE_IMMEDIATE_ACK: "false" },
+    seedEnv: { ENABLE_IMMEDIATE_ACK: "true" },
+  }, (shouldSendImmediateAck) => {
+    assert.equal(shouldSendImmediateAck("確認して"), false);
+    assert.equal(shouldSendImmediateAck("", true), false);
+  });
+});
+
+test("a false dotenv seed disables immediate ack when launch env is unset", () => {
+  withImmediateAckDecision({ seedEnv: { ENABLE_IMMEDIATE_ACK: "false" } }, (shouldSendImmediateAck) => {
+    assert.equal(shouldSendImmediateAck("確認して"), false);
+  });
+});
+
+test("immediate ack remains enabled by default when launch env and dotenv seed are unset", () => {
+  withImmediateAckDecision({}, (shouldSendImmediateAck) => {
+    assert.equal(shouldSendImmediateAck("確認して"), true);
+  });
+});
+
+test("a post-dotenv process env value does not become the launch tier", () => {
+  withImmediateAckDecision({ postDotenvEnv: "false" }, (shouldSendImmediateAck) => {
+    assert.equal(shouldSendImmediateAck("確認して"), true);
+  });
 });
 
 function tempDir() {

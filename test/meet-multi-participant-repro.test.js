@@ -80,6 +80,10 @@ test("real hub arbitrates two pipelines across DW0-DW3 and DW6", async (t) => {
   process.env.TTS_GAP_MS = "0";
   process.env.TTS_LEAD_MS = "0";
   process.env.SENTENCE_PAUSE_MS = "0";
+  const settingsBootstrap = require("../src/settings/bootstrap");
+  const settingsResolver = require("../src/settings/resolver");
+  settingsBootstrap.resetStartupForTest();
+  settingsResolver.resetRuntimeForTest();
 
   // The managed test sandbox forbids TCP listen(). The hub still runs as a
   // real child process from its own repo; a newline-framed WebSocket adapter
@@ -96,6 +100,7 @@ test("real hub arbitrates two pipelines across DW0-DW3 and DW6", async (t) => {
   const sttEmitters = [];
   const calls = [];
   const spoken = [];
+  const spokenRoles = [];
   const audioWindows = new Map([["caty", []], ["ciel", []]]);
   const pipelineErrors = [];
   const originalConsoleError = console.error;
@@ -128,10 +133,11 @@ test("real hub arbitrates two pipelines across DW0-DW3 and DW6", async (t) => {
     }),
   });
   require.cache[require.resolve(path.join(src, "tts-fish.js"))] = cacheEntry(path.join(src, "tts-fish.js"), {
-    synthesize: async (text, { onAudio }) => {
+    synthesize: async (text, { onAudio, role }) => {
       activeSynthesis += 1;
       maxActiveSynthesis = Math.max(maxActiveSynthesis, activeSynthesis);
       spoken.push(text);
+      spokenRoles.push(role);
       await sleep(20);
       onAudio(Buffer.alloc(320));
       await sleep(10);
@@ -264,6 +270,7 @@ test("real hub arbitrates two pipelines across DW0-DW3 and DW6", async (t) => {
     }
     assert.equal(maxActiveSynthesis, 1);
     assert.equal(spoken.length >= calls.length, true);
+    assert.equal(spokenRoles.includes("ack"), false);
     assert.deepEqual(pipelineErrors, []);
     assert.equal(pipelines.every((pipeline) => pipeline._test.getGateState() === "OPEN"), true);
   } finally {
@@ -279,5 +286,7 @@ test("real hub arbitrates two pipelines across DW0-DW3 and DW6", async (t) => {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
+    settingsResolver.resetRuntimeForTest();
+    settingsBootstrap.resetStartupForTest();
   }
 });

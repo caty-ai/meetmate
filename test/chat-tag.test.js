@@ -330,6 +330,10 @@ async function withEnvAsync(values, fn) {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
   }
+  const settingsBootstrap = require("../src/settings/bootstrap");
+  const settingsResolver = require("../src/settings/resolver");
+  settingsBootstrap.resetStartupForTest();
+  settingsResolver.resetRuntimeForTest();
 
   try {
     return await fn();
@@ -338,5 +342,7 @@ async function withEnvAsync(values, fn) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
+    settingsResolver.resetRuntimeForTest();
+    settingsBootstrap.resetStartupForTest();
   }
 }

@@ -72,6 +72,10 @@ async function withPipeline(provider, configOverrides, fn, testOptions = {}) {
     TTS_GAP_MS: "0",
     SENTENCE_PAUSE_MS: "0",
   });
+  const settingsBootstrap = require("../src/settings/bootstrap");
+  const settingsResolver = require("../src/settings/resolver");
+  settingsBootstrap.resetStartupForTest();
+  settingsResolver.resetRuntimeForTest();
 
   const session = { id: "provider-pipeline", conversationLog: [], config: { wakeMode: "wake" } };
   const config = {
@@ -121,6 +125,8 @@ async function withPipeline(provider, configOverrides, fn, testOptions = {}) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
+    settingsResolver.resetRuntimeForTest();
+    settingsBootstrap.resetStartupForTest();
     for (const file of files) {
       const resolved = require.resolve(file);
       delete require.cache[resolved];
