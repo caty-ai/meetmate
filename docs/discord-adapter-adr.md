@@ -43,7 +43,8 @@ Premise **[v1 assumption — verified by the #4 setup-guide walkthrough]**: Disc
 
 1. Discord Developer Portal → the bot application → Bot → **Reset Token**. Treat the bot as down from this moment.
 2. Paste the new token into the settings UI (`discord_bot_token`, masked field) and save.
-3. **Clear any environment copy**: §3 precedence puts launch-env / `.env` seed **above** the store — a leftover `DISCORD_BOT_TOKEN` in the launch environment or `.env` would keep the dead (or worse, leaked) token as the effective value after restart. Unset the env var / remove the `.env` line (operator action; meetmate never edits `.env`).
+3. **Clear any environment copy**: §3 precedence is four-tier — launch env → store → `.env` seed → default. A leftover `DISCORD_BOT_TOKEN` in the **launch environment** outranks the store and would keep the dead (or worse, leaked) token as the effective value after restart; a leftover `.env` line loses to the stored token but becomes effective again the moment the store value is cleared. Unset the env var and remove the `.env` line (operator action; meetmate never edits `.env`).
+   *Erratum (#143, 2026-09-02): this step previously stated that the `.env` seed sits above the store; corrected to the contract's four-tier order (settings-contract §3). Mechanism sentence only — the rotation advice is unchanged.*
 4. Restart meetmate (`restart-required` apply). Expected downtime = the restart window.
 5. Verify with the `discord` connection test (ADR-6) or by observing the bot come online in an allowlisted guild.
 6. If rotating because of suspected compromise: also review the bot's guild membership in the portal (**[v1 assumption — verified by #0c/#4]**: an attacker holding the token could have joined it to new guilds — the allowlist (ADR-3) prevents *our* process from serving those guilds either way, but membership itself should be pruned) and check the audit log of allowlisted guilds.
