@@ -392,10 +392,14 @@ test("connection routes retain all providers and require a SHA-256 revision", as
   for (const provider of ["soniox", "fish-audio"]) {
     const res = response();
     await handler(request("POST", `/api/settings/connections/${provider}/test`, { revision: configState.revision }), res);
+    const payload = JSON.parse(res.body);
     assert.equal(res.status, 200, `${provider} ${res.body}`);
-    assert.deepEqual(JSON.parse(res.body), {
+    assert.deepEqual(Object.keys(payload), ["ok", "provider", "code", "message", "durationMs"]);
+    assert.deepEqual({ ...payload, durationMs: 0 }, {
       ok: false, provider, code: "NOT_CONFIGURED", message: "Connection is not configured", durationMs: 0,
     });
+    assert.equal(Number.isInteger(payload.durationMs), true);
+    assert.equal(payload.durationMs >= 0, true);
   }
   for (const provider of ["deepgram", "attendee", "llm", "tunnel"]) {
     const res = response();
