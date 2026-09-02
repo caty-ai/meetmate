@@ -189,7 +189,13 @@
       </section>
 
       <div class="settings-actions">
-        <p id="dirtyStatus">設定を読み込んでいます。</p>
+        <div class="settings-action-copy">
+          <p id="dirtyStatus">設定を読み込んでいます。</p>
+          <div class="save-status" id="saveStatus" role="status" aria-live="polite" hidden>
+            <span id="saveStatusText"></span>
+            <button class="btn-text" id="reloadSettingsPage" type="button" hidden>ページを再読み込み</button>
+          </div>
+        </div>
         <button class="settings-save" id="saveSettings" type="submit" disabled><span>変更を保存</span></button>
       </div>
     </form>

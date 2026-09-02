@@ -253,13 +253,11 @@
     },
     {
       "name": "ENABLE_IMMEDIATE_ACK",
-      "references": [
-        "src/pipeline.js:49"
-      ],
+      "references": [],
       "ux": "deployment-readonly",
       "credentialClass": "none",
       "handling": "env-only-readonly-diagnostic",
-      "remainingDirectReads": 1
+      "remainingDirectReads": 0
     },
     {
       "name": "ENABLE_MEETING_CONTEXT_INJECTION",
@@ -562,7 +560,7 @@
     {
       "name": "OPENCLAW_WORKSPACE",
       "references": [
-        "src/transport-meet/meet-routes.js:574"
+        "src/transport-meet/meet-routes.js:585"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -620,8 +618,8 @@
     {
       "name": "PUBLIC_WSS_URL",
       "references": [
-        "src/transport-meet/meet-routes.js:987",
-        "src/transport-meet/meet-routes.js:988"
+        "src/transport-meet/meet-routes.js:998",
+        "src/transport-meet/meet-routes.js:999"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -981,8 +979,8 @@
       "expression": "runtime.startup.{preDotenvEnv,dotenvSeeds}[name]",
       "helper": "per-agent Slack token compatibility lookup",
       "references": [
-        "src/settings/resolver.js:382",
-        "src/settings/resolver.js:384"
+        "src/settings/resolver.js:386",
+        "src/settings/resolver.js:388"
       ],
       "pattern": "^[A-Z0-9_-]+_SLACK_BOT_TOKEN$",
       "names": [],

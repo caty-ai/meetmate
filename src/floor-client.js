@@ -177,7 +177,7 @@ class FloorClient extends EventEmitter {
     if (this.readyGraceTimer !== null) return;
     this.readyGraceTimer = this.timers.setTimeout(() => {
       this.readyGraceTimer = null;
-      if (this.stopped || this.hasBeenReady || this.state === STATES.READY || this.state === STATES.HELD) return;
+      if (this.stopped || this.state === STATES.READY || this.state === STATES.HELD) return;
       this.transition(STATES.DEGRADED, { cause: "ready_timeout" });
       this.emit("degraded", { cause: "ready_timeout", delayMs: this.fallbackDelayMs() });
     }, this.readyGraceMs);
@@ -633,8 +633,15 @@ class FloorClient extends EventEmitter {
 
   handleDisconnect(generation, error) {
     if (generation !== this.socketGeneration || this.stopped) return;
+    const lostEstablishedConnection = this.connectionEpoch !== null;
     const wasHolder = Boolean(this.grant);
     const staleGrant = this.grant;
+    if (lostEstablishedConnection) {
+      if (this.readyGraceTimer !== null) this.timers.clearTimeout(this.readyGraceTimer);
+      this.readyGraceTimer = null;
+      this.connectStartedAt = this.now();
+      this.armReadyGrace();
+    }
     this.clearGrantExtension();
     this.socket = null;
     this.connectionEpoch = null;
@@ -665,10 +672,7 @@ class FloorClient extends EventEmitter {
       this.onAbortPlayback({ cause: "disconnect", grantId: staleGrant.grantId });
       this.emit("revoked", { type: "revoked", grantId: staleGrant.grantId, cause: "disconnect" });
     }
-    if (this.hasBeenReady) {
-      this.transition(STATES.DEGRADED, { cause: "disconnect" });
-      this.emit("degraded", { cause: "disconnect", delayMs: degradedDelayMs, holder: wasHolder });
-    } else if (this.connectStartedAt !== null && this.now() - this.connectStartedAt >= this.readyGraceMs) {
+    if (this.connectStartedAt !== null && this.now() - this.connectStartedAt >= this.readyGraceMs) {
       this.transition(STATES.DEGRADED, { cause: "ready_timeout" });
     } else {
       this.transition(STATES.CONNECTING, { cause: "disconnect" });
@@ -736,6 +740,7 @@ class FloorClient extends EventEmitter {
     if (this.readyGraceTimer !== null) this.timers.clearTimeout(this.readyGraceTimer);
     this.reconnectTimer = null;
     this.readyGraceTimer = null;
+    this.connectStartedAt = null;
     this.clearGrantExtension();
     for (const report of this.reports.values()) {
       if (report.timer !== null) this.timers.clearTimeout(report.timer);

@@ -294,11 +294,12 @@ test("unset keys avoid vendor calls while Discord is implemented and Slack remai
   });
   for (const provider of ["soniox", "fish-audio", "discord"]) {
     const res = await invoke(handler, "POST", `/api/settings/connections/${provider}/test`, { revision: state.revision });
-    const { durationMs, ...rest } = res.json;
-    assert.equal(Number.isInteger(durationMs) && durationMs >= 0, true, `${provider}: durationMs=${durationMs}`);
-    assert.deepEqual(rest, {
-      ok: false, provider, code: "NOT_CONFIGURED", message: "Connection is not configured",
+    assert.deepEqual(Object.keys(res.json), ["ok", "provider", "code", "message", "durationMs"]);
+    assert.deepEqual({ ...res.json, durationMs: 0 }, {
+      ok: false, provider, code: "NOT_CONFIGURED", message: "Connection is not configured", durationMs: 0,
     });
+    assert.equal(Number.isInteger(res.json.durationMs), true);
+    assert.equal(res.json.durationMs >= 0, true);
   }
   assert.equal(calls, 0);
   for (const provider of ["deepgram", "attendee", "llm", "tunnel"]) {

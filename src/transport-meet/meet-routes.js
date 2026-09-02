@@ -181,6 +181,16 @@ function appendLateDelegationResult(sessionId, evt) {
   return true;
 }
 
+function deleteMeetingSession(sessionId) {
+  deleteSessionAndRelease(sessionId);
+}
+
+function releaseRetainedMeetingSession(sessionId, reason) {
+  if (activeConnections.has(sessionId)) return;
+  deleteMeetingSession(sessionId);
+  console.log(`🧹  Retained session released (${reason}): ${sessionId}`);
+}
+
 const gatewayTracker = createGatewaySessionTracker({
   gatewayEvents,
   recordEvent,
@@ -189,6 +199,7 @@ const gatewayTracker = createGatewaySessionTracker({
   getGatewayConfigForProfile,
   getDefaultAgentId: () => FIXED_AGENT_ID || "agent",
   appendLateResult: appendLateDelegationResult,
+  onRetentionReleased: releaseRetainedMeetingSession,
 });
 const { trackGatewaySession, untrackGatewaySession, findGatewayRoute } = gatewayTracker;
 
@@ -661,7 +672,7 @@ function requestBotLeave(botId, reason, attendeeKey, timeoutMs = 10_000) {
         let data = "";
         res.on("data", (c) => (data += c));
         res.on("error", (error) => finish({ ok: false, error }));
-        res.on("end", () => { console.log(`🚪  Attendee bot leave (${reason}): ${botId} → ${res.statusCode} ${data.slice(0, 200)}`); finish({ ok: true, statusCode: res.statusCode }); });
+        res.on("end", () => { console.log(`🚪  Attendee bot leave (${reason}): ${botId} → ${res.statusCode} ${require("./local-avatar-session").redactLogValue(data).slice(0, 200)}`); finish({ ok: true, statusCode: res.statusCode }); });
       });
       req.on("error", (error) => { console.error(`❌  Attendee bot leave error (${reason}): ${error.message}`); finish({ ok: false, error }); });
       req.setTimeout(timeoutMs, () => { const error = new Error(`Attendee bot leave timeout after ${timeoutMs}ms`); req.destroy?.(error); finish({ ok: false, error }); });
@@ -686,7 +697,7 @@ function finalizeSessionIfInactive(sessionId) {
   closeLocalAvatarSession(session, "session_end");
   sessionBotIds.delete(sessionId);
   const retained = untrackGatewaySession(sessionId, { retainIfDelegations: true });
-  if (!retained) deleteSessionAndRelease(sessionId);
+  if (!retained) deleteMeetingSession(sessionId);
   leavingSessionIds.delete(sessionId);
   console.log(`🧹  Session closed: ${sessionId}`);
 }
@@ -1128,7 +1139,7 @@ async function handleHttp(req, res) {
         saveConversationLog(session);
         sessionBotIds.delete(sid);
         const retained = untrackGatewaySession(sid, { retainIfDelegations: true });
-        if (!retained) deleteSessionAndRelease(sid);
+        if (!retained) deleteMeetingSession(sid);
         console.log(`🧹  Session closed (leave): ${sid}`);
       }
 
@@ -1152,16 +1163,16 @@ async function handleHttp(req, res) {
     let launchedBotId = null;
     let launchedBotAttendeeKey = null;
     try {
-      const status = getStatus({ transport: joinTransport });
-      if (!status.meetingReady) {
-        res.writeHead(503, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
-        res.end(JSON.stringify({ error: { code: "MEETING_SETUP_REQUIRED", message: "Meeting setup is incomplete", issues: status.issues } }));
-        return;
-      }
       const formData = await parseRequestBody(req);
       const hasExternalToken = req.headers["x-join-token"];
       if (hasExternalToken && !checkJoinAuthorization(req, formData)) {
         writePlainResponse(res, 401, "Unauthorized: invalid join token");
+        return;
+      }
+      const status = getStatus({ transport: joinTransport });
+      if (!status.meetingReady) {
+        res.writeHead(503, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+        res.end(JSON.stringify({ error: { code: "MEETING_SETUP_REQUIRED", message: "Meeting setup is incomplete", issues: status.meetingIssues } }));
         return;
       }
 
@@ -1455,7 +1466,11 @@ async function handleHttp(req, res) {
         sessionInserted,
         lifecycleCreated,
       });
-      writePlainResponse(res, 502, `Bot起動エラー: ${attendeeResult.statusCode} - ${attendeeResult.body}`);
+      writePlainResponse(
+        res,
+        502,
+        `Bot起動エラー (upstream_status=${attendeeResult.statusCode}) [code=BOT_LAUNCH_UPSTREAM_ERROR]`
+      );
       return;
     } catch (err) {
       try { localAvatarSession?.close("join_failed"); } catch { /* visual cleanup is best-effort */ }

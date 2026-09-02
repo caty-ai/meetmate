@@ -96,6 +96,25 @@ function pendingChangesForValues(loadedValues, currentValues) {
   return diffFields(loadedValues, currentValues);
 }
 
+function formatSaveTime(savedAt = new Date()) {
+  return `${String(savedAt.getHours()).padStart(2, "0")}:${String(savedAt.getMinutes()).padStart(2, "0")}`;
+}
+
+function savedFieldsRequireRestart(fields, manifest) {
+  const metadataById = new Map((manifest || []).map((entry) => [entry.id, entry]));
+  return Object.keys(fields || {}).some((id) => metadataById.get(id)?.apply === "restart-required");
+}
+
+function successfulSaveStatus(fields, manifest, savedAt = new Date()) {
+  const result = savedFieldsRequireRestart(fields, manifest) ? "保存済み・再起動で反映" : "保存しました";
+  return `${result}（${formatSaveTime(savedAt)}）`;
+}
+
+function failedSaveStatus(reason) {
+  const detail = typeof reason === "string" && reason.trim() ? reason.trim() : "設定を保存できませんでした。";
+  return `${detail} 入力内容とネットワーク接続を確認し、もう一度保存してください。`;
+}
+
 function clipMatchesCurrentText(clip, fields = {}) {
   const values = {
     ack: fields.agent_ack_variants || [],
@@ -120,11 +139,14 @@ if (typeof module !== "undefined" && module.exports) {
     },
     clipMatchesCurrentText,
     diffFields,
+    failedSaveStatus,
     fieldContainerId,
     pendingChangesForValues,
     prefillValues,
     readinessSummary,
+    savedFieldsRequireRestart,
     shownValue,
+    successfulSaveStatus,
   };
 }
 
@@ -241,6 +263,9 @@ if (typeof document !== "undefined") {
     const loadStatus = document.getElementById("loadStatus");
     const saveButton = document.getElementById("saveSettings");
     const dirtyStatus = document.getElementById("dirtyStatus");
+    const saveStatus = document.getElementById("saveStatus");
+    const saveStatusText = document.getElementById("saveStatusText");
+    const reloadSettingsPage = document.getElementById("reloadSettingsPage");
     const importFile = document.getElementById("importFile");
     const audioRole = document.getElementById("audioRole");
     const audioText = document.getElementById("audioText");
@@ -640,6 +665,7 @@ if (typeof document !== "undefined") {
       const count = Object.keys(pendingChanges()).length;
       saveButton.disabled = !envelope || count === 0;
       dirtyStatus.textContent = !envelope ? "設定を読み込んでいます。" : count ? `${count} 件の未保存の変更があります。` : "変更はありません。";
+      if (count && ["success", "restart"].includes(saveStatus.dataset.kind)) clearSaveStatus();
     }
 
     function currentProvider(id, fallback) {
@@ -728,6 +754,25 @@ if (typeof document !== "undefined") {
       toastTimer = window.setTimeout(() => toast.classList.remove("visible"), 3500);
     }
 
+    function showSaveStatus(kind, message, reload = false) {
+      saveStatus.dataset.kind = kind;
+      saveStatus.className = `save-status ${kind}`;
+      saveStatusText.textContent = message;
+      reloadSettingsPage.hidden = !reload;
+      saveStatus.hidden = false;
+    }
+
+    function clearSaveStatus() {
+      saveStatus.hidden = true;
+      saveStatus.dataset.kind = "";
+      saveStatusText.textContent = "";
+      reloadSettingsPage.hidden = true;
+    }
+
+    function showRevisionConflict() {
+      showSaveStatus("conflict", "他の場所で設定が変更されました。ページを再読み込みしてください。", true);
+    }
+
     async function responseJson(response) {
       try { return await response.json(); } catch { return null; }
     }
@@ -750,6 +795,7 @@ if (typeof document !== "undefined") {
     async function loadSettings(conflict = false) {
       loadStatus.textContent = "読み込み中";
       loadStatus.className = "status-badge loading";
+      if (conflict) showRevisionConflict();
       try {
         const response = await fetch("/api/settings", { headers: { Accept: "application/json" } });
         const body = await responseJson(response);
@@ -1052,9 +1098,14 @@ if (typeof document !== "undefined") {
         renderState();
         renderDiagnostics();
         await renderCachedReadiness();
+        const restartRequired = savedFieldsRequireRestart(fields, manifest);
+        showSaveStatus(restartRequired ? "restart" : "success", successfulSaveStatus(fields, manifest));
         showToast("設定を保存しました。");
       } catch (error) {
-        if (!error.handled) showToast(error.message);
+        if (!error.handled) {
+          showSaveStatus("error", failedSaveStatus(error.message));
+          showToast(error.message);
+        }
       } finally {
         saveButton.textContent = "変更を保存";
         updateDirtyState();
@@ -1285,6 +1336,7 @@ if (typeof document !== "undefined") {
     document.getElementById("exportSettings").addEventListener("click", exportSettings);
     document.getElementById("importSettings").addEventListener("click", importSettings);
     document.getElementById("migrateVendorSettings").addEventListener("click", migrateVendorSettings);
+    reloadSettingsPage.addEventListener("click", () => location.reload());
     window.addEventListener("hashchange", applyHashDeepLink);
 
     initTabs();

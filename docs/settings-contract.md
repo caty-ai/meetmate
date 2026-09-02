@@ -295,7 +295,7 @@ The single existing server continues to listen on port 5005 (or its existing por
 | `PUT /api/settings` | `SettingsMutation` below | `SettingsEnvelope` with new revision |
 | `GET /api/settings/export` | none | `ExportDocument` in §8 as attachment |
 | `POST /api/settings/import` | `ImportRequest` below | `SettingsEnvelope` plus `import` report |
-| `POST /api/settings/connections/:provider/test` | `{revision}` where provider is `soniox|deepgram|fish-audio|attendee|slack|discord` | `{ok, provider, code, message, durationMs}` or optional-test `501` below |
+| `POST /api/settings/connections/:provider/test` | `{revision}` where provider is `soniox|deepgram|fish-audio|elevenlabs|openai-compatible|attendee|llm|tunnel|slack|discord` (the §6 connection-test provider table) | `{ok, provider, code, message, durationMs}`, or `501 TEST_NOT_IMPLEMENTED` for the not-yet-implemented tier (`slack` only) |
 | `POST /api/settings/migrate-env-class1` | `{revision}` | `{imported:[fieldId], skipped:[fieldId], revision}` |
 | `POST /api/settings/tts-preview` | `{revision,text}` | buffered `audio/wav` per §9 |
 | `POST /api/settings/audio` | multipart contract in §9 | `{clip,revision}`, never a filesystem absolute path |
@@ -380,8 +380,14 @@ type ImportRequest = {
 type ImportSuccess = SettingsEnvelope & {
   import: { imported: ImportableFieldId[]; skipped: ImportableFieldId[] };
 };
-type ConnectionCode = "CONNECTED" | "NOT_CONFIGURED" | "AUTH_FAILED" | "UNREACHABLE" |
-                      "TIMEOUT" | "RATE_LIMITED" | "PROVIDER_ERROR";
+type ConnectionCode = "CONNECTED" | "NOT_CONFIGURED" | "AUTH_FAILED" | "PAYMENT_REQUIRED" |
+                      "NOT_ENABLED" | "MISMATCH" | "RESTART_REQUIRED" | "UNREACHABLE" |
+                      "TIMEOUT" | "RATE_LIMITED" | "PROVIDER_ERROR" | "ALLOWLIST_MISMATCH";
+// Exactly the key set of the `connectionResult` message map in `src/settings/routes.js`; the same twelve
+// literals are partitioned into the readiness hard/soft sets (`HARD_CODES` / `SOFT_CODES` in
+// `src/settings/readiness.js`) plus `CONNECTED`. A probe may not emit a code outside this union.
+// `RESTART_REQUIRED` is a readiness-blocker code; the manual route forces a fresh probe, so it never
+// appears in a connection-test response.
 ```
 
 Strict mutation/import request examples are:
@@ -416,7 +422,24 @@ Literal import success example:
 {"schemaVersion":1,"revision":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","setupMode":false,"fields":{"agent_language":"ja"},"effective":{"agent_language":"ja"},"sources":{"agent_language":"config"},"restartRequired":["agent_language"],"issues":[],"diagnostics":{"server_port":{"value":5005,"source":"runtime"}},"import":{"imported":["agent_language"],"skipped":[]}}
 ```
 
-Connection tests use the effective class 1 credential already held by the resolver, perform one minimal vendor-specific authenticated request with a five-second timeout, never persist or echo response bodies, and cannot test class 2 or class 3 connections. The six provider literals `soniox|deepgram|fish-audio|attendee|slack|discord` remain the complete endpoint enum in v1; no provider route may disappear merely because its test is optional. Soniox and Fish Audio test implementations are required for v1. Deepgram, Attendee, Slack, and Discord are optional compatibility/integration tests: until implemented, each route may return `501` with the standard error envelope and code `TEST_NOT_IMPLEMENTED`, without a vendor request. Once an optional test is implemented, it must use the same five-second, value-free contract and may not regress to `501` silently.
+Connection tests perform one minimal provider-specific request with a five-second timeout and never persist or echo response bodies. Vendor probes (`soniox`, `deepgram`, `fish-audio`, `elevenlabs`, `openai-compatible`, `attendee`, `discord`, and `slack` once implemented) authenticate with the effective class 1 credential already held by the resolver and cannot test class 2 or class 3 connections; the two exceptions are `llm`, which exercises the class-2 agent connection from the immutable startup snapshot (never from the settings store), and `tunnel`, which sends no credential and only checks the public origin's identity. The connection-test provider enum is exactly the `PROVIDERS` set in `src/settings/routes.js` — ten literals as of this revision — and every literal is a route: no provider route may disappear merely because its test is optional. The tiers are:
+
+| Provider literal | Tier | Probe target | Implemented | Origin |
+|---|---|---|---|---|
+| `soniox` | required (v1 STT gate) | Soniox API with the class-1 key | yes | v1 |
+| `fish-audio` | required (v1 TTS gate) | Fish Audio API with the class-1 key | yes | v1 |
+| `deepgram` | optional gate — required when `stt_provider` is `deepgram` | Deepgram API with the class-1 key | yes | v1 |
+| `elevenlabs` | optional gate — required when `tts_provider` is `elevenlabs` | ElevenLabs API with the class-1 key | yes | #101 |
+| `openai-compatible` | optional gate — required when `tts_provider` is `openai-compatible` | OpenAI-compatible TTS base URL with the optional class-1 key | yes | #101 |
+| `attendee` | optional gate | Attendee API with the class-1 key | yes | v1 |
+| `llm` | optional gate | the configured agent/LLM connection (class-2 credentials read from the startup snapshot only, never from the settings store) | yes | #84 |
+| `tunnel` | optional gate | the public origin derived from `server_ngrok_domain`, checking that it answers as this instance (`MISMATCH` otherwise) | yes | #84 |
+| `slack` | optional, non-gate | Slack API with the class-1 token | no — exact `501 TEST_NOT_IMPLEMENTED` | v1 |
+| `discord` | optional gate — required for discord-transport session starts (§7) | Discord API with the class-1 bot token; verifies the bot is a member of at least one allowlisted guild when `discord_guild_allowlist` is non-empty (`ALLOWLIST_MISMATCH` otherwise) | yes | #123 / #132 (EPIC #41) |
+
+"Gate" means the provider is one of the readiness gate systems (`gateSystems()` in `src/settings/readiness.js`: the selected STT provider, the selected TTS provider, `attendee`, `llm`, `tunnel`, and `discord` when Discord is configured); a gate provider that is not selected by the current `stt_provider` / `tts_provider` value still keeps its route and its implemented test. Fish Audio, ElevenLabs, OpenAI-compatible, and `llm` probes may incur vendor billing, so background readiness probing skips them unless billing is allowed; the manual route above always allows it. Until a not-yet-implemented test (`slack` only at this revision) is implemented, its route returns `501` with the standard error envelope and code `TEST_NOT_IMPLEMENTED`, without a vendor request and before revision checking. Once an optional test is implemented, it must use the same five-second, value-free contract and may not regress to `501` silently.
+
+Completeness cross-check (docs track code, not the reverse): the provider table above must equal `PROVIDERS`, and the `TEST_NOT_IMPLEMENTED` tier must equal `PROVIDERS ∖ IMPLEMENTED_PROVIDERS`, both in `src/settings/routes.js`; `test/settings-connections-preview-cases.js` is the executable lock (the "only non-gate Slack remains exact 501" case covers `slack` → `501` and `deepgram|attendee|llm|tunnel` → `200`; the ElevenLabs / OpenAI-compatible cases cover the other two). Adding or removing a provider literal or a `ConnectionCode` literal is a contract amendment that updates this section, the route table, the `ConnectionCode` type, and T12-14 in the same change. Amendment applied by the EPIC #41 integration (this revision): the `discord` provider (#123) and the `ALLOWLIST_MISMATCH` code (#132) are appended to the provider table, the route table, the `ConnectionCode` type, and T12-14.
 
 The localhost guard applies **only** to `/api/settings`, `/api/settings/*`, the settings page `/settings`, and its exact UI asset allowlist under `/settings-assets/`. It requires all of: the accepted socket local address is loopback; `Host` is exactly `localhost`, `127.0.0.1`, or `[::1]` with the listener's actual port; and no `Forwarded` or `X-Forwarded-*` header is present. Requests arriving through ngrok fail these checks and receive `404`, not an authentication hint. The existing dashboard at `/`, its existing assets, `/health`, `/calibrate*`, `/agents`, join/leave/session APIs, meeting WebSocket/data-plane paths, and all other existing APIs retain their current routing and tunnel reachability; they must not be placed behind this guard. Existing API payloads and behavior also remain unchanged, except `/health` may add only the backward-compatible §7 fields `setupMode`, `meetingReady`, and `settingsIssues`. No CORS headers are emitted by the settings plane.
 
@@ -554,7 +577,7 @@ The implementation gate includes the following stable test IDs. Static scans cov
 - **T12-11 — feature/provider ownership and runtime wiring:** toggle `task_extraction_enabled` and `streaming_equivalent_enabled` independently and observe the exact §11 branches. Registry/meeting tests also lock Deepgram/Attendee settings plus wake words, language, icon, model, and voice ownership to the declared paths and providers.
 - **T12-12 — 8.x migration transactions:** seed every class-2 legacy path and class-1 `.env` source; prove class 2 is detected, value-free warned, ignored, stripped on save, and rollback-safe, while class-1 migration copies only eligible values from the startup snapshot. Failures abort only the request, leave HTTP/setup alive, and never edit `.env`; resolved-home and cwd fallback are covered.
 - **T12-13 — credential/sentinel leak matrix:** use distinct high-entropy class 1/2/3 values across all API, UI, export/import, presets, health, errors, logs, templates, and generated files. Also test the 14 exact case-sensitive placeholder sentinels, meaningful near misses, canonical numeric equality, and static rejection of class 2/3 names/deny paths from public/admin schema surfaces.
-- **T12-14 — connection tests and preview:** lock the six-provider route enum; require working Soniox and Fish Audio tests, permit exact `501 TEST_NOT_IMPLEMENTED` only for Deepgram/Attendee/Slack/Discord, and verify implemented tests use the effective class-1 credential with a five-second limit and value-free output. Preview fixtures prove user-key selection, WAV format, one 30-second budget, the 15-second cap, no partial response, and value-free logs.
+- **T12-14 — connection tests and preview:** lock the route enum to the §6 provider table (ten literals, equal to `PROVIDERS` in `src/settings/routes.js`; unknown literals are `422`); require working Soniox and Fish Audio tests, permit exact `501 TEST_NOT_IMPLEMENTED` only for the not-yet-implemented tier (Slack), and verify implemented tests (Deepgram, ElevenLabs, OpenAI-compatible, Attendee, `llm`, `tunnel`, Discord included) use the effective class-1 credential — or, for `llm`, the class-2 startup snapshot; `tunnel` sends none — with a five-second limit, value-free output, and a `code` drawn only from the twelve-literal `ConnectionCode` union. Preview fixtures prove user-key selection, WAV format, one 30-second budget, the 15-second cap, no partial response, and value-free logs.
 - **T12-15 — singular-agent reservation:** prove no settings/UI/DTO/migration/runtime path synthesizes or consumes an `agents` array, while an unknown pre-existing top-level `agents` value is preserved and remains inaccessible.
 - **T12-16 — post-child-3 effective system test:** after Epic child 3, run the operator path UI edit → save → required restart if listed → runtime behavior, recording measured evidence for every editable field family and the live-without-restart exceptions.
 - **T12-17 — operator-documentation acceptance:** README/setup guide describe the first meeting, exact five emotion tags, class separation/migration, apply wording, and current UI; screenshot fixtures are refreshed against the accepted settings screen.

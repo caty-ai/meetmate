@@ -212,6 +212,12 @@ h1 { margin: 0; font-size: clamp(30px, 5vw, 44px); letter-spacing: -.04em; line-
 .export-copy { margin: 0 0 14px; color: var(--ink-muted); font-size: 12px; }
 .settings-actions { align-items: center; padding-top: 4px; }
 .settings-actions p { max-width: 560px; margin: 0; color: var(--ink-muted); font-size: 11px; line-height: 1.5; }
+.settings-action-copy { display: grid; flex: 1 1 auto; gap: 8px; min-width: 0; }
+.save-status { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; width: fit-content; max-width: 100%; padding: 9px 11px; border: 1px solid var(--hairline); border-radius: 8px; color: var(--ink-secondary); background: var(--sunken); font-size: 12px; font-weight: 700; line-height: 1.5; }
+.save-status.success { border-color: var(--success-border); color: var(--success); background: var(--success-soft); }
+.save-status.restart, .save-status.conflict { border-color: var(--warning-border); color: var(--warning); background: var(--warning-soft); }
+.save-status.error { color: var(--danger); background: var(--danger-soft); }
+.save-status .btn-text { min-height: auto; font-size: 11px; }
 .settings-save { flex: 0 0 auto; min-height: 44px; padding: 0 24px; border: 1px solid var(--ink); border-radius: 8px; color: var(--bg); background: var(--ink); font-size: 13px; transition: transform .15s, opacity .2s; }
 .settings-save:hover { opacity: .86; }
 .settings-save:disabled:hover { opacity: .5; }

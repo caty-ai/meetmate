@@ -361,6 +361,7 @@ function registerCacheInvalidator(invalidate) {
 
 function getEffectiveValue(id) {
   const runtime = ensureRuntime();
+  if (id === "immediate_ack_enabled") return getDiagnosticValue(id, runtime);
   const entry = REGISTRY_BY_ID[id];
   if (!entry) return undefined;
   if (entry.apply === "live") return runtime.published.resolved.values[id];
@@ -369,6 +370,9 @@ function getEffectiveValue(id) {
 
 function getEffectiveSource(id) {
   const runtime = ensureRuntime();
+  if (id === "immediate_ack_enabled") {
+    return resolveDiagnostic(DIAGNOSTICS_BY_ID.get(id), runtime.startup).source;
+  }
   const entry = REGISTRY_BY_ID[id];
   if (!entry) return undefined;
   return entry.apply === "live" ? runtime.published.resolved.sources[id] : runtime.boot.sources[id];
@@ -410,10 +414,21 @@ function getBootstrapSeedFields() {
     .map((entry) => [entry.id, clone(seeded[entry.id])]));
 }
 
+function isMeetingIssue(issue) {
+  const entry = REGISTRY_BY_ID[issue.fieldId];
+  return !(entry && String(entry.path || "").startsWith("slack."));
+}
+
 function getStatus(options) {
   const runtime = ensureRuntime();
   const issues = buildIssues(runtime, options);
-  return { setupMode: issues.length > 0, meetingReady: issues.length === 0, issues: clone(issues) };
+  const meetingIssues = issues.filter(isMeetingIssue);
+  return {
+    setupMode: issues.length > 0,
+    meetingReady: meetingIssues.length === 0,
+    issues: clone(issues),
+    meetingIssues: clone(meetingIssues),
+  };
 }
 
 function buildEnvelope() {

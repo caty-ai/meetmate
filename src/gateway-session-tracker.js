@@ -10,6 +10,7 @@ function createGatewaySessionTracker({
   getGatewayConfigForProfile,
   getDefaultAgentId,
   appendLateResult,
+  onRetentionReleased,
 }) {
   const routes = new Map();
   let listenersRegistered = false;
@@ -64,7 +65,11 @@ function createGatewaySessionTracker({
         const handled = active.handler.handleGatewaySubagentCompletion(evt);
         return handled !== false;
       }
-      return appendLateResult(route.sessionId, evt) !== false;
+      const handled = appendLateResult(route.sessionId, evt) !== false;
+      if (entry?.ended && entry.children.size === 0) {
+        releaseRetainedRoute(route.sessionId, "settled");
+      }
+      return handled;
     });
 
     gatewayEvents.onSessionReply?.((evt) => {
@@ -77,12 +82,16 @@ function createGatewaySessionTracker({
         const handled = active.handler.handleGatewaySessionReply(routedEvt);
         return handled !== false;
       }
-      return appendLateResult(route.sessionId, {
+      const handled = appendLateResult(route.sessionId, {
         label: "委譲応答",
         status: "ok",
         resultText: String(evt.resultText || "").trim(),
         runId: evt.runId || "",
       }) !== false;
+      if (entry?.ended && entry.children.size === 0) {
+        releaseRetainedRoute(route.sessionId, "settled");
+      }
+      return handled;
     });
 
     gatewayEvents.onAnnounceInjected?.((evt) => {
@@ -163,7 +172,7 @@ function createGatewaySessionTracker({
       entry.ended = true;
       if (!entry.retainTimer) {
         entry.retainTimer = setTimeout(() => {
-          hardUntrackGatewaySession(sessionId);
+          releaseRetainedRoute(sessionId, "ttl");
         }, options.ttlMs || LATE_ROUTE_TTL_MS);
         entry.retainTimer.unref?.();
       }
@@ -172,6 +181,14 @@ function createGatewaySessionTracker({
 
     hardUntrackGatewaySession(sessionId);
     return false;
+  }
+
+  function releaseRetainedRoute(sessionId, reason) {
+    const entry = routes.get(sessionId);
+    if (!entry?.ended) return false;
+    hardUntrackGatewaySession(sessionId);
+    onRetentionReleased?.(sessionId, reason);
+    return true;
   }
 
   function hardUntrackGatewaySession(sessionId) {

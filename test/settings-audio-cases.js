@@ -19,6 +19,7 @@ const HERMETIC_READINESS = Object.freeze({
   async probeGateSystems() {},
 });
 const { initializeRuntime, resetRuntimeForTest } = require("../src/settings/resolver");
+const { resetStartupForTest } = require("../src/settings/bootstrap");
 const { readConfigState, settingsError } = require("../src/settings/store");
 
 const MP3 = Buffer.from([0xff, 0xfb, 0x90, 0x64, 1, 2, 3, 4]);
@@ -618,6 +619,8 @@ test("T12-09 the real pipeline forwards all five fixed phrase roles to the cache
     TTS_GAP_MS: "0",
     SENTENCE_PAUSE_MS: "0",
   });
+  resetStartupForTest();
+  resetRuntimeForTest();
   let stt;
   let pipeline;
   const roles = [];
@@ -690,6 +693,8 @@ test("T12-09 the real pipeline forwards all five fixed phrase roles to the cache
       if (value === undefined) delete process.env[name];
       else process.env[name] = value;
     }
+    resetRuntimeForTest();
+    resetStartupForTest();
   }
 });
 

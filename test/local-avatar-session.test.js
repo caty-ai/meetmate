@@ -1367,6 +1367,10 @@ async function withFakeNow(initial, fn) {
 
 async function withPipeline(overrides, fn) {
   const restoreEnv = setEnv({ ...QUIET_ENV, ...(overrides.env || {}) });
+  const settingsBootstrap = require("../src/settings/bootstrap");
+  const settingsResolver = require("../src/settings/resolver");
+  settingsBootstrap.resetStartupForTest();
+  settingsResolver.resetRuntimeForTest();
   const originalConsole = { log: console.log, warn: console.warn, error: console.error };
   console.log = () => {};
   console.warn = () => {};
@@ -1439,6 +1443,8 @@ async function withPipeline(overrides, fn) {
       if (previous) require.cache[resolved] = previous;
     }
     restoreEnv();
+    settingsResolver.resetRuntimeForTest();
+    settingsBootstrap.resetStartupForTest();
     Object.assign(console, originalConsole);
   }
 }

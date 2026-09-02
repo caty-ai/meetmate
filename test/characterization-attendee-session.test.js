@@ -725,7 +725,7 @@ test("bot launch failure stays initiating -> failed with bot_launch_failed metad
   await withMeetRoutes(async (harness) => {
     const failed = await harness.join();
     assert.equal(failed.statusCode, 502);
-    assert.match(failed.text, /Bot起動エラー: 502/);
+    assert.match(failed.text, /Bot起動エラー \(upstream_status=502\) \[code=BOT_LAUNCH_UPSTREAM_ERROR\]/);
 
     const lifecycle = harness.lifecycles[0];
     assert.ok(lifecycle);
@@ -1006,7 +1006,7 @@ test("getStatus keeps the frozen readiness shape", { concurrency: false }, () =>
   try {
     initializeRuntime({ setupIncomplete: true, homeDir });
     const status = resolver.getStatus();
-    assert.deepEqual(Object.keys(status).sort(), ["issues", "meetingReady", "setupMode"]);
+    assert.deepEqual(Object.keys(status).sort(), ["issues", "meetingIssues", "meetingReady", "setupMode"]);
     assert.equal(typeof status.setupMode, "boolean");
     assert.equal(typeof status.meetingReady, "boolean");
     assert.equal(Array.isArray(status.issues), true);

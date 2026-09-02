@@ -46,7 +46,7 @@ const PROGRESS_PING_MAX = Number(process.env.PROGRESS_PING_MAX || 3);
 const BARGE_IN_MIN_CHARS = Number(process.env.BARGE_IN_MIN_CHARS || 2);
 const BARGE_IN_CONFIDENCE_MIN = Number(process.env.BARGE_IN_CONFIDENCE_MIN || 0.45);
 const ENABLE_BARGE_IN = String(process.env.ENABLE_BARGE_IN || "true").toLowerCase() !== "false";
-const ENABLE_IMMEDIATE_ACK = String(process.env.ENABLE_IMMEDIATE_ACK || "true").toLowerCase() !== "false";
+
 const ENABLE_PROGRESS_GUARD = String(process.env.ENABLE_PROGRESS_GUARD || "true").toLowerCase() !== "false";
 
 // Multi-participant meeting mode: Injection Gate
@@ -406,13 +406,14 @@ const SHORT_UTTERANCE_PING_PATTERNS = [
   ...DEFAULT_MESSAGES.regex.shortUtterancePingPatterns.map((pattern) => new RegExp(pattern, DEFAULT_MESSAGES.regex.shortUtterancePingFlags)),
 ];
 
-function shouldSendImmediateAck(text) {
+function shouldSendImmediateAck(text, force = false) {
   // Always ack on any addressed turn so the user never hears silence after
   // calling the agent. The caller already gates this to addressed (post-wake)
   // turns, and exit/cancel turns short-circuit before reaching the ack path.
   // Pattern matching is preserved internally so pickImmediateAck() can pick
   // a task-flavored variant for request-like utterances.
-  if (!ENABLE_IMMEDIATE_ACK) return false;
+  if (!getEffectiveValue("immediate_ack_enabled")) return false;
+  if (force) return true;
   const t = String(text || "").trim();
   if (!t) return false;
   return true;
@@ -2566,7 +2567,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       // #9 Immediate ack for request-like utterances
       const currentAgentConfig = agents[currentAgentId] || {};
       const ackDecisionText = String(ackSourceText ?? userText ?? "");
-      if ((forceImmediateAck || shouldSendImmediateAck(ackDecisionText)) && !abort.signal.aborted) {
+      if (shouldSendImmediateAck(ackDecisionText, forceImmediateAck) && !abort.signal.aborted) {
         const ack = pickImmediateAck(ackDecisionText, currentAgentConfig.ackVariants || config.ackVariants, resolvedRegex);
         turnState.isAgentSpeaking = true;
         console.log(`⚡  Immediate ack: "${ack}"`);
@@ -3275,6 +3276,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
 module.exports = {
   createPipeline,
   _test: {
+    shouldSendImmediateAck,
     selectMeetingContextEntries,
     isWakeCancelText,
     buildMeetingContextBlock,
