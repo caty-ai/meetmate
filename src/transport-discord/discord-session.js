@@ -610,7 +610,9 @@ function createDiscordSessionManager(options = {}) {
       sessionRecord.pipeline.on?.("exit_requested", (event) => {
         if (sessionRecord.teardownStarted || active !== sessionRecord) return;
         console.log(`🚪  Discord exit requested for session ${sessionRecord.id}: ${event?.trigger || "unknown"}`);
-        endSession(sessionRecord, "exit_requested").catch(() => {});
+        endSession(sessionRecord, "exit_requested").catch((error) => {
+          console.error(`Discord exit_requested teardown failed: ${error?.message || error}`);
+        });
       });
       gatewaySessions.set(sessionId, sessionRecord.session);
       gatewayConnections.set(sessionId, { handler: sessionRecord.pipeline });
