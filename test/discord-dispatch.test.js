@@ -577,3 +577,47 @@ function runServerProbe(mode) {
     timeout: 10_000,
   });
 }
+
+test("discord join/leave route exceptions never echo vendor text; parse errors stay 400", async () => {
+  const { JOIN_FAILURE_MESSAGES } = require("../src/transport-discord/discord-session");
+  const originalConsoleError = console.error;
+  const logs = [];
+  console.error = (...args) => logs.push(args.map(String).join(" "));
+  try {
+    const routes = createHttpRoutes({
+      joinSession() { throw new Error('vendor rejected Bearer fallback-secret {"token":"json-secret"}'); },
+      leaveSession() { return Promise.reject(new Error("apiKey=fallback-secret")); },
+    });
+    const join = await runHttp(
+      routes,
+      createRequest({ method: "POST", url: "/api/discord/join" }),
+      JSON.stringify({ guildId: "11111111111111111", channelId: "22222222222222222" })
+    );
+    assert.equal(join.statusCode, 500);
+    assert.deepEqual(JSON.parse(join.body), { ok: false, code: "DISCORD_JOIN_FAILED", message: JOIN_FAILURE_MESSAGES.DISCORD_JOIN_FAILED });
+    assert.equal(join.body.includes("fallback-secret"), false);
+    assert.equal(join.body.includes("json-secret"), false);
+
+    const leave = await runHttp(
+      routes,
+      createRequest({ method: "POST", url: "/api/discord/leave" }),
+      JSON.stringify({})
+    );
+    assert.equal(leave.statusCode, 500);
+    assert.equal(leave.body.includes("fallback-secret"), false);
+
+    const handlerLogs = logs.filter((line) => line.includes("handler failed"));
+    assert.equal(handlerLogs.length, 2, JSON.stringify(logs));
+    assert.equal(handlerLogs.some((line) => line.includes("fallback-secret") || line.includes("json-secret")), false, JSON.stringify(handlerLogs));
+
+    const badJson = await runHttp(
+      routes,
+      createRequest({ method: "POST", url: "/api/discord/join" }),
+      "{not json"
+    );
+    assert.equal(badJson.statusCode, 400);
+    assert.equal(JSON.parse(badJson.body).code, "DISCORD_BAD_REQUEST");
+  } finally {
+    console.error = originalConsoleError;
+  }
+});

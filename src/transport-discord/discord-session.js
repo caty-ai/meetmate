@@ -39,10 +39,12 @@ function scrubJoinErrorMessage(message, secret) {
   // floor here: a short configured secret is still scrubbed (over-redaction is the safe direction).
   if (typeof secret === "string" && secret.length > 0) text = text.split(secret).join("[REDACTED]");
   return text
-    // labelled pairs, optionally scheme-prefixed: `token=x`, `Authorization: Bot x`
-    .replace(/((?:token|authorization)\s*[:=]\s*(?:(?:bot|bearer|basic)\s+)?)[^\s,})"']+/gi, "$1[REDACTED]")
-    // JSON-quoted pairs: `"token":"x"`, `"authorization": "Bearer x"`
-    .replace(/("(?:token|authorization)"\s*:\s*")[^"]*/gi, "$1[REDACTED]")
+    // labelled pairs (token / authorization / api key / secret / password, any prefix such as
+    // access_token or apiKey), optionally scheme-prefixed and optionally quoted values:
+    // `token=x`, `Authorization: Bot x`, `apiKey=x`, `Authorization: Bearer "x"`
+    .replace(/((?:[a-z_-]*(?:token|authorization|api[_-]?key|secret|password))\s*[:=]\s*(?:(?:bot|bearer|basic)\s+)?["']?)[^\s,})"']+/gi, "$1[REDACTED]")
+    // JSON / single-quoted pairs: `"token":"x"`, `'access_token': 'x'`, `"authorization": "Bearer x"`
+    .replace(/(["'][a-z_-]*(?:token|authorization|api[_-]?key|secret|password)["']\s*:\s*["'])[^"']*/gi, "$1[REDACTED]")
     // bare scheme credentials: `Bearer x`, `Bot x`, `Basic x`
     .replace(/\b((?:bot|bearer|basic)\s+)(?!\[REDACTED\])[^\s,})"']+/gi, "$1[REDACTED]");
 }

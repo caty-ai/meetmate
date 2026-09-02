@@ -33,6 +33,28 @@ function isLocalDiscordRequest(req) {
   return isLoopbackRemote(req) && !hasForwardedHeaders(req);
 }
 
+// Request parsing and the session command are caught separately: a parse failure is the caller's own
+// body (400 DISCORD_BAD_REQUEST with the parser's text), but an exception escaping joinSession /
+// leaveSession may carry dependency or vendor text, so it never reaches the client — the response is
+// the fixed per-code message and the diagnostic goes to the operator log after credential scrubbing.
+async function handleSessionCommand(req, res, options, command, verb) {
+  let body;
+  try {
+    body = await parseJsonRequestBody(req, options.bodyLimitBytes);
+  } catch (error) {
+    writeJsonResponse(res, 400, { ok: false, code: "DISCORD_BAD_REQUEST", message: error.message });
+    return;
+  }
+  try {
+    const result = await command(body);
+    writeJsonResponse(res, result.status || 200, result.body || { ok: true }, result.headers);
+  } catch (error) {
+    const { scrubJoinErrorMessage, JOIN_FAILURE_MESSAGES } = require("./discord-session");
+    console.error(`Discord ${verb} handler failed: ${scrubJoinErrorMessage(error && error.message)}`);
+    writeJsonResponse(res, 500, { ok: false, code: "DISCORD_JOIN_FAILED", message: JOIN_FAILURE_MESSAGES.DISCORD_JOIN_FAILED });
+  }
+}
+
 function parseJsonRequestBody(req, bodyLimitBytes = getDiagnosticValue("body_limit_bytes")) {
   return new Promise((resolve, reject) => {
     let body = "";
@@ -102,32 +124,12 @@ function createHttpRoutes(options = {}) {
     }
 
     if (req.method === "POST" && parsedUrl.pathname === "/api/discord/join") {
-      try {
-        const body = await parseJsonRequestBody(req, options.bodyLimitBytes);
-        const result = await joinSession(body);
-        writeJsonResponse(res, result.status || 200, result.body || { ok: true }, result.headers);
-      } catch (error) {
-        writeJsonResponse(res, 400, {
-          ok: false,
-          code: "DISCORD_BAD_REQUEST",
-          message: error.message,
-        });
-      }
+      await handleSessionCommand(req, res, options, joinSession, "join");
       return true;
     }
 
     if (req.method === "POST" && parsedUrl.pathname === "/api/discord/leave") {
-      try {
-        const body = await parseJsonRequestBody(req, options.bodyLimitBytes);
-        const result = await leaveSession(body);
-        writeJsonResponse(res, result.status || 200, result.body || { ok: true }, result.headers);
-      } catch (error) {
-        writeJsonResponse(res, 400, {
-          ok: false,
-          code: "DISCORD_BAD_REQUEST",
-          message: error.message,
-        });
-      }
+      await handleSessionCommand(req, res, options, leaveSession, "leave");
       return true;
     }
 

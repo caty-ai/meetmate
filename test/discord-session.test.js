@@ -990,6 +990,11 @@ test("scrubJoinErrorMessage strips the secret and generic token pairs without to
   assert.equal(scrubJoinErrorMessage("Bearer fallback-secret", ""), "Bearer [REDACTED]");
   assert.equal(scrubJoinErrorMessage("rejected Bot zzz) now", ""), "rejected Bot [REDACTED]) now");
   assert.equal(scrubJoinErrorMessage('{"token":"abc123","authorization":"Bearer x.y"}', ""), '{"token":"[REDACTED]","authorization":"[REDACTED]"}');
+  // wider labels and quoted values (operator-log defense in depth)
+  assert.equal(scrubJoinErrorMessage("apiKey=fallback-secret", ""), "apiKey=[REDACTED]");
+  assert.equal(scrubJoinErrorMessage("{'access_token':'fallback-secret'}", ""), "{'access_token':'[REDACTED]'}");
+  assert.equal(scrubJoinErrorMessage('Authorization: Bearer "fallback-secret"', ""), 'Authorization: Bearer "[REDACTED]"');
+  assert.equal(scrubJoinErrorMessage('{"access_token":"abc123"}', ""), '{"access_token":"[REDACTED]"}');
 });
 
 test("discord join failure scrubs a short configured token and scheme-prefixed credentials", async () => {
