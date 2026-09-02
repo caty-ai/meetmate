@@ -654,6 +654,10 @@ async function withFreshPipeline(fn, options = {}) {
     SENTENCE_PAUSE_MS: "0",
     WAKE_WORDS: "ケイティ",
   });
+  const settingsBootstrap = require("../src/settings/bootstrap");
+  const settingsResolver = require("../src/settings/resolver");
+  settingsBootstrap.resetStartupForTest();
+  settingsResolver.resetRuntimeForTest();
 
   const sttExports = {
     createSTT: () => {
@@ -706,6 +710,8 @@ async function withFreshPipeline(fn, options = {}) {
       try { pipeline.close?.(); } catch { /* ignore test cleanup */ }
     }
     restoreEnv(previousEnv);
+    settingsResolver.resetRuntimeForTest();
+    settingsBootstrap.resetStartupForTest();
     for (const p of paths) {
       const resolved = require.resolve(p);
       delete require.cache[resolved];

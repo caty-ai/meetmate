@@ -51,7 +51,7 @@ test("first utterance is preceded by TTS_LEAD_MS pad before TTS audio", async ()
   await withEnvAsync(
     {
       POST_UTTERANCE_BUFFER_MS: "0",
-      ENABLE_IMMEDIATE_ACK: "false",
+      ENABLE_IMMEDIATE_ACK: "true",
       ENABLE_PROGRESS_GUARD: "false",
       TTS_GAP_MS: "0",
       TTS_LEAD_MS: "100",
@@ -177,10 +177,16 @@ function cacheEntry(filename, exports) {
 
 async function withEnvAsync(values, fn) {
   const previous = setEnv(values);
+  const settingsBootstrap = require("../src/settings/bootstrap");
+  const settingsResolver = require("../src/settings/resolver");
+  settingsBootstrap.resetStartupForTest();
+  settingsResolver.resetRuntimeForTest();
   try {
     return await fn();
   } finally {
     restoreEnv(previous);
+    settingsResolver.resetRuntimeForTest();
+    settingsBootstrap.resetStartupForTest();
   }
 }
 

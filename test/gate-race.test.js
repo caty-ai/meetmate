@@ -22,6 +22,11 @@ test.after(() => {
   console.error = gateRaceConsole.error;
 });
 
+function resetSettingsSnapshots() {
+  require("../src/settings/bootstrap").resetStartupForTest();
+  require("../src/settings/resolver").resetRuntimeForTest();
+}
+
 test("utterance handling serializes rapid wake turns without dropping the replayed reply", async () => {
   const previousEnv = {
     POST_UTTERANCE_BUFFER_MS: process.env.POST_UTTERANCE_BUFFER_MS,
@@ -37,6 +42,7 @@ test("utterance handling serializes rapid wake turns without dropping the replay
   process.env.TTS_GAP_MS = "0";
   process.env.SENTENCE_PAUSE_MS = "0";
   process.env.WAKE_WORDS = "ケイティ";
+  resetSettingsSnapshots();
 
   const src = path.join(__dirname, "..", "src");
   const paths = [
@@ -144,6 +150,7 @@ test("utterance handling serializes rapid wake turns without dropping the replay
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
+    resetSettingsSnapshots();
   }
 });
 
@@ -162,6 +169,7 @@ test("pending queue replays a wake turn observed while the gate is closed", asyn
   process.env.TTS_GAP_MS = "0";
   process.env.SENTENCE_PAUSE_MS = "0";
   process.env.WAKE_WORDS = "ケイティ";
+  resetSettingsSnapshots();
 
   const src = path.join(__dirname, "..", "src");
   const paths = [
@@ -261,6 +269,7 @@ test("pending queue replays a wake turn observed while the gate is closed", asyn
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
+    resetSettingsSnapshots();
   }
 });
 
@@ -279,6 +288,7 @@ test("hub pending reports arbitrate before replay and non-assigned exit reopens 
   process.env.TTS_GAP_MS = "0";
   process.env.TTS_LEAD_MS = "0";
   process.env.SENTENCE_PAUSE_MS = "0";
+  resetSettingsSnapshots();
 
   const src = path.join(__dirname, "..", "src");
   const paths = ["stt-provider.js", "stt.js", "llm-provider.js", "tts-fish.js", "pipeline.js"]
@@ -403,6 +413,7 @@ test("hub pending reports arbitrate before replay and non-assigned exit reopens 
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
+    resetSettingsSnapshots();
   }
 });
 

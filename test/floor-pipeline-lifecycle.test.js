@@ -96,7 +96,14 @@ function createFloor(overrides = {}) {
   return floor;
 }
 
-async function createHarness({ floor = createFloor(), synthesize, streamChat, timers, config: configOverrides = {} } = {}) {
+async function createHarness({
+  floor = createFloor(),
+  synthesize,
+  streamChat,
+  timers,
+  config: configOverrides = {},
+  env: envOverrides = {},
+} = {}) {
   const previousEnv = Object.fromEntries([
     "ENABLE_IMMEDIATE_ACK", "ENABLE_PROGRESS_GUARD", "POST_UTTERANCE_BUFFER_MS",
     "TTS_GAP_MS", "TTS_LEAD_MS", "SENTENCE_PAUSE_MS",
@@ -107,6 +114,11 @@ async function createHarness({ floor = createFloor(), synthesize, streamChat, ti
   process.env.TTS_GAP_MS = "0";
   process.env.TTS_LEAD_MS = "0";
   process.env.SENTENCE_PAUSE_MS = "0";
+  Object.assign(process.env, envOverrides);
+  const settingsBootstrap = require("../src/settings/bootstrap");
+  const settingsResolver = require("../src/settings/resolver");
+  settingsBootstrap.resetStartupForTest();
+  settingsResolver.resetRuntimeForTest();
 
   const src = path.join(__dirname, "..", "src");
   const paths = ["stt-provider.js", "stt.js", "llm-provider.js", "tts-fish.js", "pipeline.js"]
@@ -179,6 +191,8 @@ async function createHarness({ floor = createFloor(), synthesize, streamChat, ti
         if (value === undefined) delete process.env[key];
         else process.env[key] = value;
       }
+      settingsResolver.resetRuntimeForTest();
+      settingsBootstrap.resetStartupForTest();
     },
   };
 }
@@ -285,7 +299,11 @@ test("A2 cancelled timeout fallback stays fenced and releases the next assigned 
         : { kind: "assigned", assignment: { roundId: "r-next", memberId: "m1" } });
     },
   });
-  const harness = await createHarness({ floor, timers });
+  const harness = await createHarness({
+    floor,
+    timers,
+    env: { ENABLE_IMMEDIATE_ACK: "true" },
+  });
   try {
     harness.stt.emit("utterance_end", "ケイティ、取消競合");
     await flushMicrotasks();
@@ -361,7 +379,11 @@ test("pipeline timeout before the client timer still lets a late peer assignment
 
 test("A9 verdict timeout fallback waits for jitter before its first PCM", async () => {
   const timers = new FakeTimers();
-  const harness = await createHarness({ floor: createFloor({ fallbackDelayMs: () => 500 }), timers });
+  const harness = await createHarness({
+    floor: createFloor({ fallbackDelayMs: () => 500 }),
+    timers,
+    env: { ENABLE_IMMEDIATE_ACK: "true" },
+  });
   try {
     const fallback = harness.pipeline._test.handleUtteranceEnd("ケイティ、タイムアウト", null, {
       cancelled: false,

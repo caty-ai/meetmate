@@ -217,6 +217,10 @@ async function withFreshPipeline(fn, options = {}) {
     WAKE_WORDS: "ケイティ",
     METRICS_DISABLED: "1",
   });
+  const settingsBootstrap = require("../src/settings/bootstrap");
+  const settingsResolver = require("../src/settings/resolver");
+  settingsBootstrap.resetStartupForTest();
+  settingsResolver.resetRuntimeForTest();
 
   const sttExports = {
     createSTT: () => {
@@ -275,6 +279,8 @@ async function withFreshPipeline(fn, options = {}) {
     }
     httpModule.request = previousHttpRequest;
     restoreEnv(previousEnv);
+    settingsResolver.resetRuntimeForTest();
+    settingsBootstrap.resetStartupForTest();
     for (const p of paths) {
       const resolved = require.resolve(p);
       delete require.cache[resolved];

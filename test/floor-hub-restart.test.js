@@ -64,6 +64,10 @@ test("floor clients recover from a hub restart whose round sequence resets", asy
   process.env.TTS_GAP_MS = "0";
   process.env.TTS_LEAD_MS = "0";
   process.env.SENTENCE_PAUSE_MS = "0";
+  const settingsBootstrap = require("../src/settings/bootstrap");
+  const settingsResolver = require("../src/settings/resolver");
+  settingsBootstrap.resetStartupForTest();
+  settingsResolver.resetRuntimeForTest();
 
   const hub = await spawnFloorHub({ hubDir, stdio: true });
   t.after(async () => hub.stop());
@@ -78,6 +82,7 @@ test("floor clients recover from a hub restart whose round sequence resets", asy
   const sttEmitters = [];
   const calls = [];
   const spoken = [];
+  const spokenRoles = [];
   const audioWindows = new Map([["caty", []], ["ciel", []]]);
   const assignments = [];
   let observePostRestartAssignments = false;
@@ -104,8 +109,9 @@ test("floor clients recover from a hub restart whose round sequence resets", asy
     }),
   });
   require.cache[require.resolve(path.join(src, "tts-fish.js"))] = cacheEntry(path.join(src, "tts-fish.js"), {
-    synthesize: async (text, { onAudio }) => {
+    synthesize: async (text, { onAudio, role }) => {
       spoken.push(text);
+      spokenRoles.push(role);
       await sleep(20);
       onAudio(Buffer.alloc(320));
       await sleep(10);
@@ -227,6 +233,7 @@ test("floor clients recover from a hub restart whose round sequence resets", asy
       }
     }
     assert.equal(pipelines.every((pipeline) => pipeline._test.getGateState() === "OPEN"), true);
+    assert.equal(spokenRoles.includes("ack"), false);
   } finally {
     for (const pipeline of pipelines) pipeline.close();
     for (const file of paths) {
@@ -239,5 +246,7 @@ test("floor clients recover from a hub restart whose round sequence resets", asy
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
+    settingsResolver.resetRuntimeForTest();
+    settingsBootstrap.resetStartupForTest();
   }
 });

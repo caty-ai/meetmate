@@ -316,10 +316,16 @@ function withEnv(values, fn) {
 
 async function withEnvAsync(values, fn) {
   const previous = setEnv(values);
+  const settingsBootstrap = require("../src/settings/bootstrap");
+  const settingsResolver = require("../src/settings/resolver");
+  settingsBootstrap.resetStartupForTest();
+  settingsResolver.resetRuntimeForTest();
   try {
     return await fn();
   } finally {
     restoreEnv(previous);
+    settingsResolver.resetRuntimeForTest();
+    settingsBootstrap.resetStartupForTest();
   }
 }
 

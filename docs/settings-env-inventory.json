@@ -245,13 +245,11 @@
     },
     {
       "name": "ENABLE_IMMEDIATE_ACK",
-      "references": [
-        "src/pipeline.js:49"
-      ],
+      "references": [],
       "ux": "deployment-readonly",
       "credentialClass": "none",
       "handling": "env-only-readonly-diagnostic",
-      "remainingDirectReads": 1
+      "remainingDirectReads": 0
     },
     {
       "name": "ENABLE_MEETING_CONTEXT_INJECTION",
@@ -973,8 +971,8 @@
       "expression": "runtime.startup.{preDotenvEnv,dotenvSeeds}[name]",
       "helper": "per-agent Slack token compatibility lookup",
       "references": [
-        "src/settings/resolver.js:359",
-        "src/settings/resolver.js:361"
+        "src/settings/resolver.js:363",
+        "src/settings/resolver.js:365"
       ],
       "pattern": "^[A-Z0-9_-]+_SLACK_BOT_TOKEN$",
       "names": [],
