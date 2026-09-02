@@ -263,6 +263,8 @@ tailscale serve --https=443 http://127.0.0.1:<port>
 
 ## Discord ボット（音声チャンネル参加）
 
+> **プレビュー（ライブ検証前）** — この章の Discord 経路は、実サーバーでのライブ E2E 検証（[#138](https://github.com/caty-ai/meetmate/issues/138)）より先に出荷している。未確認の項目: 音声の退出コマンドで実機がチャンネルを抜けるか（[#139](https://github.com/caty-ai/meetmate/issues/139)）、複数話者の帰属が画面上で見えるか（[#140](https://github.com/caty-ai/meetmate/issues/140)）。#138 が PASS した時点でこの注記は外す。
+
 Meetmate は Google Meet / Zoom に加えて、**Discord の音声チャンネルに Bot として参加**できる。公式 Bot API（discord.js）を使うので、ヘッドレスブラウザも Attendee も ngrok も不要（Bot 側から Discord へ外向きに接続する）。**第1弾の対象は自分が管理するサーバーのみ** — 公開サーバーでの運用は対象外。
 
 ### Bot を作成する（Developer Portal）
