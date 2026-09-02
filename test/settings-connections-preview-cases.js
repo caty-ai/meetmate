@@ -294,9 +294,12 @@ test("unset keys avoid vendor calls and only non-gate Slack remains exact 501", 
   });
   for (const provider of ["soniox", "fish-audio"]) {
     const res = await invoke(handler, "POST", `/api/settings/connections/${provider}/test`, { revision: state.revision });
-    assert.deepEqual(res.json, {
+    assert.deepEqual(Object.keys(res.json), ["ok", "provider", "code", "message", "durationMs"]);
+    assert.deepEqual({ ...res.json, durationMs: 0 }, {
       ok: false, provider, code: "NOT_CONFIGURED", message: "Connection is not configured", durationMs: 0,
     });
+    assert.equal(Number.isInteger(res.json.durationMs), true);
+    assert.equal(res.json.durationMs >= 0, true);
   }
   assert.equal(calls, 0);
   for (const provider of ["deepgram", "attendee", "llm", "tunnel"]) {
