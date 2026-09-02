@@ -53,6 +53,71 @@ test("bootstrap prefill and pendingChanges build an exact edited-only PUT body",
   assert.equal(body, '{"schemaVersion":1,"revision":"bootstrap","fields":{"agent_name":"Edited Agent"}}');
 });
 
+test("successful saves render a persistent status strip until the next edit", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const { failedSaveStatus, successfulSaveStatus } = require("../public/settings.js");
+  const html = fs.readFileSync(path.join(__dirname, "..", "public", "settings.html"), "utf8");
+  const source = fs.readFileSync(path.join(__dirname, "..", "public", "settings.js"), "utf8");
+  const showStatus = source.match(/function showSaveStatus\([\s\S]*?\n    }\n\n    function clearSaveStatus/)?.[0] || "";
+  const savePath = source.match(/async function saveSettings\([\s\S]*?\n    }\n\n    function renderConnectionButtons/)?.[0] || "";
+
+  assert.match(html, /id="saveStatus"[^>]*role="status"[^>]*aria-live="polite"/);
+  assert.equal(successfulSaveStatus({ live_field: true }, [{ id: "live_field", apply: "live" }], new Date(2026, 0, 2, 9, 7)), "保存しました（09:07）");
+  assert.match(failedSaveStatus("入力値が不正です。"), /入力値が不正です。[\s\S]*確認し、もう一度保存してください。/);
+  assert.match(showStatus, /saveStatus\.hidden = false/);
+  assert.doesNotMatch(showStatus, /setTimeout|clearTimeout|classList\.remove/);
+  assert.doesNotMatch(savePath, /setTimeout|clearTimeout|clearSaveStatus/);
+  assert.match(source, /function clearSaveStatus[\s\S]*saveStatus\.hidden = true/);
+  assert.match(source, /if \(count && \["success", "restart"\]\.includes\(saveStatus\.dataset\.kind\)\) clearSaveStatus\(\)/);
+  assert.match(source, /showSaveStatus\(restartRequired \? "restart" : "success", successfulSaveStatus\(fields, manifest\)\)/);
+  assert.match(source, /showSaveStatus\("error", failedSaveStatus\(error\.message\)\)/);
+});
+
+test("revision conflicts persist with guidance and a reload affordance on every 409 path", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const html = fs.readFileSync(path.join(__dirname, "..", "public", "settings.html"), "utf8");
+  const source = fs.readFileSync(path.join(__dirname, "..", "public", "settings.js"), "utf8");
+  const showStatus = source.match(/function showSaveStatus\([\s\S]*?\n    }\n\n    function clearSaveStatus/)?.[0] || "";
+
+  assert.match(html, /id="reloadSettingsPage"[^>]*type="button"/);
+  assert.match(showStatus, /function showSaveStatus\(kind, message, reload = false\)/);
+  assert.match(showStatus, /reloadSettingsPage\.hidden = !reload/);
+  assert.match(source, /showSaveStatus\("conflict", [^\n]+, true\)/);
+  assert.match(source, /showSaveStatus\("error", failedSaveStatus\(error\.message\)\)/);
+  assert.match(source, /showSaveStatus\(restartRequired \? "restart" : "success", successfulSaveStatus\(fields, manifest\)\)/);
+  assert.match(source, /他の場所で設定が変更されました。ページを再読み込みしてください。/);
+  assert.match(source, /if \(conflict\)[\s\S]*showRevisionConflict\(\)/);
+  assert.equal((source.match(/loadSettings\(true\)/g) || []).length, 3);
+  assert.match(source, /reloadSettingsPage\.addEventListener\("click", \(\) => location\.reload\(\)\)/);
+});
+
+test("restart-required save status comes from manifest metadata and is separate from setup mode", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const { savedFieldsRequireRestart, successfulSaveStatus } = require("../public/settings.js");
+  const source = fs.readFileSync(path.join(__dirname, "..", "public", "settings.js"), "utf8");
+  const savePath = source.match(/async function saveSettings\([\s\S]*?\n    }\n\n    function renderConnectionButtons/)?.[0] || "";
+  const manifest = [
+    { id: "live_field", apply: "live" },
+    { id: "manifest_only_restart_field", apply: "restart-required" },
+  ];
+
+  assert.equal(savedFieldsRequireRestart({ live_field: true }, manifest), false);
+  assert.equal(savedFieldsRequireRestart({ manifest_only_restart_field: "changed" }, manifest), true);
+  assert.match(savePath, /const restartRequired = savedFieldsRequireRestart\(fields, manifest\)/);
+  assert.equal(
+    successfulSaveStatus({ manifest_only_restart_field: "changed" }, manifest, new Date(2026, 0, 2, 9, 7)),
+    "保存済み・再起動で反映（09:07）",
+  );
+
+  const html = fs.readFileSync(path.join(__dirname, "..", "public", "settings.html"), "utf8");
+  const actions = html.match(/<div class="settings-actions">[\s\S]*?<\/div>\s*<\/form>/)?.[0] || "";
+  assert.match(actions, /id="saveStatus"/);
+  assert.doesNotMatch(actions, /id="settingsState"/);
+});
+
 test("client field sets deep-match registry UI metadata", () => {
   const { CLIENT_FIELD_SETS } = require("../public/settings.js");
   const { SETTINGS_REGISTRY } = require("../src/settings/registry");
