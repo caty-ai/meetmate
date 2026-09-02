@@ -1406,7 +1406,11 @@ async function handleHttp(req, res) {
         failedLifecycle.transition("failed", { reason: "bot_launch_failed", statusCode: attendeeResult.statusCode });
       }
       meetingSessions.delete(sessionId);
-      writePlainResponse(res, 502, `Bot起動エラー: ${attendeeResult.statusCode} - ${attendeeResult.body}`);
+      writePlainResponse(
+        res,
+        502,
+        `Bot起動エラー (upstream_status=${attendeeResult.statusCode}) [code=BOT_LAUNCH_UPSTREAM_ERROR]`
+      );
       return;
     } catch (err) {
       try { localAvatarSession?.close("join_failed"); } catch { /* visual cleanup is best-effort */ }
