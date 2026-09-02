@@ -75,7 +75,7 @@ function request(method, url, formData) {
   return req;
 }
 
-async function invoke(routes, formData) {
+async function invoke(routes, formData, url = "/join-meeting") {
   const output = { status: 0, headers: {}, text: "" };
   const res = {
     writeHead(status, headers = {}) {
@@ -86,17 +86,26 @@ async function invoke(routes, formData) {
       output.text += String(chunk);
     },
   };
-  await routes.handleHttp(request("POST", "/join-meeting", formData), res);
+  await routes.handleHttp(request("POST", url, formData), res);
   return output;
 }
 
-async function withJoinRoutes(run) {
+async function withJoinRoutes(run, options = {}) {
   const src = path.join(__dirname, "..", "src");
   const previousCache = new Map();
   const previousHttpsRequest = https.request;
   const previousConsoleError = console.error;
+  const previousConsoleLog = console.log;
   const consoleOutput = [];
-  const sentinel = "SECRET-INTERNAL-URL";
+  const sentinel = options.sentinel || "SECRET-INTERNAL-URL";
+  const joinStatusCode = options.joinStatusCode ?? 500;
+  const joinBody = options.joinBody ?? JSON.stringify({ error: sentinel, detail: "vendor exploded" });
+  const leaveStatusCode = options.leaveStatusCode ?? 200;
+  const leaveBody = options.leaveBody ?? JSON.stringify({ ok: true });
+  let resolveLeaveResponse;
+  const leaveResponseEnded = new Promise((resolve) => {
+    resolveLeaveResponse = resolve;
+  });
 
   installMock(previousCache, path.join(src, "config.js"), {
     getPipelineConfig: () => ({
@@ -227,11 +236,14 @@ async function withJoinRoutes(run) {
     request.destroy = () => {};
     request.write = () => {};
     request.end = () => {
-      response.statusCode = options.path === "/api/v1/bots" ? 500 : 200;
+      const isJoinRequest = options.path === "/api/v1/bots";
+      const isLeaveRequest = options.path.endsWith("/leave");
+      response.statusCode = isJoinRequest ? joinStatusCode : leaveStatusCode;
       callback(response);
       queueMicrotask(() => {
-        response.emit("data", JSON.stringify({ error: sentinel, detail: "vendor exploded" }));
+        response.emit("data", isJoinRequest ? joinBody : leaveBody);
         response.emit("end");
+        if (isLeaveRequest) resolveLeaveResponse();
       });
     };
     return request;
@@ -240,15 +252,24 @@ async function withJoinRoutes(run) {
   console.error = (...args) => {
     consoleOutput.push(args.map((value) => String(value)).join(" "));
   };
+  console.log = (...args) => {
+    consoleOutput.push(args.map((value) => String(value)).join(" "));
+  };
 
   delete require.cache[routesPath];
   try {
     const routes = require(routesPath);
     await routes.init({ detectNgrok: false, loadAvatar: false, instanceId: "test-boot" });
-    await run({ routes, consoleOutput, sentinel });
+    await run({
+      routes,
+      consoleOutput,
+      sentinel,
+      waitForLeaveResponse: () => leaveResponseEnded,
+    });
   } finally {
     https.request = previousHttpsRequest;
     console.error = previousConsoleError;
+    console.log = previousConsoleLog;
     delete require.cache[routesPath];
     for (const [resolved, cached] of previousCache.entries()) {
       if (cached === undefined) delete require.cache[resolved];
@@ -274,5 +295,33 @@ test("join 502 sanitizes upstream Attendee bodies while preserving operator logs
       true,
       consoleOutput.join("\n"),
     );
+  });
+});
+
+test("leave redacts the Attendee response body in operator logs", { concurrency: false }, async () => {
+  const sentinel = "LEAVE-BODY-SENTINEL-9f1c";
+  await withJoinRoutes(async ({ routes, consoleOutput, waitForLeaveResponse }) => {
+    const joinResponse = await invoke(routes, {
+      meetingUrl: "https://meet.google.com/abc-defg-hij",
+      wsUrl: "wss://meetmate.example/realtime",
+      conversationMode: "one_to_one",
+    });
+    assert.equal(joinResponse.status, 200);
+
+    const sessionId = joinResponse.text.match(/session_id=([^\s]+)/)?.[1];
+    assert.ok(sessionId, joinResponse.text);
+
+    const leaveResponse = await invoke(routes, { sessionId }, "/leave-meeting");
+    assert.equal(leaveResponse.status, 200);
+    await waitForLeaveResponse();
+
+    const leaveLogs = consoleOutput.filter((line) => line.includes("Attendee bot leave"));
+    assert.ok(leaveLogs.length > 0, consoleOutput.join("\n"));
+    assert.equal(consoleOutput.some((line) => line.includes(sentinel)), false, consoleOutput.join("\n"));
+  }, {
+    sentinel,
+    joinStatusCode: 200,
+    joinBody: JSON.stringify({ id: "bot-151" }),
+    leaveBody: `token=${sentinel}`,
   });
 });
