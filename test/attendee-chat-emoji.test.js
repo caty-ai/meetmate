@@ -1,5 +1,7 @@
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
+const { EventEmitter } = require("node:events");
+const https = require("node:https");
 
 const { prepareAttendeeChatMessage, sendAttendeeChatMessage } = require("../src/attendee-chat");
 
@@ -50,5 +52,50 @@ describe("sendAttendeeChatMessage() emoji fallback", () => {
   it("resolves false for all-emoji messages without hitting the network", async () => {
     const ok = await sendAttendeeChatMessage("bot_test_no_network", "👍🎉", "dummy-key");
     assert.equal(ok, false);
+  });
+
+  it("redacts token-shaped Attendee response bodies from success and failure logs", async () => {
+    const sentinel = "CHAT-BODY-SENTINEL-4b2e";
+    const responses = [
+      { statusCode: 200, body: `token=${sentinel}` },
+      { statusCode: 500, body: `token=${sentinel}` },
+    ];
+    const captured = [];
+    const originalRequest = https.request;
+    const originalLog = console.log;
+    const originalWarn = console.warn;
+
+    https.request = (_options, onResponse) => {
+      const { statusCode, body } = responses.shift();
+      const response = new EventEmitter();
+      response.statusCode = statusCode;
+      const request = new EventEmitter();
+      request.setTimeout = () => request;
+      request.write = () => true;
+      request.end = () => {
+        queueMicrotask(() => {
+          onResponse(response);
+          response.emit("data", body);
+          response.emit("end");
+        });
+      };
+      return request;
+    };
+    console.log = (...args) => captured.push(args.join(" "));
+    console.warn = (...args) => captured.push(args.join(" "));
+
+    try {
+      assert.equal(await sendAttendeeChatMessage("bot_success", "hello", "dummy-key"), true);
+      assert.ok(captured.some((line) => line.includes("Attendee chat enqueue request")));
+      assert.equal(captured.some((line) => line.includes(sentinel)), false);
+
+      assert.equal(await sendAttendeeChatMessage("bot_failure", "hello", "dummy-key"), false);
+      assert.ok(captured.some((line) => line.includes("Attendee chat message lost")));
+      assert.equal(captured.some((line) => line.includes(sentinel)), false);
+    } finally {
+      https.request = originalRequest;
+      console.log = originalLog;
+      console.warn = originalWarn;
+    }
   });
 });
