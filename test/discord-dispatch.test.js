@@ -630,6 +630,7 @@ test("discord join/leave route exceptions never echo vendor text; parse errors s
       JSON.stringify({})
     );
     assert.equal(leave.statusCode, 500);
+    assert.deepEqual(JSON.parse(leave.body), { ok: false, code: "DISCORD_LEAVE_FAILED", message: JOIN_FAILURE_MESSAGES.DISCORD_LEAVE_FAILED });
     assert.equal(leave.body.includes(DIAGNOSTIC_VALUE), false);
 
     const handlerLogs = logs.filter((line) => line.includes("handler failed"));

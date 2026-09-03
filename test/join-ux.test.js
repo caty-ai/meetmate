@@ -72,6 +72,7 @@ test("Discord join errors map known codes, preserve unknown codes, and distingui
   assert.equal(discordJoinErrorMessage("DISCORD_SETUP_REQUIRED"), "Discord 設定を確認してください");
   assert.equal(discordJoinErrorMessage("DISCORD_JOIN_UNKNOWN"), "DISCORD_JOIN_UNKNOWN");
   assert.equal(parseDiscordJoinErrorText('{"code":"DISCORD_MUTEX_BUSY"}', 409), "別の通話が動作中です");
+  assert.equal(parseDiscordJoinErrorText('{"code":"DISCORD_LEAVE_FAILED"}', 500), "Discord からの退出に失敗しました");
   assert.equal(parseDiscordJoinErrorText('{"code":"DISCORD_SOMETHING_NEW"}', 500), "DISCORD_SOMETHING_NEW");
   assert.equal(
     parseDiscordJoinErrorText('{"code":"DISCORD_SESSION_NOT_FOUND","message":"Discord セッションはありません"}', 404),

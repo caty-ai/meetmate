@@ -51,8 +51,9 @@ async function handleSessionCommand(req, res, options, command, verb) {
     writeJsonResponse(res, result.status || 200, result.body || { ok: true }, result.headers);
   } catch (error) {
     const { JOIN_FAILURE_MESSAGES } = require("./discord-session");
+    const code = verb === "leave" ? "DISCORD_LEAVE_FAILED" : "DISCORD_JOIN_FAILED";
     console.error(`Discord ${verb} handler failed: ${scrubDiscordLogMessage(error?.message || String(error))}`);
-    writeJsonResponse(res, 500, { ok: false, code: "DISCORD_JOIN_FAILED", message: JOIN_FAILURE_MESSAGES.DISCORD_JOIN_FAILED });
+    writeJsonResponse(res, 500, { ok: false, code, message: JOIN_FAILURE_MESSAGES[code] });
   }
 }
 
