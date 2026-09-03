@@ -20,6 +20,7 @@ const { isGuildAllowed, isValidSnowflake, parseAllowlist } = require("./allowlis
 const { renderAnnounceText, runAnnounce } = require("./announce");
 const { createAudioIn } = require("./audio-in");
 const { createAudioOut } = require("./audio-out");
+const { scrubDiscordLogMessage } = require("./log-scrub");
 
 // Join failures used to relay dependency/vendor error text to the loopback client. That text is not
 // under our control (discord.js, @discordjs/voice, the network layer) and can carry credentials, so the
@@ -33,24 +34,10 @@ const JOIN_FAILURE_MESSAGES = Object.freeze({
   DISCORD_JOIN_FAILED: "Discord join failed; see the server log",
 });
 
-function scrubJoinErrorMessage(message, secret) {
-  let text = String(message ?? "");
-  // The settings schema accepts any non-empty string as the class-1 token, so there is no length
-  // floor here: a short configured secret is still scrubbed (over-redaction is the safe direction).
-  if (typeof secret === "string" && secret.length > 0) text = text.split(secret).join("[REDACTED]");
-  return text
-    // labelled pairs (token / authorization / api key / secret / password, any prefix such as
-    // access_token or apiKey), optionally scheme-prefixed and optionally quoted values:
-    // `token=x`, `Authorization: Bot x`, `apiKey=x`, `Authorization: Bearer "x"`
-    .replace(/((?:[a-z_-]*(?:token|authorization|api[_-]?key|secret|password))\s*[:=]\s*(?:(?:bot|bearer|basic)\s+)?["']?)[^\s,})"']+/gi, "$1[REDACTED]")
-    // JSON / single-quoted pairs: `"token":"x"`, `'access_token': 'x'`, `"authorization": "Bearer x"`
-    .replace(/(["'][a-z_-]*(?:token|authorization|api[_-]?key|secret|password)["']\s*:\s*["'])[^"']*/gi, "$1[REDACTED]")
-    // bare scheme credentials: `Bearer x`, `Bot x`, `Basic x`
-    .replace(/\b((?:bot|bearer|basic)\s+)(?!\[REDACTED\])[^\s,})"']+/gi, "$1[REDACTED]");
-}
+const scrubJoinErrorMessage = scrubDiscordLogMessage;
 
 function joinFailureResponse(status, code, error, secret) {
-  console.error(`Discord join failed (${code}): ${scrubJoinErrorMessage(error && error.message, secret)}`);
+  console.error(`Discord join failed (${code}): ${scrubDiscordLogMessage(error?.message || String(error), secret)}`);
   return { status, body: { ok: false, code, message: JOIN_FAILURE_MESSAGES[code] } };
 }
 

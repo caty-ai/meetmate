@@ -1,6 +1,7 @@
 "use strict";
 
 const { getDiagnosticValue } = require("../settings/resolver");
+const { scrubDiscordLogMessage } = require("./log-scrub");
 
 const LOOPBACK_ADDRESSES = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
 const FORWARDED_HEADER_RE = /^(forwarded$|x-forwarded-)/i;
@@ -49,8 +50,8 @@ async function handleSessionCommand(req, res, options, command, verb) {
     const result = await command(body);
     writeJsonResponse(res, result.status || 200, result.body || { ok: true }, result.headers);
   } catch (error) {
-    const { scrubJoinErrorMessage, JOIN_FAILURE_MESSAGES } = require("./discord-session");
-    console.error(`Discord ${verb} handler failed: ${scrubJoinErrorMessage(error && error.message)}`);
+    const { JOIN_FAILURE_MESSAGES } = require("./discord-session");
+    console.error(`Discord ${verb} handler failed: ${scrubDiscordLogMessage(error?.message || String(error))}`);
     writeJsonResponse(res, 500, { ok: false, code: "DISCORD_JOIN_FAILED", message: JOIN_FAILURE_MESSAGES.DISCORD_JOIN_FAILED });
   }
 }
@@ -137,7 +138,7 @@ function createHttpRoutes(options = {}) {
       try {
         writeJsonResponse(res, 200, getSessionStatus());
       } catch (error) {
-        console.error(`Discord status handler failed: ${error.message || error}`);
+        console.error(`Discord status handler failed: ${scrubDiscordLogMessage(error?.message || String(error))}`);
         writeJsonResponse(res, 500, { ok: false, code: "DISCORD_INTERNAL_ERROR" });
       }
       return true;
