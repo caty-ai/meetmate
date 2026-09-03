@@ -9,6 +9,7 @@ const DISCORD_ERROR_MESSAGES = Object.freeze({
   DISCORD_UNSUPPORTED_TTS_RATE: "Discord 用の音声サンプルレートを確認してください",
   DISCORD_MUTEX_BUSY: "別の通話が動作中です",
   DISCORD_JOIN_FAILED: "Discord への参加に失敗しました",
+  DISCORD_LEAVE_FAILED: "Discord からの退出に失敗しました",
 });
 
 function isDiscordSnowflake(value) {

@@ -32,6 +32,7 @@ const JOIN_FAILURE_MESSAGES = Object.freeze({
   DISCORD_COORDINATOR_UNAVAILABLE: "Session coordinator unavailable; see the server log",
   DISCORD_JOIN_ABORTED: "Discord join was aborted",
   DISCORD_JOIN_FAILED: "Discord join failed; see the server log",
+  DISCORD_LEAVE_FAILED: "Discord leave failed; see the server log",
 });
 
 const scrubJoinErrorMessage = scrubDiscordLogMessage;
