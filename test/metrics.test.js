@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { execFileSync, spawnSync } = require("node:child_process");
+const { execFileSync, spawn, spawnSync } = require("node:child_process");
 const { summarize } = require("../scripts/aggregate-metrics");
 
 const loadedMetricsModules = new Set();
@@ -74,6 +74,93 @@ test("internal metrics write failures do not propagate to caller", async () => {
   });
   await metrics._test.flush();
   assert.equal(appendCalls, 1);
+});
+
+test("SIGTERM flushes pending metrics and terminates with signal semantics", async (t) => {
+  const dir = tempDir();
+  const metricsPath = path.join(__dirname, "..", "src", "metrics.js");
+  const script = `
+    const fs = require("node:fs");
+    const metrics = require(${JSON.stringify(metricsPath)});
+    const appendFile = fs.promises.appendFile.bind(fs.promises);
+
+    metrics._test.setAppendFileForTest((...args) => new Promise((resolve, reject) => {
+      process.once("SIGTERM", () => appendFile(...args).then(resolve, reject));
+      process.stdout.write("ready\\n");
+    }));
+    metrics.recordEvent("sigterm_test", { meeting_id: "sigterm-meeting" });
+    setInterval(() => {}, 1_000);
+  `;
+  const child = spawn(process.execPath, ["-e", script], {
+    cwd: path.join(__dirname, ".."),
+    env: {
+      ...process.env,
+      METRICS_LOG_DIR: dir,
+      METRICS_DISABLED: "",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let output = "";
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => { output += chunk; });
+  child.stderr.on("data", (chunk) => { output += chunk; });
+
+  t.after(() => {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+  });
+
+  const exited = new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code, signal) => resolve({ code, signal }));
+  });
+  await waitForChildOutput(child, () => output, /ready\n/, 3_000);
+
+  assert.equal(child.kill("SIGTERM"), true);
+  const exitTimeout = setTimeout(() => child.kill("SIGKILL"), 3_000);
+  const result = await exited.finally(() => clearTimeout(exitTimeout));
+
+  assert.deepEqual(result, { code: null, signal: "SIGTERM" }, output);
+  const lines = fs.readFileSync(path.join(dir, "metrics.jsonl"), "utf8").trim().split("\n");
+  assert.equal(lines.length, 1);
+  const event = JSON.parse(lines[0]);
+  assert.equal(Number.isInteger(event.timestamp_ms), true);
+  assert.equal(event.type, "sigterm_test");
+  assert.equal(event.meeting_id, "sigterm-meeting");
+});
+
+test("SIGTERM falls back to exit 143 when re-raise does not terminate", async () => {
+  const metrics = freshMetrics({ METRICS_LOG_DIR: tempDir(), METRICS_DISABLED: undefined });
+  const calls = [];
+  let resolveExit;
+  const exitCalled = new Promise((resolve) => { resolveExit = resolve; });
+  metrics._test.setTerminationForTest({
+    kill(pid, signal) {
+      calls.push({ type: "kill", pid, signal });
+    },
+    exit(code) {
+      calls.push({ type: "exit", code });
+      resolveExit(code);
+    },
+  });
+
+  const startedAt = Date.now();
+  metrics._test.terminateWithSigterm();
+  assert.deepEqual(calls, [{ type: "kill", pid: process.pid, signal: "SIGTERM" }]);
+
+  let timeout;
+  try {
+    const code = await Promise.race([
+      exitCalled,
+      new Promise((_, reject) => {
+        timeout = setTimeout(() => reject(new Error("Timed out waiting for exit fallback")), 500);
+      }),
+    ]);
+    assert.equal(code, 143);
+    assert.ok(Date.now() - startedAt < 500, "exit fallback exceeded its bounded window");
+  } finally {
+    clearTimeout(timeout);
+  }
 });
 
 test("aggregate-metrics summarizes response and delegation data", () => {
@@ -223,4 +310,40 @@ function freshMetrics(env) {
 
 function tempDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "metrics-test-"));
+}
+
+function waitForChildOutput(child, getOutput, pattern, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error(`Timed out waiting for ${pattern}:\n${getOutput()}`));
+    }, timeoutMs);
+    const inspect = () => {
+      const match = getOutput().match(pattern);
+      if (!match) return;
+      cleanup();
+      resolve(match);
+    };
+    const exited = (code, signal) => {
+      cleanup();
+      reject(new Error(`Process exited before ${pattern} (${code ?? signal}):\n${getOutput()}`));
+    };
+    const errored = (error) => {
+      cleanup();
+      reject(error);
+    };
+    const cleanup = () => {
+      clearTimeout(timeout);
+      child.stdout.off("data", inspect);
+      child.stderr.off("data", inspect);
+      child.off("exit", exited);
+      child.off("error", errored);
+    };
+
+    child.stdout.on("data", inspect);
+    child.stderr.on("data", inspect);
+    child.once("exit", exited);
+    child.once("error", errored);
+    inspect();
+  });
 }

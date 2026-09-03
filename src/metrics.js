@@ -11,6 +11,12 @@ const METRICS_DISABLED = ["1", "true", "yes"].includes(
 );
 const METRICS_LOG_FILE = path.join(METRICS_LOG_DIR, "metrics.jsonl");
 const SHUTDOWN_FLUSH_TIMEOUT_MS = 250;
+const SIGTERM_EXIT_TIMEOUT_MS = 2_000;
+const SIGTERM_RERAISE_FALLBACK_MS = 100;
+const SIGTERM_EXIT_CODE = 128 + 15;
+
+const defaultKillProcess = (pid, signal) => process.kill(pid, signal);
+const defaultExitProcess = (code) => process.exit(code);
 
 let warned = false;
 let writeFailed = false;
@@ -19,6 +25,9 @@ let mkdir = fs.promises.mkdir;
 const pendingWrites = new Set();
 let beforeExitHandler = null;
 let sigtermHandler = null;
+let sigtermExitRequested = false;
+let killProcess = defaultKillProcess;
+let exitProcess = defaultExitProcess;
 
 if (!METRICS_DISABLED) {
   console.info(`metrics recording enabled: ${METRICS_LOG_FILE}`);
@@ -74,9 +83,35 @@ function flushPendingWrites({ bounded = false } = {}) {
   ]);
 }
 
+function terminateWithSigterm() {
+  if (sigtermExitRequested) return;
+  sigtermExitRequested = true;
+  if (sigtermHandler) {
+    process.removeListener("SIGTERM", sigtermHandler);
+    sigtermHandler = null;
+  }
+  try {
+    // Re-raise first to preserve the conventional signal exit status. Linux PID 1
+    // ignores default-disposition signals, so a referenced fallback must follow.
+    killProcess(process.pid, "SIGTERM");
+  } finally {
+    setTimeout(() => exitProcess(SIGTERM_EXIT_CODE), SIGTERM_RERAISE_FALLBACK_MS);
+  }
+}
+
 if (!METRICS_DISABLED) {
   beforeExitHandler = () => flushPendingWrites().catch(warnOnce);
-  sigtermHandler = () => flushPendingWrites({ bounded: true }).catch(warnOnce);
+  sigtermHandler = () => {
+    // Keep this timer referenced so shutdown cannot outlive the hard cap even if
+    // the bounded flush chain unexpectedly fails to settle.
+    const exitTimer = setTimeout(() => exitProcess(SIGTERM_EXIT_CODE), SIGTERM_EXIT_TIMEOUT_MS);
+    flushPendingWrites({ bounded: true })
+      .catch(warnOnce)
+      .finally(() => {
+        clearTimeout(exitTimer);
+        terminateWithSigterm();
+      });
+  };
   process.once("beforeExit", beforeExitHandler);
   process.once("SIGTERM", sigtermHandler);
 }
@@ -94,6 +129,11 @@ module.exports = {
     setMkdirForTest(fn) {
       mkdir = fn;
     },
+    setTerminationForTest({ kill, exit }) {
+      killProcess = kill;
+      exitProcess = exit;
+    },
+    terminateWithSigterm,
     dispose() {
       if (beforeExitHandler) {
         process.removeListener("beforeExit", beforeExitHandler);
@@ -103,6 +143,8 @@ module.exports = {
         process.removeListener("SIGTERM", sigtermHandler);
         sigtermHandler = null;
       }
+      killProcess = defaultKillProcess;
+      exitProcess = defaultExitProcess;
     },
   },
 };
