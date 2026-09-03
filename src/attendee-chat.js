@@ -52,11 +52,13 @@ function sendAttendeeChatMessage(botId, message, attendeeKey) {
         let data = "";
         res.on("data", (c) => { data += c; });
         res.on("end", () => {
+          const { redactLogValue } = require("./transport-meet/local-avatar-session");
+          const redactedData = redactLogValue(data).slice(0, 200);
           if (res.statusCode >= 400) {
-            console.warn(`💬  Attendee chat message lost: ${botId} → ${res.statusCode} ${data.slice(0, 200)}`);
+            console.warn(`💬  Attendee chat message lost: ${botId} → ${res.statusCode} ${redactedData}`);
             resolve(false);
           } else {
-            console.log(`💬  Attendee chat enqueue request: ${botId} → ${res.statusCode} ${data.slice(0, 200)} (HTTP 200 means enqueued, not delivered)`);
+            console.log(`💬  Attendee chat enqueue request: ${botId} → ${res.statusCode} ${redactedData} (HTTP 200 means enqueued, not delivered)`);
             resolve(true);
           }
         });
