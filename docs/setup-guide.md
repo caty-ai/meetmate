@@ -26,6 +26,7 @@
 | Tailscale | https://tailscale.com/ | ngrok代替の到達経路（self-hosted Attendee 等） | 任意 | 無料/有料とも内容は変わりうる |
 | Zoom Marketplace | https://marketplace.zoom.us/ | Zoom Bot 権限・アプリ管理 | 条件付き | プラン/権限要件は運用形態次第 |
 | Slack Bot | https://api.slack.com/apps | ステータス通知・サマリー投稿 | 任意 | Slack 側プラン条件を確認 |
+| Discord Developer Portal | https://discord.com/developers/applications | Discord 音声チャンネル参加用の Bot（[専用セクション](#discord-ボット音声チャンネル参加)参照） | 任意（Discord 利用時のみ） | Bot 作成は無料 |
 
 > ⚠️ API key / token はすべて秘密情報。Git に commit しない、画面共有・ログ共有・Issue・スクリーンショットにも貼らないこと。保存場所は種類によって異なる — Soniox / Fish Audio / Attendee / Slack Bot token のようなベンダーキーは `config.json`（パーミッション 0600）、Gateway の URL/Token や OpenAI互換キーのような接続系の値は `.env`（環境変数）。ベンダーキーの入力先は `init` ウィザードか設定 UI。接続系の値だけは設定 UI から書けないため、`init` ウィザードで生成するか `.env` に直接書く。
 > ⚠️ tool 実行まで許可する OpenAI互換 gateway を使う場合も、その endpoint は **信頼できるローカル gateway** に限定すること。外部・不特定・未信頼 meeting では使わないこと。
@@ -45,6 +46,7 @@
 - **Google Meet**: まずはこれを基本経路にする。Bot 参加時に Meet 側の **「参加をリクエストしています」承認** が必要。
 - **Zoom**: 現時点では **自分が主催・管理できる会議** を前提にする。外部主催 Zoom、OBF、managed OAuth を「対応済み」とは扱わない。
 - **Zoom Marketplace**: Zoom 経路を使うなら、Attendee/運用側で必要な Marketplace 設定と権限付与が済んでいることを確認する。
+- **Discord**: **自分が管理するサーバー限定**で使う（guild allowlist が空のままだと全ての join を拒否する fail-closed 設計）。公式 Bot API 利用のため Attendee・ngrok は不要。セットアップは[専用セクション](#discord-ボット音声チャンネル参加)へ。
 
 ---
 
@@ -259,6 +261,69 @@ tailscale serve --https=443 http://127.0.0.1:<port>
 
 ---
 
+## Discord ボット（音声チャンネル参加）
+
+> **プレビュー（ライブ検証前）** — この章の Discord 経路は、実サーバーでのライブ E2E 検証（[#138](https://github.com/caty-ai/meetmate/issues/138)）より先に出荷している。未確認の項目: 音声の退出コマンドで実機がチャンネルを抜けるか（[#139](https://github.com/caty-ai/meetmate/issues/139)）、複数話者の帰属が画面上で見えるか（[#140](https://github.com/caty-ai/meetmate/issues/140)）。#138 が PASS した時点でこの注記は外す。
+
+Meetmate は Google Meet / Zoom に加えて、**Discord の音声チャンネルに Bot として参加**できる。 Discord 用のライブラリ（discord.js / @discordjs/voice と native の Opus・sodium）は `optionalDependencies` として通常の `npm install meetmate` で入る。`--omit=optional` で入れた環境では Discord 経路が `503 DISCORD_DEPENDENCY_MISSING` になる（Meet/Zoom は影響なし）。公式 Bot API（discord.js）を使うので、ヘッドレスブラウザも Attendee も ngrok も不要（Bot 側から Discord へ外向きに接続する）。**第1弾の対象は自分が管理するサーバーのみ** — 公開サーバーでの運用は対象外。
+
+### Bot を作成する（Developer Portal）
+
+1. https://discord.com/developers/applications → **New Application** → 名前を付ける。
+2. 左メニュー **Bot** → **Reset Token** → 表示された token をコピーする（この画面を閉じると二度と表示されない）。
+3. 同じ Bot ページの **Privileged Gateway Intents** は **すべて OFF のまま**にする（Presence / Server Members / **Message Content** のどれも不要）。Meetmate が使う `Guilds` / `GuildVoiceStates` は非特権 intent で、コード側の指定だけで動く。
+4. **Bot のアイコン（アバター）はこの Developer Portal の Bot ページで設定する** — Meetmate の設定 UI にあるアバター設定は Meet/Zoom のタイル用で、Discord 側の見た目には反映されない。
+
+### サーバーへ招待する（最小権限）
+
+左メニュー **OAuth2 → URL Generator** で scope に `bot` を選び、Bot Permissions は次の **3つだけ**にチェックする:
+
+| 権限 | 用途 |
+|---|---|
+| View Channel | チャンネルの存在を見る |
+| Connect | 音声チャンネルへ接続 |
+| Speak | 音声を再生 |
+
+生成される招待 URL の permission integer は `3146752`。**これより多い権限を付けるのは「不要」ではなく「非対応」** — 管理者権限・テキスト送信・メンバーのミュート/移動などを付けた構成はサポートしない。
+
+### Token を保存する
+
+- 入力先は **設定 UI の `Discord Bot token`（masked フィールド）**。保存先は `config.json`（パーミッション 0600）で、設定エクスポートには**含まれない**。
+- 環境変数 `DISCORD_BOT_TOKEN` の効き方は設定の4段優先（起動環境変数 → 設定ストア → `.env` シード → 既定値）に従う: **起動時のシェル環境変数は設定 UI の保存値より優先される**が、**`.env` の行は設定 UI に値があれば効かない**（ストアが空のときのシードとしてのみ働く）。どちらもローテーション時は掃除しておくこと（下記）。
+- ⚠️ Bot token は**常在の身分証**: 会議ごとの参加キーと違い、漏れると次のローテーションまで「いつでも・Bot が居る全サーバーに対して」悪用できる。画面共有・ログ・Issue に貼らない。
+
+### 参加を許可するサーバー（guild allowlist）
+
+- 設定 UI の **Discord サーバー許可リスト**（`discord_guild_allowlist`）に、参加を許可するサーバー（guild）の ID を追加する。**空のままだと全ての join を拒否する**（安全側の既定）。
+- 許可リストに ID を入れた時点で「Discord を使う設定」とみなされ、Bot token が空だとダッシュボードの `/health` と全体の readiness が setup mode になる（Meet/Zoom の join 自体は transport 別に判定されるので通る）。Discord をやめるときは許可リストも空に戻す。
+- ID の取得: Discord クライアントの 設定 → 詳細設定 → **開発者モード** を ON → サーバー名/チャンネル名を右クリック → **ID をコピー**。
+
+### 参加する・退出する
+
+- ダッシュボード（`/`）で transport に **Discord** を選び、**guild ID と voice channel ID** を入力して **Join**。参加すると Bot は**最初に必ず入室アナウンス**を行い、アナウンス完了までは音声のキャプチャを開始しない。
+- **TTS プロバイダの制約**: Discord 経路は現時点で **Fish Audio 前提**（他プロバイダ選択時は join が 503 になる）。TTS 出力レートも 24000 / 48000 Hz のみ対応。
+- 退出は **Leave ボタン（`POST /api/discord/leave`）が確実な経路**。音声での退出コマンドの Discord 対応は現在確認中（[#139](https://github.com/caty-ai/meetmate/issues/139)）。
+- `/api/discord/*` はセキュリティ上 **loopback（同一マシン）からのみ**受け付ける。ssh の `-L` 転送や素通しのプロキシは loopback に見えるため、Bot 操作 UI を他人と共有しない。
+
+### 記録と同意について（運用ルール）
+
+- **入室アナウンスは常に ON**（v1 では OFF にできない）。「wake word で応答する Bot であること・応答のために音声を文字起こしすること」を入室時に必ず伝える設計。
+- 文字起こしの保持は既存の会議 transcript と同じ扱い。Slack サマリーも既存の `summary_enabled` 設定に従う。
+- 長期記憶への取り込み（LCM ingest）は **Discord では行われない**（取り込み機能自体が Discord 経路では未実装。`discord_lcm_ingest_enabled` は将来の opt-in 用の予約フラグで既定 OFF — 現時点で ON にしても何も有効にならない）。
+- Bot は**セッション単位で参加・退出**し、待機のために音声チャンネルに居座ることはない。
+- 会話の途中から入ってきた人には、メンバー一覧の Bot 表示と入室済みアナウンスがその場の告知になる。**気になる場で使うときは、参加者に一言伝えてから使うこと。**
+
+### Token のローテーション
+
+1. Developer Portal → Bot → **Reset Token**（この瞬間から旧 token は無効 = Bot は停止扱い）。
+2. 新しい token を設定 UI の masked フィールドに貼って保存。
+3. **環境変数のコピーを消す**: 起動環境（シェル）に `DISCORD_BOT_TOKEN` が残っていると、再起動後もそちら（無効または漏えいした旧値）が設定 UI の新値より優先されてしまう。`.env` の行は設定 UI に値がある限り効かないが、将来ストアを空にしたときに古い値が復活しないよう、同時に消しておく。Meetmate は `.env` を書き換えないので、この削除は手作業。
+4. Meetmate を再起動する（token の反映には再起動が必要）。
+5. `discord` の接続テスト、または allowlist 済みサーバーで Bot がオンラインになることで確認。
+6. 漏えい疑いでのローテーションなら、Portal 側で Bot の参加サーバー一覧も点検して、身に覚えのないサーバーからは退出させる（allowlist があるので勝手に稼働はしないが、membership 自体も掃除する）。
+
+---
+
 ## 動作確認（画面つきウォークスルー）
 
 以下は設定が完了した状態（`変更を保存` → 再起動 → `読み込み済み`）から、ダッシュボード（`/`）で実際に会議に参加させるまでの流れ。設定 UI（`/settings`）とは別画面。
@@ -399,10 +464,10 @@ Legacy connection settings were ignored and must be supplied through the environ
 
 ### 接続テスト
 
-**接続テスト** タブには Soniox / Deepgram / Fish Audio / ElevenLabs / OpenAI-compatible TTS / Attendee / LLM / Tunnel / Slack のテストボタンがある。Slack 以外は実装済みで、TTS は選択前でも保存済みの接続情報を個別に確認できる。
+**接続テスト** タブには Soniox / Deepgram / Fish Audio / ElevenLabs / OpenAI-compatible TTS / Attendee / LLM / Tunnel / Slack / Discord のテストボタンがある。Slack 以外は実装済みで、TTS は選択前でも保存済みの接続情報を個別に確認できる。
 
 - タイムアウト: 5秒
-- 結果表示: `<サービス名>: <コード> — <説明> (<n> ms)`（コードは `CONNECTED` / `NOT_CONFIGURED` / `AUTH_FAILED` / `UNREACHABLE` / `TIMEOUT` / `RATE_LIMITED` / `PROVIDER_ERROR` のいずれか）
+- 結果表示: `<サービス名>: <コード> — <説明> (<n> ms)`（コードは `CONNECTED` / `NOT_CONFIGURED` / `AUTH_FAILED` / `PAYMENT_REQUIRED` / `NOT_ENABLED` / `MISMATCH` / `RESTART_REQUIRED` / `UNREACHABLE` / `TIMEOUT` / `RATE_LIMITED` / `PROVIDER_ERROR` のいずれか。Discord のみ、Bot が許可リストのどのサーバーにも参加していないときに `ALLOWLIST_MISMATCH` が出る）
 - レート制限: 同じサービスに対して1秒に1回まで。連打すると「接続テストの間隔が短すぎます。少し待ってから再試行してください。」と出る
 
 ### Fish Audio プレビュー（試聴）

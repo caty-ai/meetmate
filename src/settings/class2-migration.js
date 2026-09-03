@@ -17,7 +17,7 @@ const AGENT_DENY = Object.freeze([
 const PLACEHOLDER = /^\$\{[A-Z][A-Z0-9_]*\}$/;
 const SENTINELS = new Set([
   "your_gateway_token_here", "your_deepgram_key", "your_soniox_key", "your_attendee_key",
-  "your_fish_audio_key", "your_voice_id", "your_slack_bot_token", "your-model-id",
+  "your_fish_audio_key", "your_voice_id", "your_slack_bot_token", "your_discord_bot_token", "your-model-id",
   "your_openai_compatible_key", "your-agent-id", "YourAgent", "your-agent", "エージェント名",
 ]);
 

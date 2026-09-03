@@ -325,6 +325,7 @@ async function withRetentionRoutes(run) {
   console.log = () => {};
   console.warn = () => {};
 
+  require(path.join(src, "session-coordinator.js"))._test.reset();
   delete require.cache[routesPath];
   try {
     const routes = require(routesPath);

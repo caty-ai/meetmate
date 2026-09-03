@@ -10,7 +10,7 @@ const { PCM_SAMPLE_RATES: ELEVENLABS_PCM_SAMPLE_RATES } = require("../tts-eleven
 const PLACEHOLDER = /^\$\{[A-Z][A-Z0-9_]*\}$/;
 const SENTINELS = new Set([
   "your_gateway_token_here", "your_deepgram_key", "your_soniox_key", "your_attendee_key",
-  "your_fish_audio_key", "your_voice_id", "your_slack_bot_token", "your-model-id",
+  "your_fish_audio_key", "your_voice_id", "your_slack_bot_token", "your_discord_bot_token", "your-model-id",
   "your_openai_compatible_key", "your-agent-id", "YourAgent", "your-agent", "エージェント名",
 ]);
 const NUMERIC_IDS = new Set([
@@ -21,9 +21,9 @@ const NUMERIC_IDS = new Set([
 const BOOLEAN_IDS = new Set([
   "agent_emotion_tags", "openai_empty_response_retry", "openai_trusted_agent_tools", "tts_cache_enabled",
   "tts_cache_prewarm", "slack_notifications_enabled", "summary_enabled", "task_extraction_enabled",
-  "streaming_equivalent_enabled",
+  "streaming_equivalent_enabled", "discord_lcm_ingest_enabled",
 ]);
-const ARRAY_IDS = new Set(["agent_wake_words", "agent_keyterms", "agent_stt_wake_variants", "agent_ack_variants", "agent_progress_pings"]);
+const ARRAY_IDS = new Set(["agent_wake_words", "agent_keyterms", "agent_stt_wake_variants", "agent_ack_variants", "agent_progress_pings", "discord_guild_allowlist"]);
 const BASE10_NUMBER = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
 const CACHE_INVALIDATORS = new Set();
 const DIAGNOSTICS_BY_ID = new Map(ENV_DIAGNOSTICS.map((entry) => [entry.id, entry]));
@@ -230,12 +230,35 @@ function getDiagnosticValue(id, runtime = ensureRuntime()) {
   return resolveDiagnostic(diagnostic, runtime.startup).value;
 }
 
-function buildIssues(runtime) {
+function predicateApplies(predicate, values, sources, transport, contextFree) {
+  if (predicate.always === true) return true;
+  if (predicate.transport) {
+    if (contextFree) {
+      if (!predicate.transport.includes("discord")) return true;
+      return meaningful(values.discord_bot_token)
+        || (Array.isArray(values.discord_guild_allowlist) && values.discord_guild_allowlist.length > 0);
+    }
+    return ["meet", "zoom", "discord"].includes(transport)
+      ? predicate.transport.includes(transport)
+      : true;
+  }
+  if (predicate.setting) {
+    if (values[predicate.setting] !== predicate.equals) return false;
+    return predicate.explicit !== true || !["default", "unset"].includes(sources[predicate.setting]);
+  }
+  return false;
+}
+
+function buildIssues(runtime, options) {
   const values = {};
+  const sources = {};
   for (const entry of SETTINGS_REGISTRY) {
     values[entry.id] = entry.apply === "live"
       ? runtime.published.resolved.values[entry.id]
       : runtime.boot.values[entry.id];
+    sources[entry.id] = entry.apply === "live"
+      ? runtime.published.resolved.sources[entry.id]
+      : runtime.boot.sources[entry.id];
   }
   const issues = [];
   const add = (fieldId, code) => {
@@ -246,12 +269,15 @@ function buildIssues(runtime) {
     const stored = readPath(runtime.published.raw, entry.path);
     if (meaningful(stored) && entry.schema.safeParse(stored).success === false) add(entry.id, "VALUE_INVALID");
   }
-  for (const entry of SETTINGS_REGISTRY.filter((item) => item.requiredAtMeetingStart)) {
-    if (entry.visibleWhen && values[entry.visibleWhen.id] !== entry.visibleWhen.value) continue;
+  const contextFree = options === undefined;
+  const transport = options?.transport;
+  for (const entry of SETTINGS_REGISTRY.filter((item) => item.requiredWhen)) {
+    if (!predicateApplies(entry.requiredWhen, values, sources, transport, contextFree)) continue;
     if (entry.id === "openai_compatible_tts_api_key") {
       const hostname = canonicalHostname(values.openai_compatible_tts_base_url);
       if (hostname && hostname !== "api.openai.com") continue;
     }
+    if (entry.id === "slack_bot_token" && meaningful(resolveDynamicSlackToken(runtime))) continue;
     if (!meaningful(values[entry.id]) || (Array.isArray(values[entry.id]) && values[entry.id].length === 0)) {
       add(entry.id, "VALUE_REQUIRED");
     }
@@ -267,9 +293,6 @@ function buildIssues(runtime) {
     : meaningful(runtime.startup.connection.openclawUrl) && meaningful(runtime.startup.connection.openclawToken);
   if (!connectionReady) add("llm_provider", "LLM_CONNECTION_ENV_REQUIRED");
   if (!connectionReady && runtime.legacyClass2.length > 0) add("llm_provider", "LEGACY_CONNECTION_CONFIG_PRESENT");
-  const slackSource = runtime.boot.sources.slack_notifications_enabled;
-  if (values.slack_notifications_enabled && !["default", "unset"].includes(slackSource)
-      && !meaningful(resolveDynamicSlackToken(runtime))) add("slack_bot_token", "VALUE_REQUIRED");
   const launchAgentId = coerceAlias(REGISTRY_BY_ID.agent_id, runtime.startup.preDotenvEnv.AGENT_ID);
   const storedAgentId = tierValue(REGISTRY_BY_ID.agent_id, readPath(runtime.published.raw, "agent.id"));
   if (launchAgentId && storedAgentId && launchAgentId !== storedAgentId) add("agent_id", "AGENT_ID_RECONCILIATION_REQUIRED");
@@ -396,9 +419,9 @@ function isMeetingIssue(issue) {
   return !(entry && String(entry.path || "").startsWith("slack."));
 }
 
-function getStatus() {
+function getStatus(options) {
   const runtime = ensureRuntime();
-  const issues = buildIssues(runtime);
+  const issues = buildIssues(runtime, options);
   const meetingIssues = issues.filter(isMeetingIssue);
   return {
     setupMode: issues.length > 0,

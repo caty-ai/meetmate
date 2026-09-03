@@ -152,8 +152,13 @@ function assertContractType(type, schema, id) {
     valid = "secret"; invalid = "";
   } else if (base === "hex-color") {
     valid = "#08111f"; invalid = "green";
-  } else if (base === "str[]") {
-    valid = ["one", "two"]; invalid = ["same", "same"];
+  } else if (base.startsWith("str[]")) {
+    if (id === "discord_guild_allowlist") {
+      valid = ["12345678901234567", "12345678901234567890"];
+      invalid = ["not-a-snowflake"];
+    } else {
+      valid = ["one", "two"]; invalid = ["same", "same"];
+    }
   } else if (base === "absolute path") {
     valid = path.resolve("/tmp/meetmate"); invalid = "relative/path";
   } else if (base === "clip-record[]") {
@@ -190,8 +195,24 @@ test("T12-01 registry metadata and generated mutation/effective surfaces deep-ma
   assert.deepEqual(Object.keys(envelope.effective).sort(), Object.keys(envelope.sources).sort());
   assert.equal(Object.keys(envelope.effective).every((id) => writable.includes(id)), true);
   assert.deepEqual(
-    SETTINGS_REGISTRY.filter((entry) => entry.requiredAtMeetingStart).map((entry) => entry.id).sort(),
-    ["agent_display_name", "agent_id", "agent_wake_words", "attendee_api_key", "deepgram_api_key", "elevenlabs_api_key", "elevenlabs_voice_id", "fish_audio_api_key", "fish_audio_voice_id", "openai_compatible_tts_api_key", "soniox_api_key"],
+    SETTINGS_REGISTRY.filter((entry) => entry.requiredWhen)
+      .map((entry) => [entry.id, structuredClone(entry.requiredWhen)])
+      .sort(([left], [right]) => left.localeCompare(right)),
+    [
+      ["agent_display_name", { always: true }],
+      ["agent_id", { always: true }],
+      ["agent_wake_words", { always: true }],
+      ["attendee_api_key", { transport: ["meet", "zoom"] }],
+      ["deepgram_api_key", { setting: "stt_provider", equals: "deepgram" }],
+      ["discord_bot_token", { transport: ["discord"] }],
+      ["elevenlabs_api_key", { setting: "tts_provider", equals: "elevenlabs" }],
+      ["elevenlabs_voice_id", { setting: "tts_provider", equals: "elevenlabs" }],
+      ["fish_audio_api_key", { setting: "tts_provider", equals: "fish-audio" }],
+      ["fish_audio_voice_id", { setting: "tts_provider", equals: "fish-audio" }],
+      ["openai_compatible_tts_api_key", { setting: "tts_provider", equals: "openai-compatible" }],
+      ["slack_bot_token", { setting: "slack_notifications_enabled", equals: true, explicit: true }],
+      ["soniox_api_key", { setting: "stt_provider", equals: "soniox" }],
+    ],
   );
   assert.equal(REGISTRY_BY_ID.agent_greeting.schema.safeParse("😀".repeat(4096)).success, true);
   assert.equal(REGISTRY_BY_ID.agent_greeting.schema.safeParse("😀".repeat(4097)).success, false);
@@ -208,6 +229,12 @@ test("T12-01 registry metadata and generated mutation/effective surfaces deep-ma
   assert.equal(REGISTRY_BY_ID.audio_clips.schema.safeParse([{ ...clip, text: "😀".repeat(4096) }]).success, true);
   assert.equal(REGISTRY_BY_ID.audio_clips.schema.safeParse([{ ...clip, text: "😀".repeat(4097) }]).success, false);
   assert.equal(REGISTRY_BY_ID.audio_clips.schema.safeParse([{ ...clip, createdAt: "2026-08-27T07:00:00+07:00" }]).success, false);
+});
+
+test("T12-07 Discord transport predicates stay context-free unambiguous", () => {
+  for (const entry of SETTINGS_REGISTRY.filter((item) => item.requiredWhen?.transport)) {
+    assert.equal(!entry.requiredWhen.transport.includes("discord") || JSON.stringify(entry.requiredWhen.transport) === '["discord"]', true, entry.id);
+  }
 });
 
 function tokenize(source) {
@@ -313,7 +340,7 @@ function productionJavaScript() {
 test("T12-02 syntax-consuming environment inventory locks direct, computed, and rejected forms", () => {
   const inventory = JSON.parse(fs.readFileSync(path.join(ROOT, "docs/settings-env-inventory.json"), "utf8"));
   const inventoryByName = new Map(inventory.directReferences.map((entry) => [entry.name, entry]));
-  assert.equal(inventoryByName.size, 98);
+  assert.equal(inventoryByName.size, 99);
   assert.deepEqual(inventory.startupSnapshotReferences, [{
     name: "FFMPEG",
     references: ["src/settings/audio.js:361", "src/settings/audio.js:362"],
@@ -772,9 +799,15 @@ test("T12-04 PUT cannot bypass the boot operational snapshot", async (t) => {
   }, JSON.stringify({
     schemaVersion: 1,
     revision: before.revision,
-    fields: { llm_model: "next-model", llm_temperature: 0.8, gateway_warmup_timeout_ms: 9876 },
+    fields: {
+      llm_model: "next-model",
+      llm_temperature: 0.8,
+      gateway_warmup_timeout_ms: 9876,
+      discord_guild_allowlist: [" 12345678901234567 "],
+    },
   })), saved);
   assert.equal(saved.status, 200, saved.body);
+  assert.deepEqual(readConfigState(settingsPath).parsed.discord.guildAllowlist, ["12345678901234567"]);
   const running = getPipelineConfig({}, null, null, nextConfig);
   assert.deepEqual(
     { provider: running.llm.provider, model: running.llm.model, temperature: running.llm.temperature, warmup: running.warmupTimeoutMs },
@@ -1041,7 +1074,7 @@ test("T12-12 class-1 migration is strict, seed-only, transactional, and value-fr
   assert.equal(res.status, 200, res.body);
   const body = JSON.parse(res.body);
   assert.deepEqual(body.imported, ["soniox_api_key"]);
-  assert.deepEqual(body.skipped, ["attendee_api_key", "deepgram_api_key", "elevenlabs_api_key", "fish_audio_api_key", "openai_compatible_tts_api_key", "slack_bot_token"]);
+  assert.deepEqual(body.skipped, ["attendee_api_key", "deepgram_api_key", "discord_bot_token", "elevenlabs_api_key", "fish_audio_api_key", "openai_compatible_tts_api_key", "slack_bot_token"]);
   assert.equal(res.body.includes("seed-soniox"), false);
   const committed = readConfigState(configPath);
   assert.equal(committed.parsed.stt.sonioxApiKey, "seed-soniox");

@@ -287,12 +287,12 @@ test("connection failure matrix is finite and vendor bodies and credentials stay
   assert.equal(lateReset.code, "PROVIDER_ERROR");
 });
 
-test("unset keys avoid vendor calls and only non-gate Slack remains exact 501", async (t) => {
+test("unset keys avoid vendor calls while Discord is implemented and Slack remains exact 501", async (t) => {
   let calls = 0;
   const { handler, state } = fixture(t, {}, {
     connections: { fetchFn: async () => { calls += 1; throw new Error("must not call"); }, minIntervalMs: 0 },
   });
-  for (const provider of ["soniox", "fish-audio"]) {
+  for (const provider of ["soniox", "fish-audio", "discord"]) {
     const res = await invoke(handler, "POST", `/api/settings/connections/${provider}/test`, { revision: state.revision });
     assert.deepEqual(Object.keys(res.json), ["ok", "provider", "code", "message", "durationMs"]);
     assert.deepEqual({ ...res.json, durationMs: 0 }, {
@@ -314,13 +314,53 @@ test("unset keys avoid vendor calls and only non-gate Slack remains exact 501", 
     const stale = await invoke(handler, "POST", `/api/settings/connections/${provider}/test`, { revision: "a".repeat(64) });
     assert.equal(stale.status, 409);
   }
-  for (const provider of ["slack"]) {
-    const res = await invoke(handler, "POST", `/api/settings/connections/${provider}/test`, { revision: state.revision });
-    assert.equal(res.status, 501);
-    assert.equal(res.json.error.code, "TEST_NOT_IMPLEMENTED");
-    const stale = await invoke(handler, "POST", `/api/settings/connections/${provider}/test`, { revision: "a".repeat(64) });
-    assert.equal(stale.status, 501);
-  }
+  const discordInvalid = await invoke(handler, "POST", "/api/settings/connections/discord/test", { revision: "not-a-revision" });
+  assert.equal(discordInvalid.status, 422);
+  assert.equal(discordInvalid.json.error.code, "SETTINGS_VALIDATION_FAILED");
+  const discordStale = await invoke(handler, "POST", "/api/settings/connections/discord/test", { revision: "a".repeat(64) });
+  assert.equal(discordStale.status, 409);
+
+  const slack = await invoke(handler, "POST", "/api/settings/connections/slack/test", { revision: state.revision });
+  assert.equal(slack.status, 501);
+  assert.equal(slack.json.error.code, "TEST_NOT_IMPLEMENTED");
+  const slackStale = await invoke(handler, "POST", "/api/settings/connections/slack/test", { revision: "a".repeat(64) });
+  assert.equal(slackStale.status, 501);
+});
+
+test("discord connection routes keep the canned success message and preserve allowlist mismatch failures", async (t) => {
+  const successFixture = fixture(t, {
+    discord: { botToken: SENTINEL, guildAllowlist: ["11111111111111111"] },
+  }, {
+    connections: {
+      minIntervalMs: 0,
+      fetchFn: async (url) => (String(url).includes("/guilds")
+        ? new Response(JSON.stringify([{ id: "11111111111111111" }]), { status: 200, headers: { "Content-Type": "application/json" } })
+        : new Response("{}", { status: 200 })),
+    },
+  });
+  const success = await invoke(successFixture.handler, "POST", "/api/settings/connections/discord/test", {
+    revision: successFixture.state.revision,
+  });
+  assert.equal(success.status, 200, success.bytes.toString());
+  assert.equal(success.json.code, "CONNECTED");
+  assert.equal(success.json.message, "Connection succeeded");
+
+  const failureFixture = fixture(t, {
+    discord: { botToken: SENTINEL, guildAllowlist: ["11111111111111111"] },
+  }, {
+    connections: {
+      minIntervalMs: 0,
+      fetchFn: async (url) => (String(url).includes("/guilds")
+        ? new Response(JSON.stringify([{ id: "99999999999999999" }]), { status: 200, headers: { "Content-Type": "application/json" } })
+        : new Response("{}", { status: 200 })),
+    },
+  });
+  const failure = await invoke(failureFixture.handler, "POST", "/api/settings/connections/discord/test", {
+    revision: failureFixture.state.revision,
+  });
+  assert.equal(failure.status, 200, failure.bytes.toString());
+  assert.equal(failure.json.code, "ALLOWLIST_MISMATCH");
+  assert.equal(failure.json.message, "Bot が許可済みの Discord サーバーに参加していません");
 });
 
 test("connection timeout is five seconds and maps to TIMEOUT", { timeout: 7_000 }, async (t) => {

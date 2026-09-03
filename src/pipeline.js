@@ -499,15 +499,59 @@ function isTtsCacheEnabled() {
   return getEffectiveValue("tts_cache_enabled");
 }
 
+function resolvePipelineTransport(transport) {
+  if (transport === undefined) return "meet";
+  if (transport === "meet" || transport === "zoom" || transport === "discord") return transport;
+  throw new Error(`Unsupported transport: ${transport}`);
+}
+
+function resolvePipelineCapabilities(capabilities) {
+  if (capabilities === undefined) return null;
+  if (!capabilities || typeof capabilities !== "object") {
+    throw new Error("options.capabilities must be an object");
+  }
+  return capabilities;
+}
+
+function isAcceptedAudioMeta(meta) {
+  if (meta === undefined) return true;
+  const speaker = meta && typeof meta === "object" ? meta.speaker : null;
+  return (typeof speaker?.id === "string" || typeof speaker?.id === "number")
+    && String(speaker.id).length > 0
+    && typeof speaker.isBot === "boolean";
+}
+
+const MAX_ATTRIBUTED_STT = 4;
+const UNKNOWN_SPEAKER_ID = "unknown";
+const MIXED_STT_WINDOW_MS = 20;
+
+function cloneSpeakerMeta(speaker) {
+  if (!speaker || typeof speaker !== "object") return null;
+  const speakerId = String(speaker.id ?? "");
+  if (!speakerId) return null;
+  const cloned = {
+    platform: speaker.platform,
+    id: speakerId,
+    isBot: speaker.isBot,
+  };
+  if (typeof speaker.displayName === "string" && speaker.displayName.length > 0) {
+    cloned.displayName = speaker.displayName;
+  }
+  return cloned;
+}
+
 /**
  * Create the decomposed voice pipeline.
  *
  * @param {object} session - Meeting session object
  * @param {object} turnState - Shared turn state { isAgentSpeaking, inputCooldownUntil, droppedEchoFrames }
- * @param {function} onAudio - Callback: (buffer: Buffer, metadata?: object) => void (sends audio to Attendee)
+ * @param {function} onAudio - Callback: (buffer: Buffer, metadata: { outputEpoch: number, firstSampleIndex: number, sampleRate: number, envelopeSegments?: object[] }) => void
  * @param {object} config - Pipeline config from getPipelineConfig()
- * @param {object} options - Multi-agent options
- * @returns {{ sendAudio(buf: Buffer): void, close(): void }}
+ * @param {object} [options] - Multi-agent and transport options
+ * @param {"meet"|"zoom"|"discord"} [options.transport] - Canonical transport literal for sessionUser names
+ * @param {{ chat?: boolean, perSpeakerAudio?: boolean, avatarStream?: boolean, supportsFlush?: boolean, echoesOwnOutput?: boolean }} [options.capabilities]
+ * @param {boolean} [options.suppressGreeting] - Skip pipeline-owned greeting while preserving default-agent switch side effects
+ * @returns {{ sendAudio(buf: Buffer, meta?: { speaker?: { platform: string, id: string, displayName?: string, isBot: boolean } }): void, releaseSpeaker(speakerId: string): boolean, close(): void }}
  */
 function createPipeline(session, turnState, onAudio, config, options = {}) {
   const pipelineTimers = options.timers || globalThis;
@@ -515,7 +559,13 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   const { EventEmitter } = require("events");
   const { createSTT } = require("./stt-provider");
   const { FloorClient, STATES: FLOOR_STATES } = require("./floor-client");
+  const { sessionUserFor } = require("./session-user");
   const emitter = new EventEmitter();
+  const transport = resolvePipelineTransport(options.transport);
+  const capabilities = resolvePipelineCapabilities(options.capabilities);
+  const echoesOwnOutput = capabilities ? capabilities.echoesOwnOutput === true : true;
+  const perSpeakerAudioEnabled = capabilities ? capabilities.perSpeakerAudio === true : false;
+  const suppressGreeting = options.suppressGreeting === true;
   if (turnState.lastTurnEndAt == null) turnState.lastTurnEndAt = null;
 
   // Additive output observability for the existing PCM callback. Epoch 0 is
@@ -716,7 +766,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     voiceId: config.tts.referenceId || null,
     model: config.llm.model,
     openclawSystemAddendum: config.llm.openclawSystemAddendum,
-    sessionUser: `meet-${session.id}`,
+    sessionUser: sessionUserFor(transport, session.id),
   };
 
   function switchAgent(agentId) {
@@ -730,7 +780,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     agentState.openclawSystemAddendum = Object.prototype.hasOwnProperty.call(agent, "openclawSystemAddendum")
       ? agent.openclawSystemAddendum
       : config.llm.openclawSystemAddendum;
-    agentState.sessionUser = `meet-${session.id}-${agentId}`;
+    agentState.sessionUser = sessionUserFor(transport, session.id, agentId);
 
     currentAgentId = agentId;
 
@@ -973,13 +1023,14 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     if (floorEnabled) await finishFloorSpeech("cancelled");
   }
 
-  function appendConversationEntry(role, content, agentId = null) {
+  function appendConversationEntry(role, content, agentId = null, speaker = null) {
     const entry = {
       timestamp: new Date().toISOString(),
       role,
       content,
     };
     if (agentId) entry.agentId = agentId;
+    if (speaker) entry.speaker = cloneSpeakerMeta(speaker);
     session.conversationLog.push(entry);
 
     if (agentId && session.conversationLogs && Array.isArray(session.conversationLogs[agentId])) {
@@ -1601,8 +1652,154 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     keyterms: sttExtraKeyterms,
     soniox: config.stt.soniox,
   });
+  const mixedSpeakerState = { current: null };
+  const speakerSlots = new Map();
+  const mixedWindowFrames = new Map();
+  const mixedWindowSamples = Math.max(1, Math.round((config.stt.sampleRate || 16_000) * MIXED_STT_WINDOW_MS / 1000));
+  let mixedWindowAnchorMs = null;
+  let mixedWindowNextFlushIndex = 0;
+  let mixedWindowHighestIndex = -1;
+  let mixedWindowFlushTimer = null;
+  let slotArrivalSeq = 0;
 
-  stt.on("transcript", (text, isFinal, confidence) => {
+  function createAttributedStt() {
+    return createSTT(dgKey, {
+      provider: config.stt.provider,
+      sonioxKey: config.sonioxKey,
+      model: config.stt.model,
+      language: config.stt.language,
+      sampleRate: config.stt.sampleRate,
+      endpointingMs: config.stt.endpointingMs,
+      utteranceEndMs: config.stt.utteranceEndMs,
+      keyterms: sttExtraKeyterms,
+      soniox: config.stt.soniox,
+    });
+  }
+
+  function setMixedSpeaker(speaker) {
+    mixedSpeakerState.current = cloneSpeakerMeta(speaker);
+  }
+
+  function currentMixedSpeaker() {
+    return cloneSpeakerMeta(mixedSpeakerState.current);
+  }
+
+  function clearMixedWindowFlushTimer() {
+    if (!mixedWindowFlushTimer) return;
+    pipelineTimers.clearTimeout(mixedWindowFlushTimer);
+    mixedWindowFlushTimer = null;
+  }
+
+  function sendMixedAudio(buffer, speaker = null) {
+    setMixedSpeaker(speaker);
+    stt.send(buffer);
+  }
+
+  function flushMixedWindows({ force = false } = {}) {
+    if (mixedWindowAnchorMs === null) return;
+
+    const dueWindowCount = force
+      ? mixedWindowHighestIndex + 1
+      : Math.min(
+        mixedWindowHighestIndex + 1,
+        Math.max(0, Math.floor((Date.now() - mixedWindowAnchorMs) / MIXED_STT_WINDOW_MS))
+      );
+
+    while (mixedWindowNextFlushIndex < dueWindowCount) {
+      const samples = mixedWindowFrames.get(mixedWindowNextFlushIndex) || new Int32Array(mixedWindowSamples);
+      mixedWindowFrames.delete(mixedWindowNextFlushIndex);
+      const chunk = Buffer.alloc(samples.length * 2);
+      for (let index = 0; index < samples.length; index += 1) {
+        const sample = samples[index];
+        chunk.writeInt16LE(
+          sample > 32_767 ? 32_767 : sample < -32_768 ? -32_768 : sample,
+          index * 2
+        );
+      }
+      sendMixedAudio(chunk, { platform: transport, id: UNKNOWN_SPEAKER_ID, isBot: false });
+      mixedWindowNextFlushIndex += 1;
+    }
+    if (mixedWindowFrames.size === 0 && mixedWindowNextFlushIndex > mixedWindowHighestIndex) {
+      mixedWindowAnchorMs = null;
+      mixedWindowNextFlushIndex = 0;
+      mixedWindowHighestIndex = -1;
+    }
+  }
+
+  function scheduleMixedWindowFlush() {
+    clearMixedWindowFlushTimer();
+    if (stopped || mixedWindowAnchorMs === null || mixedWindowNextFlushIndex > mixedWindowHighestIndex) return;
+    const nextDueAt = mixedWindowAnchorMs + ((mixedWindowNextFlushIndex + 1) * MIXED_STT_WINDOW_MS);
+    const waitMs = Math.max(0, Math.ceil(nextDueAt - Date.now()));
+    mixedWindowFlushTimer = pipelineTimers.setTimeout(() => {
+      mixedWindowFlushTimer = null;
+      flushMixedWindows();
+      scheduleMixedWindowFlush();
+    }, waitMs);
+    mixedWindowFlushTimer.unref?.();
+  }
+
+  function mixIntoUnknownStream(buffer) {
+    const now = Date.now();
+    if (mixedWindowAnchorMs === null) mixedWindowAnchorMs = now;
+
+    const startSample = Math.max(
+      0,
+      Math.round(((now - mixedWindowAnchorMs) * (config.stt.sampleRate || 16_000)) / 1000)
+    );
+    const sampleCount = Math.floor(buffer.length / 2);
+    for (let sampleIndex = 0; sampleIndex < sampleCount; sampleIndex += 1) {
+      const absoluteSample = startSample + sampleIndex;
+      const windowIndex = Math.floor(absoluteSample / mixedWindowSamples);
+      const windowOffset = absoluteSample % mixedWindowSamples;
+      let window = mixedWindowFrames.get(windowIndex);
+      if (!window) {
+        window = new Int32Array(mixedWindowSamples);
+        mixedWindowFrames.set(windowIndex, window);
+      }
+      window[windowOffset] += buffer.readInt16LE(sampleIndex * 2);
+      if (windowIndex > mixedWindowHighestIndex) mixedWindowHighestIndex = windowIndex;
+    }
+    flushMixedWindows();
+    scheduleMixedWindowFlush();
+  }
+
+  function currentSlotFor(slot) {
+    return slot && speakerSlots.get(slot.speaker.id) === slot ? slot : null;
+  }
+
+  function closeSpeakerSlot(slot) {
+    if (!slot) return;
+    const current = currentSlotFor(slot);
+    if (!current) return;
+    speakerSlots.delete(slot.speaker.id);
+    slot.closed = true;
+    try {
+      const closeResult = slot.stt.close();
+      Promise.resolve(closeResult).catch(() => {});
+    } catch {
+      // no-op
+    }
+  }
+
+  function findLruSlot() {
+    let candidate = null;
+    for (const slot of speakerSlots.values()) {
+      if (!candidate || slot.lastArrivalSeq < candidate.lastArrivalSeq) {
+        candidate = slot;
+      }
+    }
+    return candidate;
+  }
+
+  function maybeEvictSpeakerSlot(slot) {
+    const current = currentSlotFor(slot);
+    if (!current) return;
+    if (findLruSlot() !== current) return;
+    closeSpeakerSlot(current);
+  }
+
+  function onSttTranscript(text, isFinal, confidence) {
     if (isFinal) {
       console.log(`🎤  [interim→final] ${text}`);
       return;
@@ -1615,15 +1812,13 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       liveUserSpeechUntil = now + LIVE_USER_SPEECH_HOLD_MS;
     }
 
-    // Multi-participant mode: Skip barge-in during Gate CLOSED
-    // (Cancel detection moved to utterance_end only — interim is too noisy from TTS echo)
     if (gateState === "CLOSED") {
       return;
     }
 
-    // #8 Barge-in: if user starts speaking while agent is speaking, abort immediately.
     if (
       ENABLE_BARGE_IN &&
+      echoesOwnOutput &&
       interim &&
       interim.length >= BARGE_IN_MIN_CHARS &&
       turnState.isAgentSpeaking &&
@@ -1644,24 +1839,19 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       clearAgentSpeaking();
       turnState.inputCooldownUntil = 0;
     }
-  });
+  }
 
   let utteranceChain = Promise.resolve();
-  stt.on("utterance_end", (userText) => {
+  function onSttUtteranceEnd(userText, speaker = null, slot = null) {
     const cleanedText = String(userText || "").trim();
-    // Floor reports must leave immediately, outside utteranceChain and before
-    // any transcript buffering, so a busy LLM turn cannot miss the hub window.
-    const waitingAssignment = floorClient?.claimAssignment() || null;
     const floorTurn = { cancelled: false, fallbackGeneration: null, verdictPromise: null };
+    const waitingAssignment = floorClient?.claimAssignment() || null;
     const reportedVerdictPromise = floorClient?.reportText(cleanedText, {
       onFallbackCancel: () => {
         floorTurn.cancelled = true;
         handleFloorAbort("late_assignment", floorTurn.fallbackGeneration);
       },
     }) || null;
-    // A delayed local STT still must emit its report. The hub recorded a
-    // late-slot expected seq when it assigned from peers, so this report is
-    // consumed as late_discarded; it cannot open a phantom second round.
     floorTurn.verdictPromise = waitingAssignment
       ? Promise.resolve({ kind: "assigned", assignment: waitingAssignment })
       : reportedVerdictPromise;
@@ -1673,21 +1863,84 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       });
     }
     if (isProcessing && cleanedText && isWakeCancelText(cleanedText, agents, selectedAgentIds, resolvedRegex)) {
-      handleWakeCancelAbort(cleanedText)
+      const wakeCancelPromise = handleWakeCancelAbort(cleanedText)
         .catch((err) => console.error("❌  wake+cancel handler error:", err.message || err));
-      return;
+      if (slot) {
+        utteranceChain = utteranceChain
+          .then(() => wakeCancelPromise)
+          .then(() => maybeEvictSpeakerSlot(slot))
+          .catch((err) => console.error("❌  wake+cancel slot cleanup error:", err.message || err));
+      }
+      return wakeCancelPromise;
     }
 
     utteranceChain = utteranceChain
-      .then(() => handleUtteranceEnd(userText, metricsTurnId, floorTurn))
+      .then(() => {
+        if (slot && !currentSlotFor(slot)) return;
+        return handleUtteranceEnd(userText, metricsTurnId, floorTurn, speaker);
+      })
+      .then(() => {
+        if (slot) maybeEvictSpeakerSlot(slot);
+      })
       .catch((err) => console.error("❌  utterance_end handler error:", err.message || err));
-  });
+  }
 
-  async function handleUtteranceEnd(userText, metricsTurnId = null, floorTurn = null) {
+  function attachSttListeners(stream, speakerResolver, slot = null) {
+    stream.on("transcript", (text, isFinal, confidence) => {
+      if (slot && !currentSlotFor(slot)) return;
+      onSttTranscript(text, isFinal, confidence);
+    });
+    stream.on("utterance_end", (userText) => {
+      if (slot && !currentSlotFor(slot)) return;
+      onSttUtteranceEnd(userText, speakerResolver(), slot);
+    });
+    stream.on("error", (err) => {
+      if (slot && !currentSlotFor(slot)) return;
+      console.error("❌  STT error:", err.message || err);
+    });
+  }
+
+  function createSpeakerSlot(speaker) {
+    const slot = {
+      speaker: cloneSpeakerMeta(speaker),
+      stt: createAttributedStt(),
+      lastArrivalSeq: ++slotArrivalSeq,
+      closed: false,
+    };
+    speakerSlots.set(String(slot.speaker.id), slot);
+    attachSttListeners(slot.stt, () => cloneSpeakerMeta(slot.speaker), slot);
+    return slot;
+  }
+
+  function routeAttributedAudio(buffer, speaker) {
+    const normalizedSpeaker = cloneSpeakerMeta(speaker);
+    if (!normalizedSpeaker) return;
+    if (normalizedSpeaker.id === UNKNOWN_SPEAKER_ID) {
+      mixIntoUnknownStream(buffer);
+      return;
+    }
+
+    let slot = speakerSlots.get(normalizedSpeaker.id);
+    if (!slot && speakerSlots.size < MAX_ATTRIBUTED_STT) {
+      slot = createSpeakerSlot(normalizedSpeaker);
+    }
+    if (slot) {
+      slot.speaker = normalizedSpeaker;
+      slot.lastArrivalSeq = ++slotArrivalSeq;
+      slot.stt.send(buffer);
+      return;
+    }
+    mixIntoUnknownStream(buffer);
+  }
+
+  attachSttListeners(stt, () => currentMixedSpeaker());
+
+  async function handleUtteranceEnd(userText, metricsTurnId = null, floorTurn = null, speaker = null) {
     const cleanedText = String(userText || "").trim();
     if (!cleanedText) return;
     lastUserSpeechAt = Date.now();
     liveUserSpeechUntil = Date.now() + LIVE_USER_SPEECH_HOLD_MS;
+    const attributedSpeaker = cloneSpeakerMeta(speaker);
 
     // #8 Barge-in companion: small post-utterance buffer to reduce premature turn-taking.
     if (POST_UTTERANCE_BUFFER_MS > 0) {
@@ -1706,6 +1959,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         seq: utteranceSeq,
         text: cleanedText,
         timestamp: new Date().toISOString(),
+        speaker: attributedSpeaker,
         addressed: false,
         injectToLlm: false,
         sentToLlm: false,
@@ -1774,7 +2028,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
           } catch (error) {
             console.warn("⚠️  floor acquire failed:", error.code || error.message || error);
             entry.injectToLlm = false;
-            appendConversationEntry("user", `[会議音声・未指名] ${cleanedText}`, currentAgentId || null);
+            appendConversationEntry("user", `[会議音声・未指名] ${cleanedText}`, currentAgentId || null, attributedSpeaker);
             await reopenGateAndRescan("floor_acquire_failed");
             return;
           }
@@ -1805,7 +2059,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
           entry.addressed = false;
           entry.injectToLlm = false;
           console.log(`🔇  [会議音声・非指名] "${cleanedText.slice(0, 50)}..."`);
-          appendConversationEntry("user", `[会議音声・未指名] ${cleanedText}`, currentAgentId || null);
+          appendConversationEntry("user", `[会議音声・未指名] ${cleanedText}`, currentAgentId || null, attributedSpeaker);
           await reopenGateAndRescan("not_assigned");
           return;
         }
@@ -1815,7 +2069,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     // Exit command detection
     if (exitRequested) {
       console.log("🚪  Exit command detected!");
-      appendConversationEntry("user", cleanedText, currentAgentId || null);
+      appendConversationEntry("user", cleanedText, currentAgentId || null, attributedSpeaker);
 
       // Speak farewell and emit exit event
       const farewellVoice = config.exitFarewell || resolvedSpeech.exitFarewell;
@@ -1866,6 +2120,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         seq: utteranceSeq,
         text: cleanedText,
         timestamp: new Date().toISOString(),
+        speaker: attributedSpeaker,
         addressed: wakeResult.detected,
         injectToLlm: wakeResult.detected,
         sentToLlm: false,
@@ -1882,7 +2137,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         // No wake word: keep for wake re-scan/ops logs, but don't inject into LLM context.
         pushTranscriptEntry(entry);
         console.log(`🔇  [会議音声・未指名] "${cleanedText.slice(0, 50)}..."`);
-        appendConversationEntry("user", `[会議音声・未指名] ${cleanedText}`, currentAgentId || null);
+        appendConversationEntry("user", `[会議音声・未指名] ${cleanedText}`, currentAgentId || null, attributedSpeaker);
         return;
       }
 
@@ -1916,7 +2171,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     lastUserTranscript = cleanedText;
 
     // Log to session
-    appendConversationEntry("user", cleanedText, currentAgentId || null);
+    appendConversationEntry("user", cleanedText, currentAgentId || null, attributedSpeaker);
 
     // If agent is currently speaking/processing, interrupt
     if (isProcessing && currentAbort) {
@@ -1950,10 +2205,6 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     });
   }
 
-  stt.on("error", (err) => {
-    console.error("❌  STT error:", err.message || err);
-  });
-
   async function reopenGateAndRescan(reason = "turn_exit", { replay = true } = {}) {
     try {
       // Hub-mode utterances already reported directly from utterance_end and
@@ -1978,7 +2229,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
             entry.text,
             meetingContextOptions
           );
-          appendConversationEntry("user", entry.text, currentAgentId || null);
+          appendConversationEntry("user", entry.text, currentAgentId || null, entry.speaker || null);
           lastUserTranscript = entry.text;
           const forceImmediateAck = !hasSentInitialWakeAck;
           if (forceImmediateAck) hasSentInitialWakeAck = true;
@@ -2797,6 +3048,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     if (hasSelectedAgents && defaultAgentId && currentAgentId !== defaultAgentId) {
       switchAgent(defaultAgentId);
     }
+    if (suppressGreeting) return;
 
     let greeting = resolveGreetingText();
     if (!greeting) return;
@@ -2872,8 +3124,31 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
 
   // ── Public API ──────────────────────────────────────────────────
   const api = {
-    sendAudio(buffer) {
-      stt.send(buffer);
+    sendAudio(buffer, meta) {
+      if (meta === undefined) {
+        setMixedSpeaker(null);
+        stt.send(buffer);
+        return;
+      }
+      if (!isAcceptedAudioMeta(meta)) return;
+      if (!perSpeakerAudioEnabled) {
+        setMixedSpeaker(null);
+        stt.send(buffer);
+        return;
+      }
+      routeAttributedAudio(buffer, meta.speaker);
+    },
+    releaseSpeaker(speakerId) {
+      if (!perSpeakerAudioEnabled) return false;
+      try {
+        const slot = speakerSlots.get(String(speakerId));
+        const current = currentSlotFor(slot);
+        if (!current) return false;
+        closeSpeakerSlot(current);
+        return true;
+      } catch {
+        return false;
+      }
     },
     close() {
       stopped = true;
@@ -2899,6 +3174,9 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       reportQueueDraining = false;
       syncGatewayDelegationState();
       prewarmAbort.abort();
+      clearMixedWindowFlushTimer();
+      mixedWindowFrames.clear();
+      for (const slot of [...speakerSlots.values()]) closeSpeakerSlot(slot);
       stt.close();
     },
     handleGatewaySubagentSpawn,
@@ -2968,6 +3246,13 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         pruneHandoffInflight();
         return activeHandoffInflightCount();
       },
+      getSttMuxState: () => ({
+        enabled: perSpeakerAudioEnabled,
+        slots: [...speakerSlots.keys()],
+        mixedWindowHighestIndex,
+        mixedWindowNextFlushIndex,
+        mixedWindowPendingCount: mixedWindowFrames.size,
+      }),
       getGatewayDelegationState: () => ({ ...(session.gatewayDelegationState || {}) }),
       getDelegationResults: () => [...reportResults],
       canDispatchHandoff,

@@ -43,6 +43,9 @@ const FIELD_SYSTEMS = Object.freeze({
   tts_sample_rate: Object.freeze(["fish-audio", "elevenlabs", "openai-compatible"]),
   attendee_api_key: Object.freeze(["attendee"]),
   attendee_base_url: Object.freeze(["attendee"]),
+  discord_bot_token: Object.freeze(["discord"]),
+  discord_guild_allowlist: Object.freeze(["discord"]),
+  discord_lcm_ingest_enabled: Object.freeze(["discord"]),
   llm_provider: Object.freeze(["llm"]),
   llm_model: Object.freeze(["llm"]),
   openai_base_url: Object.freeze(["llm"]),
@@ -59,6 +62,7 @@ const DEFAULT_FIELDS = Object.freeze({
   elevenlabs: "elevenlabs_api_key",
   "openai-compatible": "openai_compatible_tts_base_url",
   attendee: "attendee_api_key",
+  discord: "discord_bot_token",
   llm: "llm_provider",
   tunnel: "server_ngrok_domain",
   settings: "agent_id",
@@ -66,6 +70,7 @@ const DEFAULT_FIELDS = Object.freeze({
 
 const MESSAGES = Object.freeze({
   AUTH_FAILED: "認証情報を確認してください",
+  ALLOWLIST_MISMATCH: "許可済みの Discord サーバーに Bot が参加していません",
   NOT_CONFIGURED: "必要な接続設定が未入力です",
   PAYMENT_REQUIRED: "プロバイダーの支払い状態を確認してください",
   NOT_ENABLED: "OpenClaw 側で gateway.http.endpoints.chatCompletions.enabled を有効にしてください",
@@ -91,6 +96,7 @@ function systemsForFields(fieldIds) {
 
 function fieldFor(system, code, message = "") {
   if (system === "tunnel" && ["NOT_CONFIGURED", "MISMATCH"].includes(code)) return "server_ngrok_domain";
+  if (system === "discord" && code === "ALLOWLIST_MISMATCH") return "discord_guild_allowlist";
   if (system === "openai-compatible") {
     return ["AUTH_FAILED", "PAYMENT_REQUIRED"].includes(code)
       ? "openai_compatible_tts_api_key"
@@ -159,6 +165,8 @@ function createReadinessController(options = {}) {
     const tts = ["fish-audio", "elevenlabs", "openai-compatible"].includes(selectedTts)
       ? selectedTts
       : "fish-audio";
+    // Discord is intentionally excluded from the main readiness gate by issue #132.
+    // /info.ready remains context-free here per issue #129 residual 2.
     return [stt === "deepgram" ? "deepgram" : "soniox", tts, "attendee", "llm", "tunnel"];
   }
 
@@ -252,10 +260,16 @@ function createReadinessController(options = {}) {
     return promise;
   }
 
-  function staticIssuesBySystem() {
+  function statusFor(options) {
+    return options && Object.prototype.hasOwnProperty.call(options, "transport")
+      ? getStatus({ transport: options.transport })
+      : getStatus();
+  }
+
+  function staticIssuesBySystem(options) {
     const grouped = new Map();
     const active = new Set(gateSystems());
-    for (const issue of getStatus().issues || []) {
+    for (const issue of statusFor(options).issues || []) {
       const mapped = FIELD_SYSTEMS[issue.fieldId] || [];
       for (const system of mapped) {
         if (!active.has(system)) continue;
@@ -300,11 +314,11 @@ function createReadinessController(options = {}) {
     return blockers;
   }
 
-  function getReadiness() {
+  function getReadiness(options) {
     const active = gateSystems();
     const restarts = restartBlockers();
     const restartBySystem = new Map(restarts.map((blocker) => [blocker.system, blocker]));
-    const staticBySystem = staticIssuesBySystem();
+    const staticBySystem = staticIssuesBySystem(options);
     const blockers = [];
     const systems = active.map((system) => {
       const restart = restartBySystem.get(system);
@@ -343,7 +357,7 @@ function createReadinessController(options = {}) {
       });
     }
     const settled = systems.every((system) => system.code !== "PENDING");
-    const meetingReady = getStatus().meetingReady;
+    const meetingReady = statusFor(options).meetingReady;
     return {
       ready: settled && blockers.length === 0 && meetingReady,
       setupRequired: !meetingReady,
@@ -364,7 +378,7 @@ function createReadinessController(options = {}) {
       const record = records.get(system);
       return Boolean(record && (!record.ok || isStale(record)));
     });
-    if (!systems.length) return getReadiness();
+    if (!systems.length) return getReadiness(options);
     const budgetMs = options.budgetMs ?? JOIN_REVALIDATION_BUDGET_MS;
     let timer;
     await Promise.race([
@@ -375,7 +389,7 @@ function createReadinessController(options = {}) {
       }),
     ]);
     if (timer) clearTimeout(timer);
-    return getReadiness();
+    return getReadiness(options);
   }
 
   function setProbeObservation(system, outcome) {

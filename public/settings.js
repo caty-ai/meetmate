@@ -44,11 +44,12 @@ const OPENAI_COMPATIBLE_TTS_FIELDS = new Set([
 ]);
 const ARRAY_FIELDS = new Set([
   "agent_wake_words", "agent_keyterms", "agent_stt_wake_variants", "agent_ack_variants", "agent_progress_pings",
+  "discord_guild_allowlist",
 ]);
 const BOOLEAN_FIELDS = new Set([
   "agent_emotion_tags", "openai_empty_response_retry", "openai_trusted_agent_tools",
   "tts_cache_enabled", "tts_cache_prewarm", "slack_notifications_enabled", "summary_enabled",
-  "task_extraction_enabled", "streaming_equivalent_enabled",
+  "task_extraction_enabled", "streaming_equivalent_enabled", "discord_lcm_ingest_enabled",
 ]);
 const NUMBER_FIELDS = new Set([
   "llm_temperature", "llm_max_tokens", "llm_history_max_turns", "soniox_endpoint_sensitivity",
@@ -188,6 +189,8 @@ if (typeof document !== "undefined") {
       slack_notifications_enabled: "Slack 通知", slack_notifications_target: "Slack 通知先",
       slack_dm_user_id: "Slack User ID", slack_notify_channel: "Slack 通知チャンネル",
       slack_summary_channel: "Slack サマリーチャンネル", slack_status_channel: "Slack ステータスチャンネル",
+      discord_bot_token: "Discord Bot token", discord_guild_allowlist: "Discord サーバー許可リスト",
+      discord_lcm_ingest_enabled: "Discord LCM 取り込み",
       summary_enabled: "会議サマリー", gateway_warmup_timeout_ms: "Gateway warmup timeout (ms)",
       gateway_display_name: "Gateway 表示名", server_ngrok_domain: "ngrok ドメイン",
       task_extraction_enabled: "タスク抽出", streaming_equivalent_enabled: "ストリーミング相当",
@@ -223,6 +226,7 @@ if (typeof document !== "undefined") {
       ["soniox", "Soniox"], ["deepgram", "Deepgram"], ["fish-audio", "Fish Audio"],
       ["elevenlabs", "ElevenLabs"], ["openai-compatible", "OpenAI-compatible TTS"],
       ["attendee", "Attendee"], ["llm", "LLM"], ["tunnel", "Tunnel"], ["slack", "Slack"],
+      ["discord", "Discord"],
     ];
     const CONNECTION_EXPLANATIONS = {
       CONNECTED: "接続できました。", NOT_CONFIGURED: "キーが未設定です。", AUTH_FAILED: "キーが不正です。",

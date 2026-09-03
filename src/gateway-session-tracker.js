@@ -1,3 +1,5 @@
+const { sessionUserFor } = require("./session-user");
+
 const LATE_ROUTE_TTL_MS = 10 * 60 * 1000;
 
 function createGatewaySessionTracker({
@@ -117,7 +119,7 @@ function createGatewaySessionTracker({
     return null;
   }
 
-  function trackGatewaySession(session, profile) {
+  function trackGatewaySession(session, profile, transport = "meet") {
     const gwCfg = getGatewayConfigForProfile(profile);
     if (!gwCfg.enabled) return false;
 
@@ -125,7 +127,7 @@ function createGatewaySessionTracker({
     gatewayEvents.start(gwCfg);
 
     const agentId = profile?.agentId || session.config?.defaultAgentId || getDefaultAgentId?.() || "agent";
-    const parentUser = `meet-${session.id}-${agentId}`;
+    const parentUser = sessionUserFor(transport, session.id, agentId);
     const delegateUser = `${parentUser}-delegate`;
     const parentKey = gatewayEvents.buildSessionKey(parentUser, gwCfg.agentId);
     const delegateKey = gatewayEvents.buildSessionKey(delegateUser, gwCfg.agentId);

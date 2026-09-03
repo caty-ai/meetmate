@@ -44,8 +44,8 @@ const CONNECTION_TIMEOUT_MS = 5_000;
 const CONNECTION_MIN_INTERVAL_MS = 1_000;
 const PREVIEW_MIN_INTERVAL_MS = 2_000;
 const AVATAR_UPLOAD_MIN_INTERVAL_MS = 1_000;
-const PROVIDERS = new Set(["soniox", "deepgram", "fish-audio", "elevenlabs", "openai-compatible", "attendee", "llm", "tunnel", "slack"]);
-const IMPLEMENTED_PROVIDERS = new Set(["soniox", "deepgram", "fish-audio", "elevenlabs", "openai-compatible", "attendee", "llm", "tunnel"]);
+const PROVIDERS = new Set(["soniox", "deepgram", "fish-audio", "elevenlabs", "openai-compatible", "attendee", "llm", "tunnel", "slack", "discord"]);
+const IMPLEMENTED_PROVIDERS = new Set(["soniox", "deepgram", "fish-audio", "elevenlabs", "openai-compatible", "attendee", "llm", "tunnel", "discord"]);
 const PUBLIC_DIR = path.join(__dirname, "..", "..", "public");
 const SETTINGS_ASSETS = new Map([
   ["/settings", { filename: "settings.html", contentType: "text/html; charset=utf-8" }],
@@ -258,11 +258,12 @@ function assertCommittedRevision(revision) {
   }
 }
 
-function connectionResult(provider, code, durationMs) {
+function connectionResult(provider, code, durationMs, message) {
   const messages = {
     CONNECTED: "Connection succeeded",
     NOT_CONFIGURED: "Connection is not configured",
     AUTH_FAILED: "Authentication failed",
+    ALLOWLIST_MISMATCH: "Bot is not in any allowlisted guild",
     PAYMENT_REQUIRED: "Provider payment is required",
     NOT_ENABLED: "Provider endpoint is not enabled",
     MISMATCH: "Public endpoint points to another instance",
@@ -276,7 +277,7 @@ function connectionResult(provider, code, durationMs) {
     ok: code === "CONNECTED",
     provider,
     code,
-    message: messages[code],
+    message: code === "CONNECTED" ? messages.CONNECTED : (message || messages[code] || code),
     durationMs: Math.max(0, Math.round(durationMs)),
   };
 }
@@ -288,7 +289,7 @@ async function testConnection(provider, options = {}) {
     ...options,
     timeoutMs: options.timeoutMs ?? CONNECTION_TIMEOUT_MS,
   });
-  return connectionResult(provider, outcome.code, now() - startedAt);
+  return connectionResult(provider, outcome.code, now() - startedAt, outcome.message);
 }
 
 function createConnectionLimiter(options = {}) {
@@ -611,7 +612,12 @@ function createSettingsHandler(options = {}) {
           force: true,
           timeoutMs: connectionOptions.timeoutMs ?? CONNECTION_TIMEOUT_MS,
         });
-        writeJson(res, 200, connectionResult(provider, record?.code || "PROVIDER_ERROR", (connectionOptions.now || Date.now)() - startedAt));
+        writeJson(res, 200, connectionResult(
+          provider,
+          record?.code || "PROVIDER_ERROR",
+          (connectionOptions.now || Date.now)() - startedAt,
+          record?.message,
+        ));
         return true;
       }
 

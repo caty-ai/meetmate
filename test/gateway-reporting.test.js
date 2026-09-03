@@ -472,6 +472,58 @@ test("late spawn completion is metrics-only after delegate reply already relayed
   }, { metricsEvents });
 });
 
+test("discord transport relays delegate completion by voice when chat surface is disabled", async () => {
+  const spoken = [];
+  const chats = [];
+
+  await withFreshPipeline(async ({ createPipeline }) => {
+    const { pipeline, turnState } = createTestPipeline(createPipeline, {
+      transport: "discord",
+      capabilities: {
+        chat: false,
+        perSpeakerAudio: true,
+        avatarStream: false,
+        supportsFlush: true,
+        echoesOwnOutput: false,
+      },
+      gatewayEventsConfig: {
+        enabled: true,
+        agentId: "main",
+        reportChatEnabled: false,
+        reportVoiceEnabled: true,
+        reportVoiceGapMs: 0,
+      },
+      onChatMessage: async (text) => {
+        chats.push(text);
+        return true;
+      },
+    });
+
+    await pipeline._test.handleGatewaySubagentCompletion({
+      childKey: "agent:main:subagent:discord-child",
+      parentSessionKey: "agent:main:openai-user:discord-gateway-reporting-test-caty",
+      label: "調査",
+      status: "ok",
+      resultText: "結果です",
+      runId: "discord-child-run",
+    });
+    await sleep(50);
+
+    assert.deepEqual(chats, []);
+    assert.equal(spoken.includes("結果まとまったよ、あとでログにも残すね。"), true);
+    assert.deepEqual(pipeline.getSessionUsers(), {
+      parent: "discord-gateway-reporting-test-caty",
+      delegate: "discord-gateway-reporting-test-caty-delegate",
+    });
+    await flushMicrotasks();
+    await sleep(10);
+    assert.equal(pipeline._test.getReportQueueLength(), 0);
+    assert.equal(pipeline._test.getCurrentAbortController(), null);
+    assert.equal(turnState.isAgentSpeaking, false);
+    pipeline.close();
+  }, { spoken });
+});
+
 test("announce injection schedules best-effort parent compact and records failures", async () => {
   const metricsEvents = [];
   const compactCalls = [];
@@ -621,6 +673,8 @@ function createTestPipeline(createPipeline, options = {}) {
   };
 
   const pipeline = createPipeline(session, turnState, () => {}, config, {
+    transport: options.transport,
+    capabilities: options.capabilities,
     agents: { caty: { wakeWords: ["ケイティ"] } },
     selectedAgentIds: ["caty"],
     defaultAgentId: "caty",

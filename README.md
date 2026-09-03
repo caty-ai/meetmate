@@ -9,7 +9,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/caty-ai/meetmate/blob/main/LICENSE)
 [![npm](https://img.shields.io/npm/v/meetmate?logo=npm&label=npm)](https://www.npmjs.com/package/meetmate)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D26-blue?logo=node.js&logoColor=white)](https://nodejs.org/)
-[![Meetings](https://img.shields.io/badge/works%20in-Google%20Meet%20%7C%20Zoom-blue)](#what-it-does)
+[![Meetings](https://img.shields.io/badge/works%20in-Google%20Meet%20%7C%20Zoom%20%7C%20Discord-blue)](#what-it-does)
 [![Server](https://img.shields.io/badge/runs%20on-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](#quick-start)
 
 <picture>
@@ -17,13 +17,13 @@
   <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/hero-light.svg" alt="Meetmate — your AI agent, sitting in a meeting grid as a real participant" width="100%">
 </picture>
 
-**Bring your own AI agent into Google Meet & Zoom — as a real voice participant.**
+**Bring your own AI agent into Google Meet, Zoom & Discord voice channels — as a real voice participant.**
 
 Meetmate does exactly one thing: it gives *your* AI agent a seat in your meeting. It joins as a participant with a face and a voice — you call its name, it answers; you ask for something, it gets it done. We kept the scope that small on purpose, and polished that one thing relentlessly.
 
 ## Quick start
 
-**What you need:** [Node.js](https://nodejs.org/) ≥ 26 · an [Attendee](https://attendee.dev/) account · [Soniox](https://soniox.com/) (or [Deepgram](https://deepgram.com/)) for speech-to-text · a TTS provider ([Fish Audio](https://fish.audio/), ElevenLabs, or OpenAI-compatible) · an LLM endpoint ([OpenClaw Gateway](https://openclaw.ai/) or any OpenAI-compatible) · usually [ngrok](https://ngrok.com/) or [Tailscale](https://tailscale.com/) · and Google Meet will ask you to admit the bot. The third-party services may cost money.
+**What you need:** [Node.js](https://nodejs.org/) ≥ 26 · an [Attendee](https://attendee.dev/) account (Meet/Zoom) *or* a [Discord bot token](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#discord-ボット音声チャンネル参加) (Discord — no Attendee, no tunnel) · [Soniox](https://soniox.com/) (or [Deepgram](https://deepgram.com/)) for speech-to-text · a TTS provider ([Fish Audio](https://fish.audio/), ElevenLabs, or OpenAI-compatible) · an LLM endpoint ([OpenClaw Gateway](https://openclaw.ai/) or any OpenAI-compatible) · usually [ngrok](https://ngrok.com/) or [Tailscale](https://tailscale.com/) for Meet/Zoom · and Google Meet will ask you to admit the bot. The third-party services may cost money.
 
 In an empty folder:
 
@@ -33,15 +33,15 @@ npx meetmate init     # the wizard collects your API keys, voice ID, and LLM end
 npx meetmate start    # starts the server and prints the settings-UI URL
 ```
 
-Open the printed URL — it's the settings UI, not the dashboard yet. If anything required is still empty (or you skipped `init` entirely — the server still starts, just in setup mode), a banner tells you what's missing; fill it in, save, and restart. One exception can't be filled in from the browser: the LLM connection values (gateway URL/token or the OpenAI-compatible key) are environment-only — the `init` wizard writes them to `.env` for you, so if you skipped it, add them there. Once it's loaded, open the dashboard at the same host's `/`, paste a Meet or Zoom URL, and click **Join** — [here's what that screen looks like](#what-it-looks-like). Approve the bot's "Ask to join" request in Meet — then call its wake word and start talking. ngrok/Tailscale and the Meet admission step stay manual; the wizard's closing message and the [Setup guide](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md) walk you through them.
+Open the printed URL — it's the settings UI, not the dashboard yet. If anything required is still empty (or you skipped `init` entirely — the server still starts, just in setup mode), a banner tells you what's missing; fill it in, save, and restart. One exception can't be filled in from the browser: the LLM connection values (gateway URL/token or the OpenAI-compatible key) are environment-only — the `init` wizard writes them to `.env` for you, so if you skipped it, add them there. Once it's loaded, open the dashboard at the same host's `/`, paste a Meet or Zoom URL, and click **Join** — [here's what that screen looks like](#what-it-looks-like). Approve the bot's "Ask to join" request in Meet — then call its wake word and start talking. (For Discord there's no URL: pick the Discord transport on the same dashboard and enter the server and voice-channel IDs — the [setup guide's Discord section](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#discord-ボット音声チャンネル参加) covers creating the bot first.) ngrok/Tailscale and the Meet admission step stay manual; the wizard's closing message and the [Setup guide](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md) walk you through them.
 
 ## What it does
 
-- **It's a participant, not a notetaker.** Your agent shows up in the participant grid with its own avatar, listens to the room, and speaks — with wake-word detection and barge-in (talk over it and it stops).
+- **It's a participant, not a notetaker.** Your agent shows up in the participant grid with its own avatar, listens to the room, and speaks — with wake-word detection and barge-in (talk over it and it stops; Meet/Zoom — barge-in is not part of the Discord path).
 - **It's *your* agent.** Connect the agent you already use — with its memory, personality, and skills — via OpenClaw Gateway. The same "them" your team already knows walks into the room, so no two Meetmates sound alike. (No gateway? Any OpenAI-compatible endpoint works too, as a simpler baseline: plain LLM, built-in persona — see [LLM providers](https://github.com/caty-ai/meetmate/blob/main/docs/TECHNICAL.md#llm-providers).)
 - **Ask it things, right there.** "Summarize where we landed and post it to the channel." Heavy work is delegated to a background session automatically, so the agent stays in the conversation while the task runs.
 - **Ordinary is the point.** No push-to-talk, no special commands, no awkward silences. You talk to it the way you talk to a colleague — that this feels unremarkable is the product.
-- **Works where you meet, runs where you work.** Google Meet and Zoom on the meeting side; Windows, macOS, and Linux on the server side. A config file, your API keys, one command — add a custom avatar if you like.
+- **Works where you meet, runs where you work.** Google Meet, Zoom, and Discord voice channels on the meeting side; Windows, macOS, and Linux on the server side. A config file, your API keys, one command — add a custom avatar if you like.
 
 ## What it looks like
 
@@ -107,6 +107,7 @@ Want the avatar to move? Two experiments already ship: a frame-swap lip-sync ava
 |---|---|
 | Google Meet | Mainline path. Start here first. |
 | Zoom | Works for meetings you host/control yourself today. Do not assume support for external-hosted Zoom meetings, OBF, or managed OAuth setups yet. |
+| Discord voice channels | **Preview** — shipped ahead of the live end-to-end verification ([#138](https://github.com/caty-ai/meetmate/issues/138)); still unverified on a real server: the voice exit command leaving the channel ([#139](https://github.com/caty-ai/meetmate/issues/139)) and a visible surface for multi-speaker attribution ([#140](https://github.com/caty-ai/meetmate/issues/140)). **Servers you manage yourself only** in this first release. Official Bot API (discord.js) — no Attendee, no tunnel; the bot connects outbound. Guild allowlist is fail-closed (empty = every join refused), intents/permissions are minimal by design, and the bot always announces itself on join before any audio is captured. Leave via the dashboard button; the voice exit command on Discord is under verification ([#139](https://github.com/caty-ai/meetmate/issues/139)). Barge-in is not part of the Discord path in this release. The Discord path currently requires Fish Audio TTS. Setup: [Discord bot section of the setup guide](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#discord-ボット音声チャンネル参加). |
 | Server OS & autostart | Windows (via WSL2), macOS, and Linux all run the server. One installer registers the always-on service: `scripts/install-service.sh` sets up launchd on macOS or a systemd user unit on Linux/WSL2 (WSL2 needs `systemd=true` in `/etc/wsl.conf`; run ngrok inside WSL2, or set `server.ngrokDomain` explicitly). Details: [setup guide — always-on service](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#常駐サービス自動起動). |
 | MCP vs voice brain | Meetmate's MCP server is a control plane for `join` / `leave` / `status`. The voice brain is separate: your real agent runs behind OpenClaw or another OpenAI-compatible gateway and speaks in the meeting. |
 
@@ -117,7 +118,8 @@ The `init` wizard collects the API keys, the voice ID, and the LLM endpoint for 
 | Item | Purpose | Setting names | When needed | Notes |
 |---|---|---|---|---|
 | [Node.js](https://nodejs.org/) 26+ | Run the server | `node`, `npm` | Always | Required. |
-| [Attendee](https://attendee.dev/) account + API key | Meeting bot join/leave + audio I/O | `ATTENDEE_API_KEY` | Always | Hosted service; check current free/paid availability. |
+| [Attendee](https://attendee.dev/) account + API key | Meeting bot join/leave + audio I/O | `ATTENDEE_API_KEY` | Meet / Zoom | Hosted service; check current free/paid availability. Not used by the Discord path. |
+| Discord bot token | Voice-channel bot identity | `discord_bot_token` (settings UI, masked) / `DISCORD_BOT_TOKEN` | Discord | Create the bot in the [Developer Portal](https://discord.com/developers/applications) with minimal intents/permissions; the bot's avatar is also set there. [Setup guide](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#discord-ボット音声チャンネル参加). |
 | [Soniox](https://console.soniox.com/) account + API key | Default speech-to-text | `STT_PROVIDER=soniox`, `SONIOX_API_KEY` | Usually | Default path. Pricing/trial terms vary. |
 | [Deepgram](https://console.deepgram.com/signup) account + API key | Optional alternate speech-to-text | `STT_PROVIDER=deepgram`, `DEEPGRAM_API_KEY` | Optional | Only if you switch away from Soniox. |
 | [Fish Audio](https://fish.audio/) account + voice | Default text-to-speech voice | `TTS_PROVIDER=fish-audio`, `FISH_AUDIO_API_KEY`, `FISH_AUDIO_VOICE_ID` | Default | Existing configurations continue to use this provider. |

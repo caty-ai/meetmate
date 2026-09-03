@@ -26,7 +26,7 @@ const TERMINAL_STATES = new Set(["completed", "failed"]);
 class SessionLifecycle extends EventEmitter {
   /**
    * @param {string} sessionId
-   * @param {"meet"|"zoom"} transport
+   * @param {"meet"|"zoom"|"discord"} transport
    * @param {object} [meta] — extra metadata (to, from, meetingUrl, etc.)
    */
   constructor(sessionId, transport, meta = {}) {

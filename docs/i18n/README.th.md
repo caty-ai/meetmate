@@ -8,7 +8,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/caty-ai/meetmate/blob/main/LICENSE)
 [![npm](https://img.shields.io/npm/v/meetmate?logo=npm&label=npm)](https://www.npmjs.com/package/meetmate)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D26-blue?logo=node.js&logoColor=white)](https://nodejs.org/)
-[![Meetings](https://img.shields.io/badge/works%20in-Google%20Meet%20%7C%20Zoom-blue)](#ทำอะไรได้บ้าง)
+[![Meetings](https://img.shields.io/badge/works%20in-Google%20Meet%20%7C%20Zoom%20%7C%20Discord-blue)](#ทำอะไรได้บ้าง)
 [![Server](https://img.shields.io/badge/runs%20on-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](#เริ่มต้นอย่างรวดเร็ว)
 
 <picture>
@@ -16,13 +16,13 @@
   <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/hero-light.svg" alt="Meetmate — AI เอเจนต์ของคุณนั่งอยู่ในกริดการประชุมในฐานะผู้เข้าร่วมตัวจริง" width="100%">
 </picture>
 
-**พา AI เอเจนต์ของคุณเข้าสู่ Google Meet และ Zoom — ในฐานะผู้เข้าร่วมตัวจริงที่พูดได้**
+**พา AI เอเจนต์ของคุณเข้าสู่ Google Meet, Zoom และช่องเสียง (voice channel) ของ Discord — ในฐานะผู้เข้าร่วมตัวจริงที่พูดได้**
 
 Meetmate ทำแค่สิ่งเดียว: จองที่นั่งในการประชุมให้ AI เอเจนต์*ของคุณ* มันเข้าร่วมในฐานะผู้เข้าร่วมที่มีทั้งหน้าและเสียง — เรียกชื่อมัน มันตอบ; ฝากอะไรไว้ มันจัดการให้ เราตั้งใจจำกัดขอบเขตไว้แค่นั้น แล้วขัดเกลาสิ่งเดียวนั้นให้เนียนที่สุด
 
 ## เริ่มต้นอย่างรวดเร็ว
 
-**สิ่งที่คุณต้องมี:** [Node.js](https://nodejs.org/) ≥ 26 · บัญชี [Attendee](https://attendee.dev/) · [Soniox](https://soniox.com/) (หรือ [Deepgram](https://deepgram.com/)) สำหรับ speech-to-text · ผู้ให้บริการ TTS ([Fish Audio](https://fish.audio/), ElevenLabs หรือ OpenAI-compatible) · เอนด์พอยต์ LLM ([OpenClaw Gateway](https://openclaw.ai/) หรือ OpenAI-compatible ใดก็ได้) · โดยปกติต้องมี [ngrok](https://ngrok.com/) หรือ [Tailscale](https://tailscale.com/) · และ Google Meet จะขอให้คุณอนุมัติให้บอทเข้าร่วม บริการจากบุคคลที่สามอาจมีค่าใช้จ่าย
+**สิ่งที่คุณต้องมี:** [Node.js](https://nodejs.org/) ≥ 26 · บัญชี [Attendee](https://attendee.dev/) (สำหรับ Meet/Zoom) *หรือ* [Discord bot token](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#discord-ボット音声チャンネル参加) (Discord — ไม่ต้องใช้ Attendee ไม่ต้องใช้ tunnel) · [Soniox](https://soniox.com/) (หรือ [Deepgram](https://deepgram.com/)) สำหรับ speech-to-text · ผู้ให้บริการ TTS ([Fish Audio](https://fish.audio/), ElevenLabs หรือ OpenAI-compatible) · เอนด์พอยต์ LLM ([OpenClaw Gateway](https://openclaw.ai/) หรือ OpenAI-compatible ใดก็ได้) · โดยปกติต้องมี [ngrok](https://ngrok.com/) หรือ [Tailscale](https://tailscale.com/) สำหรับ Meet/Zoom · และ Google Meet จะขอให้คุณอนุมัติให้บอทเข้าร่วม บริการจากบุคคลที่สามอาจมีค่าใช้จ่าย
 
 ในโฟลเดอร์ว่าง:
 
@@ -32,15 +32,15 @@ npx meetmate init     # ตัวช่วยติดตั้งจะเก�
 npx meetmate start    # เริ่มเซิร์ฟเวอร์และพิมพ์ URL ของหน้าตั้งค่า
 ```
 
-เปิด URL ที่แสดงขึ้นมา — นี่คือหน้า settings UI ยังไม่ใช่แดชบอร์ด ถ้ายังมีช่องที่จำเป็นว่างอยู่ (หรือคุณข้ามขั้นตอน `init` ไปเลย — เซิร์ฟเวอร์จะยังเริ่มทำงาน แค่อยู่ในโหมดตั้งค่า) จะมีแบนเนอร์「セットアップ中」(ซึ่งแปลว่า "กำลังตั้งค่า") บอกว่าขาดอะไร กรอกให้ครบ กดปุ่ม「変更を保存」(ซึ่งแปลว่า "บันทึกการเปลี่ยนแปลง") แล้วรีสตาร์ท มีข้อยกเว้นหนึ่งอย่างที่กรอกจากเบราว์เซอร์ไม่ได้ — ค่าการเชื่อมต่อ LLM (URL/Token ของ gateway หรือคีย์ OpenAI-compatible) ใช้ได้เฉพาะผ่านตัวแปรสภาพแวดล้อม ตัวช่วยติดตั้ง `init` จะเขียนลง `.env` ให้ ถ้าคุณข้าม `init` ให้เพิ่มลงใน `.env` เอง เมื่อโหลดเสร็จแล้ว ให้เปิดแดชบอร์ดที่ `/` บนโฮสต์เดียวกัน วาง URL ของ Meet หรือ Zoom แล้วคลิก **Join** ([ดูหน้าจอจริงได้ที่นี่](#หน้าตาเป็นแบบนี้)) อนุมัติคำขอ "ขอเข้าร่วม" (Ask to join) ของบอทใน Meet — จากนั้นเรียก wake word แล้วเริ่มพูดได้เลย ขั้นตอน ngrok/Tailscale และการอนุมัติเข้าร่วมใน Meet ยังคงต้องทำเอง ข้อความปิดท้ายของตัวช่วยติดตั้งและ[คู่มือติดตั้ง](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md) จะแนะนำคุณตลอดขั้นตอนเหล่านี้
+เปิด URL ที่แสดงขึ้นมา — นี่คือหน้า settings UI ยังไม่ใช่แดชบอร์ด ถ้ายังมีช่องที่จำเป็นว่างอยู่ (หรือคุณข้ามขั้นตอน `init` ไปเลย — เซิร์ฟเวอร์จะยังเริ่มทำงาน แค่อยู่ในโหมดตั้งค่า) จะมีแบนเนอร์「セットアップ中」(ซึ่งแปลว่า "กำลังตั้งค่า") บอกว่าขาดอะไร กรอกให้ครบ กดปุ่ม「変更を保存」(ซึ่งแปลว่า "บันทึกการเปลี่ยนแปลง") แล้วรีสตาร์ท มีข้อยกเว้นหนึ่งอย่างที่กรอกจากเบราว์เซอร์ไม่ได้ — ค่าการเชื่อมต่อ LLM (URL/Token ของ gateway หรือคีย์ OpenAI-compatible) ใช้ได้เฉพาะผ่านตัวแปรสภาพแวดล้อม ตัวช่วยติดตั้ง `init` จะเขียนลง `.env` ให้ ถ้าคุณข้าม `init` ให้เพิ่มลงใน `.env` เอง เมื่อโหลดเสร็จแล้ว ให้เปิดแดชบอร์ดที่ `/` บนโฮสต์เดียวกัน วาง URL ของ Meet หรือ Zoom แล้วคลิก **Join** ([ดูหน้าจอจริงได้ที่นี่](#หน้าตาเป็นแบบนี้)) อนุมัติคำขอ "ขอเข้าร่วม" (Ask to join) ของบอทใน Meet — จากนั้นเรียก wake word แล้วเริ่มพูดได้เลย (สำหรับ Discord จะไม่มี URL: เลือก Discord transport บนแดชบอร์ดเดียวกัน แล้วกรอกรหัสเซิร์ฟเวอร์และรหัสช่องเสียง — การสร้างบอทให้ดูที่[หัวข้อ Discord ของคู่มือติดตั้ง](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#discord-ボット音声チャンネル参加)ก่อน) ขั้นตอน ngrok/Tailscale และการอนุมัติเข้าร่วมใน Meet ยังคงต้องทำเอง ข้อความปิดท้ายของตัวช่วยติดตั้งและ[คู่มือติดตั้ง](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md) จะแนะนำคุณตลอดขั้นตอนเหล่านี้
 
 ## ทำอะไรได้บ้าง
 
-- **มันคือผู้เข้าร่วม ไม่ใช่บอทจดรายงานการประชุม** เอเจนต์ของคุณโผล่ในกริดผู้เข้าร่วมพร้อมอวาตาร์ของตัวเอง ฟังบทสนทนาในห้อง และพูด — พร้อมการตรวจจับ wake word และ barge-in (พูดแทรกได้เลย มันจะหยุดให้เอง)
+- **มันคือผู้เข้าร่วม ไม่ใช่บอทจดรายงานการประชุม** เอเจนต์ของคุณโผล่ในกริดผู้เข้าร่วมพร้อมอวาตาร์ของตัวเอง ฟังบทสนทนาในห้อง และพูด — พร้อมการตรวจจับ wake word และ barge-in (พูดแทรกได้เลย มันจะหยุดให้เอง — barge-in ใช้ได้เฉพาะ Meet/Zoom ไม่รวมเส้นทาง Discord)
 - **มันคือเอเจนต์*ของคุณ*** เชื่อมเอเจนต์ที่คุณใช้อยู่แล้ว — พร้อมความจำ บุคลิก และทักษะครบถ้วน — ผ่าน OpenClaw Gateway "คนเดิม" ที่ทีมคุ้นเคยเดินเข้าห้องประชุมมาเลย จึงไม่มี Meetmate สองตัวไหนพูดเหมือนกัน (ไม่มี Gateway? ใช้เอนด์พอยต์ OpenAI-compatible อะไรก็ได้ เป็นโหมดพื้นฐานที่เรียบง่ายกว่า: LLM ธรรมดา + เพอร์โซนาในตัว — ดู [LLM providers](https://github.com/caty-ai/meetmate/blob/main/docs/TECHNICAL.md#llm-providers))
 - **สั่งงานได้ทันทีตรงนั้น** "สรุปให้หน่อยว่าเราลงตัวตรงไหน แล้วโพสต์เข้าช่องด้วย" งานหนักจะถูกมอบหมายให้เซสชันเบื้องหลังโดยอัตโนมัติ เอเจนต์จึงอยู่คุยต่อได้ในขณะที่งานกำลังทำ
 - **"ธรรมดา" คือประเด็น** ไม่ต้องกดค้างเพื่อพูด ไม่มีคำสั่งพิเศษ ไม่มีความเงียบที่น่าอึดอัด คุณคุยกับมันเหมือนคุยกับเพื่อนร่วมงาน — ความรู้สึก "ไม่มีอะไรพิเศษ" นั่นแหละคือผลิตภัณฑ์
-- **ประชุมที่ไหนก็ได้ รันที่ไหนก็ได้** ฝั่งการประชุมคือ Google Meet และ Zoom ฝั่งเซิร์ฟเวอร์คือ Windows, macOS และ Linux แค่ไฟล์คอนฟิก คีย์ API และคำสั่งเดียว — จะเปลี่ยนรูปอวาตาร์ก็ได้ตามใจ
+- **ประชุมที่ไหนก็ได้ รันที่ไหนก็ได้** ฝั่งการประชุมคือ Google Meet, Zoom และช่องเสียงของ Discord ฝั่งเซิร์ฟเวอร์คือ Windows, macOS และ Linux แค่ไฟล์คอนฟิก คีย์ API และคำสั่งเดียว — จะเปลี่ยนรูปอวาตาร์ก็ได้ตามใจ
 
 ## หน้าตาเป็นแบบนี้
 
@@ -107,6 +107,7 @@ Meetmate: [warm] มีการเปลี่ยนแปลง 2 จุด �
 |---|---|
 | Google Meet | เส้นทางหลัก เริ่มต้นที่นี่ก่อน |
 | Zoom | ใช้งานได้กับการประชุมที่คุณโฮสต์/ควบคุมเองในตอนนี้ อย่าเพิ่งคาดหวังว่าจะรองรับการประชุม Zoom ที่โฮสต์จากภายนอก, OBF หรือการตั้งค่า OAuth แบบมีการจัดการ |
+| ช่องเสียง (voice channel) ของ Discord | **พรีวิว** — ปล่อยก่อนการทดสอบจริงแบบ end-to-end บนเซิร์ฟเวอร์จริง ([#138](https://github.com/caty-ai/meetmate/issues/138)) สิ่งที่ยังไม่ได้ยืนยัน: คำสั่งเสียงออกจากห้องออกจากช่องได้จริงหรือไม่ ([#139](https://github.com/caty-ai/meetmate/issues/139)) และหน้าจอที่แสดงการระบุผู้พูดหลายคน ([#140](https://github.com/caty-ai/meetmate/issues/140)) รีลีสแรกนี้รองรับ**เฉพาะเซิร์ฟเวอร์ที่คุณดูแลเองเท่านั้น** ใช้ Official Bot API (discord.js) — ไม่ต้องใช้ Attendee ไม่ต้องใช้ tunnel เพราะบอทเชื่อมต่อออกไปเอง allowlist ของ guild เป็นแบบ fail-closed (ถ้าว่างเปล่า = ปฏิเสธการเข้าร่วมทั้งหมด) intents/permissions ถูกออกแบบให้น้อยที่สุดเท่าที่จำเป็น และบอทจะประกาศตัวเองทุกครั้งก่อนเริ่มเก็บเสียง ออกจากห้องผ่านปุ่มบนแดชบอร์ด — คำสั่งออกจากห้องด้วยเสียงบน Discord ยังอยู่ระหว่างการตรวจสอบ ([#139](https://github.com/caty-ai/meetmate/issues/139)) บาร์จอิน (การหยุดพูดเมื่อถูกพูดแทรก) ไม่ได้เป็นส่วนหนึ่งของเส้นทาง Discord ในรีลีสนี้ เส้นทาง Discord ปัจจุบันต้องใช้ Fish Audio TTS การติดตั้ง: [หัวข้อ Discord bot ของคู่มือติดตั้ง](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#discord-ボット音声チャンネル参加) |
 | ระบบปฏิบัติการของเซิร์ฟเวอร์และการเริ่มอัตโนมัติ | รันเซิร์ฟเวอร์ได้ทั้งบน Windows (ผ่าน WSL2), macOS และ Linux การลงทะเบียนเซอร์วิสถาวรใช้ตัวติดตั้งตัวเดียว: `scripts/install-service.sh` จะตั้งค่า launchd บน macOS หรือ systemd user unit บน Linux/WSL2 (WSL2 ต้องตั้ง `systemd=true` ใน `/etc/wsl.conf` และให้รัน ngrok ภายใน WSL2 หรือระบุ `server.ngrokDomain` อย่างชัดเจน) รายละเอียด: [คู่มือติดตั้ง — เซอร์วิสถาวร](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#常駐サービス自動起動) |
 | MCP กับสมองเสียง | MCP server ของ Meetmate เป็น control plane สำหรับ `join` / `leave` / `status` ส่วนสมองเสียงแยกต่างหาก: เอเจนต์ตัวจริงของคุณทำงานอยู่หลัง OpenClaw หรือเกตเวย์ OpenAI-compatible อื่น และพูดในที่ประชุม |
 
@@ -117,7 +118,8 @@ Meetmate: [warm] มีการเปลี่ยนแปลง 2 จุด �
 | รายการ | วัตถุประสงค์ | ชื่อการตั้งค่า | จำเป็นเมื่อไร | หมายเหตุ |
 |---|---|---|---|---|
 | [Node.js](https://nodejs.org/) 26+ | รันเซิร์ฟเวอร์ | `node`, `npm` | เสมอ | จำเป็น |
-| บัญชี [Attendee](https://attendee.dev/) + API key | บอทเข้าร่วม/ออกจากการประชุม + รับส่งเสียง | `ATTENDEE_API_KEY` | เสมอ | บริการแบบโฮสต์; ตรวจสอบความพร้อมใช้งานแบบฟรี/เสียเงินในปัจจุบัน |
+| บัญชี [Attendee](https://attendee.dev/) + API key | บอทเข้าร่วม/ออกจากการประชุม + รับส่งเสียง | `ATTENDEE_API_KEY` | Meet / Zoom | บริการแบบโฮสต์; ตรวจสอบความพร้อมใช้งานแบบฟรี/เสียเงินในปัจจุบัน ไม่ได้ใช้กับเส้นทาง Discord |
+| Discord bot token | ตัวตนของบอทสำหรับช่องเสียง | `discord_bot_token` (ใน settings UI, แสดงแบบปิดบัง) / `DISCORD_BOT_TOKEN` | Discord | สร้างบอทใน [Developer Portal](https://discord.com/developers/applications) โดยใช้ intents/permissions ให้น้อยที่สุด อวาตาร์ของบอทก็ตั้งค่าได้ที่นี่เช่นกัน [คู่มือติดตั้ง](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#discord-ボット音声チャンネル参加) |
 | บัญชี [Soniox](https://console.soniox.com/) + API key | speech-to-text ค่าเริ่มต้น | `STT_PROVIDER=soniox`, `SONIOX_API_KEY` | โดยปกติ | เส้นทางค่าเริ่มต้น เงื่อนไขราคา/ทดลองใช้อาจเปลี่ยนแปลง |
 | บัญชี [Deepgram](https://console.deepgram.com/signup) + API key | speech-to-text ทางเลือก (ไม่บังคับ) | `STT_PROVIDER=deepgram`, `DEEPGRAM_API_KEY` | ไม่บังคับ | ใช้เฉพาะเมื่อเปลี่ยนจาก Soniox |
 | บัญชี [Fish Audio](https://fish.audio/) + เสียง | text-to-speech ค่าเริ่มต้น | `TTS_PROVIDER=fish-audio`, `FISH_AUDIO_API_KEY`, `FISH_AUDIO_VOICE_ID` | ค่าเริ่มต้น | การตั้งค่าเดิมยังใช้ผู้ให้บริการนี้ได้โดยไม่ต้องแก้ไข |

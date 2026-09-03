@@ -18,6 +18,7 @@ The front [README](../README.md) covers what Meetmate is and how to try it. This
 ## Feature reference
 
 - **Google Meet / Zoom support** — joins meetings through the Attendee bot API
+- **Discord voice-channel support** — joins voice channels through the official Bot API (discord.js); no Attendee, no tunnel — owner-managed servers only in this release ([setup guide](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#discord-ボット音声チャンネル参加))
 - **OpenClaw Gateway integration** — full support for SOUL / memory / skills / tools
 - **Wake-word detection + barge-in** (interrupting the agent mid-speech)
 - **Low-latency STT** — Soniox `stt-rt-v5` by default; switch to Deepgram with `STT_PROVIDER=deepgram`
@@ -70,7 +71,7 @@ Read-only bundled assets (the web UI, the default avatar) always come from the i
 
 Service notes:
 
-- [Attendee](https://attendee.dev/) is a SaaS (a self-hosted edition also exists) that puts bots into Google Meet / Zoom. All bot join/leave and audio I/O goes through the Attendee API.
+- [Attendee](https://attendee.dev/) is a SaaS (a self-hosted edition also exists) that puts bots into Google Meet / Zoom. All Meet/Zoom bot join/leave and audio I/O goes through the Attendee API. (The Discord transport does not use Attendee — it connects outbound via the official Bot API.)
 - For the Fish Audio Voice ID, open the page of the voice you want (your own or a public one) on [fish.audio](https://fish.audio/) and copy the ID at the end of the URL.
 
 ## Environment variables (`.env`)
