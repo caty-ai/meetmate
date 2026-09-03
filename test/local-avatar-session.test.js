@@ -369,6 +369,23 @@ test("local avatar logs redact capability-shaped values", () => {
   assert.equal(JSON.stringify(logs).includes(issued.capability), false);
 });
 
+test("local avatar string log redaction covers quoted JSON credentials without changing siblings", () => {
+  const credentialValue = ["cred", "-x"].join("");
+  for (const key of ["token", "capability", "authorization", "api_key"]) {
+    const value = JSON.stringify({ [key]: credentialValue, status: "ok" });
+    assert.deepEqual(JSON.parse(redactLogValue(value)), {
+      [key]: "[REDACTED]",
+      status: "ok",
+    }, key);
+  }
+
+  assert.equal(redactLogValue(`#cap=${credentialValue}`), "#cap=[REDACTED]");
+  assert.equal(redactLogValue(`authorization: Bearer ${credentialValue}`), "authorization: Bearer [REDACTED]");
+  assert.equal(redactLogValue(`token=${credentialValue}`), "token=[REDACTED]");
+  assert.equal(redactLogValue(`capability: ${credentialValue}`), "capability: [REDACTED]");
+  assert.equal(redactLogValue('{"status":"ok","count":3}'), '{"status":"ok","count":3}');
+});
+
 test("capability mismatch uses the constant-time comparison path", { concurrency: false }, () => {
   const issued = createLocalAvatarSession({ publicOrigin: "https://meetmate.example" });
   const original = crypto.timingSafeEqual;

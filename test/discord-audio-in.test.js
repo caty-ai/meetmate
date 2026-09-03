@@ -378,3 +378,58 @@ test("audio-in contains releaseSpeaker failures and continues receiving other us
   assert.equal(nextStream, streams.get("speaker-2"));
   assert.deepEqual(audioIn._test.getTrackedUserIds(), ["speaker-2"]);
 });
+
+test("audio-in scrubs decode and receive failure logs", () => {
+  const botToken = ["bot-", "abc123"].join("");
+  const originalConsoleWarn = console.warn;
+  const originalConsoleError = console.error;
+  const warnings = [];
+  const errors = [];
+  console.warn = (...args) => warnings.push(args.map(String).join(" "));
+  console.error = (...args) => errors.push(args.map(String).join(" "));
+  try {
+    const decodeFailure = createAudioIn({
+      sendAudio() {},
+      getSecret: () => botToken,
+      codecLoader() {
+        return {
+          implementation: "decode-failure",
+          createDecoder() {
+            return { decode() { throw new Error(["token", "=", botToken].join("")); } };
+          },
+        };
+      },
+    });
+    decodeFailure.ingestOpusPacket("speaker-1", Buffer.from([0]), {
+      id: "speaker-1",
+      displayName: "One",
+      isBot: false,
+    });
+
+    const stream = new EventEmitter();
+    stream.destroy = () => {};
+    const receiveFailure = createAudioIn({
+      sendAudio() { throw new Error(["token", "=", botToken].join("")); },
+      getSecret: () => botToken,
+      subscribeStream() { return stream; },
+      codecLoader() {
+        return {
+          implementation: "receive-failure",
+          createDecoder() { return { decode: () => Buffer.alloc(3840) }; },
+        };
+      },
+    });
+    receiveFailure.subscribeUser({}, { id: "speaker-2", displayName: "Two", isBot: false });
+    stream.emit("data", Buffer.from([1]));
+
+    assert.equal(warnings.length, 1, JSON.stringify(warnings));
+    assert.equal(errors.length, 1, JSON.stringify(errors));
+    for (const line of [...warnings, ...errors]) {
+      assert.equal(line.includes(botToken), false, line);
+      assert.equal(line.includes("token=[REDACTED]"), true, line);
+    }
+  } finally {
+    console.warn = originalConsoleWarn;
+    console.error = originalConsoleError;
+  }
+});

@@ -649,3 +649,61 @@ test("discord join/leave route exceptions never echo vendor text; parse errors s
     console.error = originalConsoleError;
   }
 });
+
+test("discord route failure logs scrub the configured bot token and tolerate missing config access", async () => {
+  const { JOIN_FAILURE_MESSAGES } = require("../src/transport-discord/discord-session");
+  const botToken = ["bot-", "abc123"].join("");
+  const fallbackValue = ["fallback", "-value"].join("");
+  const originalConsoleError = console.error;
+  const logs = [];
+  console.error = (...args) => logs.push(args.map(String).join(" "));
+  try {
+    const routes = createHttpRoutes({
+      getDiscordConfig: () => ({ token: botToken }),
+      joinSession() { throw new Error(`vendor said ${botToken} is invalid`); },
+      getSessionStatus() { throw new Error(`vendor said ${botToken} is invalid`); },
+    });
+    const join = await runHttp(
+      routes,
+      createRequest({ method: "POST", url: "/api/discord/join" }),
+      JSON.stringify({ guildId: "11111111111111111", channelId: "22222222222222222" })
+    );
+    const status = await runHttp(
+      routes,
+      createRequest({ method: "GET", url: "/api/discord/status" })
+    );
+
+    assert.deepEqual(JSON.parse(join.body), {
+      ok: false,
+      code: "DISCORD_JOIN_FAILED",
+      message: JOIN_FAILURE_MESSAGES.DISCORD_JOIN_FAILED,
+    });
+    assert.equal(status.statusCode, 500);
+    assert.equal(logs.length, 2, JSON.stringify(logs));
+    for (const line of logs) {
+      assert.equal(line.includes(botToken), false, line);
+      assert.equal(line.includes("[REDACTED]"), true, line);
+    }
+
+    for (const getDiscordConfig of [
+      undefined,
+      () => { throw new Error("config unavailable"); },
+      () => ({ token: 42 }),
+    ]) {
+      const fallbackRoutes = createHttpRoutes({
+        getDiscordConfig,
+        joinSession() { throw new Error(["token", "=", fallbackValue].join("")); },
+      });
+      const response = await runHttp(
+        fallbackRoutes,
+        createRequest({ method: "POST", url: "/api/discord/join" }),
+        JSON.stringify({})
+      );
+      assert.equal(response.statusCode, 500);
+    }
+    assert.equal(logs.length, 5, JSON.stringify(logs));
+    assert.equal(logs.slice(2).every((line) => line.includes("token=[REDACTED]")), true, JSON.stringify(logs));
+  } finally {
+    console.error = originalConsoleError;
+  }
+});

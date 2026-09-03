@@ -365,6 +365,7 @@ function redactLogValue(value) {
     return value
       .replace(/(#cap=)[^\s&#]+/gi, "$1[REDACTED]")
       .replace(/(authorization\s*[:=]\s*bearer\s+)[^\s,}]+/gi, "$1[REDACTED]")
+      .replace(/(["'](?:[a-z_-]*(?:token|secret|password|authorization|credential|private_key)|capability|api(?:\s+|[_-]?)key|private-?key)["']\s*:\s*["'])(?!\[REDACTED\])[^"']*/gi, "$1[REDACTED]")
       .replace(/((?:capability|token)\s*[:=]\s*)[^\s,}]+/gi, "$1[REDACTED]");
   }
   if (Array.isArray(value)) return value.map(redactLogValue);

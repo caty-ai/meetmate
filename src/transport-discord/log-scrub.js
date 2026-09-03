@@ -25,7 +25,7 @@ function scrubDiscordLogMessage(message, secret) {
   text = scrubDigestParameters(text);
 
   return text
-    .replace(/(\bhttps:\/\/discord\.com\/api\/webhooks\/\d+\/)[A-Za-z0-9._-]+/gi, `$1${REDACTED}`)
+    .replace(/(\b(?:https:\/\/)?(?:discord(?:app)?\.com|(?:ptb|canary)\.discord\.com)\/api\/webhooks\/\d+\/)[A-Za-z0-9._-]+/gi, `$1${REDACTED}`)
     .replace(/(\b(?:set-cookie|cookie)\s*:\s*)(?!\[REDACTED\])[^\r\n]*/gi, `$1${REDACTED}`)
     // JSON and single-quoted credential pairs, including scheme-prefixed authorization values.
     .replace(/(["'](?:[a-z_-]*(?:token|secret|password|authorization|credential|private_key)|api(?:\s+|[_-]?)key|private-?key|pass(?:wd)?|session[_-]?id|sid)["']\s*:\s*["'])(?!\[REDACTED\])[^"']*/gi, `$1${REDACTED}`)

@@ -157,6 +157,16 @@ function createDiscordSessionManager(options = {}) {
   let active = null;
   let loginChain = Promise.resolve();
 
+  function getDiscordLogSecret() {
+    try {
+      const config = getDiscordConfig();
+      const token = config?.token;
+      return typeof token === "string" && token.length > 0 ? token : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   function isCurrent(session) {
     return active && session && active.id === session.id;
   }
@@ -228,7 +238,7 @@ function createDiscordSessionManager(options = {}) {
         try {
           await handler(...args);
         } catch (error) {
-          console.error(`Discord ${event} listener failed: ${error.message || error}`);
+          console.error(`Discord ${event} listener failed: ${scrubDiscordLogMessage(error?.message || String(error), getDiscordLogSecret())}`);
         }
       });
     };
@@ -618,7 +628,7 @@ function createDiscordSessionManager(options = {}) {
         if (sessionRecord.teardownStarted || active !== sessionRecord) return;
         console.log(`🚪  Discord exit requested for session ${sessionRecord.id}: ${event?.trigger || "unknown"}`);
         endSession(sessionRecord, "exit_requested").catch((error) => {
-          console.error(`Discord exit_requested teardown failed: ${error?.message || error}`);
+          console.error(`Discord exit_requested teardown failed: ${scrubDiscordLogMessage(error?.message || String(error), getDiscordLogSecret())}`);
         });
       });
       gatewaySessions.set(sessionId, sessionRecord.session);
@@ -626,6 +636,7 @@ function createDiscordSessionManager(options = {}) {
       gatewayTracker.trackGatewaySession(sessionRecord.session, profile, TRANSPORT);
       sessionRecord.audioIn = createAudioInImpl({
         sendAudio: sessionRecord.pipeline.sendAudio.bind(sessionRecord.pipeline),
+        getSecret: getDiscordLogSecret,
         releaseSpeaker: typeof sessionRecord.pipeline.releaseSpeaker === "function"
           ? sessionRecord.pipeline.releaseSpeaker.bind(sessionRecord.pipeline)
           : undefined,

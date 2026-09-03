@@ -2,6 +2,7 @@
 
 const { FirDecimator, clamp16 } = require("./resampler");
 const { TRANSPORT } = require("./constants");
+const { scrubDiscordLogMessage } = require("./log-scrub");
 
 const RECEIVE_TAPS = 63;
 const RECEIVE_CUTOFF = 7000 / 48000;
@@ -100,10 +101,20 @@ function createAudioIn(options = {}) {
   const codec = codecLoader();
   const createDecoder = options.createDecoder || (() => codec.createDecoder());
   const subscribeStream = options.subscribeStream || createSubscriptionFactory(options.loadVoiceModule);
+  const getSecret = typeof options.getSecret === "function" ? options.getSecret : null;
   const releaseSpeaker = options.releaseSpeaker;
   const subscriptions = new Map();
   const states = new Map();
   let closed = false;
+
+  function getLogSecret() {
+    if (!getSecret) return undefined;
+    try {
+      return getSecret();
+    } catch {
+      return undefined;
+    }
+  }
 
   function ensureState(userId) {
     let state = states.get(userId);
@@ -133,7 +144,7 @@ function createAudioIn(options = {}) {
       state.consecutiveDecodeFailures += 1;
       if (!state.decodeWarningLogged) {
         state.decodeWarningLogged = true;
-        console.warn(`Discord Opus decode failed for user ${userId}; dropping packet: ${error.message || error}`);
+        console.warn(`Discord Opus decode failed for user ${userId}; dropping packet: ${scrubDiscordLogMessage(error?.message || String(error), getLogSecret())}`);
       }
       if (state.consecutiveDecodeFailures >= MAX_CONSECUTIVE_DECODE_FAILURES) {
         retireUser(userId);
@@ -176,7 +187,7 @@ function createAudioIn(options = {}) {
       try {
         ingestOpusPacket(speaker.id, packet, speaker);
       } catch (error) {
-        console.error(`Discord audio receive failed for user ${speaker.id}: ${error.message || error}`);
+        console.error(`Discord audio receive failed for user ${speaker.id}: ${scrubDiscordLogMessage(error?.message || String(error), getLogSecret())}`);
       }
     };
     const onClose = () => retireUser(speaker.id);
