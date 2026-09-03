@@ -834,6 +834,35 @@ test("slow network: idle frame paints as soon as it arrives, before the talk fra
   assert.ok(page.timers.some((timer) => timer.ms === 40), "the 40ms render loop is scheduled at startup");
 });
 
+test("40ms render ticks execute frame changes and recur after each callback", async () => {
+  const page = await runFramesPage({ offset: 0, now: 0, random: () => 0.5 });
+  const contract = page.sandbox.__localAvatarFramesContract;
+  assert.equal(contract.acceptState(frameMarker({
+    envelopes: [{ s: 0, v: new Array(20).fill(1) }],
+  }), 0), true);
+  assert.equal(contract.getState().currentFrame, "talk2");
+
+  const firstTimer = page.timers.find((timer) => timer.ms === 40 && !timer.cleared && !timer.fired);
+  const drawsBeforeFirstTick = page.drawCalls.length;
+  page.clock.value = 300;
+  await fireTimer(page.timers, 40);
+  assert.equal(contract.getState().currentFrame, "talk3", "the first callback executes the renderer");
+  assert.ok(page.drawCalls.length > drawsBeforeFirstTick, "the first callback draws the next frame");
+
+  const secondTimer = page.timers.find((timer) => timer.ms === 40 && !timer.cleared && !timer.fired);
+  assert.ok(secondTimer, "the first callback schedules the next render tick");
+  assert.notEqual(secondTimer, firstTimer);
+  const drawsBeforeSecondTick = page.drawCalls.length;
+  page.clock.value = 600;
+  await fireTimer(page.timers, 40);
+  assert.equal(contract.getState().currentFrame, "talk2", "the recurring callback executes the renderer again");
+  assert.ok(page.drawCalls.length > drawsBeforeSecondTick, "the recurring callback draws the next frame");
+  assert.ok(
+    page.timers.some((timer) => timer.ms === 40 && !timer.cleared && !timer.fired),
+    "the second callback keeps the render loop recurring",
+  );
+});
+
 test("frame preload serializes idle then blink before starting any talk request", async () => {
   const gate = {};
   const page = await runFramesPage({ holdFrames: new Set(["blink"]), gate });
@@ -873,6 +902,31 @@ test("stalled idle fetch latches the diagnostic after the grace window and a lat
   gate.release();
   await settleMicrotasks();
   assert.equal(contract.getState().currentFrame, "idle", "a decoded idle replaces the diagnostic without any state event");
+});
+
+test("invalid frame launches keep the diagnostic visible when the render timer fires", async () => {
+  const cases = [
+    { label: "invalid visualId", visualId: "bad!", capability: "secret" },
+    { label: "missing capability", visualId: "abcdefghijklmnop", capability: "" },
+  ];
+
+  for (const launch of cases) {
+    const page = await runFramesPage({ ...launch, now: 0, random: () => 0 });
+    const contract = page.sandbox.__localAvatarFramesContract;
+    assert.equal(contract.getState().currentFrame, "diagnostic", `${launch.label}: diagnostic startup path`);
+    assert.deepEqual(page.frameRequests, [], `${launch.label}: no frame fetches`);
+    assert.deepEqual(page.stateRequests, [], `${launch.label}: no state connection`);
+    assert.ok(
+      page.drawCalls.some((call) => call[0] === "text" && call[1] === "IDLE"),
+      `${launch.label}: diagnostic canvas is painted`,
+    );
+
+    const drawsAfterDiagnostic = page.drawCalls.length;
+    page.clock.value = 4_000;
+    await fireTimer(page.timers, 40);
+    assert.equal(contract.getState().currentFrame, "diagnostic", `${launch.label}: blink tick cannot wipe to blank`);
+    assert.equal(page.drawCalls.length, drawsAfterDiagnostic, `${launch.label}: diagnostic pixels remain untouched`);
+  }
 });
 
 test("frame assets require the session capability and an exact allowlisted PNG route", { concurrency: false }, async (t) => {
@@ -943,6 +997,22 @@ test("frame launch selection is explicit and leaves the H0 default unchanged", (
   } finally {
     legacy.session.close();
     frames.session.close();
+  }
+});
+
+test("local avatar experiments pin launch query and capability fragment bytes", { concurrency: false }, async () => {
+  const expectedSearch = "?v=WFhYWFhYWFhYWFhYWFhYWA";
+  const expectedHash = "#cap=WFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFg";
+
+  for (const avatarExperiment of ["hybrid-local-l0", "hybrid-local-frames"]) {
+    await withMeetRoutes(async (harness) => {
+      const join = await harness.join({ avatarExperiment });
+      assert.equal(join.statusCode, 200, join.text);
+      const launch = new URL(JSON.parse(harness.botRequests[0].body).voice_agent_settings.url);
+      assert.equal(launch.search, expectedSearch, `${avatarExperiment}: exact visualId query bytes`);
+      assert.equal(launch.hash, expectedHash, `${avatarExperiment}: exact capability fragment bytes`);
+      assert.equal((await harness.leave()).statusCode, 200);
+    });
   }
 });
 
@@ -1319,6 +1389,8 @@ async function runFramesPage({
   offset,
   random = () => 0.5,
   stateHandler = null,
+  visualId = "abcdefghijklmnop",
+  capability = "secret",
 } = {}) {
   let releaseHeldFrames;
   const heldGate = new Promise((resolve) => { releaseHeldFrames = resolve; });
@@ -1346,8 +1418,8 @@ async function runFramesPage({
     Math: sandboxMath,
     location: {
       pathname: "/local-avatar/frames.html",
-      search: `?v=abcdefghijklmnop${offset === undefined ? "" : `&offset=${encodeURIComponent(offset)}`}`,
-      hash: "#cap=secret",
+      search: `?v=${encodeURIComponent(visualId)}${offset === undefined ? "" : `&offset=${encodeURIComponent(offset)}`}`,
+      hash: capability ? `#cap=${encodeURIComponent(capability)}` : "",
     },
     history: { replaceState: (...args) => { sandbox.replaced = args; } },
     document: {
