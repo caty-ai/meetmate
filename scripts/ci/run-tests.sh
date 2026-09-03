@@ -13,9 +13,11 @@
 # + 1 (publication-gate selftest). executed increments only after a suite
 # finishes (PASS or FAIL). skipped counts suites deliberately not run — this
 # repo declares none, so a nonzero skip can only come from a future explicit
-# skip path, never from silence. Suites run one node process per file
-# (serialized): Node 26's parallel worker IPC is flaky for this suite, and
-# one-process-for-all would count 46 suites off a single observation.
+# skip path, never from silence. One process per file keeps the T-6 count one
+# observation per suite (not 80 suites off a single process); determinism of
+# the per-file run comes from ensure-node.sh pinning the test toolchain to Node
+# >= 26.7.0 (nodejs/node#64061, fixed in #64706). See
+# docs/test-runner-node-floor.md (#38).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 

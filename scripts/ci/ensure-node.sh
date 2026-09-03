@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/ci/ensure-node.sh — guarantee Node >= 26 on PATH (fail-closed).
+# scripts/ci/ensure-node.sh — guarantee Node >= 26.7.0 on PATH (fail-closed).
 #
 # Why this exists: the family test-lint gate (reusable-test-lint.yml@ci-v1)
 # runs `make test` / `make lint` on a bare GitHub runner with no toolchain
@@ -10,17 +10,41 @@
 # against the SHASUMS256.txt published in the same dist directory (integrity
 # anchored to nodejs.org TLS; no独立 pin so the patch line can advance).
 #
+# The test-toolchain floor is 26.7.0 because Node 26.0–26.6 can fail with
+# "Unable to deserialize cloned data due to invalid or unsupported version"
+# even when running one file per process. nodejs/node#64706 fixed the
+# nodejs/node#64061 test-runner IPC bug in v26.7.0; on this suite, measured
+# results were Node 26.5.0 = 6/8 red versus Node 26.8.1 = 24/24 green. See
+# docs/test-runner-node-floor.md (#38). `engines.node >= 26` remains unchanged
+# because the bug is in the test runner, not the server runtime.
+#
 # Usage: `. scripts/ci/ensure-node.sh` at the repo root. This script enables
 # `set -euo pipefail` itself and exports PATH; any failure aborts the caller
 # (fail-closed — an unprovable toolchain must not pass the gate).
 
 set -euo pipefail
-MIN_MAJOR=26
+MIN_VERSION="26.7.0"
 NODE_DIST_LINE="latest-v26.x"
 
-node_major() { node -p 'parseInt(process.versions.node, 10)' 2>/dev/null || echo 0; }
+# Prints "MAJOR MINOR PATCH" of the node on PATH, or "0 0 0" when missing.
+node_semver() {
+  node -p 'process.versions.node.split(".").slice(0,3).map(function (n) { return parseInt(n, 10) || 0; }).join(" ")' 2>/dev/null || echo "0 0 0"
+}
 
-if ! command -v node >/dev/null 2>&1 || [ "$(node_major)" -lt "$MIN_MAJOR" ]; then
+# node_at_least MAJOR MINOR PATCH — true when the node on PATH is >= that.
+node_at_least() {
+  local want_major=$1 want_minor=$2 want_patch=$3 have_major have_minor have_patch
+  read -r have_major have_minor have_patch <<<"$(node_semver)"
+  case "$have_major$have_minor$have_patch" in ''|*[!0-9]*) return 1 ;; esac
+  if [ "$have_major" -ne "$want_major" ]; then [ "$have_major" -gt "$want_major" ]; return; fi
+  if [ "$have_minor" -ne "$want_minor" ]; then [ "$have_minor" -gt "$want_minor" ]; return; fi
+  [ "$have_patch" -ge "$want_patch" ]
+}
+
+IFS=. read -r MIN_MAJOR MIN_MINOR MIN_PATCH <<<"$MIN_VERSION"
+
+if ! command -v node >/dev/null 2>&1 || ! node_at_least "$MIN_MAJOR" "$MIN_MINOR" "$MIN_PATCH"; then
+  echo "ensure-node: node on PATH is $(node --version 2>/dev/null || echo 'missing'), need >= ${MIN_VERSION} (nodejs/node#64061 test-runner IPC fix) — bootstrapping ${NODE_DIST_LINE} into .cache/node"
   case "$(uname -s)-$(uname -m)" in
     Linux-x86_64)   plat=linux-x64 ;;
     Linux-aarch64)  plat=linux-arm64 ;;
@@ -50,14 +74,8 @@ if ! command -v node >/dev/null 2>&1 || [ "$(node_major)" -lt "$MIN_MAJOR" ]; th
   export PATH="$cache_dir/${tarball%.tar.gz}/bin:$PATH"
 fi
 
-node_major_val="$(node_major)"
-case "$node_major_val" in
-  ''|*[!0-9]*)
-    echo "ensure-node: could not determine a numeric node major version (got '${node_major_val}') — failing closed." >&2
-    exit 1 ;;
-esac
-if [ "$node_major_val" -lt "$MIN_MAJOR" ]; then
-  echo "ensure-node: node on PATH is still $(node --version 2>/dev/null || echo 'missing'), need >= ${MIN_MAJOR} — failing closed." >&2
+if ! command -v node >/dev/null 2>&1 || ! node_at_least "$MIN_MAJOR" "$MIN_MINOR" "$MIN_PATCH"; then
+  echo "ensure-node: node on PATH is still $(node --version 2>/dev/null || echo 'missing'), need >= ${MIN_VERSION} — failing closed." >&2
   exit 1
 fi
 echo "ensure-node: using node $(node --version)"
