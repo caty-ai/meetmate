@@ -10,6 +10,10 @@ const adapterRegistry = require("../src/adapter-registry");
 const { createDiscordAdapter } = require("../src/transport-discord");
 const { createHttpRoutes } = require("../src/transport-discord/http-routes");
 
+const DISCORD_VALUE = "tok-short";
+const DIAGNOSTIC_VALUE = "s3cr3t";
+const JSON_VALUE = "jsonkey";
+
 function createRequest({ method = "GET", url = "/api/discord/status", remoteAddress = "127.0.0.1", headers = {} } = {}) {
   const req = new EventEmitter();
   req.method = method;
@@ -145,7 +149,7 @@ test("discord status route stays localhost-only and does not echo secrets or all
   const adapter = createDiscordAdapter({
     getDiscordConfig() {
       return {
-        token: "discord.secret.value",
+        token: DISCORD_VALUE,
         guildAllowlist: ["11111111111111111"],
       };
     },
@@ -160,7 +164,7 @@ test("discord status route stays localhost-only and does not echo secrets or all
   const body = JSON.parse(local.body);
   assert.equal(body.configured, true);
   assert.equal(body.transport, "discord");
-  assert.equal(JSON.stringify(body).includes("discord.secret.value"), false);
+  assert.equal(JSON.stringify(body).includes(DISCORD_VALUE), false);
   assert.equal(JSON.stringify(body).includes("11111111111111111"), false);
 });
 
@@ -182,15 +186,35 @@ test("discord routes enforce exact methods and keep setup refusal explicit after
   assert.equal(joinRefused.statusCode, 503);
   assert.equal(JSON.parse(joinRefused.body).code, "DISCORD_SETUP_REQUIRED");
 
-  const statusFailure = createHttpRoutes({
-    getSessionStatus() { throw new Error("status failed"); },
-  });
-  const failedStatus = await runHttp(
-    statusFailure,
-    createRequest({ method: "GET", url: "/api/discord/status" })
-  );
-  assert.equal(failedStatus.statusCode, 500);
-  assert.deepEqual(JSON.parse(failedStatus.body), { ok: false, code: "DISCORD_INTERNAL_ERROR" });
+  const originalConsoleError = console.error;
+  const logs = [];
+  const statusValue = "stat-key";
+  console.error = (...args) => logs.push(args.map(String).join(" "));
+  try {
+    const statusFailure = createHttpRoutes({
+      getSessionStatus() { throw new Error(["status failed private_key=", statusValue].join("")); },
+    });
+    const failedStatus = await runHttp(
+      statusFailure,
+      createRequest({ method: "GET", url: "/api/discord/status" })
+    );
+    assert.equal(failedStatus.statusCode, 500);
+    assert.deepEqual(JSON.parse(failedStatus.body), { ok: false, code: "DISCORD_INTERNAL_ERROR" });
+    assert.deepEqual(logs, ["Discord status handler failed: status failed private_key=[REDACTED]"]);
+
+    const emptyMessageStatus = createHttpRoutes({
+      getSessionStatus() { throw new Error(""); },
+    });
+    const emptyMessageResponse = await runHttp(
+      emptyMessageStatus,
+      createRequest({ method: "GET", url: "/api/discord/status" })
+    );
+    assert.equal(emptyMessageResponse.statusCode, 500);
+    assert.deepEqual(JSON.parse(emptyMessageResponse.body), { ok: false, code: "DISCORD_INTERNAL_ERROR" });
+    assert.equal(logs[1], "Discord status handler failed: Error");
+  } finally {
+    console.error = originalConsoleError;
+  }
 });
 
 test("server destroys websocket upgrades for adapter prefixes without a Discord upgrade handler", () => {
@@ -584,9 +608,11 @@ test("discord join/leave route exceptions never echo vendor text; parse errors s
   const logs = [];
   console.error = (...args) => logs.push(args.map(String).join(" "));
   try {
+    const joinDiagnostic = ['vendor rejected Bearer ', DIAGNOSTIC_VALUE, ' {"token":"', JSON_VALUE, '"}'].join("");
+    const leaveDiagnostic = ["leave diagnostic credential=", DIAGNOSTIC_VALUE].join("");
     const routes = createHttpRoutes({
-      joinSession() { throw new Error('vendor rejected Bearer fallback-secret {"token":"json-secret"}'); },
-      leaveSession() { return Promise.reject(new Error("apiKey=fallback-secret")); },
+      joinSession() { throw new Error(joinDiagnostic); },
+      leaveSession() { return Promise.reject(leaveDiagnostic); },
     });
     const join = await runHttp(
       routes,
@@ -595,8 +621,8 @@ test("discord join/leave route exceptions never echo vendor text; parse errors s
     );
     assert.equal(join.statusCode, 500);
     assert.deepEqual(JSON.parse(join.body), { ok: false, code: "DISCORD_JOIN_FAILED", message: JOIN_FAILURE_MESSAGES.DISCORD_JOIN_FAILED });
-    assert.equal(join.body.includes("fallback-secret"), false);
-    assert.equal(join.body.includes("json-secret"), false);
+    assert.equal(join.body.includes(DIAGNOSTIC_VALUE), false);
+    assert.equal(join.body.includes(JSON_VALUE), false);
 
     const leave = await runHttp(
       routes,
@@ -604,11 +630,12 @@ test("discord join/leave route exceptions never echo vendor text; parse errors s
       JSON.stringify({})
     );
     assert.equal(leave.statusCode, 500);
-    assert.equal(leave.body.includes("fallback-secret"), false);
+    assert.equal(leave.body.includes(DIAGNOSTIC_VALUE), false);
 
     const handlerLogs = logs.filter((line) => line.includes("handler failed"));
     assert.equal(handlerLogs.length, 2, JSON.stringify(logs));
-    assert.equal(handlerLogs.some((line) => line.includes("fallback-secret") || line.includes("json-secret")), false, JSON.stringify(handlerLogs));
+    assert.equal(handlerLogs.some((line) => line.includes(DIAGNOSTIC_VALUE) || line.includes(JSON_VALUE)), false, JSON.stringify(handlerLogs));
+    assert.equal(handlerLogs.some((line) => line === "Discord leave handler failed: leave diagnostic credential=[REDACTED]"), true, JSON.stringify(handlerLogs));
 
     const badJson = await runHttp(
       routes,

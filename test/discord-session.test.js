@@ -13,6 +13,8 @@ const GUILD_ID = "11111111111111111";
 const CHANNEL_ID = "22222222222222222";
 const HUMAN_ID = "33333333333333333";
 const BOT_ID = "44444444444444444";
+const DISCORD_VALUE = "discord-token";
+const GATEWAY_VALUE = "gateway.value";
 
 function emitVendorPlayback(player, { duration = 900, error = null, idle = true } = {}) {
   const idleState = { status: "idle" };
@@ -120,7 +122,7 @@ function createHarness(overrides = {}) {
 
   manager = createDiscordSessionManager({
     getDiscordConfig: () => overrides.discordConfig === undefined
-      ? { token: "discord-token", guildAllowlist: [GUILD_ID] }
+      ? { token: DISCORD_VALUE, guildAllowlist: [GUILD_ID] }
       : overrides.discordConfig,
     ttsProvider: overrides.ttsProvider,
     getPipelineConfig: overrides.getPipelineConfig || (() => ({
@@ -264,13 +266,13 @@ test("discord join refuses malformed request and setup blockers before acquire o
   assert.equal(nullBody.status, 400);
   assert.equal(invalid.coordinatorState.tryAcquireCalls, 0);
 
-  const allowlistEmpty = createHarness({ discordConfig: { token: "discord-token", guildAllowlist: [] } });
+  const allowlistEmpty = createHarness({ discordConfig: { token: DISCORD_VALUE, guildAllowlist: [] } });
   const allowlistResult = await allowlistEmpty.manager.join({ guildId: GUILD_ID, channelId: CHANNEL_ID });
   assert.equal(allowlistResult.status, 403);
   assert.equal(allowlistEmpty.coordinatorState.tryAcquireCalls, 0);
   assert.equal(allowlistEmpty.client.loginCalls.length, 0);
 
-  const allowlistInvalid = createHarness({ discordConfig: { token: "discord-token", guildAllowlist: [GUILD_ID, GUILD_ID] } });
+  const allowlistInvalid = createHarness({ discordConfig: { token: DISCORD_VALUE, guildAllowlist: [GUILD_ID, GUILD_ID] } });
   const invalidAllowlistResult = await allowlistInvalid.manager.join({ guildId: GUILD_ID, channelId: CHANNEL_ID });
   assert.equal(invalidAllowlistResult.status, 503);
   assert.equal(allowlistInvalid.coordinatorState.tryAcquireCalls, 0);
@@ -869,7 +871,7 @@ test("discord gateway completion routes through the gateway events client", asyn
       greeting: "hello",
       fishKey: "fish-key",
       gatewayEvents: { enabled: true, agentId: "main" },
-      llm: { model: "gpt-test", provider: "openclaw", gateway: { url: "https://gateway.example", token: "gateway.value" } },
+      llm: { model: "gpt-test", provider: "openclaw", gateway: { url: "https://gateway.example", token: GATEWAY_VALUE } },
       tts: { sampleRate: 24000, referenceId: "voice", latency: "balanced", speed: 1 },
       slack: { enabled: false, channelId: "", statusChannelId: "", summaryChannelId: "", notifyTarget: "dm", dmUserId: "", labels: {} },
       summary: { prompt: "summary" },
@@ -949,24 +951,24 @@ test("discord post-acquire throw sites all release the lease and leave no active
 });
 
 test("discord join failure responses and operator log never carry the configured bot token", async () => {
-  const token = "dsc-sentinel-41";
+  const configuredValue = "tok-short";
   const originalConsoleError = console.error;
   const errors = [];
   console.error = (...args) => errors.push(args.map(String).join(" "));
   try {
     const harness = createHarness({
-      discordConfig: { token, guildAllowlist: [GUILD_ID] },
-      loginError: new Error(`vendor rejected token=${token} (Authorization: Bot ${token})`),
+      discordConfig: { token: configuredValue, guildAllowlist: [GUILD_ID] },
+      loginError: new Error(`vendor rejected token=${configuredValue} (Authorization: Bot ${configuredValue})`),
     });
     const result = await harness.manager.join({ guildId: GUILD_ID, channelId: CHANNEL_ID });
     assert.equal(result.status, 502);
     assert.equal(result.body.code, "DISCORD_JOIN_FAILED");
     const serialized = JSON.stringify(result.body);
-    assert.equal(serialized.includes(token), false, serialized);
+    assert.equal(serialized.includes(configuredValue), false, serialized);
     assert.equal(result.body.message, "Discord join failed; see the server log");
     const joinLogs = errors.filter((line) => line.includes("Discord join failed"));
     assert.equal(joinLogs.length, 1, JSON.stringify(errors));
-    assert.equal(joinLogs[0].includes(token), false, joinLogs[0]);
+    assert.equal(joinLogs[0].includes(configuredValue), false, joinLogs[0]);
     assert.match(joinLogs[0], /vendor rejected token=\[REDACTED\] \(Authorization: Bot \[REDACTED\]\)/);
     assert.equal(harness.coordinatorState.releaseCalls, 1);
   } finally {
@@ -974,38 +976,124 @@ test("discord join failure responses and operator log never carry the configured
   }
 });
 
-test("scrubJoinErrorMessage strips the secret and generic token pairs without touching other text", () => {
+test("Discord operator-log scrub covers credential forms without destroying benign diagnostics", () => {
+  const { scrubDiscordLogMessage } = require("../src/transport-discord/log-scrub");
   const { scrubJoinErrorMessage } = require("../src/transport-discord/discord-session");
-  assert.equal(scrubJoinErrorMessage("429 identify", "dsc-secret-x"), "429 identify");
-  assert.equal(scrubJoinErrorMessage("bad dsc-secret-x here", "dsc-secret-x"), "bad [REDACTED] here");
-  assert.equal(scrubJoinErrorMessage("token: abc.def.ghi", ""), "token: [REDACTED]");
+  assert.equal(scrubJoinErrorMessage, scrubDiscordLogMessage);
   assert.equal(scrubJoinErrorMessage(undefined, "x"), "");
-  // no length floor: a short configured secret is still scrubbed
-  assert.equal(scrubJoinErrorMessage("vendor rejected abc", "abc"), "vendor rejected [REDACTED]");
-  // scheme-prefixed credential pairs lose the credential, not just the scheme word
-  assert.equal(scrubJoinErrorMessage("Authorization: Bot fallback-secret", ""), "Authorization: Bot [REDACTED]");
-  assert.equal(scrubJoinErrorMessage("authorization=Bearer abc.def", ""), "authorization=Bearer [REDACTED]");
-  assert.equal(scrubJoinErrorMessage("429 identify", ""), "429 identify");
-  // bare scheme credentials and JSON-quoted pairs
-  assert.equal(scrubJoinErrorMessage("Bearer fallback-secret", ""), "Bearer [REDACTED]");
-  assert.equal(scrubJoinErrorMessage("rejected Bot zzz) now", ""), "rejected Bot [REDACTED]) now");
-  assert.equal(scrubJoinErrorMessage('{"token":"abc123","authorization":"Bearer x.y"}', ""), '{"token":"[REDACTED]","authorization":"[REDACTED]"}');
-  // wider labels and quoted values (operator-log defense in depth)
-  assert.equal(scrubJoinErrorMessage("apiKey=fallback-secret", ""), "apiKey=[REDACTED]");
-  assert.equal(scrubJoinErrorMessage("{'access_token':'fallback-secret'}", ""), "{'access_token':'[REDACTED]'}");
-  assert.equal(scrubJoinErrorMessage('Authorization: Bearer "fallback-secret"', ""), 'Authorization: Bearer "[REDACTED]"');
-  assert.equal(scrubJoinErrorMessage('{"access_token":"abc123"}', ""), '{"access_token":"[REDACTED]"}');
+  const redacted = "[REDACTED]";
+  const value = "s3cr3t";
+  const shortValue = "abc";
+  const redactionCase = (name, before, after = "", candidate = value) => [
+    name,
+    [before, candidate, after].join(""),
+    [before, redacted, after].join(""),
+  ];
+  const configuredCase = (name, before, after, candidate) => [
+    ...redactionCase(name, before, after, candidate),
+    candidate,
+  ];
+  const pemBlock = [
+    ["-----BEGIN", "RSA PRIVATE KEY-----"].join(" "),
+    "pemdata",
+    ["-----END", "RSA PRIVATE KEY-----"].join(" "),
+  ].join("\n");
+
+  const cases = [
+    configuredCase("configured token", "bad ", " here", value),
+    configuredCase("short configured token", "vendor rejected ", "", shortValue),
+    redactionCase("token pair", "token: "),
+    redactionCase("prefixed token", "access_token="),
+    redactionCase("authorization Bot", "Authorization: Bot "),
+    redactionCase("authorization Bearer", "authorization=Bearer "),
+    redactionCase("bare Bearer", "Bearer "),
+    redactionCase("bare Basic", "Basic "),
+    redactionCase("bare Bot punctuation", "rejected Bot ", ") now"),
+    [
+      "JSON credentials",
+      ['{"token":"', value, '","authorization":"Bearer ', value, '"}'].join(""),
+      ['{"token":"', redacted, '","authorization":"', redacted, '"}'].join(""),
+    ],
+    redactionCase("single-quoted token", "{'access_token':'", "'}"),
+    redactionCase("separator-less access token", "accesstoken="),
+    redactionCase("camel-case access token", "accessToken="),
+    redactionCase("separator-less refresh token", "refreshtoken="),
+    redactionCase("auth token", "authtoken="),
+    redactionCase("session token", "sessiontoken="),
+    redactionCase("bot token", "botToken="),
+    redactionCase("API secret equals", "apisecret="),
+    redactionCase("API secret colon", "apisecret: "),
+    redactionCase("user secret", "usersecret="),
+    redactionCase("user password", "userpassword="),
+    redactionCase("admin password", "adminpassword="),
+    redactionCase("JSON separator-less access token", '{"accesstoken":"', '"}'),
+    redactionCase("single-quoted refresh token", "{'refreshtoken':'", "'}"),
+    redactionCase("quoted authorization", 'Authorization: Bearer "', '"'),
+    redactionCase("api key with space and equals", "api key = "),
+    redactionCase("api_key with colon", "api_key: "),
+    redactionCase("apikey", "apikey="),
+    redactionCase("camel-case apiKey", "apiKey="),
+    redactionCase("credential", "credential="),
+    redactionCase("secret", "client_secret="),
+    redactionCase("private key", "private_key="),
+    [
+      "multi-line PEM private key",
+      ["before private_key=", pemBlock, " after"].join(""),
+      ["before private_key=", redacted, " after"].join(""),
+    ],
+    redactionCase("passwd", "passwd="),
+    redactionCase("pass", "pass="),
+    redactionCase("password", "password="),
+    ["Cookie header", ["Cookie: theme=dark; auth=", value].join(""), ["Cookie: ", redacted].join("")],
+    ["Set-Cookie header", ["Set-Cookie: auth=", value, "; HttpOnly"].join(""), ["Set-Cookie: ", redacted].join("")],
+    redactionCase("session_id", "session_id="),
+    redactionCase("sessionid", "sessionid="),
+    redactionCase("sid", "sid="),
+    redactionCase("Discord webhook", "POST https://discord.com/api/webhooks/123456789/", "?wait=true"),
+    redactionCase("Digest response", 'Authorization: Digest realm="api", response="', '"'),
+    redactionCase("Digest nonce", 'Digest username="caty", nonce="', '"'),
+    redactionCase("Digest cnonce", 'Digest qop=auth, cnonce="', '"'),
+    ["benign diagnostic", "request code=E42 bypass complete", "request code=E42 bypass complete"],
+    ["benign compound words", "bypass=route code=E42", "bypass=route code=E42"],
+  ];
+
+  for (const [name, input, expected, secret = ""] of cases) {
+    assert.equal(scrubDiscordLogMessage(input, secret), expected, name);
+  }
 });
 
-test("discord join failure scrubs a short configured token and scheme-prefixed credentials", async () => {
-  const token = "abc";
+test("discord join failure preserves a thrown-string diagnostic through scrubbing", async () => {
+  const diagnosticValue = "s3cr3t";
   const originalConsoleError = console.error;
   const errors = [];
   console.error = (...args) => errors.push(args.map(String).join(" "));
   try {
     const harness = createHarness({
-      discordConfig: { token, guildAllowlist: [GUILD_ID] },
-      loginError: new Error("vendor rejected abc (Authorization: Bot fallback-secret)"),
+      loginError: ["join diagnostic credential=", diagnosticValue].join(""),
+    });
+    const result = await harness.manager.join({ guildId: GUILD_ID, channelId: CHANNEL_ID });
+    assert.equal(result.status, 502);
+    assert.equal(result.body.message, "Discord join failed; see the server log");
+    assert.equal(
+      errors.some((line) => line === "Discord join failed (DISCORD_JOIN_FAILED): join diagnostic credential=[REDACTED]"),
+      true,
+      JSON.stringify(errors)
+    );
+  } finally {
+    console.error = originalConsoleError;
+  }
+});
+
+test("discord join failure scrubs a short configured token and scheme-prefixed credentials", async () => {
+  const configuredValue = "abc";
+  const diagnosticValue = "s3cr3t";
+  const originalConsoleError = console.error;
+  const errors = [];
+  console.error = (...args) => errors.push(args.map(String).join(" "));
+  try {
+    const harness = createHarness({
+      discordConfig: { token: configuredValue, guildAllowlist: [GUILD_ID] },
+      loginError: new Error(["vendor rejected ", configuredValue, " (Authorization: Bot ", diagnosticValue, ")"].join("")),
     });
     const result = await harness.manager.join({ guildId: GUILD_ID, channelId: CHANNEL_ID });
     assert.equal(result.status, 502);
@@ -1013,7 +1101,7 @@ test("discord join failure scrubs a short configured token and scheme-prefixed c
     const joinLogs = errors.filter((line) => line.includes("Discord join failed"));
     assert.equal(joinLogs.length, 1);
     assert.match(joinLogs[0], /vendor rejected \[REDACTED\] \(Authorization: Bot \[REDACTED\]\)/);
-    assert.equal(joinLogs[0].includes("fallback-secret"), false, joinLogs[0]);
+    assert.equal(joinLogs[0].includes(diagnosticValue), false, joinLogs[0]);
     assert.equal(/\babc\b/.test(joinLogs[0]), false, joinLogs[0]);
   } finally {
     console.error = originalConsoleError;
@@ -1022,17 +1110,19 @@ test("discord join failure scrubs a short configured token and scheme-prefixed c
 
 test("discord join failure bodies are fixed per code and never carry vendor text", async () => {
   const { JOIN_FAILURE_MESSAGES } = require("../src/transport-discord/discord-session");
+  const configuredValue = "cfg-short";
+  const diagnosticValue = "s3cr3t";
   const originalConsoleError = console.error;
   console.error = () => {};
   try {
     const harness = createHarness({
-      discordConfig: { token: "cfg-secret", guildAllowlist: [GUILD_ID] },
-      loginError: new Error("Bearer fallback-secret"),
+      discordConfig: { token: configuredValue, guildAllowlist: [GUILD_ID] },
+      loginError: new Error(["Bearer ", diagnosticValue].join("")),
     });
     const result = await harness.manager.join({ guildId: GUILD_ID, channelId: CHANNEL_ID });
     assert.equal(result.status, 502);
     assert.deepEqual(result.body, { ok: false, code: "DISCORD_JOIN_FAILED", message: JOIN_FAILURE_MESSAGES.DISCORD_JOIN_FAILED });
-    assert.equal(JSON.stringify(result.body).includes("fallback-secret"), false);
+    assert.equal(JSON.stringify(result.body).includes(diagnosticValue), false);
   } finally {
     console.error = originalConsoleError;
   }
