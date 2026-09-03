@@ -41,14 +41,19 @@ async function readFrameSize(file, framesDir, statFile) {
   }
 }
 
-async function warnOversizedAvatarFrames({
-  framesDir,
-  logger = console,
-  statFile = fs.promises.stat,
-  warnFrameBytes = WARN_FRAME_BYTES,
-  warnTotalBytes = WARN_TOTAL_BYTES,
-} = {}) {
+async function warnOversizedAvatarFrames(options) {
   try {
+    const {
+      framesDir: resolveFramesDir,
+      logger = console,
+      statFile = fs.promises.stat,
+      warnFrameBytes = WARN_FRAME_BYTES,
+      warnTotalBytes = WARN_TOTAL_BYTES,
+    } = options || {};
+    const framesDir = typeof resolveFramesDir === "function" ? resolveFramesDir() : resolveFramesDir;
+    // Invalid path input is a fail-open diagnostic skip, just like resolution failures.
+    if (typeof framesDir !== "string" || framesDir.length === 0) return null;
+
     const presentFrames = (await Promise.all(
       FRAME_FILENAMES.map((file) => readFrameSize(file, framesDir, statFile))
     )).filter(Boolean);

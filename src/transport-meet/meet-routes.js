@@ -1365,7 +1365,7 @@ async function handleHttp(req, res) {
         session.localAvatarSession = localAvatarSession;
         if (avatarExperiment === LOCAL_AVATAR_FRAMES_EXPERIMENT) {
           warnOversizedAvatarFrames({
-            framesDir: path.join(resolveHome(), "assets", "avatar-frames"),
+            framesDir: () => path.join(resolveHome(), "assets", "avatar-frames"),
           }).catch(() => {});
         }
       }

@@ -1203,6 +1203,99 @@ test("avatar frame size helper pins the filename set to ui-routes", () => {
   assert.deepEqual(servedFrames, FRAME_FILENAMES);
 });
 
+test("avatar frame size helper warns only above the total byte boundary", async (t) => {
+  const {
+    FRAME_FILENAMES,
+    WARN_TOTAL_BYTES,
+    warnOversizedAvatarFrames,
+  } = require("../src/transport-meet/avatar-frame-size");
+  const framesDir = fs.mkdtempSync(path.join(os.tmpdir(), "mm65-total-boundary-"));
+  const bytesPerFrame = WARN_TOTAL_BYTES / FRAME_FILENAMES.length;
+  const lines = [];
+  const logger = { warn: (line) => lines.push(line) };
+  t.after(() => fs.rmSync(framesDir, { recursive: true, force: true }));
+
+  for (const name of FRAME_FILENAMES) {
+    fs.writeFileSync(path.join(framesDir, name), Buffer.alloc(bytesPerFrame));
+  }
+
+  const exact = await warnOversizedAvatarFrames({ framesDir, logger });
+  assert.equal(exact.totalBytes, WARN_TOTAL_BYTES);
+  assert.equal(exact.warned, false);
+  assert.equal(lines.length, 0);
+
+  fs.writeFileSync(path.join(framesDir, FRAME_FILENAMES[0]), Buffer.alloc(bytesPerFrame + 1));
+  const above = await warnOversizedAvatarFrames({ framesDir, logger });
+  assert.equal(above.totalBytes, WARN_TOTAL_BYTES + 1);
+  assert.equal(above.warned, true);
+  assert.equal(lines.length, 1);
+});
+
+test("avatar frame size helper warns only above the per-frame byte boundary", async (t) => {
+  const {
+    FRAME_FILENAMES,
+    WARN_FRAME_BYTES,
+    warnOversizedAvatarFrames,
+  } = require("../src/transport-meet/avatar-frame-size");
+  const framesDir = fs.mkdtempSync(path.join(os.tmpdir(), "mm65-frame-boundary-"));
+  const frameName = FRAME_FILENAMES[0];
+  const framePath = path.join(framesDir, frameName);
+  const lines = [];
+  const logger = { warn: (line) => lines.push(line) };
+  t.after(() => fs.rmSync(framesDir, { recursive: true, force: true }));
+
+  fs.writeFileSync(framePath, Buffer.alloc(WARN_FRAME_BYTES));
+  const exact = await warnOversizedAvatarFrames({ framesDir, logger });
+  assert.equal(exact.totalBytes, WARN_FRAME_BYTES);
+  assert.equal(exact.warned, false);
+  assert.equal(lines.length, 0);
+
+  fs.writeFileSync(framePath, Buffer.alloc(WARN_FRAME_BYTES + 1));
+  const above = await warnOversizedAvatarFrames({ framesDir, logger });
+  assert.equal(above.totalBytes, WARN_FRAME_BYTES + 1);
+  assert.equal(above.warned, true);
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], new RegExp(frameName.replace(".", "\\.")));
+});
+
+test("avatar frame size helper contains invalid lazy directory resolution without logging", async () => {
+  const { warnOversizedAvatarFrames } = require("../src/transport-meet/avatar-frame-size");
+  const lines = [];
+  const logger = {
+    warn: (line) => lines.push(line),
+    log: (line) => lines.push(line),
+  };
+  const thrown = await warnOversizedAvatarFrames({
+    framesDir: () => { throw new TypeError("no home"); },
+    logger,
+  });
+  const originalWarn = console.warn;
+  const originalLog = console.log;
+  let nullOptions;
+  try {
+    console.warn = logger.warn;
+    console.log = logger.log;
+    nullOptions = await warnOversizedAvatarFrames(null);
+  } finally {
+    console.warn = originalWarn;
+    console.log = originalLog;
+  }
+  const nonStringDirectory = await warnOversizedAvatarFrames({ framesDir: 65, logger });
+
+  assert.equal(thrown, null);
+  assert.equal(nullOptions, null);
+  assert.equal(nonStringDirectory, null);
+  assert.equal(lines.length, 0);
+});
+
+test("frames join keeps size diagnostics guarded, lazy, and rejection-safe", () => {
+  const meetRoutesSource = fs.readFileSync(path.join(ROOT, "src", "transport-meet", "meet-routes.js"), "utf8");
+  assert.match(
+    meetRoutesSource,
+    /if \(avatarExperiment === LOCAL_AVATAR_FRAMES_EXPERIMENT\) \{\s*warnOversizedAvatarFrames\(\{\s*framesDir: \(\) => path\.join\(resolveHome\(\), ["']assets["'], ["']avatar-frames["']\),\s*\}\)\.catch\(\(\) => \{\}\);\s*\}/,
+  );
+});
+
 async function withMeetRoutes(fn, { ttsProvider = "fish-audio", ngrokDomain = "meetmate.example", hostHttpGet = null } = {}) {
   const settingsResolver = require("../src/settings/resolver");
   const routesPath = require.resolve("../src/transport-meet/meet-routes");
