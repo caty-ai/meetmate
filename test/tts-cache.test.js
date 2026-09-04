@@ -514,6 +514,28 @@ test("prewarm scrubs labelled secrets from raw-string failures", async () => {
   assert.equal(warnings[0].includes(secret), false);
 });
 
+test("prewarm preserves benign raw-string failures", async () => {
+  const warnings = [];
+  const originalWarn = console.warn;
+  const cache = createTtsCache({
+    dir: tempDir(),
+    synthesizeFn: async () => {
+      throw "socket hung up";
+    },
+  });
+  console.warn = (...args) => warnings.push(args.join(" "));
+
+  try {
+    await cache.prewarm(["benign"], { sampleRate: 24_000 });
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0], "⚠️  TTS cache prewarm failed (benign): socket hung up");
+  assert.equal(warnings[0].includes("[REDACTED]"), false);
+});
+
 test("prewarm stops before the next phrase when aborted", async () => {
   const dir = tempDir();
   const abort = new AbortController();

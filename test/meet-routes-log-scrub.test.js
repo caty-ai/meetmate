@@ -67,3 +67,31 @@ test("Attendee leave request error logs scrub the active API key", async () => {
   assert.match(errors[0], /\[REDACTED\]/);
   assert.equal(errors[0].includes(apiKey), false);
 });
+
+test("Attendee leave request error logs preserve benign messages", async () => {
+  const apiKey = "key" + "_" + "abc12";
+  const errors = [];
+  const originalRequest = https.request;
+  const originalError = console.error;
+  https.request = () => {
+    const request = new EventEmitter();
+    request.setTimeout = () => request;
+    request.write = () => true;
+    request.end = () => queueMicrotask(() => request.emit("error", new Error("upstream 503")));
+    return request;
+  };
+  console.error = (...args) => errors.push(args.join(" "));
+
+  let result;
+  try {
+    result = await _test.requestBotLeave("bot-scrub", "test", apiKey, 1_000);
+  } finally {
+    https.request = originalRequest;
+    console.error = originalError;
+  }
+
+  assert.equal(result.ok, false);
+  assert.equal(errors.length, 1);
+  assert.equal(errors[0], "❌  Attendee bot leave error (test): upstream 503");
+  assert.equal(errors[0].includes("[REDACTED]"), false);
+});

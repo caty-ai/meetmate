@@ -126,4 +126,31 @@ describe("sendAttendeeChatMessage() emoji fallback", () => {
     assert.match(captured[0], /\[REDACTED\]/);
     assert.equal(captured[0].includes(apiKey), false);
   });
+
+  it("preserves benign request error logs with a configured key", async () => {
+    const apiKey = "key" + "_" + "abc12";
+    const captured = [];
+    const originalRequest = https.request;
+    const originalError = console.error;
+
+    https.request = () => {
+      const request = new EventEmitter();
+      request.setTimeout = () => request;
+      request.write = () => true;
+      request.end = () => queueMicrotask(() => request.emit("error", new Error("socket hung up")));
+      return request;
+    };
+    console.error = (...args) => captured.push(args.join(" "));
+
+    try {
+      assert.equal(await sendAttendeeChatMessage("bot_error", "hello", apiKey), false);
+    } finally {
+      https.request = originalRequest;
+      console.error = originalError;
+    }
+
+    assert.equal(captured.length, 1);
+    assert.equal(captured[0], "💬  Attendee chat error: socket hung up");
+    assert.equal(captured[0].includes("[REDACTED]"), false);
+  });
 });
