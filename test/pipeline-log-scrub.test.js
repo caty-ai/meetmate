@@ -12,13 +12,18 @@ function cacheEntry(filename, exports) {
   return { id: filename, filename, loaded: true, exports, children: [], paths: [] };
 }
 
-async function withPipeline(provider, token, fn) {
+async function withPipeline(provider, token, fn, {
+  hub = { enabled: false },
+  floorClient,
+} = {}) {
   const files = ["pipeline.js", "llm-provider.js", "stt-provider.js", "tts-fish.js"]
     .map((name) => path.join(src, name));
   const previousCache = new Map(files.map((file) => [require.resolve(file), require.cache[require.resolve(file)]]));
   const previousEnv = {
+    WAKE_WORDS: process.env.WAKE_WORDS,
     ENABLE_IMMEDIATE_ACK: process.env.ENABLE_IMMEDIATE_ACK,
     ENABLE_PROGRESS_GUARD: process.env.ENABLE_PROGRESS_GUARD,
+    POST_UTTERANCE_BUFFER_MS: process.env.POST_UTTERANCE_BUFFER_MS,
     TTS_GAP_MS: process.env.TTS_GAP_MS,
     SENTENCE_PAUSE_MS: process.env.SENTENCE_PAUSE_MS,
   };
@@ -29,8 +34,10 @@ async function withPipeline(provider, token, fn) {
 
   try {
     Object.assign(process.env, {
+      WAKE_WORDS: "zznever",
       ENABLE_IMMEDIATE_ACK: "false",
       ENABLE_PROGRESS_GUARD: "false",
+      POST_UTTERANCE_BUFFER_MS: "0",
       TTS_GAP_MS: "0",
       SENTENCE_PAUSE_MS: "0",
     });
@@ -68,7 +75,7 @@ async function withPipeline(provider, token, fn) {
           firstTokenDelegateMs: 0,
           gateway: { url: "http://gateway.test", token },
         },
-        hub: { enabled: false },
+        hub,
         gatewayEvents: { enabled: false },
         greeting: "",
         exitDetection: false,
@@ -80,6 +87,7 @@ async function withPipeline(provider, token, fn) {
         defaultAgentId: "alpha",
         suppressGreeting: true,
         _testExposeInternals: true,
+        ...(floorClient ? { floorClient } : {}),
       },
     );
     await fn({ pipeline, stt });
@@ -157,4 +165,68 @@ test("pipeline operator error logs scrub the configured gateway token", { concur
   }
 
   assertScrubbedLog(errors, "❌  Pipeline error:", token);
+});
+
+test("floor verdict logs scrub hub and gateway tokens while preserving benign text", { concurrency: false }, async (t) => {
+  const gatewayToken = "gw" + "-secret";
+  const hubAuthToken = "hub" + "-key";
+  const rows = [
+    {
+      name: "scrubs the hub auth token",
+      message: `hub rejected ${hubAuthToken}`,
+      expected: "hub rejected [REDACTED]",
+      absent: hubAuthToken,
+    },
+    {
+      name: "still scrubs the gateway token",
+      message: `hub echoed ${gatewayToken}`,
+      expected: "hub echoed [REDACTED]",
+      absent: gatewayToken,
+    },
+    {
+      name: "keeps benign errors byte-identical",
+      message: "benign hub failure",
+      expected: "benign hub failure",
+      absent: null,
+    },
+  ];
+
+  for (const row of rows) {
+    await t.test(row.name, async () => {
+      const warnings = [];
+      const originalWarn = console.warn;
+      console.warn = (...args) => warnings.push(args.join(" "));
+      try {
+        await withPipeline({
+          name: "openclaw",
+          streamChat: async function* () { yield "unused"; },
+        }, gatewayToken, async ({ pipeline }) => {
+          await pipeline._test.handleUtteranceEnd("ordinary floor speech", null, {
+            cancelled: false,
+            verdictPromise: Promise.reject(new Error(row.message)),
+          });
+        }, {
+          hub: {
+            enabled: true,
+            url: "ws://fake",
+            roomCode: "scrub-room",
+            authToken: hubAuthToken,
+            tailMs: 0,
+          },
+          floorClient: {
+            connect() {},
+            close() {},
+            claimAssignment() { return null; },
+            fallbackDelayMs() { return 0; },
+          },
+        });
+      } finally {
+        console.warn = originalWarn;
+      }
+
+      const line = warnings.find((candidate) => candidate.startsWith("⚠️  floor verdict failed:"));
+      assert.equal(line, `⚠️  floor verdict failed: ${row.expected}`);
+      if (row.absent) assert.ok(!line.includes(row.absent));
+    });
+  }
 });
