@@ -1,6 +1,11 @@
 const fs = require("fs");
 const path = require("path");
 const { bundledPublicDir, metricsLogDir, resolveHome } = require("./paths");
+const { scrubLogMessage } = require("./log-scrub");
+
+function scrubErrorMessage(err, secret) {
+  return scrubLogMessage(err && err.message ? err.message : err, secret);
+}
 
 const PUBLIC_DIR = bundledPublicDir();
 const METRICS_TAIL_BYTES = 5 * 1024 * 1024;
@@ -232,7 +237,7 @@ async function sendMetricsSummary(req, res, url = new URL(req.url || "/", "http:
   try {
     summary = await readMetricsSummary(url.searchParams.get("hours"));
   } catch (err) {
-    console.warn("metrics summary failed:", err && err.message);
+    console.warn("metrics summary failed:", scrubErrorMessage(err));
     summary = { enabled: false };
   }
   writeJson(res, 200, summary);

@@ -10,6 +10,11 @@ const { getEffectiveValue, initializeRuntime, getStatus, setServerPort } = requi
 const { warnLegacyClass2 } = require("./settings/class2-migration");
 const { createSettingsHandler } = require("./settings/routes");
 const adapterRegistry = require("./adapter-registry");
+const { scrubLogMessage } = require("./log-scrub");
+
+function scrubErrorMessage(err, secret) {
+  return scrubLogMessage(err && err.message ? err.message : err, secret);
+}
 
 let initialSettingsState;
 try {
@@ -71,7 +76,7 @@ async function bootstrap() {
       },
     }));
   } catch (error) {
-    console.warn(`Discord adapter bootstrap skipped: ${error.message}`);
+    console.warn(`Discord adapter bootstrap skipped: ${scrubErrorMessage(error)}`);
   }
 
   let server;
@@ -118,7 +123,12 @@ async function bootstrap() {
       try {
         await adapter.handleHttp(req, res, new URL(req.url || "/", "http://localhost"));
       } catch (error) {
-        console.error(`Adapter HTTP handler failed (${adapter.transport || "unknown"}):`, error);
+        const message = scrubErrorMessage(error);
+        const code = error && typeof error.code === "string" ? error.code.trim() : "";
+        console.error(
+          `Adapter HTTP handler failed (${adapter.transport || "unknown"}):`,
+          code ? `${message} (code=${code})` : message,
+        );
         if (res.headersSent) {
           res.destroy?.();
         } else {
@@ -187,6 +197,8 @@ async function bootstrap() {
 }
 
 bootstrap().catch((err) => {
-  console.error("❌  Failed to start Meet server:", err);
+  const message = scrubErrorMessage(err);
+  const code = err && typeof err.code === "string" ? err.code.trim() : "";
+  console.error("❌  Failed to start Meet server:", code ? `${message} (code=${code})` : message);
   process.exit(1);
 });

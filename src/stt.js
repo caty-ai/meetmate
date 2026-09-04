@@ -4,6 +4,7 @@
 const { createClient, LiveTranscriptionEvents } = require("@deepgram/sdk");
 const { EventEmitter } = require("events");
 const { getEffectiveValue } = require("./settings/resolver");
+const { scrubLogMessage } = require("./log-scrub");
 
 const STT_ACCUMULATED_MAX_CHARS = Number(process.env.STT_ACCUMULATED_MAX_CHARS || 120);
 
@@ -28,6 +29,10 @@ function buildKeyterms(extraKeyterms = []) {
 }
 
 const readiness = require("./settings/readiness");
+
+function scrubErrorMessage(err, secret) {
+  return scrubLogMessage(err && err.message ? err.message : err, secret);
+}
 
 function withDeepgramStatus(value) {
   if (readiness.runtimeStatus(value)) return value;
@@ -182,7 +187,9 @@ function createSTT(dgKey, options = {}) {
         return;
       }
 
-      console.error("❌  STT error:", err);
+      const message = scrubErrorMessage(err, dgKey);
+      const code = err && typeof err.code === "string" ? err.code.trim() : "";
+      console.error("❌  STT error:", code ? `${message} (code=${code})` : message);
       emitter.emit("error", err);
     });
 
@@ -212,7 +219,7 @@ function createSTT(dgKey, options = {}) {
     try {
       connection?.send(audioBuffer);
     } catch (err) {
-      console.error("❌  STT send error:", err.message);
+      console.error("❌  STT send error:", scrubErrorMessage(err, dgKey));
     }
   };
 

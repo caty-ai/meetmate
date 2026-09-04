@@ -766,7 +766,7 @@
       "name": "STT_ACCUMULATED_MAX_CHARS",
       "references": [
         "src/stt-soniox.js:18",
-        "src/stt.js:8"
+        "src/stt.js:9"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -776,7 +776,7 @@
     {
       "name": "STT_ENABLE_KEYWORDS",
       "references": [
-        "src/stt.js:16"
+        "src/stt.js:17"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
