@@ -2301,12 +2301,33 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     let llmFirstResponseTimedOut = false;
     let forcedDelegationFired = false;
     let llmTimeoutFallbackPlayed = false;
+    let llmRequestStartedAt = 0;
+    let llmResponseStatus = null;
+    let llmResponseAt = 0;
+    let llmFirstEventAt = 0;
     let handoffAttempted = false;
     let ttsPlaybackStartRecorded = false;
     let scheduledGatewayFallbackRetry = false;
     const shortSkipReason = gatewayEventsEnabled && !circuitBreakerOpen
       ? getShortUtteranceSkipReason(ackSourceText, gatewayEventsConfig.shortUtteranceSkipChars ?? 24, resolvedRegex)
       : null;
+    const normalizeLlmResponseStatus = (statusCode) => {
+      const parsed = Number(statusCode);
+      return Number.isInteger(parsed) && parsed >= 100 && parsed <= 999 ? parsed : null;
+    };
+    const relativeMsLabel = (timestamp) => {
+      if (!(llmRequestStartedAt > 0) || !(timestamp > 0)) return "none";
+      return `+${Math.max(0, timestamp - llmRequestStartedAt)}ms`;
+    };
+    const buildLlmTimeoutStageSummary = () => {
+      const stage = llmResponseAt > 0
+        ? (llmFirstEventAt > 0 ? "stream_no_content" : "agent_no_output")
+        : "gateway_no_response";
+      const gatewayResponse = llmResponseAt > 0
+        ? `HTTP ${llmResponseStatus ?? "unknown"} ${relativeMsLabel(llmResponseAt)}`
+        : "none";
+      return `[stage=${stage}; request_sent=${llmRequestStartedAt > 0 ? "+0ms" : "none"}; gateway_response=${gatewayResponse}; stream_event=${relativeMsLabel(llmFirstEventAt)}; tts=${ttsPlaybackStartRecorded ? "started" : "not_started"}]`;
+    };
 
     const stopProgressTimer = () => {
       if (progressTimer) {
@@ -2500,7 +2521,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       llmTimeoutTimer = setTimeout(() => {
         if (firstChunkSeen || abort.signal.aborted || !isProcessing) return;
         llmFirstResponseTimedOut = true;
-        console.warn(`⏱️  LLM first-response timeout (${timeoutMs}ms) — aborting`);
+        console.warn(`⏱️  LLM first-response timeout (${timeoutMs}ms) — aborting ${buildLlmTimeoutStageSummary()}`);
         stopFirstResponseTimers();
         abortPlayback(abort, "llm_response_timeout");
       }, timeoutMs);
@@ -2683,6 +2704,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
 
       llmStreamOpen = true;
       try {
+        llmRequestStartedAt = Date.now();
         for await (const chunk of llmProvider.streamChat(
           llmMessages,
           {
@@ -2701,6 +2723,14 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
               sessionHeader: config.llm.openaiCompatible?.sessionHeader,
               streamingEquivalentEnabled: config.llm.openaiCompatible?.streamingEquivalentEnabled,
             } : {}),
+            onResponseStart: (payload) => {
+              const statusCode = payload && typeof payload === "object" ? payload.statusCode : undefined;
+              if (!(llmResponseAt > 0)) llmResponseAt = Date.now();
+              if (llmResponseStatus === null) llmResponseStatus = normalizeLlmResponseStatus(statusCode);
+            },
+            onFirstEvent: () => {
+              if (!(llmFirstEventAt > 0)) llmFirstEventAt = Date.now();
+            },
             signal: abort.signal,
           }
         )) {

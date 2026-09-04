@@ -22,6 +22,15 @@ const RESERVED_SESSION_HEADER_NAMES = Object.freeze([
   "x-caty-agent-trust",
 ]);
 
+function invokeOptionalCallback(callback, payload) {
+  if (typeof callback !== "function") return;
+  try {
+    callback(payload);
+  } catch {
+    // Callback errors must not affect request handling.
+  }
+}
+
 function resolveCompletionPath(baseUrl) {
   const basePath = baseUrl.pathname && baseUrl.pathname !== "/"
     ? baseUrl.pathname.replace(/\/$/, "")
@@ -166,6 +175,12 @@ function parseSseFrame(frame) {
   };
 }
 
+function hasSseDataLine(frame) {
+  return String(frame || "")
+    .split(/\r?\n/)
+    .some((rawLine) => rawLine.startsWith("data:"));
+}
+
 function complete(messages, options = {}) {
   if (options.signal?.aborted) throw new Error("LLM request aborted");
   const credentials = resolveCredentials(options);
@@ -179,7 +194,15 @@ function complete(messages, options = {}) {
   return new Promise((resolve, reject) => {
     const req = request.transport.request(request.options, (res) => {
       let text = "";
-      res.on("data", (chunk) => { text += chunk; });
+      let firstEventSeen = false;
+      invokeOptionalCallback(options.onResponseStart, { statusCode: res.statusCode });
+      res.on("data", (chunk) => {
+        if (!firstEventSeen) {
+          firstEventSeen = true;
+          invokeOptionalCallback(options.onFirstEvent);
+        }
+        text += chunk;
+      });
       res.on("end", () => resolve({ statusCode: res.statusCode, text }));
     });
 
@@ -261,17 +284,27 @@ async function* streamOpenAI(messages, options) {
     req.end();
   });
 
+  invokeOptionalCallback(options.onResponseStart, { statusCode: response.statusCode });
+
   if (response.statusCode !== 200) {
     let errBody = "";
     for await (const chunk of response) errBody += chunk;
     throw new Error(`OpenAI-compatible error (${response.statusCode}): ${errBody.slice(0, 200)}`);
   }
 
-  yield* filterSilentRepliesStream(parseSSE(response, options.signal));
+  yield* filterSilentRepliesStream(parseSSE(response, options.signal, options.onFirstEvent));
 }
 
-async function* parseSSE(response, signal) {
+async function* parseSSE(response, signal, onFirstEvent) {
   let buffer = "";
+  let firstEventSeen = false;
+
+  const markFirstEvent = (frame) => {
+    if (firstEventSeen || !hasSseDataLine(frame)) return;
+    firstEventSeen = true;
+    invokeOptionalCallback(onFirstEvent);
+  };
+
   for await (const chunk of response) {
     if (signal?.aborted) break;
     buffer += chunk.toString();
@@ -280,6 +313,7 @@ async function* parseSSE(response, signal) {
       if (!boundary) break;
       const frame = buffer.slice(0, boundary.index);
       buffer = buffer.slice(boundary.index + boundary[0].length);
+      markFirstEvent(frame);
       const parsed = parseSseFrame(frame);
       if (parsed.done) return;
       if (parsed.content) yield parsed.content;
@@ -287,7 +321,9 @@ async function* parseSSE(response, signal) {
   }
 
   if (buffer.trim()) {
-    const parsed = parseSseFrame(buffer.trim());
+    const frame = buffer.trim();
+    markFirstEvent(frame);
+    const parsed = parseSseFrame(frame);
     if (!parsed.done && parsed.content) yield parsed.content;
   }
 }
