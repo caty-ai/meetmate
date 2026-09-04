@@ -190,7 +190,7 @@ function connect() {
   try {
     url = toWsUrl(cfg.openclawUrl);
   } catch (err) {
-    console.warn("⚠️  gateway-events invalid OpenClaw URL:", err.message);
+    console.warn("⚠️  gateway-events invalid OpenClaw URL:", scrubErrorMessage(err));
     return;
   }
 
@@ -272,7 +272,7 @@ function onMessage(evt, generation = socketGeneration) {
 
     if (frame.ok === false) {
       const code = frame.error?.code || "UNKNOWN";
-      const message = frame.error?.message || "gateway connect failed";
+      const message = scrubErrorMessage(frame.error?.message || "gateway connect failed");
       if (!connectRequestId || String(frame.id) !== connectRequestId) {
         console.warn(`⚠️  gateway-events ignored late rejected response ${frame.id}: ${code}: ${message}`);
         return;
@@ -319,7 +319,7 @@ function onClose(_evt, generation = socketGeneration) {
 
 function onError(err, generation = socketGeneration) {
   if (generation !== socketGeneration) return;
-  if (!stopping) console.warn("⚠️  gateway-events WS error:", err?.message || err);
+  if (!stopping) console.warn("⚠️  gateway-events WS error:", scrubErrorMessage(err));
 }
 
 function safeCloseForReconnect() {

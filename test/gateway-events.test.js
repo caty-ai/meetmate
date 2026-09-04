@@ -165,7 +165,7 @@ test("scrubs the configured token from WebSocket construction failures", () => {
 
   class ThrowingWs {
     constructor() {
-      throw new Error(`constructor rejected token=${token}`);
+      throw new Error(`constructor rejected ${token}`);
     }
   }
 
@@ -178,6 +178,100 @@ test("scrubs the configured token from WebSocket construction failures", () => {
     });
 
     const warning = warnings.find((line) => line.startsWith("⚠️  gateway-events WS construction failed:"));
+    assert.ok(warning);
+    assert.equal(warning.includes("[REDACTED]"), true);
+    assert.equal(warning.includes(token), false);
+  } finally {
+    restoreWarn();
+  }
+});
+
+test("scrubs the configured token from WebSocket error events", () => {
+  const token = ["gateway", "socket", "token"].join("-");
+  const warnings = [];
+  const restoreWarn = captureConsoleWarn(warnings);
+  const sockets = [];
+
+  class FakeWs {
+    constructor() {
+      this.listeners = new Map();
+      sockets.push(this);
+    }
+    addEventListener(name, cb) {
+      this.listeners.set(name, cb);
+    }
+    close() {
+      this.listeners.get("close")?.({});
+    }
+    emitError(error) {
+      this.listeners.get("error")?.(error);
+    }
+  }
+
+  try {
+    gatewayEvents.start({
+      enabled: true,
+      openclawUrl: "http://gateway.test:18789",
+      openclawToken: token,
+      WebSocketImpl: FakeWs,
+    });
+    sockets[0].emitError(new Error(`socket rejected ${token}`));
+
+    const warning = warnings.find((line) => line.startsWith("⚠️  gateway-events WS error:"));
+    assert.ok(warning);
+    assert.equal(warning.includes("[REDACTED]"), true);
+    assert.equal(warning.includes(token), false);
+  } finally {
+    restoreWarn();
+  }
+});
+
+test("scrubs the configured token from connect rejection warnings", () => {
+  const token = ["gateway", "connect", "token"].join("-");
+  const warnings = [];
+  const restoreWarn = captureConsoleWarn(warnings);
+  const sockets = [];
+  const sent = [];
+
+  class FakeWs {
+    constructor() {
+      this.listeners = new Map();
+      sockets.push(this);
+    }
+    addEventListener(name, cb) {
+      this.listeners.set(name, cb);
+    }
+    send(data) {
+      sent.push(JSON.parse(data));
+    }
+    close() {
+      this.listeners.get("close")?.({});
+    }
+    serverMessage(frame) {
+      this.listeners.get("message")?.({ data: JSON.stringify(frame) });
+    }
+  }
+
+  try {
+    gatewayEvents.start({
+      enabled: true,
+      openclawUrl: "http://gateway.test:18789",
+      openclawToken: token,
+      WebSocketImpl: FakeWs,
+    });
+    sockets[0].serverMessage({
+      type: "event",
+      event: "connect.challenge",
+      payload: { nonce: "scrub-connect" },
+    });
+    sockets[0].serverMessage({
+      type: "res",
+      id: sent[0].id,
+      ok: false,
+      error: { code: "AUTH_FAILED", message: `connect rejected ${token}` },
+    });
+
+    const warning = warnings.find((line) => line.startsWith("⚠️  gateway-events connect rejected:"));
     assert.ok(warning);
     assert.equal(warning.includes("[REDACTED]"), true);
     assert.equal(warning.includes(token), false);
