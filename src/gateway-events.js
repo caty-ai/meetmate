@@ -2,6 +2,7 @@
 
 const os = require("node:os");
 const pkg = require("../package.json");
+const { scrubLogMessage } = require("./log-scrub");
 const { recordEvent } = require("./metrics");
 const { DEFAULT_MESSAGES } = require("./messages");
 
@@ -113,6 +114,11 @@ function buildConnectFrame(id, options) {
   };
 }
 
+function scrubErrorMessage(error) {
+  const message = error && error.message ? error.message : error;
+  return scrubLogMessage(message, cfg && cfg.openclawToken);
+}
+
 function start(input = {}) {
   cfg = normalizeCfg(input);
   if (!cfg.enabled) return false;
@@ -184,7 +190,7 @@ function connect() {
   try {
     url = toWsUrl(cfg.openclawUrl);
   } catch (err) {
-    console.warn("⚠️  gateway-events invalid OpenClaw URL:", err.message);
+    console.warn("⚠️  gateway-events invalid OpenClaw URL:", scrubErrorMessage(err));
     return;
   }
 
@@ -207,7 +213,7 @@ function connect() {
     }
   } catch (err) {
     connecting = false;
-    console.warn("⚠️  gateway-events WS construction failed:", err.message || err);
+    console.warn("⚠️  gateway-events WS construction failed:", scrubErrorMessage(err));
     scheduleReconnect();
     return;
   }
@@ -256,7 +262,7 @@ function onMessage(evt, generation = socketGeneration) {
       }
       connectRequestId = null;
       trackTask(handleHello(frame.payload).catch((err) => {
-        console.warn("⚠️  gateway-events subscribe failed:", err.message || err);
+        console.warn("⚠️  gateway-events subscribe failed:", scrubErrorMessage(err));
         connected = false;
         connecting = false;
         safeCloseForReconnect();
@@ -266,7 +272,7 @@ function onMessage(evt, generation = socketGeneration) {
 
     if (frame.ok === false) {
       const code = frame.error?.code || "UNKNOWN";
-      const message = frame.error?.message || "gateway connect failed";
+      const message = scrubErrorMessage(frame.error?.message || "gateway connect failed");
       if (!connectRequestId || String(frame.id) !== connectRequestId) {
         console.warn(`⚠️  gateway-events ignored late rejected response ${frame.id}: ${code}: ${message}`);
         return;
@@ -313,7 +319,7 @@ function onClose(_evt, generation = socketGeneration) {
 
 function onError(err, generation = socketGeneration) {
   if (generation !== socketGeneration) return;
-  if (!stopping) console.warn("⚠️  gateway-events WS error:", err?.message || err);
+  if (!stopping) console.warn("⚠️  gateway-events WS error:", scrubErrorMessage(err));
 }
 
 function safeCloseForReconnect() {
@@ -419,7 +425,7 @@ function onReconnect(cb) {
 function handleEvent(name, payload) {
   if (name !== "sessions.changed") return;
   trackTask(handleSessionsChanged(payload).catch((err) => {
-    console.warn("⚠️  gateway-events demux error:", err.message || err);
+    console.warn("⚠️  gateway-events demux error:", scrubErrorMessage(err));
   }));
 }
 
@@ -569,7 +575,7 @@ async function fetchResultText(sessionKey) {
   } catch (err) {
     const attempts = (completionFetchAttempts.get(sessionKey) || 0) + 1;
     completionFetchAttempts.set(sessionKey, attempts);
-    console.warn("⚠️  gateway-events chat.history failed:", err.message || err);
+    console.warn("⚠️  gateway-events chat.history failed:", scrubErrorMessage(err));
     return null;
   }
 }
@@ -595,7 +601,7 @@ async function recoverChildMeta(sessionKey) {
     const meta = fromRecord(resolved?.session || resolved);
     if (meta) return meta;
   } catch (err) {
-    console.warn("⚠️  gateway-events sessions.resolve recovery failed:", err.message || err);
+    console.warn("⚠️  gateway-events sessions.resolve recovery failed:", scrubErrorMessage(err));
   }
 
   try {
@@ -604,7 +610,7 @@ async function recoverChildMeta(sessionKey) {
     const found = sessions.find((item) => item?.key === sessionKey || item?.sessionKey === sessionKey) || sessions[0];
     return fromRecord(found);
   } catch (err) {
-    console.warn("⚠️  gateway-events sessions.list recovery failed:", err.message || err);
+    console.warn("⚠️  gateway-events sessions.list recovery failed:", scrubErrorMessage(err));
     return null;
   }
 }
@@ -638,10 +644,10 @@ function emit(listeners, payload) {
   for (const cb of [...listeners]) {
     try {
       trackTask(Promise.resolve(cb(payload)).catch((err) => {
-        console.warn("⚠️  gateway-events listener failed:", err.message || err);
+        console.warn("⚠️  gateway-events listener failed:", scrubErrorMessage(err));
       }));
     } catch (err) {
-      console.warn("⚠️  gateway-events listener failed:", err.message || err);
+      console.warn("⚠️  gateway-events listener failed:", scrubErrorMessage(err));
     }
   }
 }
@@ -661,10 +667,10 @@ async function emitCompletion(payload) {
       tasks.push(Promise.resolve(cb(payload)).then((result) => {
         if (result !== false) handled = true;
       }).catch((err) => {
-        console.warn("⚠️  gateway-events listener failed:", err.message || err);
+        console.warn("⚠️  gateway-events listener failed:", scrubErrorMessage(err));
       }));
     } catch (err) {
-      console.warn("⚠️  gateway-events listener failed:", err.message || err);
+      console.warn("⚠️  gateway-events listener failed:", scrubErrorMessage(err));
     }
   }
   await Promise.all(tasks);
@@ -702,7 +708,7 @@ function runAbortAttempt(job) {
       return;
     }
     if (job.attempts >= ABORT_RETRY_DELAYS_MS.length) {
-      console.warn("⚠️  gateway-events abort failed:", err.message || err);
+      console.warn("⚠️  gateway-events abort failed:", scrubErrorMessage(err));
       abortJobs.delete(job.sessionKey);
       job.resolve({ ok: false, attempts: job.attempts });
       return;

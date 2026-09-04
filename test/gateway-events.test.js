@@ -158,6 +158,180 @@ test("disabled start never constructs WebSocket", () => {
   gatewayEvents._test.reset();
 });
 
+test("scrubs the configured token from WebSocket construction failures", () => {
+  const token = ["gateway", "runtime", "token"].join("-");
+  const warnings = [];
+  const restoreWarn = captureConsoleWarn(warnings);
+
+  class ThrowingWs {
+    constructor() {
+      throw new Error(`constructor rejected ${token}`);
+    }
+  }
+
+  try {
+    gatewayEvents.start({
+      enabled: true,
+      openclawUrl: "http://gateway.test:18789",
+      openclawToken: token,
+      WebSocketImpl: ThrowingWs,
+    });
+
+    const warning = warnings.find((line) => line.startsWith("⚠️  gateway-events WS construction failed:"));
+    assert.ok(warning);
+    assert.equal(warning.includes("[REDACTED]"), true);
+    assert.equal(warning.includes(token), false);
+  } finally {
+    restoreWarn();
+  }
+});
+
+test("scrubs the configured token from WebSocket error events", () => {
+  const token = ["gateway", "socket", "token"].join("-");
+  const warnings = [];
+  const restoreWarn = captureConsoleWarn(warnings);
+  const sockets = [];
+
+  class FakeWs {
+    constructor() {
+      this.listeners = new Map();
+      sockets.push(this);
+    }
+    addEventListener(name, cb) {
+      this.listeners.set(name, cb);
+    }
+    close() {
+      this.listeners.get("close")?.({});
+    }
+    emitError(error) {
+      this.listeners.get("error")?.(error);
+    }
+  }
+
+  try {
+    gatewayEvents.start({
+      enabled: true,
+      openclawUrl: "http://gateway.test:18789",
+      openclawToken: token,
+      WebSocketImpl: FakeWs,
+    });
+    sockets[0].emitError(new Error(`socket rejected ${token}`));
+
+    const warning = warnings.find((line) => line.startsWith("⚠️  gateway-events WS error:"));
+    assert.ok(warning);
+    assert.equal(warning.includes("[REDACTED]"), true);
+    assert.equal(warning.includes(token), false);
+  } finally {
+    restoreWarn();
+  }
+});
+
+test("scrubs the configured token from connect rejection warnings", () => {
+  const token = ["gateway", "connect", "token"].join("-");
+  const warnings = [];
+  const restoreWarn = captureConsoleWarn(warnings);
+  const sockets = [];
+  const sent = [];
+
+  class FakeWs {
+    constructor() {
+      this.listeners = new Map();
+      sockets.push(this);
+    }
+    addEventListener(name, cb) {
+      this.listeners.set(name, cb);
+    }
+    send(data) {
+      sent.push(JSON.parse(data));
+    }
+    close() {
+      this.listeners.get("close")?.({});
+    }
+    serverMessage(frame) {
+      this.listeners.get("message")?.({ data: JSON.stringify(frame) });
+    }
+  }
+
+  try {
+    gatewayEvents.start({
+      enabled: true,
+      openclawUrl: "http://gateway.test:18789",
+      openclawToken: token,
+      WebSocketImpl: FakeWs,
+    });
+    sockets[0].serverMessage({
+      type: "event",
+      event: "connect.challenge",
+      payload: { nonce: "scrub-connect" },
+    });
+    sockets[0].serverMessage({
+      type: "res",
+      id: sent[0].id,
+      ok: false,
+      error: { code: "AUTH_FAILED", message: `connect rejected ${token}` },
+    });
+
+    const warning = warnings.find((line) => line.startsWith("⚠️  gateway-events connect rejected:"));
+    assert.ok(warning);
+    assert.equal(warning.includes("[REDACTED]"), true);
+    assert.equal(warning.includes(token), false);
+  } finally {
+    restoreWarn();
+  }
+});
+
+test("scrubs the configured token from listener failures", async () => {
+  const token = ["gateway", "listener", "token"].join("-");
+  const warnings = [];
+  const restoreWarn = captureConsoleWarn(warnings);
+  const sockets = [];
+
+  class FakeWs {
+    constructor() {
+      this.listeners = new Map();
+      sockets.push(this);
+    }
+    addEventListener(name, cb) {
+      this.listeners.set(name, cb);
+    }
+    close() {
+      this.listeners.get("close")?.({});
+    }
+    serverMessage(frame) {
+      this.listeners.get("message")?.({ data: JSON.stringify(frame) });
+    }
+  }
+
+  try {
+    gatewayEvents.onSubagentSpawn(() => {
+      throw new Error(`listener rejected ${token}`);
+    });
+    gatewayEvents.start({
+      enabled: true,
+      openclawUrl: "http://gateway.test:18789",
+      openclawToken: token,
+      WebSocketImpl: FakeWs,
+    });
+    sockets[0].serverMessage({
+      type: "event",
+      event: "sessions.changed",
+      payload: {
+        sessionKey: "agent:main:subagent:scrub-listener",
+        parentSessionKey: "agent:main:openai-user:meet-scrub-caty",
+        reason: "create",
+      },
+    });
+    await gatewayEvents._test.drainActiveTasks();
+
+    const warning = warnings.find((line) => line.startsWith("⚠️  gateway-events listener failed:"));
+    assert.ok(warning);
+    assert.equal(warning.includes("[REDACTED]"), true);
+    assert.equal(warning.includes(token), false);
+  } finally {
+    restoreWarn();
+  }
+});
+
 test("parses hello-ok response envelope, subscribes, demuxes completion once, and ignores announce errors", async () => {
   gatewayEvents._test.reset();
   const sockets = [];
