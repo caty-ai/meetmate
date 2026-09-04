@@ -127,7 +127,7 @@
     {
       "name": "BARGE_IN_CONFIDENCE_MIN",
       "references": [
-        "src/pipeline.js:47"
+        "src/pipeline.js:48"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -137,7 +137,7 @@
     {
       "name": "BARGE_IN_MIN_CHARS",
       "references": [
-        "src/pipeline.js:46"
+        "src/pipeline.js:47"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -163,7 +163,7 @@
     {
       "name": "CLAUSE_PAUSE_MS",
       "references": [
-        "src/pipeline.js:30"
+        "src/pipeline.js:31"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -173,7 +173,7 @@
     {
       "name": "COMFORT_NOISE_AMPLITUDE",
       "references": [
-        "src/pipeline.js:37"
+        "src/pipeline.js:38"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -244,7 +244,7 @@
     {
       "name": "ENABLE_BARGE_IN",
       "references": [
-        "src/pipeline.js:48"
+        "src/pipeline.js:49"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -262,7 +262,7 @@
     {
       "name": "ENABLE_MEETING_CONTEXT_INJECTION",
       "references": [
-        "src/pipeline.js:61"
+        "src/pipeline.js:62"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -272,7 +272,7 @@
     {
       "name": "ENABLE_PROGRESS_GUARD",
       "references": [
-        "src/pipeline.js:50"
+        "src/pipeline.js:51"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -282,7 +282,7 @@
     {
       "name": "FIRST_CHUNK_MIN_CHARS",
       "references": [
-        "src/pipeline.js:25"
+        "src/pipeline.js:26"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -415,7 +415,7 @@
     {
       "name": "MEETING_CONTEXT_RAW_CHARS",
       "references": [
-        "src/pipeline.js:56"
+        "src/pipeline.js:57"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -425,7 +425,7 @@
     {
       "name": "MEETING_CONTEXT_RAW_UTTERANCES",
       "references": [
-        "src/pipeline.js:55"
+        "src/pipeline.js:56"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -456,7 +456,7 @@
     {
       "name": "MIN_CLAUSE_LEN",
       "references": [
-        "src/pipeline.js:23"
+        "src/pipeline.js:24"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -466,7 +466,7 @@
     {
       "name": "MIN_CLAUSE_PREFIX",
       "references": [
-        "src/pipeline.js:24"
+        "src/pipeline.js:25"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -476,7 +476,7 @@
     {
       "name": "LOCAL_AVATAR_ENVELOPE",
       "references": [
-        "src/pipeline.js:38"
+        "src/pipeline.js:39"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -486,7 +486,7 @@
     {
       "name": "LOCAL_AVATAR_ENVELOPE_SLACK_MS",
       "references": [
-        "src/pipeline.js:40"
+        "src/pipeline.js:41"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -570,7 +570,7 @@
     {
       "name": "PENDING_QUEUE_MAX",
       "references": [
-        "src/pipeline.js:54"
+        "src/pipeline.js:55"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -588,7 +588,7 @@
     {
       "name": "POST_UTTERANCE_BUFFER_MS",
       "references": [
-        "src/pipeline.js:43"
+        "src/pipeline.js:44"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -598,7 +598,7 @@
     {
       "name": "PROGRESS_PING_INTERVAL_MS",
       "references": [
-        "src/pipeline.js:44"
+        "src/pipeline.js:45"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -608,7 +608,7 @@
     {
       "name": "PROGRESS_PING_MAX",
       "references": [
-        "src/pipeline.js:45"
+        "src/pipeline.js:46"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -629,7 +629,7 @@
     {
       "name": "SENTENCE_PAUSE_MS",
       "references": [
-        "src/pipeline.js:29"
+        "src/pipeline.js:30"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -802,7 +802,7 @@
     {
       "name": "TRANSCRIPT_BUFFER_MAX",
       "references": [
-        "src/pipeline.js:53"
+        "src/pipeline.js:54"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -839,7 +839,7 @@
     {
       "name": "TTS_GAP_MS",
       "references": [
-        "src/pipeline.js:35"
+        "src/pipeline.js:36"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -849,7 +849,7 @@
     {
       "name": "TTS_LEAD_MS",
       "references": [
-        "src/pipeline.js:36"
+        "src/pipeline.js:37"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
