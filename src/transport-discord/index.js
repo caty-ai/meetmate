@@ -13,6 +13,7 @@ function createDiscordAdapter(options = {}) {
   });
   const handleHttp = createHttpRoutes({
     writePlainResponse,
+    getDiscordConfig,
     joinSession: (body) => sessionManager.join(body),
     leaveSession: (body) => sessionManager.leave(body),
     getSessionStatus: () => sessionManager.getStatus(),

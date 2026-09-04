@@ -377,6 +377,8 @@ test("join wires the pipeline releaseSpeaker into audio-in (feature-detected)", 
   assert.equal((await wired.manager.join({ guildId: GUILD_ID, channelId: CHANNEL_ID })).status, 200);
   const wiredOptions = audioInOptions.find((entry) => entry.kind === "wired").options;
   assert.equal(typeof wiredOptions.releaseSpeaker, "function");
+  assert.equal(typeof wiredOptions.getSecret, "function");
+  assert.equal(wiredOptions.getSecret(), DISCORD_VALUE);
   assert.equal(wiredOptions.releaseSpeaker("42"), true);
   assert.equal(releaseCalls.length, 1);
   assert.equal(releaseCalls[0].id, "42");
@@ -457,6 +459,49 @@ test("discord exit_requested ends the active voice session through the leave tea
   const leftAgain = await harness.manager.leave();
   assert.equal(leftAgain.status, 404);
   assert.equal(leftAgain.body.code, "DISCORD_SESSION_NOT_FOUND");
+});
+
+test("discord listener and exit_requested teardown failures scrub the configured bot token", async () => {
+  const botToken = ["bot-", "abc123"].join("");
+  const originalConsoleError = console.error;
+  const logs = [];
+  console.error = (...args) => logs.push(args.map(String).join(" "));
+  const failingAudioIn = () => ({
+    subscribeUser() {},
+    unsubscribeUser() {},
+    close() { throw new Error(`vendor said ${botToken} is invalid`); },
+  });
+  try {
+    const listenerHarness = createHarness({
+      discordConfig: { token: botToken, guildAllowlist: [GUILD_ID] },
+      createAudioIn: failingAudioIn,
+    });
+    assert.equal((await listenerHarness.manager.join({ guildId: GUILD_ID, channelId: CHANNEL_ID })).status, 200);
+    listenerHarness.connection.emit("stateChange", { status: "ready" }, { status: "destroyed" });
+    await waitFor(
+      () => logs.some((line) => line.includes("Discord stateChange listener failed")),
+      "bindSafe did not log the listener failure"
+    );
+
+    const exitHarness = createHarness({
+      discordConfig: { token: botToken, guildAllowlist: [GUILD_ID] },
+      createAudioIn: failingAudioIn,
+    });
+    assert.equal((await exitHarness.manager.join({ guildId: GUILD_ID, channelId: CHANNEL_ID })).status, 200);
+    exitHarness.createdPipelines[0].emit("exit_requested", { trigger: "voice_command" });
+    await waitFor(
+      () => logs.some((line) => line.includes("Discord exit_requested teardown failed")),
+      "exit_requested did not log the teardown failure"
+    );
+
+    assert.equal(logs.length, 2, JSON.stringify(logs));
+    for (const line of logs) {
+      assert.equal(line.includes(botToken), false, line);
+      assert.equal(line.includes("[REDACTED]"), true, line);
+    }
+  } finally {
+    console.error = originalConsoleError;
+  }
 });
 
 test("discord ignores exit_requested from an already-left stale pipeline", async () => {
@@ -1049,7 +1094,12 @@ test("Discord operator-log scrub covers credential forms without destroying beni
     redactionCase("session_id", "session_id="),
     redactionCase("sessionid", "sessionid="),
     redactionCase("sid", "sid="),
-    redactionCase("Discord webhook", "POST https://discord.com/api/webhooks/123456789/", "?wait=true"),
+    ["Discord webhook", "https://discord.com/api/webhooks/123/abcDEF", "https://discord.com/api/webhooks/123/[REDACTED]"],
+    ["Discord PTB webhook", "https://ptb.discord.com/api/webhooks/123/abcDEF", "https://ptb.discord.com/api/webhooks/123/[REDACTED]"],
+    ["Discord canary webhook", "https://canary.discord.com/api/webhooks/123/abcDEF", "https://canary.discord.com/api/webhooks/123/[REDACTED]"],
+    ["Discord legacy webhook", "https://discordapp.com/api/webhooks/123/abcDEF", "https://discordapp.com/api/webhooks/123/[REDACTED]"],
+    ["scheme-less Discord webhook", "discord.com/api/webhooks/123/abcDEF", "discord.com/api/webhooks/123/[REDACTED]"],
+    ["non-webhook Discord API URL", "https://discord.com/api/v10/users/@me", "https://discord.com/api/v10/users/@me"],
     redactionCase("Digest response", 'Authorization: Digest realm="api", response="', '"'),
     redactionCase("Digest nonce", 'Digest username="caty", nonce="', '"'),
     redactionCase("Digest cnonce", 'Digest qop=auth, cnonce="', '"'),

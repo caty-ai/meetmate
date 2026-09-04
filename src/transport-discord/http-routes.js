@@ -34,6 +34,17 @@ function isLocalDiscordRequest(req) {
   return isLoopbackRemote(req) && !hasForwardedHeaders(req);
 }
 
+function getDiscordLogSecret(getDiscordConfig) {
+  if (typeof getDiscordConfig !== "function") return undefined;
+  try {
+    const config = getDiscordConfig();
+    const token = config?.token;
+    return typeof token === "string" && token.length > 0 ? token : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 // Request parsing and the session command are caught separately: a parse failure is the caller's own
 // body (400 DISCORD_BAD_REQUEST with the parser's text), but an exception escaping joinSession /
 // leaveSession may carry dependency or vendor text, so it never reaches the client — the response is
@@ -52,7 +63,7 @@ async function handleSessionCommand(req, res, options, command, verb) {
   } catch (error) {
     const { JOIN_FAILURE_MESSAGES } = require("./discord-session");
     const code = verb === "leave" ? "DISCORD_LEAVE_FAILED" : "DISCORD_JOIN_FAILED";
-    console.error(`Discord ${verb} handler failed: ${scrubDiscordLogMessage(error?.message || String(error))}`);
+    console.error(`Discord ${verb} handler failed: ${scrubDiscordLogMessage(error?.message || String(error), getDiscordLogSecret(options.getDiscordConfig))}`);
     writeJsonResponse(res, 500, { ok: false, code, message: JOIN_FAILURE_MESSAGES[code] });
   }
 }
@@ -139,7 +150,7 @@ function createHttpRoutes(options = {}) {
       try {
         writeJsonResponse(res, 200, getSessionStatus());
       } catch (error) {
-        console.error(`Discord status handler failed: ${scrubDiscordLogMessage(error?.message || String(error))}`);
+        console.error(`Discord status handler failed: ${scrubDiscordLogMessage(error?.message || String(error), getDiscordLogSecret(options.getDiscordConfig))}`);
         writeJsonResponse(res, 500, { ok: false, code: "DISCORD_INTERNAL_ERROR" });
       }
       return true;
