@@ -23,12 +23,13 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          # 26.x only: the suite relies on Node 26 test-runner async semantics.
-          # Node 22 fails with cancelledByParent/"Promise resolution is still
-          # pending" (measured on this PR's first run) despite engines >=22.
-          node-version: 26.x
+          # >= 26.7.0 only: Node 22 fails with cancelledByParent/"Promise
+          # resolution is still pending"; Node 26.0–26.6 flake on
+          # nodejs/node#64061 (fixed in 26.7.0). This matches the floor in
+          # scripts/ci/ensure-node.sh; see docs/test-runner-node-floor.md (#38).
+          node-version: '>=26.7.0 <27'
           cache: npm
       - run: npm ci
-      # Serialized on purpose: Node 26's parallel test-runner worker IPC is
-      # flaky for this suite; this is the locally verified invocation.
+      # Serialized on purpose so the canary's timing stays close to `make test`
+      # (one process per suite).
       - run: node --test --test-concurrency=1
