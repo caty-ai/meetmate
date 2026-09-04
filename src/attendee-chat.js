@@ -1,5 +1,6 @@
 const https = require("node:https");
 
+const { scrubLogMessage } = require("./log-scrub");
 const { stripEmojis } = require("./speech-policy");
 const { getEffectiveValue } = require("./settings/resolver");
 
@@ -18,8 +19,9 @@ function prepareAttendeeChatMessage(message) {
 
 function sendAttendeeChatMessage(botId, message, attendeeKey) {
   return new Promise((resolve) => {
+    let apiKey = "";
     try {
-      const apiKey = attendeeKey || getEffectiveValue("attendee_api_key") || "";
+      apiKey = attendeeKey || getEffectiveValue("attendee_api_key") || "";
       const prepared = prepareAttendeeChatMessage(message);
       if (prepared.skip) {
         console.warn(`💬  Attendee chat skipped (empty after emoji strip): ${botId} original=${JSON.stringify(String(message || "").slice(0, 100))}`);
@@ -64,17 +66,21 @@ function sendAttendeeChatMessage(botId, message, attendeeKey) {
         });
       });
       req.on("error", (err) => {
-        console.error(`💬  Attendee chat error: ${err.message}`);
+        console.error(`💬  Attendee chat error: ${scrubErrorMessage(err, apiKey)}`);
         resolve(false);
       });
       req.setTimeout(10_000, () => req.destroy(new Error("Attendee chat request timeout")));
       req.write(body);
       req.end();
     } catch (err) {
-      console.error(`💬  Attendee chat error: ${err.message || err}`);
+      console.error(`💬  Attendee chat error: ${scrubErrorMessage(err, apiKey)}`);
       resolve(false);
     }
   });
+}
+
+function scrubErrorMessage(err, secret) {
+  return scrubLogMessage(err && err.message ? err.message : err, secret);
 }
 
 module.exports = { sendAttendeeChatMessage, prepareAttendeeChatMessage };

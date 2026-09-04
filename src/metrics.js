@@ -1,6 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { metricsLogDir } = require("./paths");
+const { scrubLogMessage } = require("./log-scrub");
 
 // Metrics default to the home logs directory (AI_MEET_HOME, else cwd). Set
 // METRICS_LOG_DIR to move the JSONL file (metrics only — conversation logs
@@ -37,7 +38,7 @@ function warnOnce(err) {
   if (warned) return;
   writeFailed = true;
   warned = true;
-  console.warn("metrics recording disabled after error:", err?.message || err);
+  console.warn("metrics recording disabled after error:", scrubLogMessage((err || {}).message || err, undefined));
 }
 
 function queueWrite(line) {

@@ -9,6 +9,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { ttsCacheDir } = require("./paths");
 const { stripCanonicalEmotionTags } = require("./messages");
+const { scrubLogMessage } = require("./log-scrub");
 const { getEffectiveValue } = require("./settings/resolver");
 const { canonicalBaseUrl } = require("./url-utils");
 
@@ -238,7 +239,7 @@ function createTtsCache({ dir = defaultCacheDir(), synthesizeFn } = {}) {
       try {
         await synthesizeCached(text, options);
       } catch (err) {
-        console.warn(`⚠️  TTS cache prewarm failed (${previewText(text)}): ${err.message || err}`);
+        console.warn(`⚠️  TTS cache prewarm failed (${previewText(text)}): ${scrubLogMessage((err || {}).message || err, undefined)}`);
       }
     }
   }

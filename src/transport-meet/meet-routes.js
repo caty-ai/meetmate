@@ -26,6 +26,7 @@ const { resolveAgentProfile, AgentNotFoundError } = require("../agent-profile");
 const { sendAttendeeChatMessage: sendAttendeeChatMessageShared } = require("../attendee-chat");
 const gatewayEvents = require("../gateway-events");
 const { recordEvent } = require("../metrics");
+const { scrubLogMessage } = require("../log-scrub");
 const { buildDelegationResultsSection } = require("../delegation-results");
 const { createGatewaySessionTracker } = require("../gateway-session-tracker");
 const { servePublicAsset, serveLocalAvatar, sendMetricsSummary } = require("../ui-routes");
@@ -227,7 +228,7 @@ async function handleMeetSessionEnd(lifecycle) {
 
       await postMeetFullTranscript(notifier, lifecycle);
     } catch (err) {
-      console.error("⚠️  Meetサマリー生成/投稿失敗:", err.message);
+      console.error("⚠️  Meetサマリー生成/投稿失敗:", scrubErrorMessage(err, undefined));
     }
   }
 
@@ -323,12 +324,12 @@ async function sendLcmIngest(lifecycle) {
     }
   } catch (err) {
     const elapsed = Date.now() - ingestStart;
-    console.warn(`⚠️  LCM ingest failed (non-fatal, ${elapsed}ms):`, err.message);
+    console.warn(`⚠️  LCM ingest failed (non-fatal, ${elapsed}ms):`, scrubErrorMessage(err, undefined));
 
     // Notify failure to Slack log channel for monitoring
     const notifier = getMeetSlackNotifier();
     if (notifier.enabled) {
-      notifier.postTranscript(lifecycle, `⚠️ LCM ingest 失敗: ${err.message} (${(elapsed / 1000).toFixed(1)}s)`).catch(() => {});
+      notifier.postTranscript(lifecycle, `⚠️ LCM ingest 失敗: ${scrubErrorMessage(err, undefined)} (${(elapsed / 1000).toFixed(1)}s)`).catch(() => {});
     }
   } finally {
     // Keep in Set intentionally — prevents re-ingest on duplicate events.
@@ -375,7 +376,7 @@ async function postMeetFullTranscript(notifier, lifecycle) {
     }
     console.log("📜  Meet全文ログSlack投稿完了");
   } catch (err) {
-    console.error("⚠️  Meet全文ログSlack投稿失敗:", err.message);
+    console.error("⚠️  Meet全文ログSlack投稿失敗:", scrubErrorMessage(err, undefined));
   }
 }
 
@@ -502,7 +503,7 @@ async function createAttendeeBotWithRetry(attendeePayload, agentAttendeeKey) {
       lastError = err;
       if (attempt === attendeeRetryAttempts) break;
       const delay = attendeeRetryBaseMs * Math.pow(2, attempt - 1);
-      console.warn(`⚠️  Attendee API network retry ${attempt}/${attendeeRetryAttempts} in ${delay}ms: ${err.message}`);
+      console.warn(`⚠️  Attendee API network retry ${attempt}/${attendeeRetryAttempts} in ${delay}ms: ${scrubErrorMessage(err, agentAttendeeKey || ATTENDEE_API_KEY)}`);
       await sleep(delay);
     }
   }
@@ -576,7 +577,7 @@ function appendLateDelegationToPersistedLogs(session, item) {
       fs.writeFileSync(session.conversationLogJsonPath, JSON.stringify(data, null, 2));
     }
   } catch (err) {
-    console.warn("⚠️  late delegation result persistence failed:", err.message || err);
+    console.warn("⚠️  late delegation result persistence failed:", scrubErrorMessage(err, undefined));
   }
 }
 
@@ -648,7 +649,7 @@ function appendToMemory(session) {
     session.memoryCallLogPath = callLogPath;
     console.log(`🧠  Meetログ memory/calls/ 保存: ${callLogPath}`);
   } catch (err) {
-    console.error("⚠️  メモリ追記失敗:", err.message);
+    console.error("⚠️  メモリ追記失敗:", scrubErrorMessage(err, undefined));
   }
 }
 
@@ -675,11 +676,11 @@ function requestBotLeave(botId, reason, attendeeKey, timeoutMs = 10_000) {
         res.on("error", (error) => finish({ ok: false, error }));
         res.on("end", () => { console.log(`🚪  Attendee bot leave (${reason}): ${botId} → ${res.statusCode} ${require("./local-avatar-session").redactLogValue(data).slice(0, 200)}`); finish({ ok: true, statusCode: res.statusCode }); });
       });
-      req.on("error", (error) => { console.error(`❌  Attendee bot leave error (${reason}): ${error.message}`); finish({ ok: false, error }); });
+      req.on("error", (error) => { console.error(`❌  Attendee bot leave error (${reason}): ${scrubErrorMessage(error, apiKey)}`); finish({ ok: false, error }); });
       req.setTimeout(timeoutMs, () => { const error = new Error(`Attendee bot leave timeout after ${timeoutMs}ms`); req.destroy?.(error); finish({ ok: false, error }); });
       req.write(body);
       req.end();
-    } catch (error) { console.error(`❌  Attendee bot leave error (${reason}): ${error.message}`); finish({ ok: false, error }); }
+    } catch (error) { console.error(`❌  Attendee bot leave error (${reason}): ${scrubErrorMessage(error, apiKey)}`); finish({ ok: false, error }); }
   });
 }
 
@@ -770,7 +771,7 @@ function createLegacyAgent(session, turnState, onAudio) {
   });
 
   agent.on(AgentEvents.Audio, (raw) => onAudio(Buffer.from(raw)));
-  agent.on(AgentEvents.Error, (err) => console.error(`❌  Deepgram error (sid=${session.id}):`, err));
+  agent.on(AgentEvents.Error, (err) => console.error(`❌  Deepgram error (sid=${session.id}):`, scrubErrorMessage(err, undefined)));
   agent.on(AgentEvents.Close, () => {
     clearAgentSpeaking();
     turnState.inputCooldownUntil = 0;
@@ -915,7 +916,7 @@ function startBotImageLoad() {
         console.log(`🖼️  Bot avatar downloaded and cached: ${path.basename(avatarCache)}`);
       }
     } catch (err) {
-      console.warn("⚠️  Bot avatar load failed:", err.message);
+      console.warn("⚠️  Bot avatar load failed:", scrubErrorMessage(err, undefined));
     }
   })();
 }
@@ -1147,7 +1148,7 @@ async function handleHttp(req, res) {
       writePlainResponse(res, 200, `退出リクエスト送信: session=${sid}, bot=${botId || "unknown"}`);
       return;
     } catch (err) {
-      console.error("❌  /leave-meeting error:", err);
+      console.error("❌  /leave-meeting error:", scrubErrorMessage(err, undefined));
       writePlainResponse(res, 500, `leave-meeting エラー: ${err.message}`);
       return;
     }
@@ -1489,7 +1490,7 @@ async function handleHttp(req, res) {
         botId: launchedBotId,
         attendeeKey: launchedBotAttendeeKey,
       });
-      console.error("❌  /join-meeting error:", err);
+      console.error("❌  /join-meeting error:", scrubErrorMessage(err, undefined));
       writePlainResponse(res, 500, `join-meeting エラー: ${err.message}`);
       return;
     }
@@ -1686,7 +1687,7 @@ function handleWsConnection(client, req) {
       client.send(JSON.stringify(payload));
       audioSent = true;
     } catch (err) {
-      console.error(`❌  Failed sending bot_output (sid=${sid}):`, err.message);
+      console.error(`❌  Failed sending bot_output (sid=${sid}):`, scrubErrorMessage(err, undefined));
     }
 
     if (!audioSent) return;
@@ -1783,12 +1784,12 @@ function handleWsConnection(client, req) {
         console.log("📩  Non-audio message:", parsed.trigger || parsed);
       }
     } catch (err) {
-      console.error(`❌  Bad WS message (sid=${sid}):`, err.message);
+      console.error(`❌  Bad WS message (sid=${sid}):`, scrubErrorMessage(err, undefined));
     }
   });
 
   client.on("error", (err) => {
-    console.error(`❌  WS error (sid=${sid}):`, err.message);
+    console.error(`❌  WS error (sid=${sid}):`, scrubErrorMessage(err, undefined));
   });
 
   client.on("close", () => {
@@ -1838,6 +1839,11 @@ function logLegacyMode(session) {
   console.log(`🔊  Deepgram Voice Agent モード (sid=${session.id})`);
   if (HUB_CONFIG.enabled) console.warn("⚠️  HUB_* is configured, but floor arbitration requires a pipeline TTS provider; disabling hub integration in legacy Deepgram Voice Agent mode.");
 }
+
+function scrubErrorMessage(err, secret) {
+  return scrubLogMessage(err && err.message ? err.message : err, secret);
+}
+
 const readinessProbes = require("../settings/probes");
 let readinessInstanceId = "";
 let readinessProbeOptions = {};
@@ -1851,10 +1857,12 @@ module.exports = {
   writePlainResponse,
   _test: {
     appendToMemory,
+    appendLateDelegationToPersistedLogs,
     buildConfiguredDelegationResultsSection,
     configuredSummaryPrompt: () => _resolvedMessages.prompts.summary,
     configureReadinessForTest,
     createHandler,
+    requestBotLeave,
     finalizeSessionIfInactive,
     deleteSessionAndRelease,
     rollbackJoinAttempt,
