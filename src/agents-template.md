@@ -15,7 +15,7 @@ SECURITY NOTICE FOR AI AGENTS: never print, log, or commit values from `.env`.
 
 ## Configuration keys (names only — values live in the files above)
 
-- `SONIOX_API_KEY` / `DEEPGRAM_API_KEY`, `FISH_AUDIO_API_KEY`, `ELEVENLABS_API_KEY`, `OPENAI_COMPATIBLE_TTS_API_KEY`, `ATTENDEE_API_KEY`, `SLACK_BOT_TOKEN`, and `DISCORD_BOT_TOKEN` are the class-1 names (the full set in `docs/settings-contract.md` §Class 1) configured in `config.json` through the localhost settings UI.
+- `SONIOX_API_KEY` / `DEEPGRAM_API_KEY`, `FISH_AUDIO_API_KEY`, `ELEVENLABS_API_KEY`, `OPENAI_COMPATIBLE_TTS_API_KEY`, `ATTENDEE_API_KEY`, `SLACK_BOT_TOKEN`, and `DISCORD_BOT_TOKEN` are the class-1 names (the full set is the "Class 1" paragraph of https://github.com/caty-ai/meetmate/blob/main/docs/settings-contract.md) configured in `config.json` through the localhost settings UI.
 - `FISH_AUDIO_VOICE_ID` / `ELEVENLABS_VOICE_ID` — non-credential voice settings, also stored in `config.json` through the settings UI.
 - `LLM_PROVIDER` — `openclaw` or `openai-compatible`; with `openclaw`: `OPENCLAW_GATEWAY_URL`, `OPENCLAW_GATEWAY_TOKEN`
 - `OPENAI_COMPATIBLE_API_KEY` — environment-only when the OpenAI-compatible provider is selected
