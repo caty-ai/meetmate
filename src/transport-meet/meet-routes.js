@@ -29,7 +29,8 @@ const { recordEvent } = require("../metrics");
 const { buildDelegationResultsSection } = require("../delegation-results");
 const { createGatewaySessionTracker } = require("../gateway-session-tracker");
 const { servePublicAsset, serveLocalAvatar, sendMetricsSummary } = require("../ui-routes");
-const { logsDir, avatarCachePath, bundledAssetPath, bundledPublicDir } = require("../paths");
+const { logsDir, avatarCachePath, bundledAssetPath, bundledPublicDir, resolveHome } = require("../paths");
+const { warnOversizedAvatarFrames } = require("./avatar-frame-size");
 const {
   AVATAR_FILE_LIMIT,
   installUrlCacheAvatar,
@@ -1362,6 +1363,11 @@ async function handleHttp(req, res) {
         localAvatarSession = issued.session;
         localAvatarLaunchUrl = issued.launchUrl;
         session.localAvatarSession = localAvatarSession;
+        if (avatarExperiment === LOCAL_AVATAR_FRAMES_EXPERIMENT) {
+          warnOversizedAvatarFrames({
+            framesDir: () => path.join(resolveHome(), "assets", "avatar-frames"),
+          }).catch(() => {});
+        }
       }
 
       session.lease = lease;

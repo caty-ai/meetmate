@@ -1105,6 +1105,197 @@ test("unknown experiments stay rejected and hybrid-local-l0 payload bytes remain
   });
 });
 
+test("avatar frame size helper warns for an oversized frame", async (t) => {
+  const { WARN_FRAME_BYTES, warnOversizedAvatarFrames } = require("../src/transport-meet/avatar-frame-size");
+  const framesDir = fs.mkdtempSync(path.join(os.tmpdir(), "mm65-"));
+  const lines = [];
+  t.after(() => fs.rmSync(framesDir, { recursive: true, force: true }));
+
+  fs.writeFileSync(path.join(framesDir, "idle.png"), Buffer.alloc(WARN_FRAME_BYTES + 1));
+  fs.writeFileSync(path.join(framesDir, "talk1.png"), Buffer.alloc(32 * 1024));
+
+  const result = await warnOversizedAvatarFrames({
+    framesDir,
+    logger: { warn: (line) => lines.push(line) },
+  });
+
+  assert.deepEqual(result.oversized.map((frame) => frame.file), ["idle.png"]);
+  assert.equal(result.warned, true);
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /^⚠️  avatar-frames:/);
+  assert.match(lines[0], /idle\.png/);
+  assert.match(lines[0], /total/);
+  assert.match(lines[0], /docs\/setup-guide\.md/);
+});
+
+test("avatar frame size helper warns on total threshold", async (t) => {
+  const { warnOversizedAvatarFrames } = require("../src/transport-meet/avatar-frame-size");
+  const framesDir = fs.mkdtempSync(path.join(os.tmpdir(), "mm65-"));
+  const lines = [];
+  t.after(() => fs.rmSync(framesDir, { recursive: true, force: true }));
+
+  for (const name of ["idle.png", "talk1.png", "talk2.png", "talk3.png", "blink.png", "talk_blink.png"]) {
+    fs.writeFileSync(path.join(framesDir, name), Buffer.alloc(600 * 1024));
+  }
+
+  const result = await warnOversizedAvatarFrames({
+    framesDir,
+    logger: { warn: (line) => lines.push(line) },
+  });
+
+  assert.equal(result.warned, true);
+  assert.equal(result.oversized.length, 6);
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /total 3\.5 MB/);
+});
+
+test("avatar frame size helper stays silent below thresholds", async (t) => {
+  const { warnOversizedAvatarFrames } = require("../src/transport-meet/avatar-frame-size");
+  const framesDir = fs.mkdtempSync(path.join(os.tmpdir(), "mm65-"));
+  const lines = [];
+  t.after(() => fs.rmSync(framesDir, { recursive: true, force: true }));
+
+  for (const name of ["idle.png", "talk1.png", "talk2.png", "talk3.png", "blink.png", "talk_blink.png"]) {
+    fs.writeFileSync(path.join(framesDir, name), Buffer.alloc(200 * 1024));
+  }
+
+  const result = await warnOversizedAvatarFrames({
+    framesDir,
+    logger: { warn: (line) => lines.push(line) },
+  });
+
+  assert.equal(result.warned, false);
+  assert.deepEqual(result.oversized, []);
+  assert.equal(lines.length, 0);
+});
+
+test("avatar frame size helper fails open for missing directories and unexpected stat errors", async () => {
+  const { warnOversizedAvatarFrames } = require("../src/transport-meet/avatar-frame-size");
+  const missingLines = [];
+  const missingDir = path.join(os.tmpdir(), `mm65-missing-${crypto.randomUUID()}`);
+  const missingResult = await warnOversizedAvatarFrames({
+    framesDir: missingDir,
+    logger: { warn: (line) => missingLines.push(line) },
+  });
+
+  assert.ok(missingResult === null || missingResult.warned === false);
+  assert.equal(missingLines.length, 0);
+
+  const boomLines = [];
+  const boomResult = await warnOversizedAvatarFrames({
+    framesDir: missingDir,
+    logger: { warn: (line) => boomLines.push(line) },
+    statFile: async () => {
+      throw new Error("boom");
+    },
+  });
+
+  assert.equal(boomResult, null);
+  assert.equal(boomLines.length, 0);
+});
+
+test("avatar frame size helper pins the filename set to ui-routes", () => {
+  const { FRAME_FILENAMES } = require("../src/transport-meet/avatar-frame-size");
+  const uiRoutesSource = fs.readFileSync(path.join(ROOT, "src", "ui-routes.js"), "utf8");
+  const servedFrames = [...uiRoutesSource.matchAll(/\[\s*["']\/local-avatar\/frames\/[^"']+["']\s*,\s*["']([^"']+)["']\s*\]/g)]
+    .map((match) => match[1]);
+
+  assert.deepEqual(servedFrames, FRAME_FILENAMES);
+});
+
+test("avatar frame size helper warns only above the total byte boundary", async (t) => {
+  const {
+    FRAME_FILENAMES,
+    WARN_TOTAL_BYTES,
+    warnOversizedAvatarFrames,
+  } = require("../src/transport-meet/avatar-frame-size");
+  const framesDir = fs.mkdtempSync(path.join(os.tmpdir(), "mm65-total-boundary-"));
+  const bytesPerFrame = WARN_TOTAL_BYTES / FRAME_FILENAMES.length;
+  const lines = [];
+  const logger = { warn: (line) => lines.push(line) };
+  t.after(() => fs.rmSync(framesDir, { recursive: true, force: true }));
+
+  for (const name of FRAME_FILENAMES) {
+    fs.writeFileSync(path.join(framesDir, name), Buffer.alloc(bytesPerFrame));
+  }
+
+  const exact = await warnOversizedAvatarFrames({ framesDir, logger });
+  assert.equal(exact.totalBytes, WARN_TOTAL_BYTES);
+  assert.equal(exact.warned, false);
+  assert.equal(lines.length, 0);
+
+  fs.writeFileSync(path.join(framesDir, FRAME_FILENAMES[0]), Buffer.alloc(bytesPerFrame + 1));
+  const above = await warnOversizedAvatarFrames({ framesDir, logger });
+  assert.equal(above.totalBytes, WARN_TOTAL_BYTES + 1);
+  assert.equal(above.warned, true);
+  assert.equal(lines.length, 1);
+});
+
+test("avatar frame size helper warns only above the per-frame byte boundary", async (t) => {
+  const {
+    FRAME_FILENAMES,
+    WARN_FRAME_BYTES,
+    warnOversizedAvatarFrames,
+  } = require("../src/transport-meet/avatar-frame-size");
+  const framesDir = fs.mkdtempSync(path.join(os.tmpdir(), "mm65-frame-boundary-"));
+  const frameName = FRAME_FILENAMES[0];
+  const framePath = path.join(framesDir, frameName);
+  const lines = [];
+  const logger = { warn: (line) => lines.push(line) };
+  t.after(() => fs.rmSync(framesDir, { recursive: true, force: true }));
+
+  fs.writeFileSync(framePath, Buffer.alloc(WARN_FRAME_BYTES));
+  const exact = await warnOversizedAvatarFrames({ framesDir, logger });
+  assert.equal(exact.totalBytes, WARN_FRAME_BYTES);
+  assert.equal(exact.warned, false);
+  assert.equal(lines.length, 0);
+
+  fs.writeFileSync(framePath, Buffer.alloc(WARN_FRAME_BYTES + 1));
+  const above = await warnOversizedAvatarFrames({ framesDir, logger });
+  assert.equal(above.totalBytes, WARN_FRAME_BYTES + 1);
+  assert.equal(above.warned, true);
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], new RegExp(frameName.replace(".", "\\.")));
+});
+
+test("avatar frame size helper contains invalid lazy directory resolution without logging", async () => {
+  const { warnOversizedAvatarFrames } = require("../src/transport-meet/avatar-frame-size");
+  const lines = [];
+  const logger = {
+    warn: (line) => lines.push(line),
+    log: (line) => lines.push(line),
+  };
+  const thrown = await warnOversizedAvatarFrames({
+    framesDir: () => { throw new TypeError("no home"); },
+    logger,
+  });
+  const originalWarn = console.warn;
+  const originalLog = console.log;
+  let nullOptions;
+  try {
+    console.warn = logger.warn;
+    console.log = logger.log;
+    nullOptions = await warnOversizedAvatarFrames(null);
+  } finally {
+    console.warn = originalWarn;
+    console.log = originalLog;
+  }
+  const nonStringDirectory = await warnOversizedAvatarFrames({ framesDir: 65, logger });
+
+  assert.equal(thrown, null);
+  assert.equal(nullOptions, null);
+  assert.equal(nonStringDirectory, null);
+  assert.equal(lines.length, 0);
+});
+
+test("frames join keeps size diagnostics guarded, lazy, and rejection-safe", () => {
+  const meetRoutesSource = fs.readFileSync(path.join(ROOT, "src", "transport-meet", "meet-routes.js"), "utf8");
+  assert.match(
+    meetRoutesSource,
+    /if \(avatarExperiment === LOCAL_AVATAR_FRAMES_EXPERIMENT\) \{\s*warnOversizedAvatarFrames\(\{\s*framesDir: \(\) => path\.join\(resolveHome\(\), ["']assets["'], ["']avatar-frames["']\),\s*\}\)\.catch\(\(\) => \{\}\);\s*\}/,
+  );
+});
+
 async function withMeetRoutes(fn, { ttsProvider = "fish-audio", ngrokDomain = "meetmate.example", hostHttpGet = null } = {}) {
   const settingsResolver = require("../src/settings/resolver");
   const routesPath = require.resolve("../src/transport-meet/meet-routes");
@@ -1226,6 +1417,7 @@ async function withMeetRoutes(fn, { ttsProvider = "fish-audio", ngrokDomain = "m
     avatarCachePath: () => "/tmp/meetmate-frames-avatar.png",
     bundledAssetPath: (name) => `/tmp/${name}`,
     bundledPublicDir: () => "/tmp/meetmate-frames-public",
+    resolveHome: () => "/tmp/meetmate-frames-home",
   });
 
   const botRequests = [];
