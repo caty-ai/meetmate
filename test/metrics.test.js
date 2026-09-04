@@ -76,6 +76,50 @@ test("internal metrics write failures do not propagate to caller", async () => {
   assert.equal(appendCalls, 1);
 });
 
+test("warnOnce scrubs labelled secrets from write failures", async () => {
+  const secret = "key" + "_" + "abc12";
+  const metrics = freshMetrics({ METRICS_LOG_DIR: tempDir(), METRICS_DISABLED: undefined });
+  const warnings = [];
+  const originalWarn = console.warn;
+  metrics._test.setAppendFileForTest(() => {
+    throw new Error(`api_key=${secret}`);
+  });
+  console.warn = (...args) => warnings.push(args.join(" "));
+
+  try {
+    metrics.recordEvent("first_token", { meeting_id: "meeting-scrub" });
+    await metrics._test.flush();
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /^metrics recording disabled after error:/);
+  assert.match(warnings[0], /\[REDACTED\]/);
+  assert.equal(warnings[0].includes(secret), false);
+});
+
+test("warnOnce preserves benign write failures", async () => {
+  const metrics = freshMetrics({ METRICS_LOG_DIR: tempDir(), METRICS_DISABLED: undefined });
+  const warnings = [];
+  const originalWarn = console.warn;
+  metrics._test.setAppendFileForTest(() => {
+    throw new Error("upstream 503");
+  });
+  console.warn = (...args) => warnings.push(args.join(" "));
+
+  try {
+    metrics.recordEvent("first_token", { meeting_id: "meeting-benign" });
+    await metrics._test.flush();
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0], "metrics recording disabled after error: upstream 503");
+  assert.equal(warnings[0].includes("[REDACTED]"), false);
+});
+
 test("SIGTERM flushes pending metrics and terminates with signal semantics", async (t) => {
   const dir = tempDir();
   const metricsPath = path.join(__dirname, "..", "src", "metrics.js");

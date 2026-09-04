@@ -1,4 +1,5 @@
 const { captureStartup, getStartup } = require("../settings/bootstrap");
+const { scrubLogMessage } = require("../log-scrub");
 const packageJson = require("../../package.json");
 
 const DEFAULT_BASE_URL = "http://localhost:5005";
@@ -159,12 +160,17 @@ async function start() {
   await server.connect(new StdioServerTransport());
 }
 
-module.exports = { buildJoinBody, callApi, createToolHandlers, deriveWsUrl, start };
+function formatStartupError(error) {
+  const message = scrubLogMessage((error || {}).message || error, undefined);
+  return message + (error && error.code ? ` (${error.code})` : "");
+}
+
+module.exports = { buildJoinBody, callApi, createToolHandlers, deriveWsUrl, formatStartupError, start };
 
 if (require.main === module) {
   captureStartup();
   start().catch((error) => {
-    console.error(error.stack || error.message);
+    console.error(formatStartupError(error));
     process.exitCode = 1;
   });
 }

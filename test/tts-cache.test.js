@@ -490,6 +490,52 @@ test("prewarm skips existing cache files and swallows per-phrase errors", async 
   assert.deepEqual(fs.readFileSync(cache.fileFor("new", { referenceId: "voice", sampleRate: 24_000, speed: 1 })), Buffer.from([7, 8]));
 });
 
+test("prewarm scrubs labelled secrets from raw-string failures", async () => {
+  const secret = "key" + "_" + "abc12";
+  const warnings = [];
+  const originalWarn = console.warn;
+  const cache = createTtsCache({
+    dir: tempDir(),
+    synthesizeFn: async () => {
+      throw `api_key=${secret}`;
+    },
+  });
+  console.warn = (...args) => warnings.push(args.join(" "));
+
+  try {
+    await cache.prewarm(["unsafe"], { sampleRate: 24_000 });
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /^⚠️  TTS cache prewarm failed \(unsafe\):/);
+  assert.match(warnings[0], /\[REDACTED\]/);
+  assert.equal(warnings[0].includes(secret), false);
+});
+
+test("prewarm preserves benign raw-string failures", async () => {
+  const warnings = [];
+  const originalWarn = console.warn;
+  const cache = createTtsCache({
+    dir: tempDir(),
+    synthesizeFn: async () => {
+      throw "socket hung up";
+    },
+  });
+  console.warn = (...args) => warnings.push(args.join(" "));
+
+  try {
+    await cache.prewarm(["benign"], { sampleRate: 24_000 });
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0], "⚠️  TTS cache prewarm failed (benign): socket hung up");
+  assert.equal(warnings[0].includes("[REDACTED]"), false);
+});
+
 test("prewarm stops before the next phrase when aborted", async () => {
   const dir = tempDir();
   const abort = new AbortController();

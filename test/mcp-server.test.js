@@ -1,7 +1,7 @@
 const assert = require("node:assert/strict");
 const http = require("node:http");
 const test = require("node:test");
-const { buildJoinBody, callApi, createToolHandlers, deriveWsUrl } = require("../src/mcp/server");
+const { buildJoinBody, callApi, createToolHandlers, deriveWsUrl, formatStartupError } = require("../src/mcp/server");
 
 async function withServer(handler, callback) {
   const server = http.createServer(handler);
@@ -26,6 +26,19 @@ test("deriveWsUrl prefers publicWsUrl and otherwise derives the base host", () =
   assert.equal(deriveWsUrl("http://example.test:5005/", { publicWsUrl: "wss://public.example/ws" }), "wss://public.example/ws");
   assert.equal(deriveWsUrl("http://example.test:5005/", {}), "ws://example.test:5005");
   assert.equal(deriveWsUrl("https://example.test:8443/api", null), "wss://example.test:8443");
+});
+
+test("formatStartupError scrubs the message, keeps the code, and omits the stack", () => {
+  const secret = "key" + "_" + "abc12";
+  const error = new Error(`api_key=${secret}`);
+  error.code = "E_START";
+  error.stack = `STACK_ONLY ${secret}`;
+
+  const output = formatStartupError(error);
+
+  assert.equal(output, "api_key=[REDACTED] (E_START)");
+  assert.equal(output.includes(secret), false);
+  assert.equal(output.includes("STACK_ONLY"), false);
 });
 
 test("buildJoinBody uses the REST form field names", () => {

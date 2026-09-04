@@ -223,7 +223,7 @@
     {
       "name": "ECHO_GATE_CLOSED_BYPASS",
       "references": [
-        "src/transport-meet/meet-routes.js:54"
+        "src/transport-meet/meet-routes.js:55"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -234,7 +234,7 @@
       "name": "ECHO_LOOP_COOLDOWN_MS",
       "references": [
         "src/config.js:52",
-        "src/transport-meet/meet-routes.js:53"
+        "src/transport-meet/meet-routes.js:54"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -371,7 +371,7 @@
     {
       "name": "JOIN_SHARED_TOKEN",
       "references": [
-        "src/transport-meet/meet-routes.js:55"
+        "src/transport-meet/meet-routes.js:56"
       ],
       "ux": "hidden",
       "credentialClass": "class-3-internal-control",
@@ -435,7 +435,7 @@
     {
       "name": "METRICS_DISABLED",
       "references": [
-        "src/metrics.js:10"
+        "src/metrics.js:11"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -560,7 +560,7 @@
     {
       "name": "OPENCLAW_WORKSPACE",
       "references": [
-        "src/transport-meet/meet-routes.js:586"
+        "src/transport-meet/meet-routes.js:587"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -619,7 +619,7 @@
       "name": "PUBLIC_WSS_URL",
       "references": [
         "src/transport-meet/meet-routes.js:1000",
-        "src/transport-meet/meet-routes.js:999"
+        "src/transport-meet/meet-routes.js:1001"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -639,7 +639,7 @@
     {
       "name": "SESSION_GRACE_CLOSE_MS",
       "references": [
-        "src/transport-meet/meet-routes.js:52"
+        "src/transport-meet/meet-routes.js:53"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -721,7 +721,7 @@
     {
       "name": "SONIOX_KEEPALIVE_INTERVAL_MS",
       "references": [
-        "src/stt-soniox.js:56"
+        "src/stt-soniox.js:57"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -747,7 +747,7 @@
     {
       "name": "SONIOX_PENDING_MAX",
       "references": [
-        "src/stt-soniox.js:60"
+        "src/stt-soniox.js:61"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -765,7 +765,7 @@
     {
       "name": "STT_ACCUMULATED_MAX_CHARS",
       "references": [
-        "src/stt-soniox.js:17",
+        "src/stt-soniox.js:18",
         "src/stt.js:8"
       ],
       "ux": "deployment-readonly",
@@ -893,7 +893,7 @@
     {
       "name": "WS_SHARED_TOKEN",
       "references": [
-        "src/transport-meet/meet-routes.js:56"
+        "src/transport-meet/meet-routes.js:57"
       ],
       "ux": "hidden",
       "credentialClass": "class-3-internal-control",

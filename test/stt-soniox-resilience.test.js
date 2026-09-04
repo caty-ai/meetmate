@@ -40,6 +40,55 @@ test("Soniox handshake rejection socket error records runtime PAYMENT_REQUIRED",
   });
 });
 
+test("Soniox socket error logs scrub the configured API key", async () => {
+  await withFreshSonioxModule({}, async ({ createSonioxSTT }) => {
+    const apiKey = "key" + "_" + "abc12";
+    const instances = [];
+    const errors = [];
+    const originalError = console.error;
+    const FakeWebSocket = fakeWebSocketCtor(instances);
+    const stt = createSonioxSTT(apiKey, { _wsCtor: FakeWebSocket, _buildKeyterms: () => [] });
+    stt.on("error", () => {});
+    console.error = (...args) => errors.push(args.join(" "));
+
+    try {
+      instances[0].emit("error", new Error(`socket rejected ${apiKey}`));
+    } finally {
+      console.error = originalError;
+      stt.close();
+    }
+
+    assert.equal(errors.length, 1);
+    assert.match(errors[0], /^❌  STT\(Soniox\) error:/);
+    assert.match(errors[0], /\[REDACTED\]/);
+    assert.equal(errors[0].includes(apiKey), false);
+  });
+});
+
+test("Soniox socket error logs preserve benign messages with a configured API key", async () => {
+  await withFreshSonioxModule({}, async ({ createSonioxSTT }) => {
+    const apiKey = "key" + "_" + "abc12";
+    const instances = [];
+    const errors = [];
+    const originalError = console.error;
+    const FakeWebSocket = fakeWebSocketCtor(instances);
+    const stt = createSonioxSTT(apiKey, { _wsCtor: FakeWebSocket, _buildKeyterms: () => [] });
+    stt.on("error", () => {});
+    console.error = (...args) => errors.push(args.join(" "));
+
+    try {
+      instances[0].emit("error", new Error("socket hung up"));
+    } finally {
+      console.error = originalError;
+      stt.close();
+    }
+
+    assert.equal(errors.length, 1);
+    assert.equal(errors[0], "❌  STT(Soniox) error: socket hung up");
+    assert.equal(errors[0].includes("[REDACTED]"), false);
+  });
+});
+
 test("Soniox STT sends keepalive frames on interval while open", async () => {
   await withFreshSonioxModule(
     { SONIOX_KEEPALIVE_INTERVAL_MS: "30" },

@@ -11,6 +11,7 @@
 //   5. Send an empty frame to finish; server replies { finished: true } and closes.
 
 const { EventEmitter } = require("events");
+const { scrubLogMessage } = require("./log-scrub");
 const { getEffectiveValue } = require("./settings/resolver");
 
 const DEFAULT_SONIOX_WS_URL = "wss://stt-rt.soniox.com/transcribe-websocket";
@@ -162,7 +163,7 @@ function createSonioxSTT(apiKey, options = {}) {
       try {
         socket.send(pending.shift());
       } catch (err) {
-        console.error("❌  STT(Soniox) flush error:", err.message);
+        console.error("❌  STT(Soniox) flush error:", scrubErrorMessage(err, apiKey));
         break;
       }
     }
@@ -309,7 +310,7 @@ function createSonioxSTT(apiKey, options = {}) {
     socket.on("error", (err) => {
       if (socket !== ws) return;
       clearKeepAlive();
-      console.error("❌  STT(Soniox) error:", err?.message || err);
+      console.error("❌  STT(Soniox) error:", scrubErrorMessage(err, apiKey));
       if (!opened) {
         readiness.reportRuntimeFailure("soniox", readiness.classifyRuntimeFailure(withHandshakeStatus(err)));
       }
@@ -357,7 +358,7 @@ function createSonioxSTT(apiKey, options = {}) {
     try {
       ws.send(audioBuffer);
     } catch (err) {
-      console.error("❌  STT(Soniox) send error:", err.message);
+      console.error("❌  STT(Soniox) send error:", scrubErrorMessage(err, apiKey));
     }
   };
 
@@ -389,6 +390,10 @@ function withHandshakeStatus(error) {
   if (readiness.runtimeStatus(error)) return error;
   const match = /^Unexpected server response:\s*(401|402|403|404|429)\b/.exec(String(error?.message || ""));
   return match ? { statusCode: Number(match[1]) } : error;
+}
+
+function scrubErrorMessage(err, secret) {
+  return scrubLogMessage(err && err.message ? err.message : err, secret);
 }
 
 module.exports = { createSonioxSTT };
