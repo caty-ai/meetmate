@@ -5,6 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 const {
   readMetricsSummary,
+  sendMetricsSummary,
   servePublicAsset,
 } = require("../src/ui-routes");
 
@@ -128,6 +129,36 @@ test("readMetricsSummary returns empty totals for an empty metrics file", async 
   assert.deepEqual(summary.recentSessions, []);
 });
 
+test("metrics summary logs scrub labelled secrets and preserve benign messages", async (t) => {
+  const value = ["ui", "184", "key"].join("");
+  const originalWarn = console.warn;
+  const warnings = [];
+  console.warn = (...args) => warnings.push(args);
+
+  try {
+    const rows = [
+      [`metrics read failed token=${value}`, "metrics read failed token=[REDACTED]"],
+      ["metrics read temporarily unavailable", "metrics read temporarily unavailable"],
+    ];
+
+    for (const [message] of rows) {
+      const response = await invokeMetricsSummary(message);
+      assert.equal(response.statusCode, 200);
+      assert.deepEqual(JSON.parse(response.body), { enabled: false });
+    }
+
+    for (const [index, [, expected]] of rows.entries()) {
+      const name = index === 0 ? "labelled secret row" : "benign row";
+      await t.test(name, () => assert.deepEqual(
+        warnings[index],
+        ["metrics summary failed:", expected],
+      ));
+    }
+  } finally {
+    console.warn = originalWarn;
+  }
+});
+
 test("servePublicAsset does not serve non-GET requests for known assets", async () => {
   const res = await serveAsset("/style.css", "POST");
   assert.equal(res, false);
@@ -179,4 +210,22 @@ function serveAsset(requestPath, method = "GET") {
       reject(err);
     }
   });
+}
+
+async function invokeMetricsSummary(message) {
+  const req = { method: "GET", url: "/metrics" };
+  const url = {
+    pathname: "/metrics",
+    searchParams: {
+      get() { throw new Error(message); },
+    },
+  };
+  const response = { statusCode: null, body: "" };
+  const res = {
+    writeHead(statusCode) { response.statusCode = statusCode; },
+    end(body = "") { response.body = String(body); },
+  };
+
+  assert.equal(await sendMetricsSummary(req, res, url), true);
+  return response;
 }

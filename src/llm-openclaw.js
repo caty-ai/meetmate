@@ -5,6 +5,11 @@ const http = require("http");
 const https = require("https");
 const { filterSilentRepliesStream } = require("./speech-policy");
 const { buildVoiceAddendumFromMessages, resolveMessages } = require("./messages");
+const { scrubLogMessage } = require("./log-scrub");
+
+function scrubErrorMessage(err, secret) {
+  return scrubLogMessage(err && err.message ? err.message : err, secret);
+}
 
 function resolveCompletionPath(gatewayUrl) {
   // Design #114 explicitly permits base URLs with path prefixes.
@@ -131,7 +136,7 @@ function timeoutHandoff(params) {
       resolveHandoff(true);
       return;
     }
-    console.error("❌  Timeout handoff request error:", err.message);
+    console.error("❌  Timeout handoff request error:", scrubErrorMessage(err, params.openclawToken));
     resolveHandoff(false);
   });
 

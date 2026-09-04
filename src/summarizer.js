@@ -2,6 +2,14 @@
 
 const crypto = require("node:crypto");
 const { DEFAULT_MESSAGES } = require("./messages");
+const { scrubLogMessage } = require("./log-scrub");
+
+function scrubErrorMessage(err, secret, additionalSecret) {
+  return scrubLogMessage(
+    scrubLogMessage(err && err.message ? err.message : err, secret),
+    additionalSecret,
+  );
+}
 
 const SUMMARY_PROMPT = DEFAULT_MESSAGES.prompts.summary;
 
@@ -73,7 +81,14 @@ async function summarizeConversation(conversationLog, options = {}) {
     // Parse JSON from response (handle potential markdown wrapping)
     return parseJsonResponse(responseText, { taskExtractionEnabled });
   } catch (err) {
-    console.error("⚠️  Summarizer error:", err.message);
+    console.error(
+      "⚠️  Summarizer error:",
+      scrubErrorMessage(
+        err,
+        options.llm?.openaiCompatible?.apiKey,
+        options.llm?.gateway?.token,
+      ),
+    );
     return { summary: [], decisions: [], todos: [] };
   }
 }
