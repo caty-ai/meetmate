@@ -9,6 +9,7 @@ const { getExitCommands, detectExitIntent } = require("./exit-handler");
 const { shouldSuppressReply, stripEmojis, stripRareScriptCharacters, extractChatTags } = require("./speech-policy");
 const { recordEvent } = require("./metrics");
 const gatewayEventsClient = require("./gateway-events");
+const { scrubLogMessage } = require("./log-scrub");
 const { DEFAULT_MESSAGES, renderTemplate, resolveMessages } = require("./messages");
 const { createEnvelopeAccumulator } = require("./audio-envelope");
 
@@ -68,6 +69,10 @@ function withLlmResponseStatus(error, openclaw) {
     : /^OpenAI-compatible error \((401|402|404)\):/;
   const match = pattern.exec(String(error?.message || ""));
   return match ? { statusCode: Number(match[1]) } : error;
+}
+
+function scrubErrorMessage(err, secret) {
+  return scrubLogMessage(err && err.message ? err.message : err, secret);
 }
 
 // Cancel word detection: strict boundary match to avoid false positives
@@ -703,6 +708,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
 
   const dgKey = config.dgKey;
   const fishKey = config.fishKey;
+  const gatewayToken = config.llm.gateway?.token;
   const selectedAgentIds = Array.isArray(options.selectedAgentIds) ? options.selectedAgentIds.filter(Boolean) : [];
   const hasSelectedAgents = selectedAgentIds.length > 0;
   const agents = options.agents || {};
@@ -728,7 +734,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         onReady: ({ members }) => {
           if (typeof onChatMessage === "function") {
             Promise.resolve(onChatMessage(`調停ON / room=${config.hub.roomCode} / members=${members.length}`))
-              .catch((error) => console.warn("⚠️  floor status chat failed:", error.message || error));
+              .catch((error) => console.warn("⚠️  floor status chat failed:", scrubErrorMessage(error, gatewayToken)));
           }
         },
       }))
@@ -1096,7 +1102,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       }
       return ok;
     } catch (err) {
-      console.warn(`⚠️  parent compact failed (${reason}):`, err.message || err);
+      console.warn(`⚠️  parent compact failed (${reason}):`, scrubErrorMessage(err, gatewayToken));
       recordGatewayMetric("parent_compact", { ok: false, reason, error: String(err?.message || err).slice(0, 120) });
       return false;
     }
@@ -1262,7 +1268,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     pendingHandoffDrainTimer = setTimeout(() => {
       pendingHandoffDrainTimer = null;
       drainPendingHandoffs().catch((err) => {
-        console.warn("⚠️  pending handoff drain failed:", err.message || err);
+        console.warn("⚠️  pending handoff drain failed:", scrubErrorMessage(err, gatewayToken));
       });
     }, delay);
     pendingHandoffDrainTimer.unref?.();
@@ -1300,7 +1306,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       try {
         success = await item.dispatch();
       } catch (err) {
-        console.warn("⚠️  pending handoff dispatch threw:", err.message || err);
+        console.warn("⚠️  pending handoff dispatch threw:", scrubErrorMessage(err, gatewayToken));
       }
       item.attempts = (item.attempts || 0) + 1;
       if (success) {
@@ -1396,7 +1402,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     });
     syncGatewayDelegationState();
     drainPendingHandoffs().catch((err) => {
-      console.warn("⚠️  pending handoff drain failed:", err.message || err);
+      console.warn("⚠️  pending handoff drain failed:", scrubErrorMessage(err, gatewayToken));
     });
     return { suppressedReport };
   }
@@ -1437,7 +1443,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       enqueuedAt: Date.now(),
     });
     drainReportQueue().catch((err) => {
-      console.warn("⚠️  report voice queue failed:", err.message || err);
+      console.warn("⚠️  report voice queue failed:", scrubErrorMessage(err, gatewayToken));
     });
   }
 
@@ -1497,7 +1503,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         chatPosted = await Promise.resolve(onChatMessage(chatMessage))
           .then((ok) => ok === true)
           .catch((err) => {
-            console.warn("⚠️  delegation chat report failed:", err.message || err);
+            console.warn("⚠️  delegation chat report failed:", scrubErrorMessage(err, gatewayToken));
             return false;
           });
         if (chatPosted) {
@@ -1509,7 +1515,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       enqueueReportVoiceLine(buildCompletionVoiceLine(result, chatPosted));
       return true;
     } catch (err) {
-      console.warn("⚠️  gateway completion handling failed:", err.message || err);
+      console.warn("⚠️  gateway completion handling failed:", scrubErrorMessage(err, gatewayToken));
       return false;
     }
   }
@@ -1576,7 +1582,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       });
       syncGatewayDelegationState();
       drainPendingHandoffs().catch((err) => {
-        console.warn("⚠️  pending handoff drain failed:", err.message || err);
+        console.warn("⚠️  pending handoff drain failed:", scrubErrorMessage(err, gatewayToken));
       });
       return true;
     }
@@ -1587,7 +1593,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       chatPosted = await Promise.resolve(onChatMessage(chatMessage))
         .then((ok) => ok === true)
         .catch((err) => {
-          console.warn("⚠️  delegate reply chat relay failed:", err.message || err);
+          console.warn("⚠️  delegate reply chat relay failed:", scrubErrorMessage(err, gatewayToken));
           return false;
         });
       if (chatPosted) recordGatewayMetric("report_posted", { channel: "chat", source: "delegate_reply" });
@@ -1614,7 +1620,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     });
     syncGatewayDelegationState();
     drainPendingHandoffs().catch((err) => {
-      console.warn("⚠️  pending handoff drain failed:", err.message || err);
+      console.warn("⚠️  pending handoff drain failed:", scrubErrorMessage(err, gatewayToken));
     });
     return true;
   }
@@ -1864,12 +1870,12 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     }
     if (isProcessing && cleanedText && isWakeCancelText(cleanedText, agents, selectedAgentIds, resolvedRegex)) {
       const wakeCancelPromise = handleWakeCancelAbort(cleanedText)
-        .catch((err) => console.error("❌  wake+cancel handler error:", err.message || err));
+        .catch((err) => console.error("❌  wake+cancel handler error:", scrubErrorMessage(err, gatewayToken)));
       if (slot) {
         utteranceChain = utteranceChain
           .then(() => wakeCancelPromise)
           .then(() => maybeEvictSpeakerSlot(slot))
-          .catch((err) => console.error("❌  wake+cancel slot cleanup error:", err.message || err));
+          .catch((err) => console.error("❌  wake+cancel slot cleanup error:", scrubErrorMessage(err, gatewayToken)));
       }
       return wakeCancelPromise;
     }
@@ -1882,7 +1888,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       .then(() => {
         if (slot) maybeEvictSpeakerSlot(slot);
       })
-      .catch((err) => console.error("❌  utterance_end handler error:", err.message || err));
+      .catch((err) => console.error("❌  utterance_end handler error:", scrubErrorMessage(err, gatewayToken)));
   }
 
   function attachSttListeners(stream, speakerResolver, slot = null) {
@@ -1896,7 +1902,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     });
     stream.on("error", (err) => {
       if (slot && !currentSlotFor(slot)) return;
-      console.error("❌  STT error:", err.message || err);
+      console.error("❌  STT error:", scrubErrorMessage(err, gatewayToken));
     });
   }
 
@@ -1974,7 +1980,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         try {
           verdict = await floorTurn?.verdictPromise;
         } catch (error) {
-          console.warn("⚠️  farewell floor verdict failed:", error.message || error);
+          console.warn("⚠️  farewell floor verdict failed:", scrubErrorMessage(error, gatewayToken));
           verdict = { kind: "degraded", delayMs: floorClient.fallbackDelayMs() };
         }
         if (
@@ -1987,7 +1993,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
             hubAuthorized = true;
             entry.addressed = true;
           } catch (error) {
-            console.warn("⚠️  farewell floor acquire failed:", error.code || error.message || error);
+            console.warn("⚠️  farewell floor acquire failed:", error.code || scrubErrorMessage(error, gatewayToken));
           }
         } else if (
           verdict?.kind === "assigned"
@@ -2014,7 +2020,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         try {
           verdict = await floorTurn?.verdictPromise;
         } catch (error) {
-          console.warn("⚠️  floor verdict failed:", error.message || error);
+          console.warn("⚠️  floor verdict failed:", scrubErrorMessage(error, gatewayToken));
           verdict = { kind: "degraded", delayMs: floorClient.fallbackDelayMs() };
         }
 
@@ -2026,7 +2032,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
             entry.injectToLlm = true;
             currentWakeEntry = entry;
           } catch (error) {
-            console.warn("⚠️  floor acquire failed:", error.code || error.message || error);
+            console.warn("⚠️  floor acquire failed:", error.code || scrubErrorMessage(error, gatewayToken));
             entry.injectToLlm = false;
             appendConversationEntry("user", `[会議音声・未指名] ${cleanedText}`, currentAgentId || null, attributedSpeaker);
             await reopenGateAndRescan("floor_acquire_failed");
@@ -2244,7 +2250,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         }
       }
     } catch (error) {
-      console.error("❌  Pending replay error:", error.message || error);
+      console.error("❌  Pending replay error:", scrubErrorMessage(error, gatewayToken));
     }
     gateState = "OPEN";
     turnState.gateState = gateState;
@@ -2399,7 +2405,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
 
           console.log(`🔄  Timeout handoff spawned for: "${trimmed.slice(0, 80)}${trimmed.length > 80 ? "…" : ""}"`);
         } catch (err) {
-          console.error("❌  Timeout handoff setup error:", err.message);
+          console.error("❌  Timeout handoff setup error:", scrubErrorMessage(err, gatewayToken));
           finish(false);
         }
       });
@@ -2529,7 +2535,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
             const attempts = Number(result?.attempts || 1);
             recordGatewayMetric("abort_requested", { ok, attempts });
           }).catch((err) => {
-            console.warn("⚠️  gateway abort fire-and-forget failed:", err.message || err);
+            console.warn("⚠️  gateway abort fire-and-forget failed:", scrubErrorMessage(err, gatewayToken));
             recordGatewayMetric("abort_requested", { ok: false, attempts: 1 });
           });
         }
@@ -2648,10 +2654,10 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         }
         try {
           Promise.resolve(onChatMessage(message)).catch((err) => {
-            console.error(`❌  chatタグ送信コールバック失敗 (${source}):`, err.message || err);
+            console.error(`❌  chatタグ送信コールバック失敗 (${source}):`, scrubErrorMessage(err, gatewayToken));
           });
         } catch (err) {
-          console.error(`❌  chatタグ送信コールバック失敗 (${source}):`, err.message || err);
+          console.error(`❌  chatタグ送信コールバック失敗 (${source}):`, scrubErrorMessage(err, gatewayToken));
         }
       };
 
@@ -2862,7 +2868,12 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         });
         return;
       }
-      console.error("❌  Pipeline error:", err.message || err.code || JSON.stringify(err));
+      console.error(
+        "❌  Pipeline error:",
+        err && err["message"]
+          ? scrubErrorMessage(err, gatewayToken)
+          : err?.code || scrubLogMessage(JSON.stringify(err), gatewayToken),
+      );
 
       // Speak error message
       try {
@@ -2993,7 +3004,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       });
     } catch (err) {
       if (signal?.aborted) return;
-      console.error("❌  TTS error:", err.message);
+      console.error("❌  TTS error:", scrubErrorMessage(err, gatewayToken));
     }
   }
 
@@ -3038,7 +3049,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     };
 
     ttsCache.prewarm(phrases.map((text) => ({ text })), baseOptions).catch((err) => {
-      console.warn("⚠️  TTS cache prewarm failed:", err.message || err);
+      console.warn("⚠️  TTS cache prewarm failed:", scrubErrorMessage(err, gatewayToken));
     });
   }
 
@@ -3095,7 +3106,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       }
     } catch (err) {
       if (!greetAbort.signal.aborted && err.code !== "not_assigned") {
-        console.error("❌  Greeting TTS error:", err.message);
+        console.error("❌  Greeting TTS error:", scrubErrorMessage(err, gatewayToken));
       } else if (err.code === "not_assigned") {
         console.debug("🔇  Greeting swallowed: not_assigned");
       }
@@ -3276,6 +3287,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
 module.exports = {
   createPipeline,
   _test: {
+    scrubErrorMessage,
     shouldSendImmediateAck,
     selectMeetingContextEntries,
     isWakeCancelText,
