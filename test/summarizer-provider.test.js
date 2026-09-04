@@ -238,6 +238,44 @@ test("summarizer operator logs scrub the configured API key and preserve benign 
   }
 });
 
+test("summarizer operator logs scrub the configured gateway token", async () => {
+  const originalProvider = require.cache[providerPath];
+  const originalSummarizer = require.cache[summarizerPath];
+  const gatewayToken = ["gw", "184", "key"].join("");
+  const errors = [];
+  const originalError = console.error;
+  console.error = (...args) => errors.push(args);
+  try {
+    require.cache[providerPath] = { exports: {
+      createLlmProvider: () => ({
+        complete: async () => { throw new Error("gateway rejected " + gatewayToken); },
+      }),
+    } };
+    delete require.cache[summarizerPath];
+    const { summarizeConversation } = require("../src/summarizer");
+    const gatewayCfg = (url, token) => ({ url, token });
+    await summarizeConversation([{ role: "user", content: "hello" }], {
+      llm: {
+        provider: "openclaw",
+        model: "agent",
+        gateway: gatewayCfg("https://gw.test", gatewayToken),
+      },
+    });
+
+    assert.deepEqual(
+      errors[0],
+      ["⚠️  Summarizer error:", "gateway rejected [REDACTED]"],
+    );
+    assert.equal(errors[0].join(" ").includes(gatewayToken), false);
+  } finally {
+    console.error = originalError;
+    delete require.cache[summarizerPath];
+    if (originalSummarizer) require.cache[summarizerPath] = originalSummarizer;
+    if (originalProvider === undefined) delete require.cache[providerPath];
+    else require.cache[providerPath] = originalProvider;
+  }
+});
+
 test("meeting-end task extraction reads the restart-required boot value", () => {
   const resolver = require("../src/settings/resolver");
   const startup = Object.freeze({

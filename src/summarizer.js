@@ -4,8 +4,11 @@ const crypto = require("node:crypto");
 const { DEFAULT_MESSAGES } = require("./messages");
 const { scrubLogMessage } = require("./log-scrub");
 
-function scrubErrorMessage(err, secret) {
-  return scrubLogMessage(err && err.message ? err.message : err, secret);
+function scrubErrorMessage(err, secret, additionalSecret) {
+  return scrubLogMessage(
+    scrubLogMessage(err && err.message ? err.message : err, secret),
+    additionalSecret,
+  );
 }
 
 const SUMMARY_PROMPT = DEFAULT_MESSAGES.prompts.summary;
@@ -80,7 +83,11 @@ async function summarizeConversation(conversationLog, options = {}) {
   } catch (err) {
     console.error(
       "⚠️  Summarizer error:",
-      scrubErrorMessage(err, options.llm?.openaiCompatible?.apiKey),
+      scrubErrorMessage(
+        err,
+        options.llm?.openaiCompatible?.apiKey,
+        options.llm?.gateway?.token,
+      ),
     );
     return { summary: [], decisions: [], todos: [] };
   }
