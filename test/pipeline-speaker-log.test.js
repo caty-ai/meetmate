@@ -174,6 +174,19 @@ test("user transcript log falls back to platform and id", { concurrency: false }
   });
 });
 
+test("user transcript log falls back to id when platform is absent", { concurrency: false }, async () => {
+  await withPipeline(async ({ pipeline, sttInstances, logs }) => {
+    const stt = attributedStt(pipeline, sttInstances, { id: "user-9", isBot: false });
+    stt.emit("utterance_end", "id-only identity");
+
+    await waitFor(
+      () => logs.includes('🔇  [会議音声・未指名] [user-9] "id-only identity..."'),
+      "id-only utterance did not finish",
+    );
+    assert.ok(logs.includes("💬  [user] [user-9] id-only identity"));
+  });
+});
+
 test("user transcript log without speaker metadata is byte-identical", { concurrency: false }, async () => {
   await withPipeline(async ({ sttInstances, logs }) => {
     sttInstances[0].emit("utterance_end", "shared stream text");
@@ -195,6 +208,26 @@ test("final transcript logs include a tag only for resolved speakers", { concurr
 
     assert.ok(logs.includes("🎤  [interim→final] [Carol] attributed final"));
     assert.ok(logs.includes("🎤  [interim→final] shared final"));
+  });
+});
+
+test("synthetic unknown mixed-stream speakers keep transcript logs byte-identical", { concurrency: false }, async () => {
+  await withPipeline(async ({ pipeline, sttInstances, logs }) => {
+    pipeline.sendAudio(Buffer.alloc(2), {
+      speaker: { platform: "discord", id: "unknown", isBot: false },
+    });
+    assert.equal(sttInstances.length, 1);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    sttInstances[0].emit("transcript", "unknown mixed final", true, 0.99);
+    sttInstances[0].emit("utterance_end", "unknown mixed text");
+
+    await waitFor(
+      () => logs.includes('🔇  [会議音声・未指名] "unknown mixed text..."'),
+      "unknown mixed utterance did not finish",
+    );
+    assert.ok(logs.includes("🎤  [interim→final] unknown mixed final"));
+    assert.ok(logs.includes("💬  [user] unknown mixed text"));
+    assert.ok(logs.every((line) => !line.includes("[discord:unknown]")));
   });
 });
 

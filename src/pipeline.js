@@ -551,10 +551,12 @@ function cloneSpeakerMeta(speaker) {
 
 function speakerTag(speaker) {
   const speakerId = String(speaker?.id ?? "");
-  if (!speakerId) return "";
+  if (!speakerId || speakerId === UNKNOWN_SPEAKER_ID) return "";
   const tag = typeof speaker.displayName === "string" && speaker.displayName.length > 0
     ? speaker.displayName
-    : `${speaker.platform}:${speakerId}`;
+    : typeof speaker.platform === "string" && speaker.platform.length > 0
+      ? `${speaker.platform}:${speakerId}`
+      : speakerId;
   return ` [${tag}]`;
 }
 
