@@ -63,15 +63,12 @@ test("hub URL scheme and per-install tail are validated and resolved", () => {
   });
 });
 
-test("cloud hub mode uses the installation token and leaves room-code derivation to the caller", () => {
+test("cloud hub mode stays disabled until room-code derivation lands", () => {
   const result = loadConfigWith({ HUB_TOKEN: "env-hub-token" }, {
     hub: {
       cloudUrl: "https://cloud.example.test",
       token: "stored-hub",
       cloudHubUrl: "wss://cloud-floor.example.test/ws",
-      url: "wss://shared-floor.example.test/ws",
-      roomCode: "shared-room",
-      sharedToken: "shared-token",
       roomSalt: "salt-secret",
       roomSaltVersion: "v7",
       installationId: "install-190",
@@ -80,7 +77,7 @@ test("cloud hub mode uses the installation token and leaves room-code derivation
   });
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(JSON.parse(result.stdout), {
-    enabled: true,
+    enabled: false,
     url: "wss://cloud-floor.example.test/ws",
     roomCode: null,
     authToken: "env-hub-token",
@@ -93,8 +90,55 @@ test("cloud hub mode uses the installation token and leaves room-code derivation
   });
 });
 
+test("cloud hub mode ignores leftover shared settings until room-code derivation lands", () => {
+  const result = loadConfigWith({}, {
+    hub: {
+      token: "stored-hub",
+      cloudHubUrl: "wss://cloud-floor.example.test/ws",
+      url: "wss://shared-floor.example.test/ws",
+      roomCode: "leftover-shared-room",
+      sharedToken: "leftover-shared",
+    },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), {
+    enabled: false,
+    url: "wss://cloud-floor.example.test/ws",
+    roomCode: null,
+    authToken: "stored-hub",
+    tailMs: 500,
+    roomSalt: "",
+    roomSaltVersion: "",
+    installationId: "",
+    planId: "",
+    mode: "cloud",
+  });
+});
+
+test("cloud hub mode ignores HUB_ROOM_CODE from the environment", () => {
+  const result = loadConfigWith({ HUB_ROOM_CODE: "leftover-env-room" }, {
+    hub: {
+      token: "stored-hub",
+      cloudHubUrl: "wss://cloud-floor.example.test/ws",
+    },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), {
+    enabled: false,
+    url: "wss://cloud-floor.example.test/ws",
+    roomCode: null,
+    authToken: "stored-hub",
+    tailMs: 500,
+    roomSalt: "",
+    roomSaltVersion: "",
+    installationId: "",
+    planId: "",
+    mode: "cloud",
+  });
+});
+
 test("cloud hub mode requires its dedicated hub URL alongside HUB_TOKEN", () => {
   const result = loadConfigWith({ HUB_TOKEN: "env-hub-token" });
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /Cloud hub URL and HUB_TOKEN must be set together/);
+  assert.match(result.stderr, /hub\.cloudHubUrl and HUB_TOKEN must be set together/);
 });

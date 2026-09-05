@@ -46,6 +46,7 @@ const {
   cloudDisconnectRequestSchema,
   exportDocumentSchema,
   importRequestSchema,
+  isImportableSetting,
   parseStrict,
   revisionOnlySchema,
   settingsMutationSchema,
@@ -392,7 +393,7 @@ function prepareMutationFields(fields, revision) {
 }
 
 function importableEntries() {
-  return SETTINGS_REGISTRY.filter((entry) => entry.writeSurface === "settings" && entry.credential === "none");
+  return SETTINGS_REGISTRY.filter((entry) => isImportableSetting(entry) && entry.transferable);
 }
 
 function buildExportDocument(now = new Date()) {
@@ -421,7 +422,13 @@ function parseImportRequest(value) {
       throw settingsError("SETTINGS_IMPORT_VERSION_UNSUPPORTED", "Settings import version is not supported", 409);
     }
   }
-  return parseStrict(importRequestSchema, value);
+  const request = parseStrict(importRequestSchema, value);
+  const nonTransferableId = Object.keys(request.document.settings)
+    .find((id) => SETTINGS_REGISTRY.some((entry) => entry.id === id && !entry.transferable));
+  if (nonTransferableId) {
+    throw settingsError("SETTINGS_VALIDATION_FAILED", "Request validation failed", 422);
+  }
+  return request;
 }
 
 function sameValue(left, right) {

@@ -3,6 +3,12 @@
 const { z } = require("zod");
 const { MASK, SETTINGS_REGISTRY } = require("./registry");
 
+function isImportableSetting(entry) {
+  return entry.writeSurface === "settings"
+    && entry.credential === "none"
+    && entry.transferable !== false;
+}
+
 const sha256RevisionSchema = z.string().regex(/^[a-f0-9]{64}$/);
 const revisionSchema = z.union([sha256RevisionSchema, z.literal("bootstrap")]);
 const floorSettingsSchema = z.object({
@@ -46,7 +52,7 @@ const floorSettingsSchema = z.object({
   debug: z.boolean(),
 }).strict().superRefine((value, context) => {
   if (value.token && !value.cloudHubUrl) {
-    context.addIssue({ code: "custom", message: "Cloud hub URL and HUB_TOKEN must be set together" });
+    context.addIssue({ code: "custom", message: "hub.cloudHubUrl and HUB_TOKEN must be set together" });
   } else if (!value.token && Boolean(value.url) !== Boolean(value.roomCode)) {
     context.addIssue({ code: "custom", message: "HUB_URL and HUB_ROOM_CODE must be set together" });
   }
@@ -92,7 +98,7 @@ const audioMetadataSchema = z.object({
 }).strict();
 
 const importableShape = {};
-for (const entry of SETTINGS_REGISTRY.filter((item) => item.writeSurface === "settings" && item.credential === "none")) {
+for (const entry of SETTINGS_REGISTRY.filter(isImportableSetting)) {
   importableShape[entry.id] = entry.schema.optional();
 }
 
@@ -144,6 +150,7 @@ module.exports = {
   cloudConnectRequestSchema,
   cloudDisconnectRequestSchema,
   floorSettingsSchema,
+  isImportableSetting,
   parseFloorSettings,
   parseStrict,
   exportDocumentSchema,

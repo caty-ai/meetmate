@@ -2,9 +2,9 @@
 
 Version: **v1.3.0**
 
-Changelog: hub cloud group + class-1 `hub_token`/`room_salt` — owner approval pending in PR.
+Changelog: hub cloud group + class-1 `hub_token`/`room_salt`, four cloud admin routes, and non-transferable shared/hosted hub state — owner approved via PR #195 labels on 2026-09-05.
 
-Status: **approved baseline — CP#1 owner approval recorded 2026-08-29 ([#29 comment](https://github.com/caty-ai/meetmate/issues/29#issuecomment-5460738835)); v1.3.0 amendment pending owner approval in PR**. This contract augments the existing Node `http` server and vanilla-JavaScript dashboard on `localhost:5005`. It does not authorize another application, UI framework, persistence store, or port. `config.json` in the resolved home remains the only settings store. The settings UI, admin API, import/export, connection tests, TTS preview, and audio ingest form one allowlisted admin plane; meeting transport remains a separate data plane.
+Status: **approved baseline — CP#1 owner approval recorded 2026-08-29 ([#29 comment](https://github.com/caty-ai/meetmate/issues/29#issuecomment-5460738835)); v1.3.0 amendment approved via PR #195 labels on 2026-09-05**. This contract augments the existing Node `http` server and vanilla-JavaScript dashboard on `localhost:5005`. It does not authorize another application, UI framework, persistence store, or port. `config.json` in the resolved home remains the only settings store. The settings UI, admin API, import/export, connection tests, TTS preview, and audio ingest form one allowlisted admin plane; meeting transport remains a separate data plane.
 
 The credential classes used below are fixed:
 
@@ -31,10 +31,11 @@ type SettingDefinition = {
     | { transport: Array<"meet" | "zoom" | "discord"> }
     | { setting: string; equals: unknown; explicit?: true };
   writeSurface: "settings" | "audio-only" | "none";
+  transferable: boolean;
 };
 ```
 
-`apply` is `restart-required` unless the table explicitly says `live`. `writeSurface` defaults to `settings` for `basic|detail`; every `deployment-readonly` entry is `none`, and `audio_clips` is `audio-only`. `hidden` is reserved for registry fields that are conditionally irrelevant in the UI; it does not permit class 2 or class 3. Deployment-readonly values may be returned for diagnosis but PUT/import must reject changes to them. Credential values use `z.string().trim().min(1).max(4096)` and the masked round trip in §8.
+`apply` is `restart-required` unless the table explicitly says `live`. `writeSurface` defaults to `settings` for `basic|detail`; every `deployment-readonly` entry is `none`, and `audio_clips` is `audio-only`. `transferable` defaults to `true`; `false` means the setting is never exported or imported. `hidden` is reserved for registry fields that are conditionally irrelevant in the UI; it does not permit class 2 or class 3. Deployment-readonly values may be returned for diagnosis but PUT/import must reject changes to them. Credential values use `z.string().trim().min(1).max(4096)` and the masked round trip in §8.
 
 `requiredWhen` is the closed meeting-start predicate vocabulary. `{always:true}` is unconditional. `{transport:[...]}` uses a non-empty list of canonical server-derived session transports; an absent or unknown join transport evaluates every transport predicate as required. `{setting,equals}` compares the resolved registry value, and `explicit:true` additionally requires that setting's source to be neither `default` nor `unset`. A join re-evaluates these predicates for its server-derived transport. The context-free `/health.meetingReady` retains the Attendee-plane requirements and includes the Discord transport requirement only when Discord is configured by a meaningful `discord.botToken` or a non-empty `discord.guildAllowlist`. Resolver-owned dynamic Slack-token and OpenAI-compatible TTS hostname exceptions remain outside this vocabulary.
 
@@ -42,93 +43,93 @@ The compact type glossary is normative. `url` means an absolute URL whose scheme
 
 The allowlist below is complete. The compact type notation is directly translatable to Zod (`str(n)`, `text(n)`, `bool`, `int(min,max)`, `num(min,max)`, `url`, `enum(...)`, `str[]`). Entries marked `live` are the only exceptions to restart-required apply.
 
-| ID | Config path | Type/default | UX | Credential | Apply | Env alias |
-|---|---|---|---|---|---|---|
-| `agent_id` | `agent.id` | `str(128)` | basic | none | restart-required | `AGENT_ID` |
-| `agent_name` | `agent.name` | `str(128)` | basic | none | restart-required | none |
-| `agent_display_name` | `agent.displayName` | `str(128)` | basic | none | restart-required | none |
-| `agent_language` | `agent.language` | `enum(ja,en)` / `ja` | basic | none | restart-required | `AGENT_LANG` |
-| `agent_greeting` | `agent.greeting` | `text(4096)` | basic | none | live | none |
-| `agent_emotion_tags` | `agent.emotionTags` | `bool` / `true` | basic | none | live | none |
-| `agent_wake_words` | `agent.wakeWords` | `str[]` | basic | none | restart-required | `WAKE_WORDS` |
-| `agent_keyterms` | `agent.keyterms` | `str[]` | detail | none | restart-required | `SONIOX_CONTEXT_TERMS` |
-| `agent_stt_wake_variants` | `agent.sttWakeVariants` | `str[]` | detail | none | restart-required | none |
-| `agent_ack_variants` | `agent.ackVariants` | `str[]` | detail | none | live | none |
-| `agent_progress_pings` | `agent.progressPings` | `str[]` | detail | none | live | none |
-| `agent_exit_farewell` | `agent.exitFarewell` | `text(4096)` | detail | none | live | none |
-| `agent_cancel_ack` | `agent.cancelAck` | `text(4096)` | detail | none | live | none |
-| `agent_timeout_fallback` | `agent.timeoutFallback` | `text(4096)` | detail | none | live | none |
-| `agent_avatar_url` | `agent.avatarUrl` | `url-or-empty` | detail | none | restart-required | `BOT_IMAGE_URL` |
-| `avatar_experiment` | `avatar.experiment` | `enum(,hybrid-local-l0,hybrid-local-frames)` / empty | basic | none | live | none |
-| `avatar_rig_background_mode` | `avatar.rigBackgroundMode` | `enum(solid,image,chroma)` / `solid` | basic | none | live | none |
-| `avatar_rig_background_color` | `avatar.rigBackgroundColor` | `hex-color` / `#08111f` | basic | none | live | none |
-| `llm_provider` | `llm.provider` | `enum(openclaw,openai-compatible)` / `openclaw` | basic | none | restart-required | `LLM_PROVIDER` |
-| `llm_model` | `llm.model` | `str(256)` | basic | none | restart-required | none |
-| `llm_temperature` | `llm.temperature` | `num(0,2)` / `0.5` | detail | none | restart-required | `AGENT_TEMPERATURE` |
-| `llm_max_tokens` | `llm.maxTokens` | `int(1,32768)` / `300` | detail | none | restart-required | `AGENT_MAX_TOKENS` |
-| `llm_history_max_turns` | `llm.historyMaxTurns` | `int(0,256)` / `12` | detail | none | restart-required | none |
-| `llm_system_prompt` | `llm.systemPrompt` | `text(16384)` / empty | detail | none | restart-required | none |
-| `openai_base_url` | `llm.openaiCompatible.baseUrl` | `url-or-empty` | detail | none | restart-required | `OPENAI_COMPATIBLE_BASE_URL` |
-| `openai_empty_response_retry` | `llm.openaiCompatible.emptyResponseRetry` | `bool` / `true` | detail | none | restart-required | none |
-| `openai_trusted_agent_tools` | `llm.openaiCompatible.trustedAgentTools` | `bool` / `false` | detail | none | restart-required | none |
-| `openai_session_header` | `llm.openaiCompatible.sessionHeader` | `header-token-or-empty` / empty | detail | none | restart-required | none |
-| `soniox_api_key` | `stt.sonioxApiKey` | `secret` | basic | class-1 | restart-required | `SONIOX_API_KEY` |
-| `deepgram_api_key` | `stt.apiKey` | `secret` | basic | class-1 | restart-required | `DEEPGRAM_API_KEY` |
-| `stt_provider` | `stt.provider` | `enum(soniox,deepgram)` / `soniox` | basic | none | restart-required | `STT_PROVIDER` |
-| `soniox_model` | `stt.soniox.model` | `str(128)` / `stt-rt-v5` | detail | none | restart-required | `SONIOX_MODEL` |
-| `soniox_ws_url` | `stt.soniox.wsUrl` | `wss-url` | detail | none | restart-required | `SONIOX_WS_URL` |
-| `soniox_endpoint_sensitivity` | `stt.soniox.endpointSensitivity` | `num(-1,1)-or-null` | detail | none | restart-required | `SONIOX_ENDPOINT_SENSITIVITY` |
-| `soniox_max_endpoint_delay_ms` | `stt.soniox.maxEndpointDelayMs` | `int(0,30000)-or-null` | detail | none | restart-required | `SONIOX_MAX_ENDPOINT_DELAY_MS` |
-| `soniox_endpoint_latency_level` | `stt.soniox.endpointLatencyLevel` | `int(0,5)-or-null` | detail | none | restart-required | `SONIOX_ENDPOINT_LATENCY_LEVEL` |
-| `listen_endpointing_ms` | `stt.endpointingMs` | `int(0,30000)` / `400` | detail | none | restart-required | `LISTEN_ENDPOINTING_MS` |
-| `listen_utterance_end_ms` | `stt.utteranceEndMs` | `int(0,30000)` / `1200` | detail | none | restart-required | `LISTEN_UTTERANCE_END_MS` |
-| `fish_audio_api_key` | `tts.apiKey` | `secret` | basic | class-1 | restart-required | `FISH_AUDIO_API_KEY` |
-| `fish_audio_voice_id` | `tts.voiceId` | `str(256)` | basic | none | restart-required | `FISH_AUDIO_VOICE_ID` |
-| `tts_provider` | `tts.provider` | `enum(fish-audio,elevenlabs,openai-compatible)` / `fish-audio` | basic | none | restart-required | `TTS_PROVIDER` |
-| `fish_audio_model` | `tts.model` | `str(128)` / `s2-pro` | detail | none | restart-required | `FISH_AUDIO_MODEL` |
-| `fish_audio_speed` | `tts.speed` | `num(0.5,2)` / `1` | detail | none | restart-required | `FISH_AUDIO_SPEED` |
-| `fish_audio_latency` | `tts.latency` | `enum(normal,balanced,low)` / `balanced` | detail | none | restart-required | `FISH_AUDIO_LATENCY` |
-| `elevenlabs_api_key` | `tts.elevenlabs.apiKey` | `secret` | basic | class-1 | restart-required | `ELEVENLABS_API_KEY` |
-| `elevenlabs_voice_id` | `tts.elevenlabs.voiceId` | `str(256)` | basic | none | restart-required | `ELEVENLABS_VOICE_ID` |
-| `elevenlabs_model` | `tts.elevenlabs.model` | `str(128)` / `eleven_multilingual_v2` | detail | none | restart-required | `ELEVENLABS_MODEL` |
-| `openai_compatible_tts_api_key` | `tts.openaiCompatibleTts.apiKey` | `secret` | basic | class-1 | restart-required | `OPENAI_COMPATIBLE_TTS_API_KEY` |
-| `openai_compatible_tts_base_url` | `tts.openaiCompatibleTts.baseUrl` | `url` / `https://api.openai.com` | basic | none | restart-required | `OPENAI_COMPATIBLE_TTS_BASE_URL` |
-| `openai_compatible_tts_model` | `tts.openaiCompatibleTts.model` | `str(128)` / `gpt-4o-mini-tts` | detail | none | restart-required | `OPENAI_COMPATIBLE_TTS_MODEL` |
-| `openai_compatible_tts_voice` | `tts.openaiCompatibleTts.voice` | `str(128)` / `alloy` | detail | none | restart-required | `OPENAI_COMPATIBLE_TTS_VOICE` |
-| `tts_sample_rate` | `tts.sampleRate` | `int(8000,96000)` / `24000` | detail | none | restart-required | `TTS_SAMPLE_RATE` |
-| `tts_cache_enabled` | `tts.cache.enabled` | `bool` / `true` | detail | none | restart-required | `TTS_CACHE_ENABLED` |
-| `tts_cache_prewarm` | `tts.cache.prewarm` | `bool` / `true` | detail | none | restart-required | `TTS_CACHE_PREWARM` |
-| `attendee_api_key` | `attendee.apiKey` | `secret` | basic | class-1 | restart-required | `ATTENDEE_API_KEY` |
-| `attendee_base_url` | `attendee.baseUrl` | `hostname` / `app.attendee.dev` | detail | none | restart-required | `ATTENDEE_API_BASE_URL` |
-| `slack_bot_token` | `slack.botToken` | `secret` | basic | class-1 | restart-required | `SLACK_BOT_TOKEN` |
-| `slack_notifications_enabled` | `slack.notifications.enabled` | `bool` / `true` | basic | none | restart-required | `SLACK_NOTIFY_ENABLED` |
-| `slack_notifications_target` | `slack.notifications.target` | `enum(dm,channel)` / `dm` | basic | none | restart-required | none |
-| `slack_dm_user_id` | `slack.notifications.dmUserId` | `str(128)` | detail | none | restart-required | none |
-| `slack_notify_channel` | `slack.notifyChannel` | `str(128)` | detail | none | restart-required | `SLACK_NOTIFY_CHANNEL` |
-| `slack_summary_channel` | `slack.summaryChannel` | `str(128)` | detail | none | restart-required | `SLACK_SUMMARY_CHANNEL` |
-| `slack_status_channel` | `slack.statusChannel` | `str(128)` | detail | none | restart-required | `SLACK_STATUS_CHANNEL` |
-| `discord_bot_token` | `discord.botToken` | `secret` | basic | class-1 | restart-required | `DISCORD_BOT_TOKEN` |
-| `discord_guild_allowlist` | `discord.guildAllowlist` | `str[]` (unique, ≤64, each `^[0-9]{17,20}$`) / `[]` | basic | none | restart-required | none |
-| `discord_lcm_ingest_enabled` | `discord.lcmIngestEnabled` | `bool` / `false` | basic | none | restart-required | none |
-| `hub_cloud_url` | `hub.cloudUrl` | `url` | basic | none | restart-required | `CATY_CLOUD_URL` |
-| `hub_token` | `hub.token` | `secret` | hidden | class-1 | restart-required | `HUB_TOKEN` |
-| `hub_installation_id` | `hub.installationId` | `str(256)` | hidden | none | restart-required | none |
-| `hub_cloud_hub_url` | `hub.cloudHubUrl` | `ws-url` | hidden | none | restart-required | none |
-| `hub_url` | `hub.url` | `ws-url` | hidden | none | restart-required | `HUB_URL` |
-| `hub_room_salt` | `hub.roomSalt` | `secret` | hidden | class-1 | restart-required | none |
-| `hub_room_salt_version` | `hub.roomSaltVersion` | `str(128)` | hidden | none | restart-required | none |
-| `hub_plan_id` | `hub.planId` | `str(128)` | hidden | none | restart-required | none |
-| `hub_expires_at` | `hub.expiresAt` | `iso-datetime` | hidden | none | restart-required | none |
-| `hub_config_refreshed_at` | `hub.configRefreshedAt` | `iso-datetime` | hidden | none | restart-required | none |
-| `summary_enabled` | `summary.enabled` | `bool` / `true` | basic | none | restart-required | `SUMMARY_ENABLED` |
-| `gateway_warmup_timeout_ms` | `gateway.warmupTimeoutMs` | `int(0,120000)` / `8000` | detail | none | restart-required | `GATEWAY_WARMUP_TIMEOUT_MS` |
-| `gateway_display_name` | `gateway.displayName` | `str(128)` / `AI MeetServer` | detail | none | restart-required | none |
-| `server_port` | `server.port` | `int(1,65535)` / `5005` | deployment-readonly | none | restart-required | `PORT` |
-| `server_ngrok_domain` | `server.ngrokDomain` | `hostname-or-empty` / empty | detail | none | restart-required | none |
-| `resolved_home` | synthetic | absolute path | deployment-readonly | none | restart-required | `AI_MEET_HOME` |
-| `task_extraction_enabled` | `features.taskExtractionEnabled` | `bool` / `true` | detail | none | restart-required | none |
-| `streaming_equivalent_enabled` | `features.streamingEquivalentEnabled` | `bool` / `true` | detail | none | restart-required | none |
-| `audio_clips` | `audio.clips` | `clip-record[]` / `[]` | detail | none | live | none |
+| ID | Config path | Type/default | UX | Credential | Apply | Env alias | Transferable |
+|---|---|---|---|---|---|---|---|
+| `agent_id` | `agent.id` | `str(128)` | basic | none | restart-required | `AGENT_ID` | default |
+| `agent_name` | `agent.name` | `str(128)` | basic | none | restart-required | none | default |
+| `agent_display_name` | `agent.displayName` | `str(128)` | basic | none | restart-required | none | default |
+| `agent_language` | `agent.language` | `enum(ja,en)` / `ja` | basic | none | restart-required | `AGENT_LANG` | default |
+| `agent_greeting` | `agent.greeting` | `text(4096)` | basic | none | live | none | default |
+| `agent_emotion_tags` | `agent.emotionTags` | `bool` / `true` | basic | none | live | none | default |
+| `agent_wake_words` | `agent.wakeWords` | `str[]` | basic | none | restart-required | `WAKE_WORDS` | default |
+| `agent_keyterms` | `agent.keyterms` | `str[]` | detail | none | restart-required | `SONIOX_CONTEXT_TERMS` | default |
+| `agent_stt_wake_variants` | `agent.sttWakeVariants` | `str[]` | detail | none | restart-required | none | default |
+| `agent_ack_variants` | `agent.ackVariants` | `str[]` | detail | none | live | none | default |
+| `agent_progress_pings` | `agent.progressPings` | `str[]` | detail | none | live | none | default |
+| `agent_exit_farewell` | `agent.exitFarewell` | `text(4096)` | detail | none | live | none | default |
+| `agent_cancel_ack` | `agent.cancelAck` | `text(4096)` | detail | none | live | none | default |
+| `agent_timeout_fallback` | `agent.timeoutFallback` | `text(4096)` | detail | none | live | none | default |
+| `agent_avatar_url` | `agent.avatarUrl` | `url-or-empty` | detail | none | restart-required | `BOT_IMAGE_URL` | default |
+| `avatar_experiment` | `avatar.experiment` | `enum(,hybrid-local-l0,hybrid-local-frames)` / empty | basic | none | live | none | default |
+| `avatar_rig_background_mode` | `avatar.rigBackgroundMode` | `enum(solid,image,chroma)` / `solid` | basic | none | live | none | default |
+| `avatar_rig_background_color` | `avatar.rigBackgroundColor` | `hex-color` / `#08111f` | basic | none | live | none | default |
+| `llm_provider` | `llm.provider` | `enum(openclaw,openai-compatible)` / `openclaw` | basic | none | restart-required | `LLM_PROVIDER` | default |
+| `llm_model` | `llm.model` | `str(256)` | basic | none | restart-required | none | default |
+| `llm_temperature` | `llm.temperature` | `num(0,2)` / `0.5` | detail | none | restart-required | `AGENT_TEMPERATURE` | default |
+| `llm_max_tokens` | `llm.maxTokens` | `int(1,32768)` / `300` | detail | none | restart-required | `AGENT_MAX_TOKENS` | default |
+| `llm_history_max_turns` | `llm.historyMaxTurns` | `int(0,256)` / `12` | detail | none | restart-required | none | default |
+| `llm_system_prompt` | `llm.systemPrompt` | `text(16384)` / empty | detail | none | restart-required | none | default |
+| `openai_base_url` | `llm.openaiCompatible.baseUrl` | `url-or-empty` | detail | none | restart-required | `OPENAI_COMPATIBLE_BASE_URL` | default |
+| `openai_empty_response_retry` | `llm.openaiCompatible.emptyResponseRetry` | `bool` / `true` | detail | none | restart-required | none | default |
+| `openai_trusted_agent_tools` | `llm.openaiCompatible.trustedAgentTools` | `bool` / `false` | detail | none | restart-required | none | default |
+| `openai_session_header` | `llm.openaiCompatible.sessionHeader` | `header-token-or-empty` / empty | detail | none | restart-required | none | default |
+| `soniox_api_key` | `stt.sonioxApiKey` | `secret` | basic | class-1 | restart-required | `SONIOX_API_KEY` | default |
+| `deepgram_api_key` | `stt.apiKey` | `secret` | basic | class-1 | restart-required | `DEEPGRAM_API_KEY` | default |
+| `stt_provider` | `stt.provider` | `enum(soniox,deepgram)` / `soniox` | basic | none | restart-required | `STT_PROVIDER` | default |
+| `soniox_model` | `stt.soniox.model` | `str(128)` / `stt-rt-v5` | detail | none | restart-required | `SONIOX_MODEL` | default |
+| `soniox_ws_url` | `stt.soniox.wsUrl` | `wss-url` | detail | none | restart-required | `SONIOX_WS_URL` | default |
+| `soniox_endpoint_sensitivity` | `stt.soniox.endpointSensitivity` | `num(-1,1)-or-null` | detail | none | restart-required | `SONIOX_ENDPOINT_SENSITIVITY` | default |
+| `soniox_max_endpoint_delay_ms` | `stt.soniox.maxEndpointDelayMs` | `int(0,30000)-or-null` | detail | none | restart-required | `SONIOX_MAX_ENDPOINT_DELAY_MS` | default |
+| `soniox_endpoint_latency_level` | `stt.soniox.endpointLatencyLevel` | `int(0,5)-or-null` | detail | none | restart-required | `SONIOX_ENDPOINT_LATENCY_LEVEL` | default |
+| `listen_endpointing_ms` | `stt.endpointingMs` | `int(0,30000)` / `400` | detail | none | restart-required | `LISTEN_ENDPOINTING_MS` | default |
+| `listen_utterance_end_ms` | `stt.utteranceEndMs` | `int(0,30000)` / `1200` | detail | none | restart-required | `LISTEN_UTTERANCE_END_MS` | default |
+| `fish_audio_api_key` | `tts.apiKey` | `secret` | basic | class-1 | restart-required | `FISH_AUDIO_API_KEY` | default |
+| `fish_audio_voice_id` | `tts.voiceId` | `str(256)` | basic | none | restart-required | `FISH_AUDIO_VOICE_ID` | default |
+| `tts_provider` | `tts.provider` | `enum(fish-audio,elevenlabs,openai-compatible)` / `fish-audio` | basic | none | restart-required | `TTS_PROVIDER` | default |
+| `fish_audio_model` | `tts.model` | `str(128)` / `s2-pro` | detail | none | restart-required | `FISH_AUDIO_MODEL` | default |
+| `fish_audio_speed` | `tts.speed` | `num(0.5,2)` / `1` | detail | none | restart-required | `FISH_AUDIO_SPEED` | default |
+| `fish_audio_latency` | `tts.latency` | `enum(normal,balanced,low)` / `balanced` | detail | none | restart-required | `FISH_AUDIO_LATENCY` | default |
+| `elevenlabs_api_key` | `tts.elevenlabs.apiKey` | `secret` | basic | class-1 | restart-required | `ELEVENLABS_API_KEY` | default |
+| `elevenlabs_voice_id` | `tts.elevenlabs.voiceId` | `str(256)` | basic | none | restart-required | `ELEVENLABS_VOICE_ID` | default |
+| `elevenlabs_model` | `tts.elevenlabs.model` | `str(128)` / `eleven_multilingual_v2` | detail | none | restart-required | `ELEVENLABS_MODEL` | default |
+| `openai_compatible_tts_api_key` | `tts.openaiCompatibleTts.apiKey` | `secret` | basic | class-1 | restart-required | `OPENAI_COMPATIBLE_TTS_API_KEY` | default |
+| `openai_compatible_tts_base_url` | `tts.openaiCompatibleTts.baseUrl` | `url` / `https://api.openai.com` | basic | none | restart-required | `OPENAI_COMPATIBLE_TTS_BASE_URL` | default |
+| `openai_compatible_tts_model` | `tts.openaiCompatibleTts.model` | `str(128)` / `gpt-4o-mini-tts` | detail | none | restart-required | `OPENAI_COMPATIBLE_TTS_MODEL` | default |
+| `openai_compatible_tts_voice` | `tts.openaiCompatibleTts.voice` | `str(128)` / `alloy` | detail | none | restart-required | `OPENAI_COMPATIBLE_TTS_VOICE` | default |
+| `tts_sample_rate` | `tts.sampleRate` | `int(8000,96000)` / `24000` | detail | none | restart-required | `TTS_SAMPLE_RATE` | default |
+| `tts_cache_enabled` | `tts.cache.enabled` | `bool` / `true` | detail | none | restart-required | `TTS_CACHE_ENABLED` | default |
+| `tts_cache_prewarm` | `tts.cache.prewarm` | `bool` / `true` | detail | none | restart-required | `TTS_CACHE_PREWARM` | default |
+| `attendee_api_key` | `attendee.apiKey` | `secret` | basic | class-1 | restart-required | `ATTENDEE_API_KEY` | default |
+| `attendee_base_url` | `attendee.baseUrl` | `hostname` / `app.attendee.dev` | detail | none | restart-required | `ATTENDEE_API_BASE_URL` | default |
+| `slack_bot_token` | `slack.botToken` | `secret` | basic | class-1 | restart-required | `SLACK_BOT_TOKEN` | default |
+| `slack_notifications_enabled` | `slack.notifications.enabled` | `bool` / `true` | basic | none | restart-required | `SLACK_NOTIFY_ENABLED` | default |
+| `slack_notifications_target` | `slack.notifications.target` | `enum(dm,channel)` / `dm` | basic | none | restart-required | none | default |
+| `slack_dm_user_id` | `slack.notifications.dmUserId` | `str(128)` | detail | none | restart-required | none | default |
+| `slack_notify_channel` | `slack.notifyChannel` | `str(128)` | detail | none | restart-required | `SLACK_NOTIFY_CHANNEL` | default |
+| `slack_summary_channel` | `slack.summaryChannel` | `str(128)` | detail | none | restart-required | `SLACK_SUMMARY_CHANNEL` | default |
+| `slack_status_channel` | `slack.statusChannel` | `str(128)` | detail | none | restart-required | `SLACK_STATUS_CHANNEL` | default |
+| `discord_bot_token` | `discord.botToken` | `secret` | basic | class-1 | restart-required | `DISCORD_BOT_TOKEN` | default |
+| `discord_guild_allowlist` | `discord.guildAllowlist` | `str[]` (unique, ≤64, each `^[0-9]{17,20}$`) / `[]` | basic | none | restart-required | none | default |
+| `discord_lcm_ingest_enabled` | `discord.lcmIngestEnabled` | `bool` / `false` | basic | none | restart-required | none | default |
+| `hub_cloud_url` | `hub.cloudUrl` | `url` | basic | none | restart-required | `CATY_CLOUD_URL` | default |
+| `hub_token` | `hub.token` | `secret` | hidden | class-1 | restart-required | `HUB_TOKEN` | default |
+| `hub_installation_id` | `hub.installationId` | `str(256)` | hidden | none | restart-required | none | false |
+| `hub_cloud_hub_url` | `hub.cloudHubUrl` | `ws-url` | hidden | none | restart-required | none | false |
+| `hub_url` | `hub.url` | `ws-url` | hidden | none | restart-required | `HUB_URL` | false |
+| `hub_room_salt` | `hub.roomSalt` | `secret` | hidden | class-1 | restart-required | none | default |
+| `hub_room_salt_version` | `hub.roomSaltVersion` | `str(128)` | hidden | none | restart-required | none | false |
+| `hub_plan_id` | `hub.planId` | `str(128)` | hidden | none | restart-required | none | false |
+| `hub_expires_at` | `hub.expiresAt` | `iso-datetime` | hidden | none | restart-required | none | false |
+| `hub_config_refreshed_at` | `hub.configRefreshedAt` | `iso-datetime` | hidden | none | restart-required | none | false |
+| `summary_enabled` | `summary.enabled` | `bool` / `true` | basic | none | restart-required | `SUMMARY_ENABLED` | default |
+| `gateway_warmup_timeout_ms` | `gateway.warmupTimeoutMs` | `int(0,120000)` / `8000` | detail | none | restart-required | `GATEWAY_WARMUP_TIMEOUT_MS` | default |
+| `gateway_display_name` | `gateway.displayName` | `str(128)` / `AI MeetServer` | detail | none | restart-required | none | default |
+| `server_port` | `server.port` | `int(1,65535)` / `5005` | deployment-readonly | none | restart-required | `PORT` | default |
+| `server_ngrok_domain` | `server.ngrokDomain` | `hostname-or-empty` / empty | detail | none | restart-required | none | default |
+| `resolved_home` | synthetic | absolute path | deployment-readonly | none | restart-required | `AI_MEET_HOME` | default |
+| `task_extraction_enabled` | `features.taskExtractionEnabled` | `bool` / `true` | detail | none | restart-required | none | default |
+| `streaming_equivalent_enabled` | `features.streamingEquivalentEnabled` | `bool` / `true` | detail | none | restart-required | none | default |
+| `audio_clips` | `audio.clips` | `clip-record[]` / `[]` | detail | none | live | none | default |
 
 The registry contains exactly 85 rows. `hub.url`, `hub.roomCode`, and `hub.sharedToken` belong to shared mode. Hosted setup writes the returned `hub_url` only to `hub.cloudHubUrl`; a cloud connect/disconnect round trip never changes the shared-mode fields. `hub.configRefreshAfterSeconds` is server-owned cache metadata rather than a user setting: it is absent from the registry and every admin DTO, and is committed atomically with `hub.configRefreshedAt` and the last-good hosted configuration.
 
@@ -311,6 +312,10 @@ The single existing server continues to listen on port 5005 (or its existing por
 | `PUT /api/settings` | `SettingsMutation` below | `SettingsEnvelope` with new revision |
 | `GET /api/settings/export` | none | `ExportDocument` in §8 as attachment |
 | `POST /api/settings/import` | `ImportRequest` below | `SettingsEnvelope` plus `import` report |
+| `POST /api/settings/cloud/connect` | Strict `{revision:Sha256Revision,cloudUrl?:https-url}`; local-admin + same-origin + committed-revision gates; single-flight and one start/second rate limit | `{ok:true,authorizeUrl,expiresAt}`; route-specific errors: `400 SETTINGS_CLOUD_URL_INVALID`, `409 SETTINGS_CLOUD_CONNECT_IN_PROGRESS`, `409 SETTINGS_CLOUD_CONNECT_CANCELLED`, `429 SETTINGS_CLOUD_CONNECT_RATE_LIMITED`, `502 SETTINGS_CLOUD_CONNECT_FAILED` |
+| `GET /api/settings/cloud/status` | Local-admin gate; no same-origin, revision, or rate-limit gate | Hosted status shape below; stale-refresh failure retains last-good state and does not fail the status response |
+| `POST /api/settings/cloud/refresh` | Strict `{revision:Sha256Revision}`; local-admin + same-origin + committed-revision gates; no route rate limit | `{ok:true,revision,refreshAfterSeconds}`; route-specific errors: `400 SETTINGS_CLOUD_NOT_CONNECTED`, `502 SETTINGS_CLOUD_REFRESH_FAILED` |
+| `POST /api/settings/cloud/disconnect` | Strict `{revision:Sha256Revision,force?:bool}`; local-admin + same-origin + committed-revision gates; no route rate limit | `{ok:true,revision,forced}`; route-specific error: `502 SETTINGS_CLOUD_DISCONNECT_FAILED` unless `force:true` |
 | `POST /api/settings/connections/:provider/test` | `{revision}` where provider is `soniox|deepgram|fish-audio|elevenlabs|openai-compatible|attendee|llm|tunnel|slack|discord` (the §6 connection-test provider table) | `{ok, provider, code, message, durationMs}`, or `501 TEST_NOT_IMPLEMENTED` for the not-yet-implemented tier (`slack` only) |
 | `POST /api/settings/migrate-env-class1` | `{revision}` | `{imported:[fieldId], skipped:[fieldId], revision}` |
 | `POST /api/settings/tts-preview` | `{revision,text}` | buffered `audio/wav` per §9 |
@@ -334,6 +339,7 @@ type WritableFieldId = EditableSettingId;
 type ImportableFieldId = RegistryIdWhere<{
   writeSurface: "settings";
   credential: "none";
+  transferable: true;
 }>;
 type RestartRequiredFieldId = RegistryIdWhere<{
   writeSurface: "settings";
@@ -496,7 +502,7 @@ Export is `Content-Type: application/json` with the strict `ExportDocument` sche
 {"format":"meetmate-settings","version":1,"exportedAt":"ISO-8601","settings":{"agent_display_name":"…"}}
 ```
 
-The four top-level keys are required and no others are accepted; `format` is the literal `meetmate-settings`, `version` is the literal integer `1`, `exportedAt` is a UTC RFC 3339 timestamp, and `settings` is a strict object of writable, noncredential `basic|detail` registry IDs. It excludes `audio_clips`, all credentials in classes 1, 2, and 3, deployment diagnostics, effective/source diagnostics, revisions, absolute paths, and unknown whole-config keys. Template presets use the same secret-free shape and may contain only documented nonsecret settings; they never carry blank-looking credential presets or dummy secrets.
+The four top-level keys are required and no others are accepted; `format` is the literal `meetmate-settings`, `version` is the literal integer `1`, `exportedAt` is a UTC RFC 3339 timestamp, and `settings` is a strict object of writable, noncredential `basic|detail` registry IDs whose `transferable` metadata is `true`. It excludes `audio_clips`, all credentials in classes 1, 2, and 3, deployment diagnostics, effective/source diagnostics, revisions, absolute paths, unknown whole-config keys, the shared-mode `hub_url`, and the server-owned hosted fields `hub_installation_id`, `hub_cloud_hub_url`, `hub_room_salt_version`, `hub_plan_id`, `hub_expires_at`, and `hub_config_refreshed_at`. The user-entered `hub_cloud_url` is the only transferable `hub.*` setting. Template presets use the same secret-free shape and may contain only documented nonsecret settings; they never carry blank-looking credential presets or dummy secrets.
 
 Import accepts version 1 strictly and has no version-0 migrator. Negative, noninteger, zero, unknown-format, or future versions return `409 SETTINGS_IMPORT_VERSION_UNSUPPORTED`. Unknown setting IDs in a recognized version return `422` rather than being ignored. Import merges validated allowlisted values into the whole config, so unknown existing config keys remain preserved. Success adds exactly `"import":{"imported":[ImportableFieldId],"skipped":[ImportableFieldId]}` to `SettingsEnvelope`; both arrays are sorted/unique and all other envelope fields retain §6's schema.
 
