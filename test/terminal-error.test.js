@@ -84,6 +84,59 @@ async function invokeFloorContinue(routes, formData = {}, joinToken = "") {
   return output;
 }
 
+test("dashboard floor continuation prompts once after 401 and reuses the supplied token", async () => {
+  const { requestFloorContinuation } = require("../public/app.js");
+  const requests = [];
+  const stored = [];
+  let prompts = 0;
+  const response = await requestFloorContinuation({
+    sessionId: "sid-active",
+    joinToken: "",
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      return { status: requests.length === 1 ? 401 : 200 };
+    },
+    promptImpl: (message) => {
+      prompts += 1;
+      assert.equal(message, "参加トークン（JOIN_SHARED_TOKEN）を入力してください");
+      return "  operator-token  ";
+    },
+    storeToken: (token) => stored.push(token),
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(prompts, 1);
+  assert.deepEqual(stored, ["operator-token"]);
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].options.headers, undefined);
+  assert.deepEqual(requests[1].options.headers, { "x-join-token": "operator-token" });
+  assert.equal(requests[1].options.body.get("sessionId"), "sid-active");
+
+  prompts = 0;
+  await requestFloorContinuation({
+    sessionId: "sid-open",
+    joinToken: "",
+    fetchImpl: async () => ({ status: 200 }),
+    promptImpl: () => { prompts += 1; },
+    storeToken: () => {},
+  });
+  assert.equal(prompts, 0, "an unprotected server must not prompt for a token");
+
+  const rejectedRequests = [];
+  const rejected = await requestFloorContinuation({
+    sessionId: "sid-active",
+    joinToken: "stale-token",
+    fetchImpl: async (url, options) => {
+      rejectedRequests.push({ url, options });
+      return { status: 401 };
+    },
+    promptImpl: () => "replacement-token",
+    storeToken: () => {},
+  });
+  assert.equal(rejected.status, 401);
+  assert.equal(rejectedRequests.length, 2, "a second 401 must be returned without prompting again");
+});
+
 test("floor continue route requires authorization and an explicit known session", async () => {
   const routesPath = require.resolve("../src/transport-meet/meet-routes");
   const previousToken = process.env.JOIN_SHARED_TOKEN;

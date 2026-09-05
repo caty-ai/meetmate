@@ -24,7 +24,7 @@ function loadConfigWith(env = {}, config = null) {
   return result;
 }
 
-function resolveSessionHubConfigWithFrozenDisabled(config) {
+function resolveSessionHubConfigWithBootConfig(config, bootHubConfig) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-live-floor-config-"));
   fs.writeFileSync(path.join(home, "config.json"), `${JSON.stringify(config)}\n`, { mode: 0o600 });
   const childEnv = { ...process.env, AI_MEET_HOME: home };
@@ -35,7 +35,7 @@ function resolveSessionHubConfigWithFrozenDisabled(config) {
     const config = require(configPath);
     require.cache[configPath].exports = {
       ...config,
-      HUB_CONFIG: Object.freeze({ ...config.HUB_CONFIG, enabled: false }),
+      HUB_CONFIG: Object.freeze(${JSON.stringify(bootHubConfig)}),
     };
     const routes = require(${JSON.stringify(routesFile)});
     routes._test.resolveSessionHubConfig("https://zoom.us/j/123").then((value) => {
@@ -166,8 +166,16 @@ test("cloud hub mode requires its dedicated hub URL alongside HUB_TOKEN", () => 
   assert.match(result.stderr, /hub\.cloudHubUrl and HUB_TOKEN must be set together/);
 });
 
-test("session cloud arbitration uses live stored credentials after boot", () => {
-  const result = resolveSessionHubConfigWithFrozenDisabled({
+test("session hub mode prefers live cloud credentials and otherwise preserves the boot config", () => {
+  const bootShared = {
+    mode: "shared",
+    enabled: true,
+    url: "wss://shared-floor.example.test/ws",
+    roomCode: "shared-room",
+    authToken: "shared-token",
+    tailMs: 500,
+  };
+  const result = resolveSessionHubConfigWithBootConfig({
     hub: {
       cloudUrl: "https://cloud.example.test",
       token: "hub-token",
@@ -177,11 +185,25 @@ test("session cloud arbitration uses live stored credentials after boot", () => 
       configRefreshedAt: "2999-01-01T00:00:00.000Z",
       configRefreshAfterSeconds: 3600,
     },
-  });
+  }, bootShared);
   assert.equal(result.status, 0, result.stderr);
   const session = JSON.parse(result.stdout.split("__SESSION_HUB_CONFIG__").at(-1));
   assert.equal(session.enabled, true);
   assert.equal(session.url, "wss://cloud-floor.example.test/ws");
   assert.equal(session.authToken, "hub-token");
+  assert.equal(session.mode, "cloud");
   assert.match(session.roomCode, /^v1-[A-Z2-7]{26}$/u);
+
+  const fallback = resolveSessionHubConfigWithBootConfig({
+    hub: {
+      url: bootShared.url,
+      roomCode: bootShared.roomCode,
+      sharedToken: bootShared.authToken,
+    },
+  }, bootShared);
+  assert.equal(fallback.status, 0, fallback.stderr);
+  assert.deepEqual(
+    JSON.parse(fallback.stdout.split("__SESSION_HUB_CONFIG__").at(-1)),
+    bootShared,
+  );
 });

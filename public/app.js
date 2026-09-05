@@ -20,9 +20,30 @@ const FLOOR_RECOVERY_HINTS = Object.freeze({
   room_expired: "会議へ入り直すと再開できます",
   hub_unavailable: "自動再試行します。続く場合は設定を確認してください",
 });
+const JOIN_TOKEN_PROMPT = `参加トークン（${["JOIN", "SHARED", "TOKEN"].join("_")}）を入力してください`;
 
 function floorRecoveryHint(reason) {
   return FLOOR_RECOVERY_HINTS[reason] || "";
+}
+
+async function requestFloorContinuation({ sessionId, joinToken, fetchImpl, promptImpl, storeToken }) {
+  const body = new URLSearchParams({ sessionId: String(sessionId || "") });
+  const send = (token) => {
+    const normalizedToken = typeof token === "string" ? token.trim() : "";
+    return fetchImpl("/floor/continue-without-arbitration", {
+      method: "POST",
+      ...(normalizedToken ? { headers: { "x-join-token": normalizedToken } } : {}),
+      body,
+    });
+  };
+
+  const response = await send(joinToken);
+  if (response.status !== 401) return response;
+
+  const promptedToken = String(promptImpl(JOIN_TOKEN_PROMPT) || "").trim();
+  if (!promptedToken) return response;
+  storeToken(promptedToken);
+  return send(promptedToken);
 }
 
 function isDiscordSnowflake(value) {
@@ -269,12 +290,16 @@ if (typeof module !== "undefined" && module.exports) module.exports = {
   parseDiscordJoinErrorText,
   parseJoinErrorText,
   readinessDisplayRows,
+  requestFloorContinuation,
   floorRecoveryHint,
   settingsPortFromReadiness,
 };
 
 if (typeof document !== "undefined") (function () {
   const pageJoinToken = new URLSearchParams(window.location.search).get("joinToken")?.trim() || "";
+  const storedJoinToken = () => {
+    try { return sessionStorage.getItem("meetmate.joinToken")?.trim() || ""; } catch { return ""; }
+  };
   const root = document.documentElement;
   const form = document.getElementById("joinForm");
   const statusEl = document.getElementById("status");
@@ -934,9 +959,15 @@ if (typeof document !== "undefined") (function () {
   async function continueWithoutArbitration() {
     continueWithoutFloorBtn.disabled = true;
     try {
-      const body = new URLSearchParams({ sessionId: activeSessionId || "" });
-      const headers = pageJoinToken ? { "x-join-token": pageJoinToken } : undefined;
-      const response = await fetch("/floor/continue-without-arbitration", { method: "POST", headers, body });
+      const response = await requestFloorContinuation({
+        sessionId: activeSessionId,
+        joinToken: storedJoinToken() || pageJoinToken,
+        fetchImpl: fetch,
+        promptImpl: (message) => window.prompt(message),
+        storeToken: (token) => {
+          try { sessionStorage.setItem("meetmate.joinToken", token); } catch { /* retry still uses the in-memory token */ }
+        },
+      });
       const payload = await response.json().catch(() => null);
       if (!response.ok || !payload?.ok) throw new Error(payload?.error || `HTTP ${response.status}`);
       renderFloorStatus(payload.floor);

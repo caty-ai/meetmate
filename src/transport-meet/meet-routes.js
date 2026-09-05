@@ -1515,10 +1515,11 @@ async function handleHttp(req, res) {
 // line-pinned by docs/settings-env-inventory.json.
 function readCloudHubState() {
   const raw = getRawConfig();
+  const bootCloudConfig = HUB_CONFIG?.mode === "cloud" ? HUB_CONFIG : {};
   return {
     cloudUrl: readPath(raw, "hub.cloudUrl") || getEffectiveValue("hub_cloud_url") || "",
-    hubToken: readPath(raw, "hub.token") || HUB_CONFIG.authToken || "",
-    hubUrl: readPath(raw, "hub.cloudHubUrl") || HUB_CONFIG.url || "",
+    hubToken: readPath(raw, "hub.token") || bootCloudConfig.authToken || "",
+    hubUrl: readPath(raw, "hub.cloudHubUrl") || bootCloudConfig.url || "",
     roomSalt: readPath(raw, "hub.roomSalt") || "",
     roomSaltVersion: readPath(raw, "hub.roomSaltVersion") || "",
     configRefreshedAt: readPath(raw, "hub.configRefreshedAt") || null,
@@ -1552,12 +1553,13 @@ function saveRefreshedHubConfig(result) {
 }
 
 async function resolveSessionHubConfig(meetingUrl) {
-  if (!HUB_CONFIG || HUB_CONFIG.mode !== "cloud") return null;
-  const baseHubConfig = { ...HUB_CONFIG };
-  delete baseHubConfig.roomSalt;
-
+  if (!HUB_CONFIG?.mode) return null;
   let state = readCloudHubState();
   let enabled = Boolean(state.hubToken && state.hubUrl);
+  if (!enabled) return HUB_CONFIG?.mode ? { ...HUB_CONFIG } : null;
+
+  const baseHubConfig = { ...HUB_CONFIG, mode: "cloud" };
+  delete baseHubConfig.roomSalt;
   if (enabled) {
     const refreshed = await refreshHubConfigIfStale({
       cloudUrl: state.cloudUrl,
@@ -1579,7 +1581,14 @@ async function resolveSessionHubConfig(meetingUrl) {
 
   enabled = Boolean(state.hubToken && state.hubUrl);
   if (!enabled || !state.roomSalt || !state.roomSaltVersion) {
-    return { ...baseHubConfig, enabled: false, roomCode: null, reason: "hub_config_missing" };
+    return {
+      ...baseHubConfig,
+      enabled: false,
+      url: state.hubUrl || null,
+      roomCode: null,
+      authToken: state.hubToken,
+      reason: "hub_config_missing",
+    };
   }
   return {
     ...baseHubConfig,
