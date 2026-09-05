@@ -3,7 +3,13 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const { spawnSync } = require("node:child_process");
 const { FloorClient, STATES } = require("../src/floor-client");
+
+const routesFile = path.join(__dirname, "..", "src", "transport-meet", "meet-routes.js");
 
 class FakeTimers {
   constructor() { this.nowMs = 0; this.nextId = 1; this.tasks = new Map(); }
@@ -49,6 +55,7 @@ function harness(overrides = {}) {
     url: "wss://hub.example.test/ws",
     roomCode: "r1-ROOM",
     authToken: "cati_hub_t1",
+    mode: "cloud",
     agentId: "caty",
     displayName: "Caty",
     wakeWords: ["ケイティ"],
@@ -73,6 +80,55 @@ function welcome(socket, overrides = {}) {
     type: "welcome", proto: 1, memberId: "m1", connectionEpoch: 1,
     members: [{ memberId: "m1", displayName: "Caty", wakeWords: ["ケイティ"] }],
     floorState: { holder: null, queue: [] }, ...overrides,
+  });
+}
+
+function resolveSessionHubConfig({ debug, mode }) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-session-hub-config-"));
+  const childEnv = { ...process.env, AI_MEET_HOME: home };
+  for (const name of [
+    "CATY_CLOUD_URL",
+    "FLOOR_DEBUG",
+    "HUB_ROOM_CODE",
+    "HUB_SHARED_TOKEN",
+    "HUB_TOKEN",
+    "HUB_URL",
+  ]) delete childEnv[name];
+  if (debug !== undefined) childEnv.FLOOR_DEBUG = debug;
+
+  if (mode === "cloud") {
+    fs.writeFileSync(path.join(home, "config.json"), `${JSON.stringify({
+      hub: {
+        token: "cloud-token",
+        cloudHubUrl: "wss://cloud-floor.example.test/ws",
+        roomSalt: "salt-1",
+        roomSaltVersion: "v1",
+        configRefreshedAt: "2999-01-01T00:00:00.000Z",
+        configRefreshAfterSeconds: 3600,
+      },
+    })}\n`, { mode: 0o600 });
+  } else {
+    childEnv.HUB_URL = "wss://shared-floor.example.test/ws";
+    childEnv.HUB_ROOM_CODE = "shared-room";
+    childEnv.HUB_SHARED_TOKEN = "shared-token";
+  }
+
+  const result = spawnSync(process.execPath, ["-e", `
+    console.log = () => {};
+    const routes = require(${JSON.stringify(routesFile)});
+    routes._test.resolveSessionHubConfig("https://zoom.us/j/123").then((value) => {
+      process.stdout.write("\\n__SESSION_HUB_CONFIG__" + JSON.stringify(value));
+    });
+  `], { cwd: home, env: childEnv, encoding: "utf8" });
+  fs.rmSync(home, { recursive: true, force: true });
+  assert.equal(result.status, 0, result.stderr);
+  return JSON.parse(result.stdout.split("__SESSION_HUB_CONFIG__").at(-1));
+}
+
+for (const mode of ["shared", "cloud"]) {
+  test(`${mode} session hub config propagates the floor debug flag`, () => {
+    assert.equal(resolveSessionHubConfig({ debug: "1", mode }).debug, true);
+    assert.equal(Boolean(resolveSessionHubConfig({ mode }).debug), false);
   });
 }
 
@@ -150,6 +206,33 @@ test("welcome without a lease uses the first-welcome time plus two hours", () =>
   socket.drop();
   assert.equal(h.client.isMuted(), true);
   assert.equal(h.client.reconnectTimer, null);
+});
+
+test("shared mode treats a missing lease as unlimited and reconnects after two hours", () => {
+  const h = harness({ mode: "shared" });
+  const scheduled = [];
+  h.client.on("reconnect_scheduled", (event) => scheduled.push(event));
+  const socket = open(h);
+  welcome(socket);
+  assert.equal(h.client.leaseExpiresAt, null);
+
+  h.timers.advance((2 * 60 * 60_000) + 1);
+  socket.drop();
+
+  assert.equal(h.client.isMuted(), false);
+  assert.equal(h.client.terminalReason(), null);
+  assert.equal(scheduled.length, 1);
+  assert.notEqual(h.client.reconnectTimer, null);
+  h.timers.advance(scheduled[0].delayMs);
+  assert.equal(h.wire.sockets.length, 2);
+});
+
+test("cloud mode preserves a provided lease expiry", () => {
+  const h = harness();
+  const socket = open(h);
+  const leaseExpiresAt = new Date(5_000).toISOString();
+  welcome(socket, { leaseExpiresAt });
+  assert.equal(h.client.leaseExpiresAt, Date.parse(leaseExpiresAt));
 });
 
 test("explicit connect stays muted until welcome releases terminal state", () => {

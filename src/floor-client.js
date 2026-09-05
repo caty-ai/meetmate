@@ -75,6 +75,7 @@ class FloorClient extends EventEmitter {
     this.agentId = options.agentId || "";
     this.displayName = options.displayName || this.agentId;
     this.wakeWords = Array.isArray(options.wakeWords) ? options.wakeWords.slice() : [];
+    this.mode = options.mode === "cloud" ? "cloud" : "shared";
     this.clientInstanceId = options.clientInstanceId || randomUUID();
     this.WebSocketImpl = options.WebSocketImpl || WebSocket;
     this.timers = options.timers || globalThis;
@@ -292,7 +293,7 @@ class FloorClient extends EventEmitter {
     const providedLease = Date.parse(message.leaseExpiresAt || "");
     this.leaseExpiresAt = Number.isFinite(providedLease)
       ? providedLease
-      : this.firstWelcomeAt + (2 * 60 * 60_000);
+      : (this.mode === "cloud" ? this.firstWelcomeAt + (2 * 60 * 60_000) : null);
     this.reconnectAttempt = 0;
     if (this.readyGraceTimer !== null) this.timers.clearTimeout(this.readyGraceTimer);
     this.readyGraceTimer = null;

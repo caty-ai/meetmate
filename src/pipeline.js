@@ -736,6 +736,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         url: config.hub.url,
         roomCode: config.hub.roomCode,
         authToken: hubAuthToken,
+        mode: config.hub.mode,
         debug: config.hub.debug,
         agentId,
         displayName: agentProfile?.displayName || agentProfile?.name || agentId,

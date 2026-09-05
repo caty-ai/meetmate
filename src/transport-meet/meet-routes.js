@@ -1554,11 +1554,16 @@ function saveRefreshedHubConfig(result) {
 
 async function resolveSessionHubConfig(meetingUrl) {
   if (!HUB_CONFIG?.mode) return null;
+  const pipelineDebug = getPipelineConfig({}, null, currentAgentProfile(), _configJson).hub.debug;
+  const pipelineHubConfig = {
+    ...HUB_CONFIG,
+    ...(pipelineDebug ? { debug: true } : {}),
+  };
   let state = readCloudHubState();
   let enabled = Boolean(state.hubToken && state.hubUrl);
-  if (!enabled) return HUB_CONFIG?.mode ? { ...HUB_CONFIG } : null;
+  if (!enabled) return HUB_CONFIG?.mode ? { ...pipelineHubConfig } : null;
 
-  const baseHubConfig = { ...HUB_CONFIG, mode: "cloud" };
+  const baseHubConfig = { ...pipelineHubConfig, mode: "cloud" };
   delete baseHubConfig.roomSalt;
   if (enabled) {
     const refreshed = await refreshHubConfigIfStale({
