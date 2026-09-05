@@ -526,7 +526,7 @@ function saveConversationLog(session) {
   const jsonPath = path.join(logDir, `${baseName}.json`);
   const jsonData = {
     session_id: session.id,
-    meeting_url: session.meetingUrl,
+    meeting_url: session.hubConfig?.mode === "cloud" ? "[cloud room]" : session.meetingUrl,
     created_at: session.createdAt,
     saved_at: new Date().toISOString(),
     tts_provider: TTS_PROVIDER,
@@ -544,7 +544,7 @@ function saveConversationLog(session) {
     `# Meeting Log — ${new Date().toLocaleString("ja-JP")}`,
     "",
     `- session_id: ${session.id}`,
-    `- meeting_url: ${session.meetingUrl}`,
+    `- meeting_url: ${session.hubConfig?.mode === "cloud" ? "[cloud room]" : session.meetingUrl}`,
     `- tts_provider: ${TTS_PROVIDER}`,
     "",
     ...session.conversationLog.map((e) => {
@@ -632,7 +632,7 @@ function appendToMemory(session) {
       `# Google Meet ログ — ${now}`,
       "",
       `- Session ID: ${session.id}`,
-      `- Meeting URL: ${session.meetingUrl || "—"}`,
+      `- Meeting URL: ${session.hubConfig?.mode === "cloud" ? "[cloud room]" : session.meetingUrl || "—"}`,
       `- 発話数: ${msgCount}`,
       "",
       "## 全文",
@@ -817,7 +817,7 @@ function createHandler(session, turnState, onAudio) {
       model: session.config.model,
       wakeMode: session.config.wakeMode,
     }, null, profile, _configJson);
-    const pipeline = createPipeline(session, turnState, onAudio, config, {
+    const pipeline = createPipeline(session, turnState, onAudio, session.hubConfig ? { ...config, hub: session.hubConfig } : config, {
       agentProfile: profile,
       onChatMessage: (text) => {
         const botInfo = sessionBotIds.get(session.id);
@@ -836,7 +836,7 @@ function createHandler(session, turnState, onAudio) {
       handleGatewaySubagentCompletion: pipeline.handleGatewaySubagentCompletion,
       handleGatewaySessionReply: pipeline.handleGatewaySessionReply,
       handleGatewayAnnounceInjected: pipeline.handleGatewayAnnounceInjected,
-      getDelegationResults: pipeline.getDelegationResults,
+      getDelegationResults: pipeline.getDelegationResults, floorStatus: pipeline.floorStatus, continueWithoutArbitration: pipeline.continueWithoutArbitration,
     };
   }
 
@@ -1061,20 +1061,54 @@ async function handleHttp(req, res) {
     const sessions = [];
     for (const [sid, session] of meetingSessions) {
       const lc = meetLifecycles.get(sid);
+      const floor = activeConnections.get(sid)?.handler?.floorStatus?.() || session.floorStatus || null;
       sessions.push({
         sessionId: sid,
-        meetingUrl: session.meetingUrl,
+        ...(session.hubConfig?.mode === "cloud" ? {} : { meetingUrl: session.meetingUrl }),
         startedAt: session.startedAt,
         state: lc?.state || "unknown",
         botId: sessionBotIds.get(sid)?.botId || null,
         hasConnection: activeConnections.has(sid),
         agentIds: session.config?.agentIds || [],
         agentDisplayNames: session.agents || [],
+        ...(floor !== null || session.hubConfig?.mode === "cloud" ? { floor } : {}),
       });
     }
     res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
     res.end(JSON.stringify({ active: sessions.length > 0, sessions }));
     return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/floor/continue-without-arbitration") {
+    try {
+      const formData = await parseRequestBody(req);
+      if (!checkJoinAuthorization(req, formData)) {
+        writeJsonResponse(res, 401, { ok: false, error: "unauthorized" });
+        return;
+      }
+      const requestedSid = toSafeString(formData.sessionId) || toSafeString(url.searchParams.get("sessionId"));
+      if (!requestedSid) {
+        writeJsonResponse(res, 400, { ok: false, error: "session_id_required" });
+        return;
+      }
+      if (!meetingSessions.has(requestedSid)) {
+        writeJsonResponse(res, 404, { ok: false, error: "session_not_found" });
+        return;
+      }
+      const sid = requestedSid;
+      const handler = activeConnections.get(sid)?.handler;
+      if (typeof handler?.continueWithoutArbitration !== "function") {
+        writeJsonResponse(res, 404, { ok: false, error: "floor_not_available" });
+        return;
+      }
+      const floor = handler.continueWithoutArbitration();
+      writeJsonResponse(res, 200, { ok: true, floor });
+      return;
+    } catch (err) {
+      console.error("❌  /floor/continue-without-arbitration error:", scrubErrorMessage(err, undefined));
+      writeJsonResponse(res, 500, { ok: false, error: "floor_continue_failed" });
+      return;
+    }
   }
 
   // Leave meeting (force-remove bot via Attendee API)
@@ -1269,6 +1303,7 @@ async function handleHttp(req, res) {
         return;
       }
 
+      const sessionHubConfig = await resolveSessionHubConfig(meetingUrl);
       sessionId = crypto.randomUUID();
       const startedAt = new Date().toISOString();
       const session = {
@@ -1276,6 +1311,17 @@ async function handleHttp(req, res) {
         createdAt: startedAt,
         startedAt,
         meetingUrl,
+        ...(sessionHubConfig ? { hubConfig: sessionHubConfig } : {}),
+        ...(sessionHubConfig?.reason ? {
+          floorStatus: {
+            mode: "cloud",
+            state: "DISABLED",
+            muted: false,
+            reason: sessionHubConfig.reason,
+            roomOccupied: null,
+            continueWithoutArbitration: { available: false },
+          },
+        } : {}),
         config: {
           prompt: toSafeString(formData.prompt) || null,
           greeting: toSafeString(formData.greeting) || null,
@@ -1351,7 +1397,7 @@ async function handleHttp(req, res) {
       sessionInserted = true;
 
       const lifecycle = new SessionLifecycle(sessionId, "meet", {
-        meetingUrl,
+        ...(sessionHubConfig?.mode === "cloud" ? {} : { meetingUrl }),
         conversationMode,
         agents: [profile.name],
         agentIds: [profile.agentId],
@@ -1375,7 +1421,8 @@ async function handleHttp(req, res) {
       warmUpGatewaySession(sessionUserFor("meet", sessionId, profile.agentId), warmupConfig, briefing);
 
       const wsWithSession = buildWsUrlWithSession(wsUrl, sessionId);
-      console.log("📹  Meeting URL:", meetingUrl);
+      if (sessionHubConfig?.mode === "cloud") console.log("📹  Cloud meeting room derived");
+      else console.log("📹  Meeting URL:", meetingUrl);
       console.log("🔗  WebSocket URL:", wsWithSession.replace(/token=[^&]+/, "token=***"));
       console.log("🧾  Session ID:", sessionId);
       console.log("💬  Conversation Mode:", conversationMode, `(${session.config.wakeMode})`);
@@ -1466,6 +1513,93 @@ async function handleHttp(req, res) {
 
 // Keep additions below handleHttp: direct process.env reads above are
 // line-pinned by docs/settings-env-inventory.json.
+function readCloudHubState() {
+  const raw = getRawConfig();
+  const bootCloudConfig = HUB_CONFIG?.mode === "cloud" ? HUB_CONFIG : {};
+  return {
+    cloudUrl: readPath(raw, "hub.cloudUrl") || getEffectiveValue("hub_cloud_url") || "",
+    hubToken: readPath(raw, "hub.token") || bootCloudConfig.authToken || "",
+    hubUrl: readPath(raw, "hub.cloudHubUrl") || bootCloudConfig.url || "",
+    roomSalt: readPath(raw, "hub.roomSalt") || "",
+    roomSaltVersion: readPath(raw, "hub.roomSaltVersion") || "",
+    configRefreshedAt: readPath(raw, "hub.configRefreshedAt") || null,
+    refreshAfterSeconds: Number(readPath(raw, "hub.configRefreshAfterSeconds"))
+      || DEFAULT_CONFIG_REFRESH_AFTER_S,
+  };
+}
+
+function saveRefreshedHubConfig(result) {
+  // Twin: src/settings/routes.js persists these refreshed cloud fields; unify both paths later.
+  const configPath = getSettingsRuntime().startup.configPath;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const revision = readConfigState(configPath).revision;
+    try {
+      return saveCloudFields({
+        configPath,
+        revision,
+        refreshAfterSeconds: result.refreshAfterSeconds,
+        fields: {
+          hub_cloud_hub_url: result.config.hub_url,
+          hub_room_salt: result.config.room_salt,
+          hub_room_salt_version: result.config.room_salt_version,
+          hub_config_refreshed_at: result.configRefreshedAt,
+        },
+      });
+    } catch (error) {
+      if (error.code !== "SETTINGS_REVISION_CONFLICT" || attempt === 1) throw error;
+    }
+  }
+  return null;
+}
+
+async function resolveSessionHubConfig(meetingUrl) {
+  if (!HUB_CONFIG?.mode) return null;
+  let state = readCloudHubState();
+  let enabled = Boolean(state.hubToken && state.hubUrl);
+  if (!enabled) return HUB_CONFIG?.mode ? { ...HUB_CONFIG } : null;
+
+  const baseHubConfig = { ...HUB_CONFIG, mode: "cloud" };
+  delete baseHubConfig.roomSalt;
+  if (enabled) {
+    const refreshed = await refreshHubConfigIfStale({
+      cloudUrl: state.cloudUrl,
+      hubToken: state.hubToken,
+      configRefreshedAt: state.configRefreshedAt,
+      refreshAfterSeconds: state.refreshAfterSeconds,
+    });
+    if (refreshed.refreshed) {
+      try {
+        saveRefreshedHubConfig(refreshed);
+        state = readCloudHubState();
+      } catch {
+        console.warn("⚠️  Cloud floor configuration refresh could not be saved; using the last-good configuration");
+      }
+    } else if (refreshed.ok === false) {
+      console.warn("⚠️  Cloud floor configuration refresh failed; using the last-good configuration");
+    }
+  }
+
+  enabled = Boolean(state.hubToken && state.hubUrl);
+  if (!enabled || !state.roomSalt || !state.roomSaltVersion) {
+    return {
+      ...baseHubConfig,
+      enabled: false,
+      url: state.hubUrl || null,
+      roomCode: null,
+      authToken: state.hubToken,
+      reason: "hub_config_missing",
+    };
+  }
+  return {
+    ...baseHubConfig,
+    enabled: true,
+    url: state.hubUrl,
+    roomCode: deriveRoomCode(meetingUrl, state),
+    authToken: state.hubToken,
+    roomSaltVersion: state.roomSaltVersion,
+  };
+}
+
 const sessionCoordinator = require("../session-coordinator");
 const { sessionUserFor } = require("../session-user");
 
@@ -1804,6 +1938,10 @@ function readinessPayload() {
 }
 
 const { getPublishedValue, getRuntime: getSettingsRuntime } = require("../settings/resolver");
+const { readPath } = require("../settings/resolver");
+const { DEFAULT_CONFIG_REFRESH_AFTER_S, refreshHubConfigIfStale } = require("../cloud-setup");
+const { deriveRoomCode } = require("../room-code");
+const { readConfigState, saveCloudFields } = require("../settings/store");
 const readiness = require("../settings/readiness");
 const { HUB_CONFIG } = require("../config");
 
@@ -1843,9 +1981,13 @@ module.exports = {
     resolvePublicOrigin,
     resolveLocalAvatarPublicOrigin,
     publicOriginCandidates,
+    readCloudHubState,
+    resolveSessionHubConfig,
     readiness,
     readEffectiveBotImage,
     checkWsUrlIdentity: readinessProbes.checkWsUrlIdentity,
     taskExtractionEnabledAtBoot,
+    meetingSessions,
+    activeConnections,
   },
 };

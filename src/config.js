@@ -234,8 +234,7 @@ function getFloorSettings() {
   if (parsed.token) {
     return {
       hub: {
-        // cloud mode stays inert until child #8 derives the room code from the meeting URL (Epic meet-floor-hub#10)
-        enabled: false,
+        enabled: Boolean(parsed.cloudHubUrl && parsed.token),
         url: parsed.cloudHubUrl || null,
         roomCode: null,
         authToken: parsed.token,

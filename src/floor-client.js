@@ -103,6 +103,11 @@ class FloorClient extends EventEmitter {
     this.readyGraceTimer = null;
     this.connectStartedAt = null;
     this.hasBeenReady = false;
+    this.firstWelcomeAt = null;
+    this.leaseExpiresAt = null;
+    this.terminal = null;
+    this.muted = false;
+    this.userOverride = false;
     this.stopped = false;
     this.latestRoundSequence = null;
     this.reports = new Map();
@@ -128,6 +133,16 @@ class FloorClient extends EventEmitter {
 
   connect() {
     if (!this.enabled || this.stopped) return Promise.resolve(false);
+    if (this.terminal || this.muted) {
+      this.userOverride = false;
+      this.firstWelcomeAt = null;
+      this.leaseExpiresAt = null;
+      if (this.reconnectTimer !== null) this.timers.clearTimeout(this.reconnectTimer);
+      if (this.readyGraceTimer !== null) this.timers.clearTimeout(this.readyGraceTimer);
+      this.reconnectTimer = null;
+      this.readyGraceTimer = null;
+      this.connectStartedAt = null;
+    }
     if (this.socket && (socketOpen(this.socket) || this.socket.readyState === 0)) return Promise.resolve(true);
     if (this.connectStartedAt === null) {
       this.connectStartedAt = this.now();
@@ -242,6 +257,15 @@ class FloorClient extends EventEmitter {
         this.send({ type: "pong" });
         break;
       case "error":
+        if (message.terminal === true) {
+          this.markTerminal({
+            code: message.code || "hub_error",
+            message: message.message,
+            roomOccupied: message.roomOccupied === true,
+          });
+        } else {
+          this.transition(STATES.DEGRADED, { cause: message.code || "hub_error" });
+        }
         this.emit("hub_error", message);
         break;
       default:
@@ -261,6 +285,14 @@ class FloorClient extends EventEmitter {
       wakeWords: Array.isArray(member.wakeWords) ? member.wakeWords.slice() : [],
     })) : [];
     this.hasBeenReady = true;
+    this.terminal = null;
+    this.muted = false;
+    this.userOverride = false;
+    if (this.firstWelcomeAt === null) this.firstWelcomeAt = this.now();
+    const providedLease = Date.parse(message.leaseExpiresAt || "");
+    this.leaseExpiresAt = Number.isFinite(providedLease)
+      ? providedLease
+      : this.firstWelcomeAt + (2 * 60 * 60_000);
     this.reconnectAttempt = 0;
     if (this.readyGraceTimer !== null) this.timers.clearTimeout(this.readyGraceTimer);
     this.readyGraceTimer = null;
@@ -636,7 +668,7 @@ class FloorClient extends EventEmitter {
     const lostEstablishedConnection = this.connectionEpoch !== null;
     const wasHolder = Boolean(this.grant);
     const staleGrant = this.grant;
-    if (lostEstablishedConnection) {
+    if (lostEstablishedConnection && !this.terminal) {
       if (this.readyGraceTimer !== null) this.timers.clearTimeout(this.readyGraceTimer);
       this.readyGraceTimer = null;
       this.connectStartedAt = this.now();
@@ -672,13 +704,48 @@ class FloorClient extends EventEmitter {
       this.onAbortPlayback({ cause: "disconnect", grantId: staleGrant.grantId });
       this.emit("revoked", { type: "revoked", grantId: staleGrant.grantId, cause: "disconnect" });
     }
-    if (this.connectStartedAt !== null && this.now() - this.connectStartedAt >= this.readyGraceMs) {
+    if (!this.terminal && this.leaseExpiresAt !== null && this.now() >= this.leaseExpiresAt) {
+      this.markTerminal({ code: "room_expired", cause: "lease_expired" });
+    } else if (this.terminal) {
+      this.transition(STATES.DEGRADED, { cause: this.terminal.code });
+    } else if (this.connectStartedAt !== null && this.now() - this.connectStartedAt >= this.readyGraceMs) {
       this.transition(STATES.DEGRADED, { cause: "ready_timeout" });
-    } else {
+    } else if (this.state !== STATES.DEGRADED) {
       this.transition(STATES.CONNECTING, { cause: "disconnect" });
     }
     if (error) this.emit("socket_error", error);
-    this.scheduleReconnect();
+    if (!this.terminal) this.scheduleReconnect();
+  }
+
+  markTerminal(details) {
+    this.terminal = { ...details };
+    this.muted = this.terminal.code !== "proto_mismatch";
+    this.userOverride = false;
+    if (this.reconnectTimer !== null) this.timers.clearTimeout(this.reconnectTimer);
+    if (this.readyGraceTimer !== null) this.timers.clearTimeout(this.readyGraceTimer);
+    this.reconnectTimer = null;
+    this.readyGraceTimer = null;
+    this.transition(STATES.DEGRADED, { cause: this.terminal.code });
+  }
+
+  isMuted() {
+    return this.muted === true;
+  }
+
+  terminalReason() {
+    return this.terminal?.code || null;
+  }
+
+  continueWithoutArbitration() {
+    this.terminal = null;
+    this.muted = false;
+    this.userOverride = true;
+    this.emit("state", {
+      previous: this.state,
+      state: this.state,
+      cause: "continue_without_arbitration",
+    });
+    return true;
   }
 
   scheduleReconnect() {
@@ -688,6 +755,10 @@ class FloorClient extends EventEmitter {
     this.reconnectAttempt += 1;
     this.reconnectTimer = this.timers.setTimeout(() => {
       this.reconnectTimer = null;
+      if (this.leaseExpiresAt !== null && this.now() >= this.leaseExpiresAt) {
+        this.markTerminal({ code: "room_expired", cause: "lease_expired" });
+        return;
+      }
       this.connect();
     }, delayMs);
     this.reconnectTimer?.unref?.();
