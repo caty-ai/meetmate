@@ -130,6 +130,7 @@ test("LLM first-response timeout log reports the stalled stage and preserves tim
       },
       verify(line) {
         assert.equal(line.includes("stage=gateway_no_response"), true);
+        assert.equal(line.includes("diagnostic=MM-LLM-510"), true);
         assert.equal(line.includes("request_sent=+0ms"), true);
         assert.equal(line.includes("gateway_response=none"), true);
         assert.equal(line.includes("stream_event=none"), true);
@@ -147,6 +148,7 @@ test("LLM first-response timeout log reports the stalled stage and preserves tim
       },
       verify(line) {
         assert.equal(line.includes("stage=agent_no_output"), true);
+        assert.equal(line.includes("diagnostic=MM-LLM-511"), true);
         assert.match(line, /gateway_response=HTTP 200 \+\d+ms/);
         assert.equal(line.includes("stream_event=none"), true);
         assert.equal(line.includes("tts=not_started"), true);
@@ -164,6 +166,7 @@ test("LLM first-response timeout log reports the stalled stage and preserves tim
       },
       verify(line) {
         assert.equal(line.includes("stage=stream_no_content"), true);
+        assert.equal(line.includes("diagnostic=MM-LLM-512"), true);
         assert.match(line, /gateway_response=HTTP 200 \+\d+ms/);
         assert.match(line, /stream_event=\+\d+ms/);
         assert.equal(line.includes("tts=not_started"), true);

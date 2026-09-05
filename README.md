@@ -1,6 +1,6 @@
 # Meetmate
 <!-- repo-state:begin (generated; do not edit) -->
-<p align="center"><sub>generation: <code>93f2b32</code> (2026-09-05T16:09:53Z) · verify: <a href="https://api.github.com/repos/caty-ai/meetmate/commits/main">API HEAD</a> · <a href="./status.json">status.json</a></sub></p>
+<p align="center"><sub>generation: <code>9b5ebaa</code> (2026-09-05T18:36:28Z) · verify: <a href="https://api.github.com/repos/caty-ai/meetmate/commits/main">API HEAD</a> · <a href="./status.json">status.json</a></sub></p>
 <!-- repo-state:end -->
 
 **English** | [日本語](https://github.com/caty-ai/meetmate/blob/main/docs/i18n/README.ja.md) | [中文](https://github.com/caty-ai/meetmate/blob/main/docs/i18n/README.zh.md) | [ไทย](https://github.com/caty-ai/meetmate/blob/main/docs/i18n/README.th.md)
@@ -209,6 +209,7 @@ Something not working? See [Troubleshooting](https://github.com/caty-ai/meetmate
 | Document | Contents |
 |---|---|
 | [docs/setup-guide.md](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md) | Zero-to-first-meeting, step by step |
+| [docs/diagnostic-ids.md](https://github.com/caty-ai/meetmate/blob/main/docs/diagnostic-ids.md) | Diagnostic IDs, meanings, and next steps (Japanese / English) |
 | [docs/TECHNICAL.md](https://github.com/caty-ai/meetmate/blob/main/docs/TECHNICAL.md) | Features in detail, architecture, providers, MCP, development |
 | [docs/architecture.md](https://github.com/caty-ai/meetmate/blob/main/docs/architecture.md) | Architecture deep dive |
 | [docs/operations.md](https://github.com/caty-ai/meetmate/blob/main/docs/operations.md) | Full operations and tuning reference |

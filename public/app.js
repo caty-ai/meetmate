@@ -190,7 +190,10 @@ function parseJoinErrorText(text) {
   if (!error || typeof error !== "object") return String(text || "");
   if (error.code === "MEETING_NOT_READY") {
     const causes = Array.isArray(error.blockers)
-      ? error.blockers.map((blocker) => blocker?.message || blocker?.code).filter(Boolean)
+      ? error.blockers.map((blocker) => {
+        const cause = blocker?.message || blocker?.code;
+        return cause && blocker?.diagnosticId ? `[${blocker.diagnosticId}] ${cause}` : cause;
+      }).filter(Boolean)
       : [];
     return [error.message || "ミーティングの接続設定を確認してください", ...causes].join(" / ");
   }
@@ -232,7 +235,7 @@ function readinessDisplayRows(readinessState) {
   }
   rows.push(...blockers.map((blocker) => ({
     kind: "blocker",
-    text: blocker.message || blocker.code,
+    text: blocker.diagnosticId ? `[${blocker.diagnosticId}] ${blocker.message || blocker.code}` : blocker.message || blocker.code,
     fieldId: blocker.fieldId,
   })));
   const notices = Array.isArray(readinessState?.notices) ? readinessState.notices : [];
@@ -241,9 +244,9 @@ function readinessDisplayRows(readinessState) {
     .map((notice) => ({ kind: "warning", text: notice.message || notice.code })));
   for (const system of systems) {
     if (system.code === "PENDING") {
-      rows.push({ kind: "pending", text: `${system.id}: 確認中…` });
+      rows.push({ kind: "pending", text: `${system.diagnosticId ? `[${system.diagnosticId}] ` : ""}${system.id}: 確認中…` });
     } else if (!system.ok && !blockers.some((blocker) => blocker.system === system.id)) {
-      rows.push({ kind: "warning", text: `${system.id}: ${system.code}（一時的な問題の可能性があります。Join はブロックしません）` });
+      rows.push({ kind: "warning", text: `${system.diagnosticId ? `[${system.diagnosticId}] ` : ""}${system.id}: ${system.code}（一時的な問題の可能性があります。Join はブロックしません）` });
     } else if (system.stale) {
       rows.push({ kind: "warning", text: `${system.id}: 前回の接続確認結果が古くなっています` });
     }

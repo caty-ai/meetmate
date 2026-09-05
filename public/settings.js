@@ -128,7 +128,7 @@ function clipMatchesCurrentText(clip, fields = {}) {
 
 function readinessSummary(data) {
   const systems = Array.isArray(data?.systems) ? data.systems : [];
-  return systems.map((system) => `${system.id}: ${system.code}`).join(" / ");
+  return systems.map((system) => `${system.id}: ${system.diagnosticId ? `[${system.diagnosticId}] ` : ""}${system.code}`).join(" / ");
 }
 
 if (typeof module !== "undefined" && module.exports) {
@@ -1148,7 +1148,7 @@ if (typeof document !== "undefined") {
               method: "POST", body: JSON.stringify({ revision: envelope.revision }),
             });
             const explanation = CONNECTION_EXPLANATIONS[body.code] || "接続結果を確認できませんでした。";
-            result.textContent = `${label}: ${body.code} — ${explanation} (${body.durationMs} ms)`;
+            result.textContent = `${label}: ${body.code} — ${typeof body.diagnosticId === "string" ? `[${body.diagnosticId}] ` : ""}${explanation} (${body.durationMs} ms)`;
             result.className = `action-result ${body.ok ? "success-text" : "danger-text"}`;
           } catch (error) {
             if (error.handled) {

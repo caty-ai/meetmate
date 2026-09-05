@@ -204,6 +204,7 @@ flowchart LR
 | 文档 | 内容 |
 |---|---|
 | [docs/setup-guide.md](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md) | 从零到第一场会议,步步引导 |
+| [docs/diagnostic-ids.md](https://github.com/caty-ai/meetmate/blob/main/docs/diagnostic-ids.md) | 诊断 ID 的含义与后续操作（日语／英语） |
 | [docs/TECHNICAL.md](https://github.com/caty-ai/meetmate/blob/main/docs/TECHNICAL.md) | 功能详解、架构、服务商、MCP、开发 |
 | [docs/architecture.md](https://github.com/caty-ai/meetmate/blob/main/docs/architecture.md) | 架构深入解析 |
 | [docs/operations.md](https://github.com/caty-ai/meetmate/blob/main/docs/operations.md) | 完整的运维与调优参考 |
