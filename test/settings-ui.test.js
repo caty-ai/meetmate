@@ -313,6 +313,10 @@ test("main UI displays notices after setup and blockers without gating join", ()
   const notices = [{ code: "AGENTS_KEY_UNSUPPORTED", message: "m" }];
   assert.deepEqual(readinessDisplayRows({ ...state, notices }), [{ kind: "warning", text: "m" }]);
   assert.deepEqual(readinessDisplayRows(state), []);
+  for (const notices of ["x", 5, {}, [null], [], undefined, null]) {
+    assert.deepEqual(readinessDisplayRows({ ...state, notices }), []);
+  }
+  assert.deepEqual(readinessDisplayRows({ ...state, notices: [{}] }), [{ kind: "warning", text: undefined }]);
   assert.deepEqual(readinessDisplayRows({ ...state, notices: [{ code: "CODE" }] }), [{ kind: "warning", text: "CODE" }]);
   const setup = { ...state, setupRequired: true };
   assert.deepEqual(readinessDisplayRows({ ...setup, notices }), [

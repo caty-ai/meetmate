@@ -1699,7 +1699,7 @@ test("touched public UI sources do not contain circled step-number literals", ()
   }
 });
 
-test("T12-16 legacy readiness notices preserve health, join, secrets, and config bytes", (t) => {
+test("T12-15 legacy readiness notices preserve health, join, secrets, and config bytes", (t) => {
   for (const name of ["registry", "schemas", "routes", "resolver", "audio"]) {
     assert.doesNotMatch(fs.readFileSync(path.join(ROOT, `src/settings/${name}.js`), "utf8"), /\bagents\b/);
   }
