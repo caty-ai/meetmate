@@ -11,6 +11,19 @@ const DISCORD_ERROR_MESSAGES = Object.freeze({
   DISCORD_JOIN_FAILED: "Discord への参加に失敗しました",
   DISCORD_LEAVE_FAILED: "Discord からの退出に失敗しました",
 });
+const FLOOR_RECOVERY_HINTS = Object.freeze({
+  auth_failed: "設定を確認してください",
+  hub_config_missing: "設定を確認してください",
+  plan_meeting_quota: "翌月まで待つか、プランをアップグレードしてください",
+  plan_agent_limit: "プランをアップグレードしてください",
+  plan_room_limit: "プランをアップグレードしてください",
+  room_expired: "会議へ入り直すと再開できます",
+  hub_unavailable: "自動再試行します。続く場合は設定を確認してください",
+});
+
+function floorRecoveryHint(reason) {
+  return FLOOR_RECOVERY_HINTS[reason] || "";
+}
 
 function isDiscordSnowflake(value) {
   return DISCORD_SNOWFLAKE_RE.test(String(value || "").trim());
@@ -256,6 +269,7 @@ if (typeof module !== "undefined" && module.exports) module.exports = {
   parseDiscordJoinErrorText,
   parseJoinErrorText,
   readinessDisplayRows,
+  floorRecoveryHint,
   settingsPortFromReadiness,
 };
 
@@ -280,8 +294,10 @@ if (typeof document !== "undefined") (function () {
   const activeStateEl = document.getElementById("activeState");
   const activeWsEl = document.getElementById("activeWs");
   const activeAgentsEl = document.getElementById("activeAgents");
+  const activeFloorEl = document.getElementById("activeFloor");
   const elapsedTimerEl = document.getElementById("elapsedTimer");
   const leaveBtn = document.getElementById("leaveBtn");
+  const continueWithoutFloorBtn = document.getElementById("continueWithoutFloorBtn");
   const agentInfoEl = document.getElementById("agentInfoDisplay");
   const calibrateLink = document.getElementById("calibrateLink");
   const modeBadge = document.getElementById("modeBadge");
@@ -691,11 +707,29 @@ if (typeof document !== "undefined") (function () {
     activeTransport = selectedTransport();
     activeSessionId = null;
     activeAgentsEl.textContent = "エージェント: -";
+    activeFloorEl.classList.add("is-hidden");
+    continueWithoutFloorBtn.classList.add("is-hidden");
     stopElapsedTimer();
     if (Date.now() < endedShownUntilMs) return;
     activeCard.classList.add("is-hidden");
     activeCard.classList.remove("ended");
     leaveBtn.classList.remove("is-hidden");
+  }
+
+  function renderFloorStatus(floor) {
+    if (!floor) {
+      activeFloorEl.classList.add("is-hidden");
+      continueWithoutFloorBtn.classList.add("is-hidden");
+      return;
+    }
+    const reason = floor.reason || "なし";
+    const hint = floorRecoveryHint(floor.reason);
+    activeFloorEl.textContent = `調停: ${floor.state || "unknown"} / 理由: ${reason}${hint ? ` / ${hint}` : ""}`;
+    activeFloorEl.classList.remove("is-hidden");
+    continueWithoutFloorBtn.classList.toggle(
+      "is-hidden",
+      floor.continueWithoutArbitration?.available !== true,
+    );
   }
 
   function renderMeetActiveBanner(session) {
@@ -713,6 +747,7 @@ if (typeof document !== "undefined") (function () {
       ? session.agentDisplayNames.join(", ")
       : fallbackName;
     activeAgentsEl.textContent = `エージェント: ${names}`;
+    renderFloorStatus(session.floor);
     activeCard.classList.remove("is-hidden", "ended");
     startElapsedTimer(startedAtMs);
     endedShownUntilMs = 0;
@@ -745,6 +780,7 @@ if (typeof document !== "undefined") (function () {
     activeStateEl.textContent = discordSessionLabel(session.state || session.lifecycle);
     activeWsEl.textContent = discordConnectionLine(status);
     activeAgentsEl.textContent = `Discord 状態: ${status?.ok === false ? "エラー" : "OK"} / 設定: ${status?.configured ? "完了" : "未完了"}`;
+    renderFloorStatus(null);
     activeCard.classList.remove("is-hidden", "ended");
     if (previousTransport !== "discord" || activeStartedAtMs === null) {
       startElapsedTimer(parseStartedAt(session.startedAt));
@@ -891,6 +927,22 @@ if (typeof document !== "undefined") (function () {
       isLeaving = false;
       leaveBtn.disabled = false;
       leaveBtn.textContent = "退出する";
+    }
+  }
+
+  async function continueWithoutArbitration() {
+    continueWithoutFloorBtn.disabled = true;
+    try {
+      const body = new URLSearchParams({ sessionId: activeSessionId || "" });
+      const response = await fetch("/floor/continue-without-arbitration", { method: "POST", body });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload?.ok) throw new Error(payload?.error || `HTTP ${response.status}`);
+      renderFloorStatus(payload.floor);
+      setStatus("success", "調停なしで続行します");
+    } catch (error) {
+      setStatus("error", `調停の切り替えに失敗しました: ${error.message}`);
+    } finally {
+      continueWithoutFloorBtn.disabled = false;
     }
   }
 
@@ -1216,6 +1268,7 @@ if (typeof document !== "undefined") (function () {
     updateDiscordTargetStatus();
   });
   leaveBtn.addEventListener("click", leaveMeeting);
+  continueWithoutFloorBtn.addEventListener("click", continueWithoutArbitration);
   readinessRecheck.addEventListener("click", recheckReadiness);
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") {

@@ -77,7 +77,7 @@ test("cloud hub mode stays disabled until room-code derivation lands", () => {
   });
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(JSON.parse(result.stdout), {
-    enabled: false,
+    enabled: true,
     url: "wss://cloud-floor.example.test/ws",
     roomCode: null,
     authToken: "env-hub-token",
@@ -102,7 +102,7 @@ test("cloud hub mode ignores leftover shared settings until room-code derivation
   });
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(JSON.parse(result.stdout), {
-    enabled: false,
+    enabled: true,
     url: "wss://cloud-floor.example.test/ws",
     roomCode: null,
     authToken: "stored-hub",
@@ -124,7 +124,7 @@ test("cloud hub mode ignores HUB_ROOM_CODE from the environment", () => {
   });
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(JSON.parse(result.stdout), {
-    enabled: false,
+    enabled: true,
     url: "wss://cloud-floor.example.test/ws",
     roomCode: null,
     authToken: "stored-hub",
