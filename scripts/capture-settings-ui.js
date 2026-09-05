@@ -2,9 +2,11 @@
 "use strict";
 
 // Run from the repository (Node >= 18; the application requires Node >= 26):
-//   npm i --no-save playwright
+//   npm i --no-save --package-lock=false playwright@1.63.0
 //   npx playwright install chromium
 //   node scripts/capture-settings-ui.js [--out docs/images] [--only name,...] [--keep-home]
+// cleanup: npm ci (removes the extraneous package)
+// Set PLAYWRIGHT_BROWSERS_PATH when ~/Library/Caches is not writable.
 // No credentials or developer environment are inherited by the application.
 // Vendor responses are local fixtures; application readiness and UI logic run unchanged.
 
@@ -19,13 +21,16 @@ const assert = require("node:assert/strict");
 // Loaded before application code. Redirect vendors before DNS, then enforce
 // exact local socket destinations as a backstop. HTTP redirects are not followed.
 function installEgressGuard() {
+  if (globalThis.__meetmateCaptureGuard) return;
   const net = require("node:net");
   const tls = require("node:tls");
   const mock = new URL(process.env.MEETMATE_CAPTURE_MOCK);
   const server = new URL(process.env.MEETMATE_CAPTURE_SERVER);
   function redirected(url) {
     if ([mock.origin, server.origin].includes(url.origin)) return url;
-    const target = new URL(url.pathname + url.search, url.hostname === "meetmate.example.invalid" ? server : mock);
+    const target = new URL(url.hostname === "meetmate.example.invalid" ? server : mock);
+    target.pathname = url.pathname;
+    target.search = url.search;
     console.log(`[redirect] ${url.origin}${url.pathname}${url.search} -> ${target}`);
     return target;
   }
@@ -42,19 +47,33 @@ function installEgressGuard() {
     }
     return connect.apply(this, args);
   };
-  tls.connect = () => { throw denied("TLS"); };
+  tls.connect = function (...args) {
+    const first = args[0];
+    const options = typeof first === "object" ? first : { ...(typeof args[1] === "object" ? args[1] : args[2]), port: first, ...(typeof args[1] === "string" ? { host: args[1] } : {}) };
+    throw denied(`TLS ${options.host || options.hostname || "localhost"}:${options.port || "unknown"}`);
+  };
   // Bot creation uses https.request (not fetch). Preserve method, body and
   // headers while routing this HTTP client through the same local fixtures.
   const https = require("node:https");
   const request = http.request;
-  https.request = function (input, options, callback) {
+  function guardedRequest(protocol, input, options, callback) {
     const isUrl = typeof input === "string" || input instanceof URL;
-    const opts = isUrl ? (typeof options === "object" ? options : {}) : input;
+    const opts = { ...(isUrl ? require("node:url").urlToHttpOptions(new URL(input)) : {}), ...(isUrl ? (typeof options === "object" ? options : {}) : input) };
     const cb = typeof options === "function" ? options : callback;
-    const url = isUrl ? new URL(input) : new URL(`https://${opts.hostname || opts.host}${opts.port ? `:${opts.port}` : ""}${opts.path || "/"}`);
+    const hostname = opts.hostname || opts.host || "localhost";
+    const host = net.isIP(hostname) === 6 ? `[${hostname}]` : hostname;
+    const url = new URL(`${opts.protocol || protocol}//${host}${opts.port ? `:${opts.port}` : ""}${opts.path || "/"}`);
     const target = redirected(url);
-    return request.call(http, target, { ...opts, protocol: target.protocol, hostname: target.hostname, host: target.hostname, port: target.port, path: target.pathname + target.search, agent: false }, cb);
-  };
+    return request.call(http, target, { ...opts, protocol: target.protocol, hostname: target.hostname, host: target.hostname, port: target.port, path: target.pathname + target.search, agent: false, createConnection: undefined, socketPath: undefined, lookup: undefined }, cb);
+  }
+  for (const [client, protocol] of [[http, "http:"], [https, "https:"]]) {
+    client.request = (input, options, callback) => guardedRequest(protocol, input, options, callback);
+    client.get = (input, options, callback) => {
+      const req = client.request(input, options, callback);
+      req.end();
+      return req;
+    };
+  }
   const fetch = globalThis.fetch;
   globalThis.fetch = async (input, options) => {
     const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url);
@@ -62,6 +81,7 @@ function installEgressGuard() {
     const request = input instanceof Request ? new Request(target, input) : target;
     return fetch(request, { ...options, redirect: "error" });
   };
+  globalThis.__meetmateCaptureGuard = true;
 }
 
 const shots = {
@@ -184,7 +204,7 @@ async function main() {
       let logs = "";
       child = spawn(process.execPath, ["--require", __filename, path.join(repo, "src/server.js")], {
         cwd: home,
-        env: { PATH: path.dirname(process.execPath), HOME: home, TMPDIR: home, AI_MEET_HOME: home, PORT: String(port), MEETMATE_CAPTURE_MOCK: mockUrl, MEETMATE_CAPTURE_SERVER: `http://127.0.0.1:${port}` },
+        env: { PATH: path.dirname(process.execPath), HOME: home, TMPDIR: home, AI_MEET_HOME: home, PORT: String(port), NODE_OPTIONS: `--require=${JSON.stringify(__filename)}`, MEETMATE_CAPTURE_MOCK: mockUrl, MEETMATE_CAPTURE_SERVER: `http://127.0.0.1:${port}` },
         stdio: ["ignore", "pipe", "pipe"],
       });
       child.on("error", (error) => { logs += error.message; });
