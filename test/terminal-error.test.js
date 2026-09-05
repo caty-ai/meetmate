@@ -249,6 +249,23 @@ test("terminal errors enforce muted-degraded speech and recovery contracts", asy
     await limited.pipeline._test.speakSentence("手動発話", null, { manual: true });
     assert.equal(limited.audio.length > 0, true, "manual speech remains audible while floor-muted");
 
+    const audioBeforeManualApi = limited.audio.length;
+    assert.equal(await limited.pipeline.speakManual("手動 API 発話"), true, "#216 speakManual returns true when it spoke");
+    assert.equal(limited.audio.length > audioBeforeManualApi, true, "#216 speakManual (production api) remains audible while floor-muted");
+    assert.equal(limited.pipeline.floorStatus().muted, true, "#216 speakManual must not clear the muted state");
+
+    const audioAfterManualApi = limited.audio.length;
+    await limited.pipeline._test.handleUtteranceEnd("ケイティ、もう一度");
+    await limited.pipeline._test.speakSentence("自動発話");
+    assert.equal(limited.audio.length, audioAfterManualApi, "#216 automatic speech stays suppressed while muted after speakManual");
+
+    assert.equal(await limited.pipeline.speakManual("   "), false, "#216 speakManual ignores empty text");
+    assert.equal(limited.audio.length, audioAfterManualApi, "#216 empty text produces no audio");
+
+    limited.pipeline.close();
+    assert.equal(await limited.pipeline.speakManual("停止後の手動発話"), false, "#216 speakManual ignores speech after close");
+    assert.equal(limited.audio.length, audioAfterManualApi, "#216 stopped pipeline produces no audio");
+
     const rejected = build(createFloor());
     const healthy = build(createFloor());
     assert.equal(healthy.pipeline.floorStatus().continueWithoutArbitration.available, false);
