@@ -1082,19 +1082,20 @@ async function handleHttp(req, res) {
   if (req.method === "POST" && url.pathname === "/floor/continue-without-arbitration") {
     try {
       const formData = await parseRequestBody(req);
-      const hasExternalToken = req.headers["x-join-token"] || formData.joinToken || formData.token;
-      if (hasExternalToken && !checkJoinAuthorization(req, formData)) {
+      if (!checkJoinAuthorization(req, formData)) {
         writeJsonResponse(res, 401, { ok: false, error: "unauthorized" });
         return;
       }
       const requestedSid = toSafeString(formData.sessionId) || toSafeString(url.searchParams.get("sessionId"));
-      const sid = requestedSid
-        ? (meetingSessions.has(requestedSid) ? requestedSid : null)
-        : meetingSessions.keys().next().value;
-      if (!sid) {
-        writeJsonResponse(res, 404, { ok: false, error: "no_active_session" });
+      if (!requestedSid) {
+        writeJsonResponse(res, 400, { ok: false, error: "session_id_required" });
         return;
       }
+      if (!meetingSessions.has(requestedSid)) {
+        writeJsonResponse(res, 404, { ok: false, error: "session_not_found" });
+        return;
+      }
+      const sid = requestedSid;
       const handler = activeConnections.get(sid)?.handler;
       if (typeof handler?.continueWithoutArbitration !== "function") {
         writeJsonResponse(res, 404, { ok: false, error: "floor_not_available" });
@@ -1527,6 +1528,7 @@ function readCloudHubState() {
 }
 
 function saveRefreshedHubConfig(result) {
+  // Twin: src/settings/routes.js persists these refreshed cloud fields; unify both paths later.
   const configPath = getSettingsRuntime().startup.configPath;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const revision = readConfigState(configPath).revision;
@@ -1555,7 +1557,8 @@ async function resolveSessionHubConfig(meetingUrl) {
   delete baseHubConfig.roomSalt;
 
   let state = readCloudHubState();
-  if (HUB_CONFIG.enabled) {
+  let enabled = Boolean(state.hubToken && state.hubUrl);
+  if (enabled) {
     const refreshed = await refreshHubConfigIfStale({
       cloudUrl: state.cloudUrl,
       hubToken: state.hubToken,
@@ -1574,7 +1577,8 @@ async function resolveSessionHubConfig(meetingUrl) {
     }
   }
 
-  if (!HUB_CONFIG.enabled || !state.hubToken || !state.hubUrl || !state.roomSalt || !state.roomSaltVersion) {
+  enabled = Boolean(state.hubToken && state.hubUrl);
+  if (!enabled || !state.roomSalt || !state.roomSaltVersion) {
     return { ...baseHubConfig, enabled: false, roomCode: null, reason: "hub_config_missing" };
   }
   return {
@@ -1974,5 +1978,7 @@ module.exports = {
     readEffectiveBotImage,
     checkWsUrlIdentity: readinessProbes.checkWsUrlIdentity,
     taskExtractionEnabledAtBoot,
+    meetingSessions,
+    activeConnections,
   },
 };

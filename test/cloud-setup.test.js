@@ -133,10 +133,10 @@ function fakeServerFactory() {
   };
 }
 
-test("settings UI explains that connected cloud arbitration is not active yet", () => {
+test("settings UI explains that connected cloud arbitration activates on meeting join", () => {
   const html = fs.readFileSync(path.join(__dirname, "..", "public", "settings.html"), "utf8");
   const script = fs.readFileSync(path.join(__dirname, "..", "public", "settings.js"), "utf8");
-  assert.match(html, /クラウド調停は次のリリース（会議 URL からの部屋コード導出）で有効になります。現在は接続情報の保存のみです。/);
+  assert.match(html, /クラウド調停は会議参加時に自動で有効になります。/);
   assert.match(script, /activationNotice\.hidden = !connected/);
 });
 

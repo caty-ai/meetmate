@@ -134,8 +134,6 @@ class FloorClient extends EventEmitter {
   connect() {
     if (!this.enabled || this.stopped) return Promise.resolve(false);
     if (this.terminal || this.muted) {
-      this.terminal = null;
-      this.muted = false;
       this.userOverride = false;
       this.firstWelcomeAt = null;
       this.leaseExpiresAt = null;
@@ -721,7 +719,7 @@ class FloorClient extends EventEmitter {
 
   markTerminal(details) {
     this.terminal = { ...details };
-    this.muted = true;
+    this.muted = this.terminal.code !== "proto_mismatch";
     this.userOverride = false;
     if (this.reconnectTimer !== null) this.timers.clearTimeout(this.reconnectTimer);
     if (this.readyGraceTimer !== null) this.timers.clearTimeout(this.readyGraceTimer);
@@ -739,6 +737,7 @@ class FloorClient extends EventEmitter {
   }
 
   continueWithoutArbitration() {
+    this.terminal = null;
     this.muted = false;
     this.userOverride = true;
     this.emit("state", {
@@ -756,6 +755,10 @@ class FloorClient extends EventEmitter {
     this.reconnectAttempt += 1;
     this.reconnectTimer = this.timers.setTimeout(() => {
       this.reconnectTimer = null;
+      if (this.leaseExpiresAt !== null && this.now() >= this.leaseExpiresAt) {
+        this.markTerminal({ code: "room_expired", cause: "lease_expired" });
+        return;
+      }
       this.connect();
     }, delayMs);
     this.reconnectTimer?.unref?.();

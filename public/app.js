@@ -274,6 +274,7 @@ if (typeof module !== "undefined" && module.exports) module.exports = {
 };
 
 if (typeof document !== "undefined") (function () {
+  const pageJoinToken = new URLSearchParams(window.location.search).get("joinToken")?.trim() || "";
   const root = document.documentElement;
   const form = document.getElementById("joinForm");
   const statusEl = document.getElementById("status");
@@ -739,7 +740,7 @@ if (typeof document !== "undefined") (function () {
     activeTransport = "meet";
     activeSessionId = session.sessionId;
     activeLabelEl.textContent = "通話中";
-    activeUrlEl.textContent = session.meetingUrl || "";
+    activeUrlEl.textContent = session.meetingUrl || "クラウド調停（会議 URL は非表示）";
     activeStateEl.textContent = stateLabel(session.state);
     activeWsEl.textContent = session.hasConnection ? "WS 接続 OK" : "WS 未接続";
     const fallbackName = availableAgents.length ? availableAgents[0].displayName : "エージェント";
@@ -934,7 +935,8 @@ if (typeof document !== "undefined") (function () {
     continueWithoutFloorBtn.disabled = true;
     try {
       const body = new URLSearchParams({ sessionId: activeSessionId || "" });
-      const response = await fetch("/floor/continue-without-arbitration", { method: "POST", body });
+      const headers = pageJoinToken ? { "x-join-token": pageJoinToken } : undefined;
+      const response = await fetch("/floor/continue-without-arbitration", { method: "POST", headers, body });
       const payload = await response.json().catch(() => null);
       if (!response.ok || !payload?.ok) throw new Error(payload?.error || `HTTP ${response.status}`);
       renderFloorStatus(payload.floor);

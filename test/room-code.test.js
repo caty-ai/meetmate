@@ -14,10 +14,23 @@ const CANON_VECTORS = [
   ["https://example.com/join?z=9&a=2&a=1&gclid=x", "url:https://example.com/join?a=1&a=2&z=9"],
   ["  not a url  ", "raw:not a url"],
   ["https://EXAMPLE.com/path/#frag", "url:https://example.com/path?"],
+  ["https://zoom.us/j/1234567890?pwd=abc", "zoom:1234567890"],
+  ["https://us02web.zoom.us/my/sho?pwd=abc", "zoom:my/us02web.zoom.us/sho"],
+  ["https://Acme.zoom.us/my/Helpdesk", "zoom:my/acme.zoom.us/helpdesk"],
 ];
 
-test("canon implements all nine frozen room-code vectors", () => {
+test("canon implements all twelve frozen room-code vectors", () => {
   for (const [input, expected] of CANON_VECTORS) assert.equal(canon(input), expected, input);
+});
+
+test("canon unifies Zoom joins and scopes personal rooms by lowercase vanity host", () => {
+  assert.equal(canon("https://zoom.us/j/123?pwd=x"), "zoom:123");
+  assert.equal(canon("https://us02web.zoom.us/j/123"), "zoom:123");
+  assert.equal(canon("https://zoom.us/my/Sho?pwd=x"), "zoom:my/zoom.us/sho");
+
+  const acme = canon("https://acme.zoom.us/my/helpdesk");
+  const globex = canon("https://globex.zoom.us/my/helpdesk");
+  assert.notEqual(acme, globex);
 });
 
 test("tracking parameter removal is limited to the frozen twelve names", () => {

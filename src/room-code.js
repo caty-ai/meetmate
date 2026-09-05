@@ -35,8 +35,12 @@ function canon(value) {
   if (hostname === "meet.google.com" && segments.length >= 1) {
     return `gmeet:${segments[0]}`;
   }
-  if (hostname.endsWith(".zoom.us") && segments[0] === "j" && segments[1]) {
+  const isZoomHost = hostname === "zoom.us" || hostname.endsWith(".zoom.us");
+  if (isZoomHost && segments[0] === "j" && segments[1]) {
     return `zoom:${segments[1]}`;
+  }
+  if (isZoomHost && segments[0] === "my" && segments[1]) {
+    return `zoom:my/${hostname}/${segments[1].toLowerCase()}`;
   }
   if (hostname === "discord.com" && segments[0] === "channels" && segments[1] && segments[2]) {
     return `discord:${segments[1]}/${segments[2]}`;

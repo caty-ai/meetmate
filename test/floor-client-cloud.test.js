@@ -124,6 +124,22 @@ test("acceptance 6: crossing an explicit lease on disconnect is terminal", () =>
   assert.deepEqual(scheduled, []);
 });
 
+test("an automatic reconnect that crosses the lease becomes terminal without opening a socket", () => {
+  const h = harness();
+  const socket = open(h);
+  welcome(socket, { leaseExpiresAt: new Date(1_000).toISOString() });
+  h.timers.advance(900);
+  socket.drop();
+  assert.notEqual(h.client.reconnectTimer, null);
+
+  h.timers.advance(250);
+
+  assert.equal(h.wire.sockets.length, 1);
+  assert.equal(h.client.isMuted(), true);
+  assert.deepEqual(h.client.terminal, { code: "room_expired", cause: "lease_expired" });
+  assert.equal(h.client.reconnectTimer, null);
+});
+
 test("welcome without a lease uses the first-welcome time plus two hours", () => {
   const h = harness();
   h.timers.advance(500);
@@ -136,7 +152,7 @@ test("welcome without a lease uses the first-welcome time plus two hours", () =>
   assert.equal(h.client.reconnectTimer, null);
 });
 
-test("explicit connect followed by welcome releases terminal muted state", () => {
+test("explicit connect stays muted until welcome releases terminal state", () => {
   const h = harness();
   const first = open(h);
   first.receive({ type: "error", code: "auth_failed", terminal: true, roomOccupied: true });
@@ -145,8 +161,24 @@ test("explicit connect followed by welcome releases terminal muted state", () =>
   h.client.connect();
   const second = h.wire.sockets.at(-1);
   second.open();
+  assert.equal(h.client.isMuted(), true);
+  assert.equal(h.client.terminalReason(), "auth_failed");
   welcome(second, { connectionEpoch: 2 });
   assert.equal(h.client.state, STATES.READY);
   assert.equal(h.client.isMuted(), false);
   assert.equal(h.client.terminalReason(), null);
+});
+
+test("terminal proto_mismatch degrades without muting or reconnecting", () => {
+  const h = harness();
+  const scheduled = [];
+  h.client.on("reconnect_scheduled", (event) => scheduled.push(event));
+  const socket = open(h);
+  socket.receive({ type: "error", code: "proto_mismatch", terminal: true });
+  socket.drop();
+  assert.equal(h.client.state, STATES.DEGRADED);
+  assert.equal(h.client.isMuted(), false);
+  assert.equal(h.client.terminalReason(), "proto_mismatch");
+  assert.deepEqual(scheduled, []);
+  assert.equal(h.client.reconnectTimer, null);
 });

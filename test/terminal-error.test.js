@@ -4,6 +4,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
 const { EventEmitter } = require("node:events");
+const { Readable } = require("node:stream");
 
 function cacheEntry(filename, exports) {
   return { id: filename, filename, loaded: true, exports, children: [], paths: [] };
@@ -53,7 +54,7 @@ function createFloor() {
     reject(code, roomOccupied = false, extra = {}) {
       const message = { type: "error", code, terminal: true, roomOccupied, ...extra };
       floor.terminal = { code, roomOccupied, ...extra };
-      floor.muted = true;
+      floor.muted = code !== "proto_mismatch";
       floor.state = "DEGRADED";
       floor.emit("state", { previous: "READY", state: "DEGRADED", cause: code });
       floor.emit("hub_error", message);
@@ -61,6 +62,59 @@ function createFloor() {
   });
   return floor;
 }
+
+async function invokeFloorContinue(routes, formData = {}, joinToken = "") {
+  const body = new URLSearchParams(formData).toString();
+  const req = Readable.from([Buffer.from(body)]);
+  req.method = "POST";
+  req.url = "/floor/continue-without-arbitration";
+  req.headers = {
+    host: "127.0.0.1:5005",
+    "content-type": "application/x-www-form-urlencoded",
+    "content-length": String(Buffer.byteLength(body)),
+    ...(joinToken ? { "x-join-token": joinToken } : {}),
+  };
+  req.socket = { remoteAddress: "127.0.0.1", localAddress: "127.0.0.1", localPort: 5005 };
+  const output = { status: 0, text: "" };
+  const res = {
+    writeHead(status) { output.status = status; },
+    end(chunk = "") { output.text += String(chunk); },
+  };
+  await routes.handleHttp(req, res);
+  return output;
+}
+
+test("floor continue route requires authorization and an explicit known session", async () => {
+  const routesPath = require.resolve("../src/transport-meet/meet-routes");
+  const previousToken = process.env.JOIN_SHARED_TOKEN;
+  process.env.JOIN_SHARED_TOKEN = "join-check";
+  delete require.cache[routesPath];
+  const routes = require(routesPath);
+  routes._test.meetingSessions.set("sid-active", { id: "sid-active" });
+  routes._test.activeConnections.set("sid-active", {
+    handler: {
+      continueWithoutArbitration: () => ({ muted: false }),
+    },
+  });
+
+  try {
+    assert.equal((await invokeFloorContinue(routes, { sessionId: "sid-active" })).status, 401);
+    assert.equal((await invokeFloorContinue(routes, { sessionId: "sid-active" }, "wrong")).status, 401);
+
+    const valid = await invokeFloorContinue(routes, { sessionId: "sid-active" }, "join-check");
+    assert.equal(valid.status, 200);
+    assert.deepEqual(JSON.parse(valid.text), { ok: true, floor: { muted: false } });
+
+    assert.equal((await invokeFloorContinue(routes, {}, "join-check")).status, 400);
+    assert.equal((await invokeFloorContinue(routes, { sessionId: "sid-missing" }, "join-check")).status, 404);
+  } finally {
+    routes._test.activeConnections.clear();
+    routes._test.meetingSessions.clear();
+    delete require.cache[routesPath];
+    if (previousToken === undefined) delete process.env.JOIN_SHARED_TOKEN;
+    else process.env.JOIN_SHARED_TOKEN = previousToken;
+  }
+});
 
 test("terminal errors enforce muted-degraded speech and recovery contracts", async () => {
   const previousEnv = Object.fromEntries([
@@ -139,8 +193,12 @@ test("terminal errors enforce muted-degraded speech and recovery contracts", asy
     assert.deepEqual(limited.chats, ["Caty は調停に参加できません（この部屋の同時エージェント上限 3体）"]);
     assert.deepEqual(limited.pipeline.floorStatus().continueWithoutArbitration, { available: true });
 
+    await limited.pipeline._test.speakSentence("手動発話", null, { manual: true });
+    assert.equal(limited.audio.length > 0, true, "manual speech remains audible while floor-muted");
+
     const rejected = build(createFloor());
     const healthy = build(createFloor());
+    assert.equal(healthy.pipeline.floorStatus().continueWithoutArbitration.available, false);
     rejected.floor.reject("auth_failed", false);
     await Promise.all([
       rejected.pipeline._test.speakSentence("拒否側"),
@@ -159,14 +217,23 @@ test("terminal errors enforce muted-degraded speech and recovery contracts", asy
     const beforeContinue = rejected.audio.length;
     const continued = rejected.pipeline.continueWithoutArbitration();
     assert.equal(continued.muted, false);
+    assert.equal(continued.continueWithoutArbitration.available, false);
     await rejected.pipeline._test.speakSentence("明示操作後の発話");
     assert.equal(rejected.audio.length > beforeContinue, true, "explicit continue re-enables fallback speech");
+
+    const incompatible = build(createFloor());
+    incompatible.floor.reject("proto_mismatch", false);
+    await Promise.resolve();
+    assert.equal(incompatible.pipeline.floorStatus().muted, false);
+    assert.equal(incompatible.pipeline.floorStatus().continueWithoutArbitration.available, false);
+    assert.deepEqual(incompatible.chats, ["調停OFF（プロトコル不一致・meetmate の更新が必要です）"]);
 
     const wording = [
       ["auth_failed", "Caty は調停に参加できません（設定の確認が必要です）"],
       ["plan_meeting_quota", "調停OFF（今月の無料枠 5/5 を使い切りました）。この会議では自動発話を停止します"],
       ["plan_room_limit", "調停OFF（同時に開ける会議は1つまで）"],
       ["room_expired", "2時間の上限に達したため調停を終了しました（入り直すと次の1回としてカウントされます）"],
+      ["proto_mismatch", "調停OFF（プロトコル不一致・meetmate の更新が必要です）"],
     ];
     for (const [code, expected] of wording) {
       const item = build(createFloor());
