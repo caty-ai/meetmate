@@ -319,3 +319,55 @@ for (const publicOrigin of ["https://funnel.example:8443", ""]) {
     });
   }
 }
+
+test("legacy notices are value-free and preserve readiness and resolver status", async () => {
+  initialize();
+  const controller = readiness.createReadinessController({
+    probeFn: async () => ({ ok: true, code: "CONNECTED" }),
+  });
+  await controller.bootstrap();
+  const baseline = controller.getReadiness();
+  const baselineStatus = resolver.getStatus();
+  assert.equal(baseline.ready, true);
+  assert.deepEqual(baseline.notices, []);
+  const parsed = document({ agents: [{ apiKey: "legacy.secret.value" }] });
+  parsed.agent.messages = { groupGreetingTemplate: "secret-template" };
+  initialize(parsed);
+  const payload = controller.getReadiness();
+  assert.deepEqual(payload.notices, [
+    {
+      code: "AGENTS_KEY_UNSUPPORTED",
+      message: "config.json の agents キーはこのバージョンでは使われません（1 サーバー = 1 エージェント）。設定は無視されます",
+    },
+    {
+      code: "GROUP_GREETING_TEMPLATE_UNSUPPORTED",
+      message: "config.json の agent.messages.groupGreetingTemplate キーはこのバージョンでは使われません。設定は無視されます",
+    },
+  ]);
+  assert.deepEqual({ ...payload, notices: [] }, baseline);
+  assert.deepEqual(resolver.getStatus(), baselineStatus);
+  assert.equal(resolver.getStatus().meetingReady, baselineStatus.meetingReady);
+  assert.doesNotMatch(JSON.stringify(payload), /legacy\.secret\.value|secret-template/);
+  assert.deepEqual((await controller.recheckPublic()).notices, payload.notices);
+  assert.equal((await controller.revalidateForJoin()).ready, baseline.ready);
+});
+
+test("readiness always includes an empty notices array without legacy keys", () => {
+  initialize();
+  assert.deepEqual(readiness.createReadinessController().getReadiness().notices, []);
+});
+
+test("an unavailable raw config does not break readiness notices", (t) => {
+  initialize();
+  const baseline = readiness.createReadinessController().getReadiness();
+  t.mock.method(resolver, "getRawConfig", () => { throw new Error("runtime unavailable"); });
+  const modulePath = require.resolve("../src/settings/readiness");
+  const cached = require.cache[modulePath];
+  delete require.cache[modulePath];
+  try {
+    const isolated = require("../src/settings/readiness").createReadinessController();
+    assert.deepEqual(isolated.getReadiness(), baseline);
+  } finally {
+    require.cache[modulePath] = cached;
+  }
+});
