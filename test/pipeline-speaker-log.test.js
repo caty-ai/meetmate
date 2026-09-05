@@ -108,9 +108,7 @@ async function withPipeline(fn) {
       {
         transport: "discord",
         capabilities: { echoesOwnOutput: false, perSpeakerAudio: true },
-        agents: { alpha: { wakeWords: ["alpha"] } },
-        selectedAgentIds: ["alpha"],
-        defaultAgentId: "alpha",
+        agentProfile: { agentId: "alpha", wakeWords: ["alpha"] },
         suppressGreeting: true,
         _testExposeInternals: true,
       },

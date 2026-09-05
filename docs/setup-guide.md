@@ -483,6 +483,8 @@ Legacy connection settings were ignored and must be supplied through the environ
 2. 2台目の設定 UI → **エクスポート・インポート** タブ → 1台目でダウンロードした `meetmate-settings.json` をインポートする。フォーマット/バージョンが合わない場合は失敗する。結果は「インポート済み: `<項目名...>` / スキップ: `<項目名...>`」（値が既に同じ項目はスキップ、空欄なら「なし」）の形で表示される
 3. 2台目用のアバター画像を `<2台目のhome>/assets/avatar.png` に配置する（[アバター画像を差し替える](#アバター画像を差し替える)）
 
+複数のエージェントを同じ会議に参加させる場合は、エージェントごとにインスタンスを起動し、[meet-floor-hub](https://github.com/caty-ai/meet-floor-hub) で発言を調停する構成をサポートしています。
+
 ---
 
 ## 接続テスト・試聴・MP3
@@ -814,7 +816,7 @@ LLM_RESPONSE_TIMEOUT_MS=60000
 
 ### Hermes background delegation
 
-接続先が Hermes Agent の `api_server` である場合に限り、設定画面の `openai_session_header`（`config.json` では `llm.openaiCompatible.sessionHeader`）を `X-Hermes-Session-Id` に設定する。Meetmate はライブ会議ごとに安定した `meet-…`形式のセッション ID（エージェント切り替え後は `meet-…-<agentId>`）を、OpenAI body の `user` フィールドと同一の値でこのヘッダーへ送り、Hermes が background delegation の結果を後続の wake turn へ返せるようにする。
+接続先が Hermes Agent の `api_server` である場合に限り、設定画面の `openai_session_header`（`config.json` では `llm.openaiCompatible.sessionHeader`）を `X-Hermes-Session-Id` に設定する。Meetmate はライブ会議ごとに安定したセッション ID（常に `meet-<sessionId>-<agentId>`）を、OpenAI body の `user` フィールドと同一の値でこのヘッダーへ送り、Hermes が background delegation の結果を後続の wake turn へ返せるようにする。
 
 VPS 側では、Hermes profile で `delegation` toolset を有効にする必要がある（現時点では `[hermes-cli]` profile のみ）。さらに `API_SERVER_KEY` を server-side に設定してから `api_server` を起動すること。
 

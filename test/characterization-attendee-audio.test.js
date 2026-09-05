@@ -249,7 +249,6 @@ async function withAudioRoutes(fn, options = {}) {
   });
   installMock(path.join(src, "gateway-warmup.js"), {
     warmUpGatewaySession: () => {},
-    warmUpMultipleAgents: () => {},
   });
   installMock(path.join(src, "session-events.js"), {
     SessionLifecycle: class {
@@ -501,9 +500,7 @@ async function withPipelineHarness(run, options = {}) {
     const pipeline = createPipeline(session, turnState, (buffer, metadata) => {
       observedAudio.push({ buffer: Buffer.from(buffer), metadata: { ...metadata } });
     }, config, {
-      agents: { caty: { wakeWords: ["ケイティ"], voiceId: "voice-id", model: "test-model" } },
-      selectedAgentIds: ["caty"],
-      defaultAgentId: "caty",
+      agentProfile: { agentId: "caty", wakeWords: ["ケイティ"], voiceId: "voice-id", model: "test-model" },
       _testExposeInternals: true,
       ...options.pipelineOptions,
     });

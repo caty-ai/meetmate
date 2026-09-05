@@ -1445,9 +1445,7 @@ async function withPipeline(overrides, fn) {
     };
     const config = mergeConfig(baseConfig, overrides.config || {});
     pipeline = createPipeline(session, turnState, overrides.onAudio || (() => {}), config, {
-      agents: { caty: { wakeWords: ["ケイティ"] } },
-      selectedAgentIds: ["caty"],
-      defaultAgentId: "caty",
+      agentProfile: { agentId: "caty", wakeWords: ["ケイティ"] },
       _testExposeInternals: overrides.exposeInternals !== false,
     });
     await fn({ pipeline, session, stt, turnState });

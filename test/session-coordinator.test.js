@@ -212,7 +212,6 @@ async function withMeetRoutesHarness(fn, options = {}) {
   });
   installMock(path.join(src, "gateway-warmup.js"), {
     warmUpGatewaySession: () => Promise.resolve(),
-    warmUpMultipleAgents: () => Promise.resolve(),
   });
   installMock(path.join(src, "slack-notifier.js"), {
     SlackNotifier: class {

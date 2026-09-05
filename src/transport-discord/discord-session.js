@@ -189,16 +189,6 @@ function createDiscordSessionManager(options = {}) {
     };
   }
 
-  function buildSingleAgentMap(profile) {
-    return {
-      [profile.agentId]: {
-        ...profile,
-        voiceId: profile.voiceId,
-        model: profile.model,
-      },
-    };
-  }
-
   function subscribeExistingHumans(session) {
     const members = session.channel?.members?.values?.() || [];
     for (const member of members) {
@@ -605,7 +595,6 @@ function createDiscordSessionManager(options = {}) {
       }
 
       sessionRecord.turnState = createTurnState();
-      const agentMap = buildSingleAgentMap(profile);
       sessionRecord.pipeline = createPipelineImpl(
         sessionRecord.session,
         sessionRecord.turnState,
@@ -615,9 +604,6 @@ function createDiscordSessionManager(options = {}) {
           transport: TRANSPORT,
           capabilities: CAPABILITIES,
           suppressGreeting: true,
-          agents: agentMap,
-          selectedAgentIds: [profile.agentId],
-          defaultAgentId: profile.agentId,
           agentProfile: profile,
         }
       );

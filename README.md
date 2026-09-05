@@ -174,7 +174,13 @@ flowchart LR
     L -.->|heavy tasks| B["Background delegation"]
 ```
 
-One agent = one server instance. The server bridges meeting audio into a speech pipeline (speech-to-text → your agent's LLM → text-to-speech) and streams the reply back into the call — fast enough to feel like conversation.
+One agent = one server instance.
+
+**Multiple agents?** Run one Meetmate instance per agent (see the [setup guide’s second-instance section](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#2人目のエージェントを増やすエクスポートインポート)).
+Let [meet-floor-hub](https://github.com/caty-ai/meet-floor-hub) arbitrate who speaks.
+In-meeting agent switching inside one instance is not supported.
+
+The server bridges meeting audio into a speech pipeline (speech-to-text → your agent's LLM → text-to-speech) and streams the reply back into the call — fast enough to feel like conversation.
 
 Full engineering detail — architecture, module map, providers, audio specs — lives in [docs/TECHNICAL.md](https://github.com/caty-ai/meetmate/blob/main/docs/TECHNICAL.md).
 

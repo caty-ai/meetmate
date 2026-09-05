@@ -158,9 +158,7 @@ async function createHarness({
   };
   const pipeline = createPipeline(session, turnState,
     (buffer) => audio.push({ buffer: Buffer.from(buffer), at: Date.now() }), config, {
-    agents: { caty: { wakeWords: ["ケイティ"] } },
-    selectedAgentIds: ["caty"],
-    defaultAgentId: "caty",
+    agentProfile: { agentId: "caty", wakeWords: ["ケイティ"] },
     floorClient: floor,
     timers,
     _testExposeInternals: true,

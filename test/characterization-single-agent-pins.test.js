@@ -32,17 +32,11 @@ function makeProfile(overrides = {}) {
 }
 
 function buildTransportPipelineOptions(profile, extra = {}) {
-  return {
-    agents: { [profile.agentId]: { ...profile, voiceId: profile.voiceId, model: profile.model } },
-    selectedAgentIds: [profile.agentId],
-    defaultAgentId: profile.agentId,
-    agentProfile: profile,
-    ...extra,
-  };
+  return { agentProfile: profile, ...extra };
 }
 
 function callIsWakeCancelText(pipeline, text, profile, regexConfig = null) {
-  return pipeline._test.isWakeCancelText(text, { [profile.agentId]: profile }, [profile.agentId], regexConfig);
+  return pipeline._test.isWakeCancelText(text, profile, regexConfig);
 }
 
 function installMock(filename, exports) {

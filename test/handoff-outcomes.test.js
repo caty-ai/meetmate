@@ -187,9 +187,7 @@ function createTestPipeline(createPipeline, gatewayEventsConfig) {
     },
   };
   return createPipeline(session, turnState, () => {}, config, {
-    agents: { caty: { wakeWords: ["ケイティ"] } },
-    selectedAgentIds: ["caty"],
-    defaultAgentId: "caty",
+    agentProfile: { agentId: "caty", wakeWords: ["ケイティ"] },
     _testExposeInternals: true,
   });
 }

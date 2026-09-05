@@ -103,7 +103,6 @@ const OLD_FIXED_SPEECH = {
   reportPostUnknown: "結果まとまったよ、あとでログにも残すね。",
   circuitBreakerRecoveryNotice: "[soft voice] ごめんね、ちょっと立て直し中。急ぎはそのまま話しかけてね。",
   exitFarewell: "[warm] 了解です！退出しますね。お疲れさまでした！",
-  groupGreetingTemplate: "。今日は{agents}も一緒だよ！",
   completionVoiceTemplate: "さっきの「{label}」、まとまったよ。チャットに貼ったね。",
   staleCompletionVoicePrefix: "(遅くなってごめんね) ",
   errorVoice: "すみません、ちょっとエラーが起きちゃいました。",
@@ -154,8 +153,8 @@ test("default message resolution preserves previously hardcoded bytes and regex 
     "退出して", "退出していいよ", "退出", "退出して大丈夫",
     "退室して", "退室していいよ", "退室", "退室して大丈夫", "退室してもらって",
   ]);
-  assert.equal(isWakeCancelText("ケイティ、ストップ", { caty: { wakeWords: ["ケイティ"] } }, ["caty"]), true);
-  assert.equal(isWakeCancelText("ケイティ、ストップウォッチ", { caty: { wakeWords: ["ケイティ"] } }, ["caty"]), false);
+  assert.equal(isWakeCancelText("ケイティ、ストップ", { agentId: "caty", wakeWords: ["ケイティ"] }), true);
+  assert.equal(isWakeCancelText("ケイティ、ストップウォッチ", { agentId: "caty", wakeWords: ["ケイティ"] }), false);
   assert.equal(getShortUtteranceSkipReason("今話せる？", 24), "ping");
   assert.equal(getShortUtteranceSkipReason("短い依頼", 24), "short");
   assert.equal(getShortUtteranceSkipReason("ケイティ、明日の会議の論点を整理して優先順位も付けて", 24), null);
@@ -218,7 +217,6 @@ test("representative config overrides replace defaults", () => {
     agent: {
       messages: {
         forcedDelegationFallback: "CUSTOM FORCED",
-        groupGreetingTemplate: " plus {agents}",
       },
     },
     regex: {
@@ -242,7 +240,6 @@ test("representative config overrides replace defaults", () => {
   assert.equal(config.summary.prompt, "CUSTOM SUMMARY\n");
   assert.equal(config.prompts.timeoutHandoffSlack, "HANDOFF {request}");
   assert.equal(config.messages.forcedDelegationFallback, "CUSTOM FORCED");
-  assert.equal(config.messages.groupGreetingTemplate, " plus {agents}");
   assert.deepEqual(config.regex.shortUtterancePingPatterns, ["ping"]);
   assert.equal(getShortUtteranceSkipReason("PING", 24, config.regex), "ping");
   assert.equal(config.delegation.defaultLabel, "Task");

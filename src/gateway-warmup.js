@@ -4,7 +4,6 @@
 const { URL } = require("url");
 const { DEFAULT_MESSAGES } = require("./messages");
 const { getEffectiveValue } = require("./settings/resolver");
-const { sessionUserFor } = require("./session-user");
 
 const DEFAULT_WARMUP_TIMEOUT_MS = 8_000;
 
@@ -145,29 +144,4 @@ function warmUpGatewaySession(sessionId, config, briefing = null) {
   });
 }
 
-function warmUpMultipleAgents(sessionId, agents, selectedAgentIds, baseConfig, briefing = null, transport = "meet") {
-  const ids = Array.isArray(selectedAgentIds) ? selectedAgentIds : [];
-  if (!sessionId || ids.length === 0) return;
-
-  const promises = ids.map((agentId) => {
-    const agent = agents?.[agentId];
-    if (!agent) return Promise.resolve({ status: "skipped_unknown", purposeStatement: null });
-
-    const agentConfig = {
-      ...baseConfig,
-      openclawUrl: baseConfig?.openclawUrl || null,
-      openclawToken: baseConfig?.openclawToken || null,
-      llm: {
-        ...(baseConfig?.llm || {}),
-        model: agent.model || baseConfig?.llm?.model,
-      },
-    };
-    return warmUpGatewaySession(sessionUserFor(transport, sessionId, agentId), agentConfig, briefing);
-  });
-
-  Promise.all(promises).catch(() => {
-    console.error("⚠️  Multi-agent warm-up partial failure");
-  });
-}
-
-module.exports = { warmUpGatewaySession, warmUpMultipleAgents };
+module.exports = { warmUpGatewaySession };

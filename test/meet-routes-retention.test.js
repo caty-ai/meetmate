@@ -189,7 +189,6 @@ async function withRetentionRoutes(run) {
   installMock(previousCache, path.join(src, "pipeline.js"), { createPipeline: () => ({}) });
   installMock(previousCache, path.join(src, "gateway-warmup.js"), {
     warmUpGatewaySession: () => {},
-    warmUpMultipleAgents: () => {},
   });
   installMock(previousCache, path.join(src, "session-events.js"), { SessionLifecycle: FakeLifecycle });
   installMock(previousCache, path.join(src, "slack-notifier.js"), { SlackNotifier: FakeSlackNotifier });

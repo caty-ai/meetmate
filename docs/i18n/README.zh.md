@@ -172,7 +172,13 @@ flowchart LR
     L -.->|重型任务| B["后台委派"]
 ```
 
-一个智能体 = 一个服务器实例。服务器把会议音频接入语音流水线(语音转文字 → 你的智能体的 LLM → 文字转语音),再把回复流式送回通话——快到感觉就像正常对话。
+一个智能体 = 一个服务器实例。
+
+**需要多个智能体？** 为每个智能体运行一个 Meetmate 实例（参见[安装指南中的第二个实例配置步骤](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#2人目のエージェントを増やすエクスポートインポート)）。
+由 [meet-floor-hub](https://github.com/caty-ai/meet-floor-hub) 协调谁来发言。
+不支持在同一实例内于会议中切换智能体。
+
+服务器把会议音频接入语音流水线(语音转文字 → 你的智能体的 LLM → 文字转语音),再把回复流式送回通话——快到感觉就像正常对话。
 
 完整的工程细节——架构、模块地图、服务商、音频规格——都在 [docs/TECHNICAL.md](https://github.com/caty-ai/meetmate/blob/main/docs/TECHNICAL.md)。
 

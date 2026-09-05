@@ -160,9 +160,6 @@ test("floor clients recover from a hub restart whose round sequence resets", asy
           end: start + (buffer.length / 2 / config.tts.sampleRate * 1_000),
         });
       }, config, {
-        agents: { [profile.agentId]: profile },
-        selectedAgentIds: [profile.agentId],
-        defaultAgentId: profile.agentId,
         agentProfile: profile,
         floorClient,
         _testExposeInternals: true,

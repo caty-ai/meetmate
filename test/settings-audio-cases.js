@@ -674,7 +674,7 @@ test("T12-09 the real pipeline forwards all five fixed phrase roles to the cache
         ackVariants: ["了解です"], progressPings: ["処理中です"], timeoutFallback: "時間がかかっています",
         exitFarewell: "退出します", echoCooldownMs: 1, greeting: "こんにちは", exitDetection: true,
       },
-      { agents: { caty: { wakeWords: ["ケイティ"] } }, selectedAgentIds: ["caty"], defaultAgentId: "caty" },
+      { agentProfile: { agentId: "caty", wakeWords: ["ケイティ"] } },
     );
     await waitUntil(() => roles.includes("greeting"), 3000);
     stt.emit("utterance_end", "ケイティ、確認して");

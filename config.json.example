@@ -32,7 +32,6 @@
     "agent.messages.reportPostUnknown": "Spoken line when a delegation result is ready but chat posting is unavailable.",
     "agent.messages.circuitBreakerRecoveryNotice": "Spoken line when the timeout circuit breaker opens.",
     "agent.messages.exitFarewell": "Default farewell line for voice exit.",
-    "agent.messages.groupGreetingTemplate": "Suffix/template appended to the default greeting when multiple agents join; {agents} is the joined agent names.",
     "agent.messages.completionVoiceTemplate": "Spoken delegation completion template; {label} is the delegation label.",
     "agent.messages.staleCompletionVoicePrefix": "Prefix added to stale delegation completion voice lines.",
     "agent.messages.errorVoice": "Spoken generic error line.",
@@ -116,7 +115,6 @@
       "reportPostUnknown": "結果まとまったよ、あとでログにも残すね。",
       "circuitBreakerRecoveryNotice": "[soft voice] ごめんね、ちょっと立て直し中。急ぎはそのまま話しかけてね。",
       "exitFarewell": "[warm] 了解です！退出しますね。お疲れさまでした！",
-      "groupGreetingTemplate": "。今日は{agents}も一緒だよ！",
       "completionVoiceTemplate": "さっきの「{label}」、まとまったよ。チャットに貼ったね。",
       "staleCompletionVoicePrefix": "(遅くなってごめんね) ",
       "errorVoice": "すみません、ちょっとエラーが起きちゃいました。"

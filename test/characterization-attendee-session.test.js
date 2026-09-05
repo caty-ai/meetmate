@@ -337,7 +337,7 @@ async function withMeetRoutes(fn, options = {}) {
           const base = sessionUserFor(
             pipelineOptions.transport ?? "meet",
             session.id,
-            pipelineOptions.defaultAgentId
+            pipelineOptions.agentProfile?.agentId
           );
           return { parent: base, delegate: `${base}-delegate` };
         },
@@ -348,7 +348,6 @@ async function withMeetRoutes(fn, options = {}) {
   });
   installMock(path.join(src, "gateway-warmup.js"), {
     warmUpGatewaySession: (...args) => { warmups.push(args); },
-    warmUpMultipleAgents: () => {},
   });
   installMock(path.join(src, "session-events.js"), recordingSessionEvents);
   installMock(path.join(src, "slack-notifier.js"), {
@@ -655,7 +654,6 @@ test("Attendee join/connect/leave keeps the observed meet collapse, lifecycle pa
     const lifecycle = harness.lifecycles[0];
     assert.ok(lifecycle);
     assert.equal(lifecycle.transport, "meet");
-    assert.equal(harness.pipelines[0].options.defaultAgentId, "caty");
     assert.equal(Object.hasOwn(harness.pipelines[0].options, "transport"), false);
     assert.equal(Object.hasOwn(harness.pipelines[0].options, "capabilities"), false);
     assert.deepEqual(harness.pipelines[0].getSessionUsers(), {
