@@ -203,6 +203,8 @@ function loadConfig() {
 }
 
 function getFloorSettings() {
+  // Compatibility rule: an absent mode from an older caller means shared mode;
+  // newly resolved settings always make the mode explicit below.
   const { parseFloorSettings } = require("./settings/schemas");
   const startup = getStartup();
   const rawConfig = getRawConfig();
@@ -219,11 +221,38 @@ function getFloorSettings() {
     url: String(resolve("HUB_URL", rawConfig?.hub?.url)).trim(),
     roomCode: String(resolve("HUB_ROOM_CODE", rawConfig?.hub?.roomCode)).trim(),
     sharedToken: String(resolve("HUB_SHARED_TOKEN", rawConfig?.hub?.sharedToken)),
+    token: String(resolve("HUB_TOKEN", rawConfig?.hub?.token)),
+    cloudHubUrl: String(rawConfig?.hub?.cloudHubUrl || "").trim(),
+    cloudUrl: String(resolve("CATY_CLOUD_URL", rawConfig?.hub?.cloudUrl)).trim(),
+    roomSalt: String(rawConfig?.hub?.roomSalt || ""),
+    roomSaltVersion: String(rawConfig?.hub?.roomSaltVersion || ""),
+    installationId: String(rawConfig?.hub?.installationId || ""),
+    planId: String(rawConfig?.hub?.planId || ""),
     tailMs: parsedTail,
     debug: debugValue === true || debugValue === "1",
   });
+  if (parsed.token) {
+    return {
+      hub: {
+        // cloud mode stays inert until child #8 derives the room code from the meeting URL (Epic meet-floor-hub#10)
+        enabled: false,
+        url: parsed.cloudHubUrl || null,
+        roomCode: null,
+        authToken: parsed.token,
+        tailMs: parsed.tailMs,
+        roomSalt: parsed.roomSalt,
+        roomSaltVersion: parsed.roomSaltVersion,
+        installationId: parsed.installationId,
+        planId: parsed.planId,
+        mode: "cloud",
+      },
+      debug: parsed.debug,
+    };
+  }
   return {
     hub: {
+      // Mode is explicit so callers never have to infer shared mode from absence.
+      mode: "shared",
       enabled: Boolean(parsed.url && parsed.roomCode),
       url: parsed.url || null,
       roomCode: parsed.roomCode || null,

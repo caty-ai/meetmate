@@ -120,6 +120,7 @@ The `init` wizard collects the API keys, the voice ID, and the LLM endpoint for 
 | [Node.js](https://nodejs.org/) 26+ | Run the server | `node`, `npm` | Always | Required. |
 | [Attendee](https://attendee.dev/) account + API key | Meeting bot join/leave + audio I/O | `ATTENDEE_API_KEY` | Meet / Zoom | Hosted service; check current free/paid availability. Not used by the Discord path. |
 | Discord bot token | Voice-channel bot identity | `discord_bot_token` (settings UI, masked) / `DISCORD_BOT_TOKEN` | Discord | Create the bot in the [Developer Portal](https://discord.com/developers/applications) with minimal intents/permissions; the bot's avatar is also set there. [Setup guide](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#discord-ボット音声チャンネル参加). |
+| Hub token | Authenticate this installation with hosted cloud arbitration | `HUB_TOKEN` (environment alias for existing installs) | Hosted hub | Provision new connections through **Settings → Connections → Cloud arbitration**; do not copy the token into logs or shared files. |
 | [Soniox](https://console.soniox.com/) account + API key | Default speech-to-text | `STT_PROVIDER=soniox`, `SONIOX_API_KEY` | Usually | Default path. Pricing/trial terms vary. |
 | [Deepgram](https://console.deepgram.com/signup) account + API key | Optional alternate speech-to-text | `STT_PROVIDER=deepgram`, `DEEPGRAM_API_KEY` | Optional | Only if you switch away from Soniox. |
 | [Fish Audio](https://fish.audio/) account + voice | Default text-to-speech voice | `TTS_PROVIDER=fish-audio`, `FISH_AUDIO_API_KEY`, `FISH_AUDIO_VOICE_ID` | Default | Existing configurations continue to use this provider. |
@@ -184,6 +185,7 @@ Entry points for the most common tweaks. The full reference is [docs/operations.
 | I want to… | Look at |
 |---|---|
 | Connect my own agent (OpenClaw Gateway) | [Setup guide](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md) |
+| Connect cloud arbitration | Settings UI › Connections › Cloud arbitration |
 | Use a generic OpenAI-compatible endpoint | [TECHNICAL.md — LLM providers](https://github.com/caty-ai/meetmate/blob/main/docs/TECHNICAL.md#llm-providers) |
 | Make responses come back faster | [Soniox tuning](https://github.com/caty-ai/meetmate/blob/main/docs/operations.md#stt-プロバイダ切替soniox-チューニング) |
 | Change the voice, speed, or TTS behavior | [Voice profile](https://github.com/caty-ai/meetmate/blob/main/docs/operations.md#音声プロファイルtts) |
@@ -191,6 +193,8 @@ Entry points for the most common tweaks. The full reference is [docs/operations.
 | Roll back to previous settings when something is off | [Emergency rollback envs](https://github.com/caty-ai/meetmate/blob/main/docs/operations.md#緊急-rollback-用-env) |
 | Control meetings from Claude Code or another client (MCP control plane) | [TECHNICAL.md — MCP server](https://github.com/caty-ai/meetmate/blob/main/docs/TECHNICAL.md#mcp-server-control-plane) |
 | Make your real agent be the voice brain | [Setup guide](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md) |
+
+Disconnecting cloud arbitration removes saved installation credentials, but cannot remove a `HUB_TOKEN` supplied by the operating-system environment.
 
 Something not working? See [Troubleshooting](https://github.com/caty-ai/meetmate/blob/main/docs/TECHNICAL.md#troubleshooting).
 
@@ -203,6 +207,7 @@ Something not working? See [Troubleshooting](https://github.com/caty-ai/meetmate
 | [docs/architecture.md](https://github.com/caty-ai/meetmate/blob/main/docs/architecture.md) | Architecture deep dive |
 | [docs/operations.md](https://github.com/caty-ai/meetmate/blob/main/docs/operations.md) | Full operations and tuning reference |
 | [docs/deploy-checklist.md](https://github.com/caty-ai/meetmate/blob/main/docs/deploy-checklist.md) | Deployment checklist |
+| [Caty Cloud hub v1 contract](https://github.com/shojikumaru/caty-cloud/tree/epic/hosted-v1/docs/contracts/hub-v1) | Hosted hub setup, admission, token, and configuration contracts |
 
 > ℹ️ Some documents under `docs/` are currently in Japanese; the reference tables and command snippets are language-neutral.
 

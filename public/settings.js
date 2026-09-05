@@ -277,12 +277,18 @@ if (typeof document !== "undefined") {
     const avatarStaticFile = document.getElementById("avatarStaticFile");
     const uploadStaticAvatarButton = document.getElementById("uploadStaticAvatar");
     const avatarStaticPreview = document.getElementById("avatarStaticPreview");
+    const connectCloudButton = document.getElementById("connectCloud");
+    const refreshCloudButton = document.getElementById("refreshCloud");
+    const disconnectCloudButton = document.getElementById("disconnectCloud");
     let manifest = [];
     let envelope = null;
     let loadedValues = {};
     let credentialChanges = {};
     let toastTimer = null;
     let previewObjectUrl = null;
+    let cloudPending = false;
+    let cloudPendingUntil = 0;
+    let cloudPollTimer = null;
 
     function readInjectedJson(id) {
       const node = document.getElementById(id);
@@ -786,6 +792,16 @@ if (typeof document !== "undefined") {
       if (code === "SETTINGS_AVATAR_RATE_LIMITED") return "アップロードの間隔が短すぎます。少し待ってから再試行してください。";
       if (code === "SETTINGS_AVATAR_FILE_TOO_LARGE") return "画像のファイルサイズが上限を超えています。";
       if (code === "SETTINGS_AVATAR_TOTAL_LIMIT") return "アバター素材の合計 64 MiB 上限を超えています。";
+      if (code === "SETTINGS_CLOUD_URL_INVALID") return "Caty Cloud URL には有効な https:// URL を指定してください。";
+      if (code === "SETTINGS_CLOUD_NOT_CONNECTED") return "Cloud arbitration は接続されていません。";
+      if (code === "SETTINGS_CLOUD_CONNECT_IN_PROGRESS") return "クラウド認証はすでに進行中です。開いている認証画面を完了してください。";
+      if (code === "SETTINGS_CLOUD_CONNECT_RATE_LIMITED") return "クラウド接続の間隔が短すぎます。少し待ってから再試行してください。";
+      if (code === "SETTINGS_CLOUD_CONNECT_FAILED") return "クラウド認証を開始できませんでした。";
+      if (code === "SETTINGS_CLOUD_CONNECT_TIMEOUT") return "クラウド認証がタイムアウトしました。もう一度お試しください。";
+      if (code === "SETTINGS_CLOUD_CONNECT_CANCELLED") return "クラウド認証はキャンセルされました。";
+      if (code === "SETTINGS_CLOUD_EXCHANGE_FAILED") return "クラウド認証コードを交換できませんでした。";
+      if (code === "SETTINGS_CLOUD_REFRESH_FAILED") return "クラウド設定を更新できませんでした。保存済み設定は維持されています。";
+      if (code === "SETTINGS_CLOUD_DISCONNECT_FAILED") return "クラウド側の切断に失敗しました。";
       if (code === "SETTINGS_REVISION_CONFLICT") return "設定が別の操作で更新されました。";
       const details = Array.isArray(body?.error?.details)
         ? body.error.details.map((detail) => detail.path).filter(Boolean).join(", ") : "";
@@ -804,6 +820,7 @@ if (typeof document !== "undefined") {
         renderFields();
         renderState();
         renderDiagnostics();
+        await loadCloudStatus(false);
         await loadAvatarAssets();
         applyHashDeepLink();
         loadStatus.textContent = envelope.setupMode ? "セットアップ中" : "読み込み済み";
@@ -1158,6 +1175,125 @@ if (typeof document !== "undefined") {
       }
     }
 
+    function cloudUrlValue() {
+      const input = document.querySelector('[data-setting-id="hub_cloud_url"]');
+      return input ? String(input.value || "").trim() : "";
+    }
+
+    function scheduleCloudPoll() {
+      if (cloudPollTimer) clearTimeout(cloudPollTimer);
+      cloudPollTimer = setTimeout(() => { void loadCloudStatus(true); }, 1_000);
+    }
+
+    function renderCloudStatus(status) {
+      const badge = document.getElementById("cloudStatusBadge");
+      const text = document.getElementById("cloudStatusText");
+      const activationNotice = document.getElementById("cloudActivationNotice");
+      const connected = Boolean(status?.connected);
+      const pending = cloudPending && !connected && Date.now() < cloudPendingUntil;
+      badge.textContent = pending ? "認証待ち" : connected ? "接続済み" : "未接続";
+      badge.className = `status-badge ${pending ? "pending" : connected ? "match" : "mismatch"}`;
+      const details = connected
+        ? [status.plan_id, status.hub_url, status.room_salt_version && `salt ${status.room_salt_version}`].filter(Boolean).join(" / ")
+        : "Cloud arbitration は接続されていません。";
+      text.textContent = details;
+      activationNotice.hidden = !connected;
+      connectCloudButton.disabled = pending;
+      refreshCloudButton.disabled = !connected || pending;
+      disconnectCloudButton.disabled = !connected && !pending;
+      cloudPending = pending;
+      if (pending) scheduleCloudPoll();
+    }
+
+    async function loadCloudStatus(reloadOnCompletion = false) {
+      const wasPending = cloudPending;
+      try {
+        const response = await fetch("/api/settings/cloud/status", { headers: { Accept: "application/json" } });
+        const body = await responseJson(response);
+        if (!response.ok || !body) throw new Error(errorMessage(body, "クラウド接続状態を取得できませんでした。"));
+        renderCloudStatus(body);
+        if (reloadOnCompletion && wasPending && !cloudPending && body.connected) await loadSettings();
+      } catch (error) {
+        const result = document.getElementById("cloudResult");
+        result.textContent = error.message;
+        result.className = "action-result danger-text";
+      }
+    }
+
+    async function connectCloud() {
+      const result = document.getElementById("cloudResult");
+      const fallback = document.getElementById("cloudAuthorizeFallback");
+      connectCloudButton.disabled = true;
+      result.textContent = "ブラウザ認証を開始しています…";
+      result.className = "action-result";
+      try {
+        const body = await jsonRequest("/api/settings/cloud/connect", {
+          method: "POST",
+          body: JSON.stringify({ revision: envelope.revision, cloudUrl: cloudUrlValue() || undefined }),
+        });
+        const link = document.getElementById("cloudAuthorizeLink");
+        link.href = body.authorizeUrl;
+        fallback.hidden = false;
+        cloudPending = true;
+        cloudPendingUntil = Date.parse(body.expiresAt) || Date.now() + 600_000;
+        result.textContent = "ブラウザで認証を完了してください。認証コードは受信後すぐに交換されます。";
+        await loadCloudStatus();
+      } catch (error) {
+        if (!error.handled) result.textContent = error.message;
+        result.className = "action-result danger-text";
+        connectCloudButton.disabled = false;
+      }
+    }
+
+    async function refreshCloud() {
+      const result = document.getElementById("cloudResult");
+      refreshCloudButton.disabled = true;
+      result.textContent = "クラウド設定を更新しています…";
+      result.className = "action-result";
+      try {
+        await jsonRequest("/api/settings/cloud/refresh", {
+          method: "POST", body: JSON.stringify({ revision: envelope.revision }),
+        });
+        result.textContent = "クラウド設定を更新しました。";
+        result.className = "action-result success-text";
+        await loadSettings();
+      } catch (error) {
+        if (!error.handled) result.textContent = error.message;
+        result.className = "action-result danger-text";
+      } finally { refreshCloudButton.disabled = false; }
+    }
+
+    async function disconnectCloud() {
+      const result = document.getElementById("cloudResult");
+      disconnectCloudButton.disabled = true;
+      try {
+        try {
+          await jsonRequest("/api/settings/cloud/disconnect", {
+            method: "POST", body: JSON.stringify({ revision: envelope.revision }),
+          });
+        } catch (error) {
+          if (error.handled) return;
+          if (!window.confirm(`${error.message}\nクラウド側の失効に失敗しました。ローカル資格情報だけ削除しますか？`)) {
+            result.textContent = "切断をキャンセルしました。ローカル資格情報は維持されています。";
+            result.className = "action-result danger-text";
+            return;
+          }
+          await jsonRequest("/api/settings/cloud/disconnect", {
+            method: "POST", body: JSON.stringify({ revision: envelope.revision, force: true }),
+          });
+        }
+        document.getElementById("cloudAuthorizeFallback").hidden = true;
+        result.textContent = "Cloud arbitration を切断しました。";
+        result.className = "action-result success-text";
+        await loadSettings();
+      } catch (error) {
+        if (!error.handled) result.textContent = error.message;
+        result.className = "action-result danger-text";
+      } finally {
+        await loadCloudStatus();
+      }
+    }
+
     function updateTtsPreviewState() {
       const text = ttsPreviewText.value.trim();
       playTtsPreviewButton.disabled = !envelope || !text || [...text].length > 500;
@@ -1336,6 +1472,9 @@ if (typeof document !== "undefined") {
     document.getElementById("exportSettings").addEventListener("click", exportSettings);
     document.getElementById("importSettings").addEventListener("click", importSettings);
     document.getElementById("migrateVendorSettings").addEventListener("click", migrateVendorSettings);
+    connectCloudButton.addEventListener("click", connectCloud);
+    refreshCloudButton.addEventListener("click", refreshCloud);
+    disconnectCloudButton.addEventListener("click", disconnectCloud);
     reloadSettingsPage.addEventListener("click", () => location.reload());
     window.addEventListener("hashchange", applyHashDeepLink);
 

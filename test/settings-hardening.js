@@ -85,10 +85,11 @@ function contractRegistry() {
   const contract = fs.readFileSync(path.join(ROOT, "docs/settings-contract.md"), "utf8");
   const rows = [];
   for (const line of contract.split(/\r?\n/)) {
-    const match = line.match(/^\| `([^`]+)` \| ([^|]+) \| ([^|]+) \| ([^|]+) \| ([^|]+) \| ([^|]+) \| ([^|]+) \|$/);
+    const match = line.match(/^\| `([^`]+)` \| ([^|]+) \| ([^|]+) \| ([^|]+) \| ([^|]+) \| ([^|]+) \| ([^|]+) \| ([^|]+) \|$/);
     if (!match) continue;
-    const [, id, rawPath, typeDefault, ux, credential, apply, rawAlias] = match.map((value) => value.trim());
+    const [, id, rawPath, typeDefault, ux, credential, apply, rawAlias, rawTransferable] = match.map((value) => value.trim());
     if (!SETTINGS_REGISTRY.some((entry) => entry.id === id)) continue;
+    assert.equal(["default", "false"].includes(rawTransferable), true, `${id} transferable marker`);
     const expectedDefault = parseDefault(typeDefault);
     rows.push({
       id,
@@ -98,6 +99,7 @@ function contractRegistry() {
       apply,
       envAlias: rawAlias === "none" ? null : rawAlias.replaceAll("`", ""),
       writeSurface: id === "audio_clips" ? "audio-only" : ux === "deployment-readonly" ? "none" : "settings",
+      transferable: rawTransferable !== "false",
       hasDefault: expectedDefault.present,
       defaultValue: expectedDefault.value,
       type: typeDefault.split(/\s\/\s/, 1)[0].replaceAll("`", ""),
@@ -139,6 +141,9 @@ function assertContractType(type, schema, id) {
   } else if (base === "wss-url" || base === "wss-url-or-empty") {
     valid = "wss://example.com/socket"; invalid = "https://example.com/socket";
     assert.equal(schema.safeParse("").success, base.endsWith("-or-empty"), `${id} empty WSS URL`);
+  } else if (base === "ws-url") {
+    valid = "wss://example.com/socket"; invalid = "https://example.com/socket";
+    assert.equal(schema.safeParse("ws://127.0.0.1:8787/socket").success, true, `${id} accepts ws URL`);
   } else if (base === "hostname" || base === "hostname-or-empty") {
     valid = "meet.example.com"; invalid = "https://meet.example.com/path";
     assert.equal(schema.safeParse("").success, base.endsWith("-or-empty"), `${id} empty hostname`);
@@ -163,6 +168,8 @@ function assertContractType(type, schema, id) {
     valid = path.resolve("/tmp/meetmate"); invalid = "relative/path";
   } else if (base === "clip-record[]") {
     valid = []; invalid = [{}];
+  } else if (base === "iso-datetime") {
+    valid = "2026-09-05T12:34:56.000Z"; invalid = "yesterday";
   } else {
     assert.fail(`unhandled contract type ${id}: ${type}`);
   }
@@ -170,7 +177,7 @@ function assertContractType(type, schema, id) {
   assert.equal(schema.safeParse(invalid).success, false, `${id} rejects invalid ${type}`);
 }
 
-test("T12-01 registry metadata and generated mutation/effective surfaces deep-match v1.2.1", () => {
+test("T12-01 registry metadata and generated mutation/effective surfaces deep-match v1.3.0", () => {
   const actual = SETTINGS_REGISTRY.map((entry) => ({
     id: entry.id,
     path: entry.path,
@@ -179,6 +186,7 @@ test("T12-01 registry metadata and generated mutation/effective surfaces deep-ma
     apply: entry.apply,
     envAlias: entry.envAlias,
     writeSurface: entry.writeSurface,
+    transferable: entry.transferable,
     hasDefault: Object.prototype.hasOwnProperty.call(entry, "defaultValue"),
     defaultValue: entry.defaultValue,
   }));
@@ -1074,7 +1082,7 @@ test("T12-12 class-1 migration is strict, seed-only, transactional, and value-fr
   assert.equal(res.status, 200, res.body);
   const body = JSON.parse(res.body);
   assert.deepEqual(body.imported, ["soniox_api_key"]);
-  assert.deepEqual(body.skipped, ["attendee_api_key", "deepgram_api_key", "discord_bot_token", "elevenlabs_api_key", "fish_audio_api_key", "openai_compatible_tts_api_key", "slack_bot_token"]);
+  assert.deepEqual(body.skipped, ["attendee_api_key", "deepgram_api_key", "discord_bot_token", "elevenlabs_api_key", "fish_audio_api_key", "hub_room_salt", "hub_token", "openai_compatible_tts_api_key", "slack_bot_token"]);
   assert.equal(res.body.includes("seed-soniox"), false);
   const committed = readConfigState(configPath);
   assert.equal(committed.parsed.stt.sonioxApiKey, "seed-soniox");

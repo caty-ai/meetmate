@@ -4,6 +4,11 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { URL } = require("node:url");
+const {
+  createCloudSetup,
+  DEFAULT_CONFIG_REFRESH_AFTER_S,
+  refreshHubConfigIfStale,
+} = require("../cloud-setup");
 const { EMOTION_TAGS } = require("../messages");
 const { MASK, SETTINGS_REGISTRY } = require("./registry");
 const {
@@ -15,7 +20,14 @@ const {
   meaningful,
   readPath,
 } = require("./resolver");
-const { readConfigState, saveFields, settingsError } = require("./store");
+const {
+  deleteCloudFields,
+  deleteFields,
+  readConfigState,
+  saveCloudFields,
+  saveFields,
+  settingsError,
+} = require("./store");
 const { deleteAudio, previewTts, uploadAudio } = require("./audio");
 const {
   deleteFrame,
@@ -30,8 +42,11 @@ const {
 const probes = require("./probes");
 const readiness = require("./readiness");
 const {
+  cloudConnectRequestSchema,
+  cloudDisconnectRequestSchema,
   exportDocumentSchema,
   importRequestSchema,
+  isImportableSetting,
   parseStrict,
   revisionOnlySchema,
   settingsMutationSchema,
@@ -44,6 +59,10 @@ const CONNECTION_TIMEOUT_MS = 5_000;
 const CONNECTION_MIN_INTERVAL_MS = 1_000;
 const PREVIEW_MIN_INTERVAL_MS = 2_000;
 const AVATAR_UPLOAD_MIN_INTERVAL_MS = 1_000;
+const CLOUD_FIELDS = Object.freeze([
+  "hub_token", "hub_installation_id", "hub_cloud_hub_url", "hub_room_salt",
+  "hub_room_salt_version", "hub_plan_id", "hub_expires_at", "hub_config_refreshed_at",
+]);
 const PROVIDERS = new Set(["soniox", "deepgram", "fish-audio", "elevenlabs", "openai-compatible", "attendee", "llm", "tunnel", "slack", "discord"]);
 const IMPLEMENTED_PROVIDERS = new Set(["soniox", "deepgram", "fish-audio", "elevenlabs", "openai-compatible", "attendee", "llm", "tunnel", "discord"]);
 const PUBLIC_DIR = path.join(__dirname, "..", "..", "public");
@@ -165,6 +184,16 @@ function writeError(res, error, requestId) {
     SETTINGS_AVATAR_NOT_FOUND: 404,
     SETTINGS_AVATAR_RATE_LIMITED: 429,
     SETTINGS_CONNECTION_RATE_LIMITED: 429,
+    SETTINGS_CLOUD_URL_INVALID: 400,
+    SETTINGS_CLOUD_NOT_CONNECTED: 400,
+    SETTINGS_CLOUD_CONNECT_IN_PROGRESS: 409,
+    SETTINGS_CLOUD_CONNECT_RATE_LIMITED: 429,
+    SETTINGS_CLOUD_CONNECT_FAILED: 502,
+    SETTINGS_CLOUD_CONNECT_TIMEOUT: 504,
+    SETTINGS_CLOUD_CONNECT_CANCELLED: 409,
+    SETTINGS_CLOUD_EXCHANGE_FAILED: 502,
+    SETTINGS_CLOUD_REFRESH_FAILED: 502,
+    SETTINGS_CLOUD_DISCONNECT_FAILED: 502,
     SETTINGS_PREVIEW_RATE_LIMITED: 429,
     SETTINGS_PREVIEW_TIMEOUT: 504,
     TEST_NOT_IMPLEMENTED: 501,
@@ -193,6 +222,16 @@ function writeError(res, error, requestId) {
     SETTINGS_AVATAR_TOTAL_LIMIT: "Managed avatar limit exceeded",
     SETTINGS_AVATAR_RATE_LIMITED: "Avatar uploads are rate limited",
     SETTINGS_CONNECTION_RATE_LIMITED: "Connection tests are rate limited",
+    SETTINGS_CLOUD_URL_INVALID: "Cloud URL is invalid",
+    SETTINGS_CLOUD_NOT_CONNECTED: "Cloud arbitration is not connected",
+    SETTINGS_CLOUD_CONNECT_IN_PROGRESS: "Cloud connection is already in progress",
+    SETTINGS_CLOUD_CONNECT_RATE_LIMITED: "Cloud connection attempts are rate limited",
+    SETTINGS_CLOUD_CONNECT_FAILED: "Cloud connection could not be started",
+    SETTINGS_CLOUD_CONNECT_TIMEOUT: "Cloud connection timed out",
+    SETTINGS_CLOUD_CONNECT_CANCELLED: "Cloud connection was cancelled",
+    SETTINGS_CLOUD_EXCHANGE_FAILED: "Cloud setup code exchange failed",
+    SETTINGS_CLOUD_REFRESH_FAILED: "Cloud configuration refresh failed",
+    SETTINGS_CLOUD_DISCONNECT_FAILED: "Cloud installation disconnect failed",
     SETTINGS_PREVIEW_RATE_LIMITED: "TTS previews are rate limited",
     SETTINGS_PREVIEW_NOT_CONFIGURED: "TTS preview is not configured",
     SETTINGS_PREVIEW_DURATION_LIMIT: "TTS preview exceeded the duration limit",
@@ -354,7 +393,7 @@ function prepareMutationFields(fields, revision) {
 }
 
 function importableEntries() {
-  return SETTINGS_REGISTRY.filter((entry) => entry.writeSurface === "settings" && entry.credential === "none");
+  return SETTINGS_REGISTRY.filter((entry) => isImportableSetting(entry) && entry.transferable);
 }
 
 function buildExportDocument(now = new Date()) {
@@ -383,7 +422,13 @@ function parseImportRequest(value) {
       throw settingsError("SETTINGS_IMPORT_VERSION_UNSUPPORTED", "Settings import version is not supported", 409);
     }
   }
-  return parseStrict(importRequestSchema, value);
+  const request = parseStrict(importRequestSchema, value);
+  const nonTransferableId = Object.keys(request.document.settings)
+    .find((id) => SETTINGS_REGISTRY.some((entry) => entry.id === id && !entry.transferable));
+  if (nonTransferableId) {
+    throw settingsError("SETTINGS_VALIDATION_FAILED", "Request validation failed", 422);
+  }
+  return request;
 }
 
 function sameValue(left, right) {
@@ -447,7 +492,130 @@ function createSettingsHandler(options = {}) {
   readinessController.configure?.({ probeOptions: connectionOptions });
   const previewOptions = options.preview || {};
   const avatarOptions = options.avatar || {};
+  const cloudOptions = options.cloud || {};
+  const cloudSetup = options.cloudSetup || createCloudSetup({ ...cloudOptions, logger: options.logger });
+  const cloudNow = cloudOptions.now || Date.now;
+  let pendingCloud = null;
+  let cloudLastError = null;
+
+  const cloudValueOf = (envName, configPath) => {
+    const startup = getRuntime().startup;
+    const raw = getRawConfig();
+    const candidates = envName
+      ? [startup.preDotenvEnv[envName], readPath(raw, configPath), startup.dotenvSeeds[envName]]
+      : [readPath(raw, configPath)];
+    return candidates.find((value) => meaningful(value));
+  };
+  const cloudState = () => ({
+    cloudUrl: cloudValueOf("CATY_CLOUD_URL", "hub.cloudUrl") || "",
+    hubToken: cloudValueOf("HUB_TOKEN", "hub.token") || "",
+    installationId: cloudValueOf(null, "hub.installationId") || "",
+    hubUrl: cloudValueOf(null, "hub.cloudHubUrl") || "",
+    roomSaltVersion: cloudValueOf(null, "hub.roomSaltVersion") || "",
+    planId: cloudValueOf(null, "hub.planId") || "",
+    expiresAt: cloudValueOf(null, "hub.expiresAt") || null,
+    configRefreshedAt: cloudValueOf(null, "hub.configRefreshedAt") || null,
+    refreshAfterSeconds: Number(cloudValueOf(null, "hub.configRefreshAfterSeconds"))
+      || DEFAULT_CONFIG_REFRESH_AFTER_S,
+  });
+  const cloudStatus = () => {
+    const state = cloudState();
+    return {
+      connected: Boolean(state.hubToken && state.installationId && state.hubUrl),
+      plan_id: state.planId || null,
+      installation_id: state.installationId || null,
+      hub_url: state.hubUrl || null,
+      room_salt_version: state.roomSaltVersion || null,
+      expires_at: state.expiresAt,
+      ...(state.configRefreshedAt ? { config_refreshed_at: state.configRefreshedAt } : {}),
+    };
+  };
+  const refreshedAt = () => new Date(Number(cloudNow())).toISOString();
+  const saveServerOwnedCloudFields = (fields, refreshAfterSeconds) => {
+    const configPath = getRuntime().startup.configPath;
+    // OAuth completion is server-owned. Re-read the committed revision so an
+    // unrelated settings save during browser authorization cannot orphan it.
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const revision = readConfigState(configPath).revision;
+      try {
+        return saveCloudFields({ configPath, revision, fields, refreshAfterSeconds });
+      } catch (error) {
+        if (error.code !== "SETTINGS_REVISION_CONFLICT" || attempt === 1) throw error;
+      }
+    }
+    return null;
+  };
+  const refreshStaleCloudConfig = async () => {
+    const state = cloudState();
+    if (!state.installationId || !state.hubUrl) return;
+    const result = await refreshHubConfigIfStale({
+      now: cloudNow,
+      cloudUrl: state.cloudUrl,
+      hubToken: state.hubToken,
+      configRefreshedAt: state.configRefreshedAt,
+      refreshAfterSeconds: state.refreshAfterSeconds,
+      refreshFn: typeof cloudSetup.refreshConfig === "function"
+        ? cloudSetup.refreshConfig.bind(cloudSetup)
+        : undefined,
+    });
+    if (result.ok === false) {
+      cloudLastError = result.lastError;
+      return;
+    }
+    if (!result.refreshed) return;
+    saveServerOwnedCloudFields({
+      hub_cloud_hub_url: result.config.hub_url,
+      hub_room_salt: result.config.room_salt,
+      hub_room_salt_version: result.config.room_salt_version,
+      hub_config_refreshed_at: result.configRefreshedAt,
+    }, result.refreshAfterSeconds);
+    cloudLastError = null;
+  };
+  const monitorCloudConnect = async (record) => {
+    try {
+      const callback = await record.session.completion;
+      if (pendingCloud !== record) return;
+      if (!callback.ok) {
+        cloudLastError = callback.error || callback.code || "SETTINGS_CLOUD_CONNECT_FAILED";
+        pendingCloud = null;
+        return;
+      }
+      const installed = await cloudSetup.completeConnect({
+        cloudUrl: record.cloudUrl,
+        setupCode: callback.setupCode,
+        codeVerifier: callback.codeVerifier,
+      });
+      if (pendingCloud !== record) return;
+      if (installed.ok === false) {
+        cloudLastError = installed.type || `HTTP_${installed.status || 0}`;
+        pendingCloud = null;
+        return;
+      }
+      saveServerOwnedCloudFields({
+        hub_token: installed.hub_token,
+        hub_installation_id: installed.installation_id,
+        hub_cloud_hub_url: installed.hub_url,
+        hub_room_salt: installed.room_salt,
+        hub_room_salt_version: installed.room_salt_version,
+        hub_plan_id: installed.plan_id,
+        hub_expires_at: installed.expires_at,
+        hub_cloud_url: record.cloudUrl,
+        hub_config_refreshed_at: refreshedAt(),
+      }, DEFAULT_CONFIG_REFRESH_AFTER_S);
+      cloudLastError = null;
+      pendingCloud = null;
+    } catch (error) {
+      if (pendingCloud === record) {
+        cloudLastError = error.code || "SETTINGS_CLOUD_EXCHANGE_FAILED";
+        pendingCloud = null;
+      }
+    }
+  };
   const takeConnectionAllowance = createConnectionLimiter(connectionOptions);
+  const takeCloudConnectAllowance = createConnectionLimiter({
+    now: cloudOptions.now || Date.now,
+    minIntervalMs: cloudOptions.minIntervalMs ?? CONNECTION_MIN_INTERVAL_MS,
+  });
   const takePreviewAllowance = createPreviewLimiter(previewOptions);
   const takeAvatarUploadAllowance = createAvatarUploadLimiter(avatarOptions);
   const schedulePostSaveProbes = () => {
@@ -505,6 +673,102 @@ function createSettingsHandler(options = {}) {
         requireSameOrigin(req, settingsOptions);
         writeJson(res, 200, await migrateClass1(req, settingsOptions));
         schedulePostSaveProbes();
+        return true;
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/settings/cloud/status") {
+        await refreshStaleCloudConfig();
+        writeJson(res, 200, cloudStatus());
+        return true;
+      }
+      if (req.method === "POST" && url.pathname === "/api/settings/cloud/connect") {
+        requireSameOrigin(req, settingsOptions);
+        const body = parseStrict(cloudConnectRequestSchema, await readJson(req, CONNECTION_JSON_LIMIT));
+        if (pendingCloud) {
+          throw settingsError("SETTINGS_CLOUD_CONNECT_IN_PROGRESS", "Cloud connection is already in progress", 409);
+        }
+        assertCommittedRevision(body.revision);
+        const cloudUrl = body.cloudUrl || cloudState().cloudUrl;
+        if (!takeCloudConnectAllowance("cloud-connect")) {
+          throw settingsError("SETTINGS_CLOUD_CONNECT_RATE_LIMITED", "Cloud connection attempts are rate limited", 429);
+        }
+        const record = { session: null, cloudUrl };
+        // Reserve before beginConnect yields so concurrent requests cannot bind
+        // a second loopback listener.
+        pendingCloud = record;
+        let session;
+        try { session = await cloudSetup.beginConnect({ cloudUrl }); } catch (error) {
+          if (pendingCloud === record) pendingCloud = null;
+          throw String(error.code || "").startsWith("SETTINGS_CLOUD_")
+            ? error
+            : settingsError("SETTINGS_CLOUD_CONNECT_FAILED", "Cloud connection could not be started", 502);
+        }
+        if (pendingCloud !== record) {
+          session.cancel();
+          throw settingsError("SETTINGS_CLOUD_CONNECT_CANCELLED", "Cloud connection was cancelled", 409);
+        }
+        record.session = session;
+        cloudLastError = null;
+        void monitorCloudConnect(record);
+        writeJson(res, 200, { ok: true, authorizeUrl: session.authorizeUrl, expiresAt: session.expiresAt });
+        return true;
+      }
+      if (req.method === "POST" && url.pathname === "/api/settings/cloud/refresh") {
+        requireSameOrigin(req, settingsOptions);
+        const body = parseStrict(revisionOnlySchema, await readJson(req, CONNECTION_JSON_LIMIT));
+        assertCommittedRevision(body.revision);
+        const state = cloudState();
+        if (!state.cloudUrl || !state.hubToken) {
+          throw settingsError("SETTINGS_CLOUD_NOT_CONNECTED", "Cloud arbitration is not connected", 400);
+        }
+        const refreshed = await cloudSetup.refreshConfig({ cloudUrl: state.cloudUrl, hubToken: state.hubToken });
+        if (refreshed.ok === false) {
+          cloudLastError = refreshed.type || `HTTP_${refreshed.status || 0}`;
+          throw settingsError("SETTINGS_CLOUD_REFRESH_FAILED", "Cloud configuration refresh failed", 502);
+        }
+        const committed = saveCloudFields({
+          configPath: getRuntime().startup.configPath,
+          revision: body.revision,
+          refreshAfterSeconds: refreshed.refresh_after_s,
+          fields: {
+            hub_cloud_hub_url: refreshed.hub_url,
+            hub_room_salt: refreshed.room_salt,
+            hub_room_salt_version: refreshed.room_salt_version,
+            hub_config_refreshed_at: refreshedAt(),
+          },
+        });
+        cloudLastError = null;
+        writeJson(res, 200, { ok: true, revision: committed.revision, refreshAfterSeconds: refreshed.refresh_after_s });
+        return true;
+      }
+      if (req.method === "POST" && url.pathname === "/api/settings/cloud/disconnect") {
+        requireSameOrigin(req, settingsOptions);
+        const body = parseStrict(cloudDisconnectRequestSchema, await readJson(req, CONNECTION_JSON_LIMIT));
+        assertCommittedRevision(body.revision);
+        const state = cloudState();
+        let disconnected = { ok: true };
+        if (state.hubToken && (!state.cloudUrl || !state.installationId)) {
+          disconnected = { ok: false, status: 0 };
+        } else if (state.cloudUrl && state.hubToken && state.installationId) {
+          disconnected = await cloudSetup.disconnect({
+            cloudUrl: state.cloudUrl,
+            hubToken: state.hubToken,
+            installationId: state.installationId,
+          });
+        }
+        if (!disconnected.ok && !body.force) {
+          cloudLastError = disconnected.type || `HTTP_${disconnected.status || 0}`;
+          throw settingsError("SETTINGS_CLOUD_DISCONNECT_FAILED", "Cloud installation disconnect failed", 502);
+        }
+        pendingCloud?.session?.cancel?.();
+        pendingCloud = null;
+        const committed = deleteCloudFields({
+          configPath: getRuntime().startup.configPath,
+          revision: body.revision,
+          ids: CLOUD_FIELDS,
+        });
+        cloudLastError = null;
+        writeJson(res, 200, { ok: true, revision: committed.revision, forced: !disconnected.ok });
         return true;
       }
 
