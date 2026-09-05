@@ -8,6 +8,7 @@ const test = require("node:test");
 const {
   buildDiscordJoinBody,
   buildMeetJoinFormData,
+  requestJoinMeeting,
   discordReadinessAllowsJoin,
   discordStatusFetchLine,
   discordTargetStatus,
@@ -256,4 +257,55 @@ test("#197 join error causes prefix supplied diagnostic IDs and preserve legacy 
   blockers[0].diagnosticId = "MM-STT-100";
   blockers[1].diagnosticId = "MM-LLM-103";
   assert.equal(parseJoinErrorText(text()), "接続設定を確認してください / [MM-STT-100] 認証情報を確認してください / [MM-LLM-103] NOT_ENABLED");
+});
+
+
+test("#215 dashboard join reuses the join-token credential path", async () => {
+  const cases = [
+    { statuses: [200], expectedTokens: [undefined], prompts: 0, stored: [] },
+    { statuses: [401, 200], prompted: "  operator-token  ", expectedTokens: [undefined, "operator-token"], prompts: 1, stored: ["operator-token"] },
+    { joinToken: " stale-token ", statuses: [401, 401], prompted: "operator-token", expectedTokens: ["stale-token", "operator-token"], prompts: 1, stored: ["operator-token"] },
+    { statuses: [401], prompted: "  ", expectedTokens: [undefined], prompts: 1, stored: [] },
+    { statuses: [401], prompted: null, expectedTokens: [undefined], prompts: 1, stored: [] },
+    { joinToken: " operator-token ", statuses: [200], expectedTokens: ["operator-token"], prompts: 0, stored: [] },
+  ];
+  for (const scenario of cases) {
+    const body = buildMeetJoinFormData({
+      meetingUrl: "https://meet.google.com/abc-defg-hij",
+      availableAgents: [{ id: "caty", displayName: "Caty" }],
+      wsUrl: "wss://meetmate.example/realtime",
+      avatarExperiment: "follow-settings",
+    });
+    const originalEntries = [...body.entries()];
+    const responses = scenario.statuses.map((status) => ({ status }));
+    const requests = [];
+    const stored = [];
+    let prompts = 0;
+    const response = await requestJoinMeeting({
+      body,
+      joinToken: scenario.joinToken,
+      fetchImpl: async (url, init) => {
+        requests.push({ url, init });
+        return responses[requests.length - 1];
+      },
+      promptImpl: (message) => {
+        assert.equal(message, "参加トークン（JOIN_SHARED_TOKEN）を入力してください");
+        prompts += 1;
+        return scenario.prompted;
+      },
+      storeToken: (token) => stored.push(token),
+    });
+    assert.equal(response, responses.at(-1));
+    assert.equal(prompts, scenario.prompts);
+    assert.deepEqual(stored, scenario.stored);
+    assert.equal(requests.length, scenario.statuses.length);
+    requests.forEach(({ url, init }, index) => {
+      assert.equal(url, "/join-meeting");
+      assert.equal(init.method, "POST");
+      assert.equal(init.body, body);
+      assert.deepEqual([...init.body.entries()], originalEntries);
+      const token = scenario.expectedTokens[index];
+      assert.deepEqual(init.headers, token ? { "x-join-token": token } : undefined);
+    });
+  }
 });

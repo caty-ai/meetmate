@@ -1184,8 +1184,7 @@ async function handleHttp(req, res) {
     let launchedBotAttendeeKey = null;
     try {
       const formData = await parseRequestBody(req);
-      const hasExternalToken = req.headers["x-join-token"];
-      if (hasExternalToken && !checkJoinAuthorization(req, formData)) {
+      if (!checkJoinAuthorization(req, formData)) {
         writePlainResponse(res, 401, "Unauthorized: invalid join token");
         return;
       }

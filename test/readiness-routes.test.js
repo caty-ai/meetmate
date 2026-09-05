@@ -114,7 +114,9 @@ async function initializeConnectedRoutes(t, options = {}) {
   }
 
   const previousJoinToken = process.env.JOIN_SHARED_TOKEN;
-  process.env.JOIN_SHARED_TOKEN = "join-secret";
+  const joinToken = Object.hasOwn(options, "joinToken") ? options.joinToken : "join-secret";
+  if (joinToken === undefined) delete process.env.JOIN_SHARED_TOKEN;
+  else process.env.JOIN_SHARED_TOKEN = joinToken;
   delete require.cache[routesPath];
   const routes = require(routesPath);
   await routes.init({
@@ -295,6 +297,9 @@ test("join authorization returns 401 before the meeting setup gate", { concurren
     meetingUrl: "https://meet.google.com/abc-defg-hij",
     wsUrl: "wss://meetmate.example/realtime",
   };
+
+  const tokenless = await invoke(routes, "POST", "/join-meeting", form);
+  assert.equal(tokenless.status, 401);
 
   const unauthorized = await invoke(routes, "POST", "/join-meeting", form, undefined, { "x-join-token": "wrong" });
   assert.equal(unauthorized.status, 401);
@@ -613,4 +618,38 @@ test("#197 readiness JSON and join 503 preserve diagnostic IDs", { concurrency: 
   assert.equal(join.body.error.code, "MEETING_NOT_READY");
   assert.deepEqual(join.body.error.blockers, response.body.blockers);
   for (const blocker of join.body.error.blockers) assert.match(blocker.diagnosticId, /^MM-[A-Z]{3}-\d{3}$/);
+});
+
+
+test("#215 join without any token returns 401 when JOIN_SHARED_TOKEN is set", { concurrency: false }, async (t) => {
+  const routes = await initializeConnectedRoutes(t, { missingDisplayName: true });
+  const response = await invoke(routes, "POST", "/join-meeting", {
+    meetingUrl: "https://meet.google.com/abc-defg-hij",
+    wsUrl: "wss://meetmate.example/realtime",
+  });
+  assert.equal(response.status, 401);
+  assert.equal(response.text, "Unauthorized: invalid join token");
+  assert.equal(response.text.includes("join-secret"), false);
+});
+
+test("#215 join token accepted from the body field", { concurrency: false }, async (t) => {
+  const routes = await initializeConnectedRoutes(t, { missingDisplayName: true });
+  const response = await invoke(routes, "POST", "/join-meeting", {
+    meetingUrl: "https://meet.google.com/abc-defg-hij",
+    wsUrl: "wss://meetmate.example/realtime",
+    joinToken: "join-secret",
+  });
+  assert.equal(response.status, 503);
+  assert.equal(response.body.error.code, "MEETING_SETUP_REQUIRED");
+  assert.equal(response.text.includes("join-secret"), false);
+});
+
+test("#215 join without token passes when JOIN_SHARED_TOKEN is unset", { concurrency: false }, async (t) => {
+  const routes = await initializeConnectedRoutes(t, { missingDisplayName: true, joinToken: undefined });
+  const response = await invoke(routes, "POST", "/join-meeting", {
+    meetingUrl: "https://meet.google.com/abc-defg-hij",
+    wsUrl: "wss://meetmate.example/realtime",
+  });
+  assert.equal(response.status, 503);
+  assert.equal(response.body.error.code, "MEETING_SETUP_REQUIRED");
 });
