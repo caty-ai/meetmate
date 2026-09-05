@@ -304,3 +304,18 @@ test("Discord readiness field mapping is present while the main gate list stays 
   assert.deepEqual(controller.gateSystems(), ["soniox", "fish-audio", "attendee", "llm", "tunnel"]);
   assert.equal(controller.gateSystems().includes("discord"), false);
 });
+
+for (const publicOrigin of ["https://funnel.example:8443", ""]) {
+  for (const code of ["MISMATCH", "NOT_CONFIGURED"]) {
+    test(`tunnel ${code} attributes to ${publicOrigin ? "public_origin" : "server_ngrok_domain"}`, () => {
+      initialize(document({ server: { publicOrigin, ngrokDomain: "meetmate.example" } }));
+      const controller = readiness.createReadinessController();
+      controller.setProbeObservation("tunnel", { ok: false, code });
+      const fieldId = publicOrigin ? "public_origin" : "server_ngrok_domain";
+      const result = controller.getReadiness();
+      assert.equal(result.systems.find((entry) => entry.id === "tunnel").fieldId, fieldId);
+      assert.equal(result.blockers.find((entry) => entry.system === "tunnel" && entry.code === code).fieldId, fieldId);
+      assert.deepEqual([...readiness.systemsForFields([fieldId])], ["tunnel"]);
+    });
+  }
+}

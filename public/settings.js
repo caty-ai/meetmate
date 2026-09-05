@@ -193,9 +193,11 @@ if (typeof document !== "undefined") {
       discord_lcm_ingest_enabled: "Discord LCM 取り込み",
       summary_enabled: "会議サマリー", gateway_warmup_timeout_ms: "Gateway warmup timeout (ms)",
       gateway_display_name: "Gateway 表示名", server_ngrok_domain: "ngrok ドメイン",
+      public_origin: "公開オリジン (https://host:port)",
       task_extraction_enabled: "タスク抽出", streaming_equivalent_enabled: "ストリーミング相当",
     };
     const HELP = {
+      public_origin: "ngrok 以外のトンネル（Tailscale funnel など）で使う公開 HTTPS オリジン。https://host または https://host:port の形式。設定すると ngrok ドメイン・自動検出より優先されます。",
       agent_wake_words: "1行に1件入力します。カンマ区切りも利用できます。",
       agent_keyterms: "音声認識へ渡す固有名詞などを1行に1件入力します。",
       agent_stt_wake_variants: "認識されやすい表記の候補を1行に1件入力します。",

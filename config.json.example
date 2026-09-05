@@ -250,7 +250,8 @@
   },
   "server": {
     "port": 5005,
-    "ngrokDomain": ""
+    "ngrokDomain": "",
+    "publicOrigin": ""
   },
   "summary": {
     "enabled": true

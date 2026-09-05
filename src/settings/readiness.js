@@ -53,6 +53,7 @@ const FIELD_SYSTEMS = Object.freeze({
   openai_trusted_agent_tools: Object.freeze(["llm"]),
   openai_session_header: Object.freeze(["llm"]),
   server_ngrok_domain: Object.freeze(["tunnel"]),
+  public_origin: Object.freeze(["tunnel"]),
 });
 
 const DEFAULT_FIELDS = Object.freeze({
@@ -95,7 +96,9 @@ function systemsForFields(fieldIds) {
 }
 
 function fieldFor(system, code, message = "") {
-  if (system === "tunnel" && ["NOT_CONFIGURED", "MISMATCH"].includes(code)) return "server_ngrok_domain";
+  if (system === "tunnel" && ["NOT_CONFIGURED", "MISMATCH"].includes(code)) {
+    return String(getPublishedValue("public_origin") || "").trim() ? "public_origin" : "server_ngrok_domain";
+  }
   if (system === "discord" && code === "ALLOWLIST_MISMATCH") return "discord_guild_allowlist";
   if (system === "openai-compatible") {
     return ["AUTH_FAILED", "PAYMENT_REQUIRED"].includes(code)

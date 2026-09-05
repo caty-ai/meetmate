@@ -717,15 +717,12 @@ function closeLocalAvatarSession(session, reason) {
 
 function resolveLocalAvatarPublicOrigin() {
   const configuredDomain = String(getEffectiveValue("server_ngrok_domain") || "").trim();
-  if (configuredDomain && /^[A-Za-z0-9.-]+(?::\d+)?$/.test(configuredDomain)) {
-    return `https://${configuredDomain}`;
-  }
-
-  if (detectedNgrokUrl.startsWith("wss://")) {
-    return `https://${detectedNgrokUrl.slice("wss://".length)}`;
-  }
-
-  return null;
+  return publicOriginCandidates({
+    publicOrigin: String(getEffectiveValue("public_origin") || "").trim(),
+    ngrokDomain: configuredDomain && /^[A-Za-z0-9.-]+(?::\d+)?$/.test(configuredDomain) ? configuredDomain : "",
+    publicWss: String(getDiagnosticValue("public_wss_url") || "").trim(),
+    detected: detectedNgrokUrl,
+  })[0] || null;
 }
 
 function scheduleFinalizeSession(sessionId) {
@@ -1585,24 +1582,31 @@ async function refreshNgrokDetection(options = {}) {
 }
 
 async function resolvePublicOrigin(options = {}) {
+  const publicOrigin = String(getPublishedValue("public_origin") || "").trim();
   const configuredDomain = String(getPublishedValue("server_ngrok_domain") || "").trim();
-  const configuredHost = configuredDomain.toLowerCase();
-  const needsDetectedCandidate = !configuredDomain
-    || (options.submittedHost && String(options.submittedHost).toLowerCase() !== configuredHost);
+  const configuredHosts = publicOriginCandidates({ publicOrigin, ngrokDomain: configuredDomain })
+    .map((origin) => new URL(origin).host.toLowerCase());
+  const needsDetectedCandidate = configuredHosts.length === 0
+    || (options.submittedHost && !configuredHosts.includes(String(options.submittedHost).toLowerCase()));
   const freshDetected = needsDetectedCandidate
     ? await lookupNgrokUrl({ ...options, preferConfigured: false })
     : "";
   const publicWss = String(getDiagnosticValue("public_wss_url") || "").trim();
-  const origins = [
-    configuredDomain ? `https://${configuredDomain}` : "",
-    freshDetected.startsWith("wss://") ? `https://${freshDetected.slice("wss://".length)}` : "",
-    publicWss.startsWith("wss://") ? `https://${publicWss.slice("wss://".length)}` : "",
-  ].filter(Boolean);
+  const origins = publicOriginCandidates({ publicOrigin, ngrokDomain: configuredDomain, publicWss, detected: freshDetected });
   const candidateHosts = new Set();
   for (const origin of origins) {
     try { candidateHosts.add(new URL(origin).host.toLowerCase()); } catch { /* validated sources only */ }
   }
   return { origin: origins[0] || "", candidateHosts };
+}
+
+function publicOriginCandidates({ publicOrigin = "", ngrokDomain = "", publicWss = "", detected = "" }) {
+  return [
+    publicOrigin,
+    ngrokDomain ? `https://${ngrokDomain}` : "",
+    publicWss.startsWith("wss://") ? `https://${publicWss.slice("wss://".length)}` : "",
+    detected.startsWith("wss://") ? `https://${detected.slice("wss://".length)}` : "",
+  ].filter(Boolean);
 }
 
 function handleWsConnection(client, req) {
@@ -1869,6 +1873,8 @@ module.exports = {
     runtimeDiagnostics,
     refreshNgrokDetection,
     resolvePublicOrigin,
+    resolveLocalAvatarPublicOrigin,
+    publicOriginCandidates,
     readiness,
     readEffectiveBotImage,
     checkWsUrlIdentity: readinessProbes.checkWsUrlIdentity,
