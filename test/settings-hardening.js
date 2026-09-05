@@ -144,6 +144,9 @@ function assertContractType(type, schema, id) {
   } else if (base === "ws-url") {
     valid = "wss://example.com/socket"; invalid = "https://example.com/socket";
     assert.equal(schema.safeParse("ws://127.0.0.1:8787/socket").success, true, `${id} accepts ws URL`);
+  } else if (base === "https-origin-or-empty") {
+    valid = "https://meet.example.com:8443"; invalid = "https://meet.example.com/";
+    assert.equal(schema.safeParse("").success, true, `${id} empty HTTPS origin`);
   } else if (base === "hostname" || base === "hostname-or-empty") {
     valid = "meet.example.com"; invalid = "https://meet.example.com/path";
     assert.equal(schema.safeParse("").success, base.endsWith("-or-empty"), `${id} empty hostname`);

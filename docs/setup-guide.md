@@ -248,6 +248,12 @@ ngrok の自動検出は、サーバーと同じマシンの `localhost:4040`（
 - 基本は **ngrok も WSL2 の中で起動する**（このガイドのコマンドをそのまま WSL2 内で実行する）
 - ngrok を Windows 側で動かす構成を続けたい場合は、設定 UI の **詳細** タブ「ngrok ドメイン」（`server.ngrokDomain`）にドメインを明示して自動検出をバイパスする
 
+### ngrok 以外のトンネル（Tailscale funnel など）
+
+設定 UI の **詳細** タブ「公開オリジン」（`server.publicOrigin` / 環境変数 `PUBLIC_ORIGIN`）に `https://host:port` を設定する。
+解決順は 公開オリジン → ngrok ドメイン → `PUBLIC_WSS_URL`（後方互換）→ ngrok 自動検出。
+設定を保存した後は、サーバーの再起動が必要。
+
 ### ngrok 不要な構成
 
 一例として、サーバーと Attendee（self-host）が同じ Tailscale ネットワーク上にある構成なら ngrok なしで直接接続できる。Attendee 側の WebSocket URL を Tailscale IP ベース（例: `wss://<tailscale-ip>:<port>`）に向ければ、トンネルなしで動作する。

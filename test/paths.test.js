@@ -204,7 +204,7 @@ function settingsRequest(method, url, headers = {}, body = "") {
 }
 
 test("T12-01 registry/schema/type lock keeps the write allowlist strict", () => {
-  assert.equal(SETTINGS_REGISTRY.length, 85);
+  assert.equal(SETTINGS_REGISTRY.length, 86);
   assert.equal(ENV_DIAGNOSTICS.length, 59);
   assert.equal(new Set(SETTINGS_REGISTRY.map((entry) => entry.id)).size, SETTINGS_REGISTRY.length);
   assert.equal(SETTINGS_REGISTRY.filter((entry) => entry.credential === "class-1").length, 10);
@@ -214,13 +214,25 @@ test("T12-01 registry/schema/type lock keeps the write allowlist strict", () => 
     assert.equal(visible.includes(forbidden), false, forbidden);
   }
   assert.equal(REGISTRY_BY_ID.server_ngrok_domain.schema.safeParse("meetmate.example").success, true);
-  for (const invalid of ["https://meetmate.example", "meetmate.example:443", "user@meetmate.example", "meetmate.example/path"]) {
+  for (const invalid of ["https://meetmate.example", "meetmate.example:443", "meetmate.example:8443", "user@meetmate.example", "meetmate.example/path"]) {
     assert.equal(REGISTRY_BY_ID.server_ngrok_domain.schema.safeParse(invalid).success, false, invalid);
   }
   assert.equal(settingsMutationSchema.safeParse({ schemaVersion: 1, revision: "bootstrap", fields: { unknown: true } }).success, false);
   resetRuntimeForTest();
   initializeRuntime({ state: settingsState({}), startup: settingsStartup(), serverPort: 5005 });
   assert.equal(Object.keys(buildEnvelope().diagnostics).length, 61);
+});
+
+test("public_origin accepts only the HTTPS origin contract without normalizing spelling", () => {
+  const schema = REGISTRY_BY_ID.public_origin.schema;
+  for (const value of ["", "https://funnel.example.ts.net:8443", "https://meetmate.example", "https://h:443", "https://Mixed.Example", "https://[::1]:8443", "https://bücher.example"]) {
+    const parsed = schema.safeParse(value);
+    assert.equal(parsed.success, true, value);
+    assert.equal(parsed.data, value);
+  }
+  for (const value of ["HTTPS://h", "https://h:", "https:////h", "https://h:0443", "https://h/foo/..", "https://h/.", "https://h/path", "https://h/", "http://h", "wss://h", "https://u:p@h", "https://h?x=1", "https://h#f", "h:8443", " https://h"]) {
+    assert.equal(schema.safeParse(value).success, false, value);
+  }
 });
 
 test("T12-02 precedence table is pre-dotenv OS > config > .env seed > default", () => {

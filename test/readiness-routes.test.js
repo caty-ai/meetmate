@@ -61,7 +61,10 @@ function initialize(options = {}) {
         stt: { provider: "soniox", sonioxApiKey: "soniox-secret" },
         tts: { provider: "fish-audio", apiKey: "fish-secret", voiceId: "voice-id" },
         attendee: { apiKey: "attendee-secret", baseUrl: "app.attendee.dev" },
-        server: options.ngrokDomain === null ? {} : { ngrokDomain: options.ngrokDomain || "meetmate.example" },
+        server: {
+          ...(options.ngrokDomain === null ? {} : { ngrokDomain: options.ngrokDomain || "meetmate.example" }),
+          ...(options.publicOrigin ? { publicOrigin: options.publicOrigin } : {}),
+        },
         slack: { notifications: { enabled: options.slackEnabled === true } },
       },
     },
@@ -463,6 +466,7 @@ test("join route enforces config-derived wsUrl identity and never fetches an out
   }, "198.51.100.1");
   assert.equal(mismatch.status, 503);
   assert.equal(mismatch.body.error.blockers.some((blocker) => blocker.code === "MISMATCH"), true);
+  assert.equal(mismatch.body.error.blockers.find((blocker) => blocker.system === "tunnel" && blocker.code === "MISMATCH").fieldId, "server_ngrok_domain");
   assert.deepEqual(fetched, ["https://candidate.example/health"]);
   assert.equal(readiness.inspect("tunnel").code, "CONNECTED", "request identity must not alter canonical readiness");
 
@@ -477,6 +481,39 @@ test("join route enforces config-derived wsUrl identity and never fetches an out
   assert.equal(readiness.inspect("tunnel").code, "MISMATCH", "outside input must not erase a canonical hard result");
   assert.equal(fetched.includes("https://outside.example/health"), false, "outside.example must never become a fetch destination");
   assert.deepEqual(fetched, ["https://candidate.example/health", "https://meetmate.example/health"]);
+});
+
+test("join-time tunnel MISMATCH attributes a configured public origin", { concurrency: false }, async (t) => {
+  initialize({ publicOrigin: "https://candidate.example" });
+  readiness.reset();
+  for (const system of ["soniox", "fish-audio", "attendee", "llm", "tunnel"]) {
+    readiness.setProbeObservation(system, { ok: true, code: "CONNECTED" });
+  }
+  delete require.cache[routesPath];
+  const routes = require(routesPath);
+  await routes.init({
+    detectNgrok: false,
+    loadAvatar: false,
+    instanceId: "this-boot",
+    readinessProbeOptions: {
+      fetchFn: async () => new Response('{"instanceId":"other-boot"}', { status: 200, headers: { "Content-Type": "application/json" } }),
+      requestFn: unavailableRequest,
+      httpGet: unavailableNgrokHttpGet,
+    },
+  });
+  t.after(() => {
+    delete require.cache[routesPath];
+    readiness.reset();
+    resolver.resetRuntimeForTest();
+  });
+
+  const mismatch = await invoke(routes, "POST", "/join-meeting", {
+    meetingUrl: "https://meet.google.com/abc-defg-hij",
+    wsUrl: "wss://meetmate.example/realtime",
+    conversationMode: "group",
+  }, "198.51.100.1");
+  assert.equal(mismatch.status, 503);
+  assert.equal(mismatch.body.error.blockers.find((blocker) => blocker.system === "tunnel" && blocker.code === "MISMATCH").fieldId, "public_origin");
 });
 
 test("fresh readiness lookup cannot clear the boot-time ngrok latch used by /info", { concurrency: false }, async (t) => {

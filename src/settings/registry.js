@@ -36,6 +36,7 @@ const RESERVED_SESSION_HEADER_NAMES = Object.freeze([
 const sessionHeader = z.string()
   .regex(/^([A-Za-z0-9!#$%&'*+.^_`|~-]{1,128})?$/)
   .refine((value) => !RESERVED_SESSION_HEADER_NAMES.includes(value.toLowerCase()), "reserved_header");
+const HTTPS_ORIGIN_SHAPE = /^https:\/\/(?:\[[0-9A-Fa-f:.]+\]|[^\s/?#@:\[\]]+)(?::[1-9][0-9]{0,4})?$/;
 
 function exactUrl(protocols, allowEmpty = false) {
   return z.string().refine((value) => {
@@ -51,6 +52,20 @@ function exactUrl(protocols, allowEmpty = false) {
       return false;
     }
   }, "invalid_url");
+}
+
+function httpsOrigin(allowEmpty = false) {
+  return z.string().refine((value) => {
+    if (allowEmpty && value === "") return true;
+    if (!HTTPS_ORIGIN_SHAPE.test(value)) return false;
+    try {
+      const parsed = new URL(value);
+      return parsed.protocol === "https:" && !parsed.username && !parsed.password
+        && !parsed.search && !parsed.hash && parsed.pathname === "/";
+    } catch {
+      return false;
+    }
+  }, "invalid_https_origin");
 }
 
 function hostname(allowEmpty = false) {
@@ -189,6 +204,7 @@ const SETTINGS_REGISTRY = Object.freeze([
   d("gateway_display_name", "gateway.displayName", trimmedString(128), { defaultValue: "AI MeetServer" }),
   d("server_port", "server.port", integer(1, 65535), { ux: "deployment-readonly", envAlias: "PORT", defaultValue: 5005, writeSurface: "none" }),
   d("server_ngrok_domain", "server.ngrokDomain", hostname(true), { defaultValue: "" }),
+  d("public_origin", "server.publicOrigin", httpsOrigin(true), { envAlias: "PUBLIC_ORIGIN", defaultValue: "" }),
   d("resolved_home", null, absolutePath, { ux: "deployment-readonly", envAlias: "AI_MEET_HOME", writeSurface: "none" }),
   d("task_extraction_enabled", "features.taskExtractionEnabled", bool, { defaultValue: true }),
   d("streaming_equivalent_enabled", "features.streamingEquivalentEnabled", bool, { defaultValue: true }),
@@ -266,5 +282,5 @@ module.exports = {
   ENV_DIAGNOSTICS,
   SETTINGS_REGISTRY,
   REGISTRY_BY_ID,
-  validators: Object.freeze({ absolutePath, clipRecord, hostname, secret, stringArray }),
+  validators: Object.freeze({ absolutePath, clipRecord, hostname, httpsOrigin, secret, stringArray }),
 };
