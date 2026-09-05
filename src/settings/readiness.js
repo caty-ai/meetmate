@@ -4,6 +4,7 @@ const probes = require("./probes");
 const {
   buildEnvelope,
   getPublishedValue,
+  getRawConfig,
   getStatus,
   registerCacheInvalidator,
 } = require("./resolver");
@@ -82,6 +83,29 @@ const MESSAGES = Object.freeze({
   RATE_LIMITED: "プロバイダー側のレート制限に達しました",
   PROVIDER_ERROR: "プロバイダーの応答を確認できませんでした",
 });
+
+const LEGACY_NOTICES = Object.freeze({
+  agents: Object.freeze({
+    code: "AGENTS_KEY_UNSUPPORTED",
+    message: "config.json の agents キーはこのバージョンでは使われません（1 サーバー = 1 エージェント）。設定は無視されます",
+  }),
+  "agent.messages.groupGreetingTemplate": Object.freeze({
+    code: "GROUP_GREETING_TEMPLATE_UNSUPPORTED",
+    message: "config.json の agent.messages.groupGreetingTemplate キーはこのバージョンでは使われません。設定は無視されます",
+  }),
+});
+
+function legacyNotices() {
+  try {
+    const parsed = getRawConfig();
+    // Loading the profile module before bootstrap would eagerly initialize config.
+    const { collectLegacyMultiAgentKeys } = require("../agent-profile");
+    return collectLegacyMultiAgentKeys(parsed).map((key) => ({ ...LEGACY_NOTICES[key] }));
+  } catch {
+    // Raw configuration may be unavailable before runtime initialization.
+    return [];
+  }
+}
 
 function cloneRecord(record) {
   return record ? { ...record } : null;
@@ -366,6 +390,7 @@ function createReadinessController(options = {}) {
       setupRequired: !meetingReady,
       systems,
       blockers,
+      notices: legacyNotices(),
     };
   }
 

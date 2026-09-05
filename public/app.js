@@ -201,6 +201,10 @@ function readinessDisplayRows(readinessState) {
     text: blocker.message || blocker.code,
     fieldId: blocker.fieldId,
   })));
+  rows.push(...(readinessState?.notices || []).map((notice) => ({
+    kind: "warning",
+    text: notice.message || notice.code,
+  })));
   for (const system of systems) {
     if (system.code === "PENDING") {
       rows.push({ kind: "pending", text: `${system.id}: 確認中…` });

@@ -306,3 +306,20 @@ test("main UI shows setup-required guidance without manufacturing a blocker", ()
     fieldId: "panel-connections",
   }]);
 });
+
+test("main UI displays notices after setup and blockers without gating join", () => {
+  const { readinessDisplayRows } = require("../public/app.js");
+  const state = { ready: true, setupRequired: false, systems: [], blockers: [] };
+  const notices = [{ code: "AGENTS_KEY_UNSUPPORTED", message: "m" }];
+  assert.deepEqual(readinessDisplayRows({ ...state, notices }), [{ kind: "warning", text: "m" }]);
+  assert.deepEqual(readinessDisplayRows(state), []);
+  assert.deepEqual(readinessDisplayRows({ ...state, notices: [{ code: "CODE" }] }), [{ kind: "warning", text: "CODE" }]);
+  const setup = { ...state, setupRequired: true };
+  assert.deepEqual(readinessDisplayRows({ ...setup, notices }), [
+    ...readinessDisplayRows(setup), { kind: "warning", text: "m" },
+  ]);
+  const blocked = { ...setup, blockers: [{ code: "BLOCKED", message: "b", fieldId: "agent_id" }] };
+  assert.deepEqual(readinessDisplayRows({ ...blocked, notices }), [
+    { kind: "blocker", text: "b", fieldId: "agent_id" }, { kind: "warning", text: "m" },
+  ]);
+});

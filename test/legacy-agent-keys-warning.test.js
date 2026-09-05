@@ -5,7 +5,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
-const { warnLegacyMultiAgentKeys } = require("../src/agent-profile");
+const { collectLegacyMultiAgentKeys, warnLegacyMultiAgentKeys } = require("../src/agent-profile");
 const { readConfigState } = require("../src/settings/store");
 const resolver = require("../src/settings/resolver");
 const readiness = require("../src/settings/readiness");
@@ -109,4 +109,23 @@ test("boot loader preserves legacy config bytes and leaves readiness and setting
   assert.deepEqual(resolver.getStatus().issues, []);
   assert.equal(resolver.getStatus().meetingReady, true);
   assert.deepEqual(readiness.createReadinessController().getReadiness().blockers, []);
+});
+
+test("legacy key collection uses own presence checks and never reads legacy values", () => {
+  const both = ["agents", "agent.messages.groupGreetingTemplate"];
+  assert.deepEqual(collectLegacyMultiAgentKeys({ agents: [], agent: { messages: { groupGreetingTemplate: "" } } }), both);
+  for (const parsed of [null, undefined, 1, false, "str", {}, { agent: { messages: {} } }]) {
+    assert.deepEqual(collectLegacyMultiAgentKeys(parsed), []);
+  }
+  const inherited = Object.create({ agents: [] });
+  inherited.agent = { messages: Object.create({ groupGreetingTemplate: "" }) };
+  assert.deepEqual(collectLegacyMultiAgentKeys(inherited), []);
+  assert.deepEqual(collectLegacyMultiAgentKeys({ agents: null }), ["agents"]);
+  assert.deepEqual(collectLegacyMultiAgentKeys({ agent: { messages: { groupGreetingTemplate: null } } }), [both[1]]);
+  assert.deepEqual(collectLegacyMultiAgentKeys({
+    get agents() { throw new Error("must not read legacy value"); },
+    agent: { messages: {
+      get groupGreetingTemplate() { throw new Error("must not read legacy value"); },
+    } },
+  }), both);
 });
