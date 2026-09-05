@@ -1,8 +1,40 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const test = require("node:test");
-const { AREA_BY_SYSTEM, CAUSE_BY_CODE, areaFor, diagnosticIdFor } = require("../src/settings/diagnostic-id");
+const { AREA_BY_SYSTEM, CAUSE_BY_CODE, STATIC_CODES, areaFor, diagnosticIdFor } = require("../src/settings/diagnostic-id");
+
+test("#197 STATIC_CODES is an explicit list matching the 0xx static family", () => {
+  const staticCodes = new Set(STATIC_CODES);
+  assert.deepEqual(staticCodes, new Set([
+    "VALUE_REQUIRED", "VALUE_INVALID", "PROVIDER_DEPENDENCY_REQUIRED",
+    "LLM_CONNECTION_ENV_REQUIRED", "AGENT_ID_RECONCILIATION_REQUIRED",
+    "LEGACY_CONNECTION_CONFIG_PRESENT", "CONFIG_DOCUMENT_INVALID",
+  ]));
+  assert.equal(STATIC_CODES.length, 7);
+  assert.equal(Object.isFrozen(STATIC_CODES), true);
+  for (const code of staticCodes) assert.match(CAUSE_BY_CODE[code], /^00[2-8]$/);
+  for (const [code, cause] of Object.entries(CAUSE_BY_CODE)) {
+    if (!staticCodes.has(code)) assert.doesNotMatch(cause, /^00[2-8]$/);
+  }
+});
+
+test("#197 docs/diagnostic-ids.md lists every emittable ID", () => {
+  const docs = fs.readFileSync(path.join(__dirname, "..", "docs", "diagnostic-ids.md"), "utf8");
+  const emittableIds = new Set();
+  for (const system of [...Object.keys(AREA_BY_SYSTEM), undefined, "unknown-system"]) {
+    for (const code of [...Object.keys(CAUSE_BY_CODE), "UNKNOWN_CODE"]) {
+      const id = diagnosticIdFor(system, code);
+      if (id !== null) emittableIds.add(id);
+    }
+  }
+  for (const id of emittableIds) assert.ok(docs.includes(`\`${id}\``), `Missing docs ID: ${id}`);
+  for (const [, id] of docs.matchAll(/`(MM-[A-Z]{3}-\d{3})`/g)) {
+    assert.ok(emittableIds.has(id), `Orphan docs ID: ${id}`);
+  }
+});
 
 test("#197 diagnosticIdFor covers every system × code without cause collisions", () => {
   const codesById = new Map();

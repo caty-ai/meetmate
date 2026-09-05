@@ -16,13 +16,16 @@ const CAUSE_BY_CODE = Object.freeze({
   RESTART_REQUIRED: "300", PENDING: "301",
   gateway_no_response: "510", agent_no_output: "511", stream_no_content: "512",
 });
-const STATIC_CODES = new Set(Object.keys(CAUSE_BY_CODE).filter((code) =>
-  CAUSE_BY_CODE[code] >= "002" && CAUSE_BY_CODE[code] <= "008"));
+const STATIC_CODES = Object.freeze([
+  "VALUE_REQUIRED", "VALUE_INVALID", "PROVIDER_DEPENDENCY_REQUIRED",
+  "LLM_CONNECTION_ENV_REQUIRED", "AGENT_ID_RECONCILIATION_REQUIRED",
+  "LEGACY_CONNECTION_CONFIG_PRESENT", "CONFIG_DOCUMENT_INVALID",
+]);
 
 function areaFor(system, code) {
   return Object.hasOwn(AREA_BY_SYSTEM, system)
     ? AREA_BY_SYSTEM[system]
-    : (STATIC_CODES.has(code) ? "SET" : "MMT");
+    : (STATIC_CODES.includes(code) ? "SET" : "MMT");
 }
 
 function diagnosticIdFor(system, code) {
@@ -31,4 +34,4 @@ function diagnosticIdFor(system, code) {
   return `MM-${areaFor(system, code)}-${cause}`;
 }
 
-module.exports = { AREA_BY_SYSTEM, CAUSE_BY_CODE, diagnosticIdFor, areaFor };
+module.exports = { AREA_BY_SYSTEM, CAUSE_BY_CODE, STATIC_CODES, diagnosticIdFor, areaFor };

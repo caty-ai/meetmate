@@ -2,6 +2,7 @@
 
 - 状態: **決裁済み（2026-09-05・#75 Owner decision: 推奨 3 点すべて Yes）**。実装 Issue= #197「診断 ID v1」（本書はその PR に同梱）。
 - 実装時の補足（#197）: blockers / systems の `system` は常にプローブ系（`soniox` 等）なので、静的検証コード（`VALUE_REQUIRED` 等）も **`system` 由来の AREA を優先**する（例: `soniox` × `VALUE_REQUIRED` → `MM-STT-002`）。`SET` は `system` が無い・未知のときの静的検証コードの受け皿。
+- v1 出荷範囲の注記（#197）: 設定画面の接続テスト結果行の ID 表示と、メイン画面行の「対処法」docs アンカーリンクは v1 では未実装（`connectionResult()` が `src/settings/routes.js` にあり宣言外・後続 Issue）。§3/§4 の該当記述は v1 以降の目標として残す。
 - 根拠: `origin/main` @ `a6b6d4a`（v8.13.5 + #193）の実測。コード変更なし。
 - 親: #75（横断提案「エラーを処理段階ごとに分類する」）。関連: #84（readiness gate）・#74（timeout stage ログ・v8.13.5）・#87（実キー分類検証）。
 
