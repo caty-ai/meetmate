@@ -21,6 +21,24 @@ windows-user-path	\b[A-Za-z]:[\\/]+Users[\\/]+(?![<{])[\w.-]+
 # 先頭セパレータが単数 `[\\/]` なのも意図的（`+` は長いセパレータ連続で二次バックトラッキングを起こす）。
 # 代償は URL パス形の過検出だが fail-closed 側であり、3リポ537ファイルの実測で誤検出ゼロ。
 wsl-drvfs-user-path	[\\/]mnt[\\/]+[A-Za-z][\\/]+users[\\/]+(?![<{])[\w.-]+
+# `wsl-unc-linux-home` / `host-mount-user-path` = caty-ai/x-collector#78 (PR#101 / v0.3.4) で凍結した family 形をそのまま採用
+# (meetmate#207)。#75/#76 の後も 4 つの隣接綴りが全 shipped rule と全 decode view をすり抜けていた。
+# `wsl-unc-linux-home` は Windows 側に現れる `absolute-personal-path` (`/home/<name>`) の鏡像として、`\\wsl$` と
+# `\\wsl.localhost` の `<distro>\\home\\<name>` を対象にする (`home\` の backslash が `/home/` アンカーを外す)。
+# `host-mount-user-path` は `/cygdrive/`、`/host_mnt/`、および Docker Desktop の
+# `/run/desktop/mnt/host/` を含む `/mnt/<root>/<drive>/users/` を対象にする。共通形 `<root>/<drive>/users/<name>`。
+# `/mnt/c/users/<name>` には掛からない (`c` は root と drive を兼ねられない) ので `wsl-drvfs-user-path` の単独報告を保つ。
+# 既存の行は触らない (#75/#76 canary への回帰面ゼロ)。
+# 記録済み won't-fix (バグとして再発見しないための理由): `/c/users/<name>` (WSL `automount.root=/`・Git-Bash MSYS) と
+# `/mnt` 外の root は対象外。bare `[\\/][A-Za-z][\\/]+users` は 3 family gate script 自身の selftest canary に 390 件
+# self-hit して全 family gate を赤にし、先行 lookbehind (例: `(?<![\w\\])[\\/][A-Za-z][\\/]+users`) は corpus 0 件だが
+# `vscode-remote://wsl+<distro>/c/users/<name>`、`sftp://<host>/c/users/<name>`、`https://<host>/c/users/<name>`、
+# `file://localhost/c/users/<name>` で fail-open (#76) する。family shape は先行 anchor を持たないためいずれも採用せず、
+# 将来 lookbehind anchor を許す family decision があれば再評価する。tool 出力の `/c/Users/<name>` は `absolute-personal-path` が捕捉する。
+# `/mnt/cdrive/users/` は #76 の trade (`[A-Za-z]+` は `/mnt/backup/users/shared` に当たる) を変更せず対象外とする。
+# `absolute-personal-path` を case-insensitive 化して代用してはならない。
+wsl-unc-linux-home	wsl(?:\$|\.localhost)[\\/]+[^\\/\s]+[\\/]+home[\\/]+(?![<{])[\w.-]+
+host-mount-user-path	[\\/](?:cygdrive|host_mnt|mnt[\\/]+[\w.-]+)[\\/]+[A-Za-z][\\/]+users[\\/]+(?![<{])[\w.-]+
 handoffs-file	_handoffs/[A-Za-z0-9._-]
 tailscale-cgnat	\b100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]{1,3}\.[0-9]{1,3}\b
 family-vault-path	SharedHub/family-vault

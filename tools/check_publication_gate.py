@@ -684,6 +684,10 @@ def _selftest_check(condition, message):
         raise RuntimeError("selftest failed: %s" % message)
 
 
+def _selftest_rules_without(rules, name):
+    return tuple(rule for rule in rules if rule[0] != name)
+
+
 def _fixture_registry(account_slug="neutral-owner"):
     return {
         "languages": ["en", "ja"],
@@ -1113,6 +1117,293 @@ def selftest_shipped_denylist():
         and wsl_backslash_escape_failures
         == ["denylist: esc.txt:1 contains wsl-drvfs-user-path (decoded view)"],
         "shipped wsl-drvfs-user-path backslash string-escape scan finding",
+    )
+    # #207: `wsl-unc-linux-home` / `host-mount-user-path` adopted verbatim from
+    # x-collector#78 (v0.3.4). Canaries mirror the lead lane against this repo's
+    # full rule set; mutation checks run each canary against the set minus the
+    # new rule so a deleted / neutered rule line turns the suite red.
+    all_rules = tuple(load_denylist(root))
+    unc_home_rules = tuple(
+        rule for rule in all_rules if rule[0] == "wsl-unc-linux-home"
+    )
+    _selftest_check(len(unc_home_rules) == 1, "shipped wsl-unc-linux-home rule")
+    unc_home_path = unc_home_rules[0][1]
+    unc_home_leak = "\\\\wsl$\\Ubuntu\\ho" + "me\\alice\\meetmate\\.env"
+    unc_home_localhost_leak = "\\\\wsl.localhost\\Ubuntu\\ho" + "me\\alice\\.ssh"
+    unc_home_case_leak = "\\\\WSL$\\UBUNTU\\HO" + "ME\\BOB"
+    unc_home_cjk_leak = "\\\\wsl$\\Ubuntu-22.04\\ho" + "me\\翔太郎"
+    unc_home_placeholder_distro_leak = "\\\\wsl$\\<distro>\\ho" + "me\\alice"
+    unc_home_file_url_leak = "file://wsl$/Ubuntu/ho" + "me/alice"
+    unc_home_extended_leak = "\\\\?\\UNC\\wsl.localhost\\Debian\\ho" + "me\\carol"
+    unc_home_json_backslash_leak = r"\\\\wsl$\\Ubuntu\\ho" + r"me\\alice"
+    unc_home_json_solidus_leak = "\\/\\/wsl.localhost\\/Ubuntu\\/ho" + "me\\/alice"
+    _selftest_check(
+        all(
+            unc_home_path.search(sample) is not None
+            for sample in (
+                unc_home_leak,
+                unc_home_localhost_leak,
+                unc_home_case_leak,
+                unc_home_cjk_leak,
+                unc_home_placeholder_distro_leak,
+                unc_home_file_url_leak,
+                unc_home_extended_leak,
+                unc_home_json_backslash_leak,
+                unc_home_json_solidus_leak,
+            )
+        ),
+        "shipped wsl-unc-linux-home detects leak shapes",
+    )
+    unc_home_match = unc_home_path.search(unc_home_leak)
+    _selftest_check(
+        unc_home_match is not None
+        and unc_home_match.group(0) == "wsl$\\Ubuntu\\ho" + "me\\alice",
+        "shipped wsl-unc-linux-home span pin",
+    )
+    unc_home_dotted_leak = "\\\\wsl$\\Ubuntu\\ho" + "me\\j" ".doe"
+    unc_home_dotted_match = unc_home_path.search(unc_home_dotted_leak)
+    _selftest_check(
+        unc_home_dotted_match is not None
+        and unc_home_dotted_match.group(0) == "wsl$\\Ubuntu\\ho" + "me\\j" ".doe",
+        "shipped wsl-unc-linux-home dotted leak",
+    )
+    unc_home_hyphenated_leak = "\\\\wsl$\\Ubuntu\\ho" + "me\\anne" "-marie"
+    unc_home_hyphenated_match = unc_home_path.search(unc_home_hyphenated_leak)
+    _selftest_check(
+        unc_home_hyphenated_match is not None
+        and unc_home_hyphenated_match.group(0)
+        == "wsl$\\Ubuntu\\ho" + "me\\anne" "-marie",
+        "shipped wsl-unc-linux-home hyphenated leak",
+    )
+    _selftest_check(
+        all(
+            unc_home_path.search(sample) is None
+            for sample in (
+                "\\\\wsl$\\Ubuntu\\ho" + "me\\<name>",
+                "\\\\wsl$\\Ubuntu\\ho" + "me\\{name}",
+                "\\\\wsl$\\Ubuntu\\etc\\passwd",
+                "\\\\wsl$\\Ubuntu\\mn" + "t\\c\\users\\alice",
+                "\\\\server\\share\\home\\alice",
+                "wsl.localhost is the new hostname; see /home/ for details",
+                "https://docs.example.com/wsl/homework/alice",
+                "/mn" + "t/backup/users/shared",
+                "https://api.github.com/users/alice",
+                "mailto:Users/alice",
+            )
+        ),
+        "shipped wsl-unc-linux-home permits clean controls",
+    )
+    unc_home_failures = []
+    _selftest_check(
+        check_denylist({"unc.txt": unc_home_leak}, all_rules, unc_home_failures) == 1
+        and unc_home_failures == ["denylist: unc.txt:1 contains wsl-unc-linux-home"],
+        "shipped wsl-unc-linux-home scan finding",
+    )
+    unc_home_mutation_failures = []
+    _selftest_check(
+        check_denylist(
+            {"unc.txt": unc_home_leak},
+            _selftest_rules_without(all_rules, "wsl-unc-linux-home"),
+            unc_home_mutation_failures,
+        )
+        == 0
+        and unc_home_mutation_failures == [],
+        "shipped wsl-unc-linux-home mutation",
+    )
+    unc_home_decoded_failures = []
+    _selftest_check(
+        check_denylist(
+            {"enc.txt": "%5C%5Cwsl%24%5CUbuntu%5Cho" + "me%5Calice"},
+            all_rules,
+            unc_home_decoded_failures,
+        )
+        == 1
+        and unc_home_decoded_failures
+        == ["denylist: enc.txt:1 contains wsl-unc-linux-home (decoded view)"],
+        "shipped wsl-unc-linux-home decoded scan finding",
+    )
+    unc_home_string_escape_failures = []
+    _selftest_check(
+        check_denylist(
+            {
+                "esc.txt": "\\u005c\\u005cwsl$\\u005cUbuntu\\u005cho"
+                + "me\\u005calice"
+            },
+            all_rules,
+            unc_home_string_escape_failures,
+        )
+        == 1
+        and unc_home_string_escape_failures
+        == ["denylist: esc.txt:1 contains wsl-unc-linux-home (decoded view)"],
+        "shipped wsl-unc-linux-home string-escape scan finding",
+    )
+    host_mount_rules = tuple(
+        rule for rule in all_rules if rule[0] == "host-mount-user-path"
+    )
+    _selftest_check(len(host_mount_rules) == 1, "shipped host-mount-user-path rule")
+    host_mount_user_path = host_mount_rules[0][1]
+    cygdrive_leak = "/cygdri" + "ve/c/users/alice/.ssh/id_rsa"
+    host_mnt_leak = "/host_m" + "nt/c/users/alice"
+    docker_desktop_leak = "/run/desktop/mn" + "t/host/c/users/alice"
+    custom_mnt_leak = "/mn" + "t/win/c/users/alice/meetmate/.env"
+    custom_mnt_cjk_leak = "/mn" + "t/host/d/users/翔太郎"
+    cygdrive_case_leak = "/CYGDRI" + "VE/C/USERS/BOB"
+    cygdrive_backslash_leak = "\\cygdri" + "ve\\c\\users\\alice"
+    cygdrive_env_leak = "export HOME=/cygdri" + "ve/c/users/alice"
+    host_mnt_file_url_leak = "file:///host_m" + "nt/c/users/carol/.env"
+    custom_mnt_abbreviated_leak = ".../mn" + "t/win/c/users/alice/x.ts"
+    cygdrive_solidus_leak = "\\/cygdri" + "ve\\/c\\/users\\/alice"
+    custom_mnt_vscode_leak = (
+        "vscode-remote://wsl+Ubuntu/mn" + "t/win/c/users/alice"
+    )
+    _selftest_check(
+        all(
+            host_mount_user_path.search(sample) is not None
+            for sample in (
+                cygdrive_leak,
+                host_mnt_leak,
+                docker_desktop_leak,
+                custom_mnt_leak,
+                custom_mnt_cjk_leak,
+                cygdrive_case_leak,
+                cygdrive_backslash_leak,
+                cygdrive_env_leak,
+                host_mnt_file_url_leak,
+                custom_mnt_abbreviated_leak,
+                cygdrive_solidus_leak,
+                custom_mnt_vscode_leak,
+            )
+        ),
+        "shipped host-mount-user-path detects leak shapes",
+    )
+    cygdrive_match = host_mount_user_path.search(cygdrive_leak)
+    docker_desktop_match = host_mount_user_path.search(docker_desktop_leak)
+    _selftest_check(
+        cygdrive_match is not None
+        and cygdrive_match.group(0) == "/cygdri" + "ve/c/users/alice"
+        and docker_desktop_match is not None
+        and docker_desktop_match.group(0) == "/mn" + "t/host/c/users/alice",
+        "shipped host-mount-user-path span pin",
+    )
+    host_mount_dotted_leak = "/cygdri" + "ve/c/users/j" ".doe"
+    host_mount_dotted_match = host_mount_user_path.search(host_mount_dotted_leak)
+    _selftest_check(
+        host_mount_dotted_match is not None
+        and host_mount_dotted_match.group(0) == "/cygdri" + "ve/c/users/j" ".doe",
+        "shipped host-mount-user-path dotted leak",
+    )
+    host_mount_hyphenated_leak = "/host_m" + "nt/c/users/anne" "-marie"
+    host_mount_hyphenated_match = host_mount_user_path.search(host_mount_hyphenated_leak)
+    _selftest_check(
+        host_mount_hyphenated_match is not None
+        and host_mount_hyphenated_match.group(0)
+        == "/host_m" + "nt/c/users/anne" "-marie",
+        "shipped host-mount-user-path hyphenated leak",
+    )
+    _selftest_check(
+        all(
+            host_mount_user_path.search(sample) is None
+            for sample in (
+                "/cygdri" + "ve/c/users/<user>",
+                "/cygdri" + "ve/c/users/{user}",
+                "/cygdri" + "ve/c/Windows/System32",
+                "/cygdri" + "ve/cc/users/alice",
+                "/host_m" + "nt/users/alice",
+                "/mn" + "t/backup/users/shared",
+                "/mn" + "t/c/users/alice",
+                "/mn" + "t/1/users/foo",
+                "/opt/c/users/alice",
+                "https://api.github.com/users/alice",
+                "mailto:Users/alice",
+            )
+        ),
+        "shipped host-mount-user-path permits clean controls",
+    )
+    # Recorded won't-fix (x-collector#78): a bare `/<letter>/users/` anchor
+    # self-hits the family gate selftest canaries and a leading lookbehind
+    # fails open on vscode-remote:// / sftp:// / https:// / file://localhost/.
+    # These misses are rule-scoped and intentional; do not "fix" them here.
+    _selftest_check(
+        all(
+            host_mount_user_path.search(sample) is None
+            for sample in (
+                "/c/us" + "ers/alice",
+                "/mn" + "t/cdrive/users/alice",
+                "/win/c/us" + "ers/alice",
+            )
+        ),
+        "shipped host-mount-user-path recorded won't-fix misses",
+    )
+    host_mount_non_overlap_failures = []
+    _selftest_check(
+        check_denylist(
+            {"drvfs.txt": "/mn" + "t/c/users/alice"},
+            all_rules,
+            host_mount_non_overlap_failures,
+        )
+        == 1
+        and host_mount_non_overlap_failures
+        == ["denylist: drvfs.txt:1 contains wsl-drvfs-user-path"],
+        "shipped host-mount-user-path non-overlap pin",
+    )
+    host_mount_scan_cases = (
+        ("cygdrive.txt", cygdrive_leak),
+        ("host-mnt.txt", host_mnt_leak),
+        ("custom-mnt.txt", custom_mnt_leak),
+    )
+    host_mount_scan_results = []
+    for path, sample in host_mount_scan_cases:
+        scan_failures = []
+        count = check_denylist({path: sample}, all_rules, scan_failures)
+        host_mount_scan_results.append((count, scan_failures))
+    _selftest_check(
+        host_mount_scan_results
+        == [
+            (1, ["denylist: cygdrive.txt:1 contains host-mount-user-path"]),
+            (1, ["denylist: host-mnt.txt:1 contains host-mount-user-path"]),
+            (1, ["denylist: custom-mnt.txt:1 contains host-mount-user-path"]),
+        ],
+        "shipped host-mount-user-path scan finding",
+    )
+    host_mount_mutation_results = []
+    for path, sample in host_mount_scan_cases:
+        mutation_failures = []
+        count = check_denylist(
+            {path: sample},
+            _selftest_rules_without(all_rules, "host-mount-user-path"),
+            mutation_failures,
+        )
+        host_mount_mutation_results.append((count, mutation_failures))
+    _selftest_check(
+        host_mount_mutation_results == [(0, []), (0, []), (0, [])],
+        "shipped host-mount-user-path mutation",
+    )
+    host_mount_decoded_failures = []
+    _selftest_check(
+        check_denylist(
+            {"enc.txt": "%2Fcygdri" + "ve%2Fc%2Fusers%2Falice"},
+            all_rules,
+            host_mount_decoded_failures,
+        )
+        == 1
+        and host_mount_decoded_failures
+        == ["denylist: enc.txt:1 contains host-mount-user-path (decoded view)"],
+        "shipped host-mount-user-path decoded scan finding",
+    )
+    host_mount_string_escape_failures = []
+    _selftest_check(
+        check_denylist(
+            {
+                "esc.txt": "\\u002fhost_m"
+                + "nt\\u002fc\\u002fusers\\u002falice"
+            },
+            all_rules,
+            host_mount_string_escape_failures,
+        )
+        == 1
+        and host_mount_string_escape_failures
+        == ["denylist: esc.txt:1 contains host-mount-user-path (decoded view)"],
+        "shipped host-mount-user-path string-escape scan finding",
     )
     home_rules = tuple(
         rule for rule in load_denylist(root) if rule[0] == "personal-home-path"
