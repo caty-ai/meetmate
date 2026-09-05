@@ -18,10 +18,36 @@ const floorSettingsSchema = z.object({
   }, "HUB_URL must be an absolute ws:// or wss:// URL"),
   roomCode: z.string().trim().max(256),
   sharedToken: z.string().max(4096),
+  token: z.string().max(4096),
+  cloudHubUrl: z.string().refine((value) => {
+    if (value === "") return true;
+    try {
+      const parsed = new URL(value);
+      return ["ws:", "wss:"].includes(parsed.protocol)
+        && !parsed.username && !parsed.password && !parsed.hash;
+    } catch {
+      return false;
+    }
+  }, "Cloud hub URL must be an absolute ws:// or wss:// URL"),
+  cloudUrl: z.string().refine((value) => {
+    if (value === "") return true;
+    try {
+      const parsed = new URL(value);
+      return parsed.protocol === "https:" && !parsed.username && !parsed.password && !parsed.hash;
+    } catch {
+      return false;
+    }
+  }, "CATY_CLOUD_URL must be an absolute https:// URL"),
+  roomSalt: z.string().max(4096),
+  roomSaltVersion: z.string().max(128),
+  installationId: z.string().max(256),
+  planId: z.string().max(128),
   tailMs: z.number().int().min(0).max(5000),
   debug: z.boolean(),
 }).strict().superRefine((value, context) => {
-  if (Boolean(value.url) !== Boolean(value.roomCode)) {
+  if (value.token && !value.cloudHubUrl) {
+    context.addIssue({ code: "custom", message: "Cloud hub URL and HUB_TOKEN must be set together" });
+  } else if (!value.token && Boolean(value.url) !== Boolean(value.roomCode)) {
     context.addIssue({ code: "custom", message: "HUB_URL and HUB_ROOM_CODE must be set together" });
   }
 });
@@ -47,6 +73,14 @@ const settingsMutationSchema = z.object({
 
 const revisionOnlySchema = z.object({ revision: revisionSchema }).strict();
 const sha256RevisionOnlySchema = z.object({ revision: sha256RevisionSchema }).strict();
+const cloudConnectRequestSchema = z.object({
+  revision: revisionSchema,
+  cloudUrl: z.string().trim().min(1).max(2048).optional(),
+}).strict();
+const cloudDisconnectRequestSchema = z.object({
+  revision: revisionSchema,
+  force: z.boolean().optional(),
+}).strict();
 const ttsPreviewSchema = z.object({
   revision: sha256RevisionSchema,
   text: z.string().trim().min(1).refine((value) => [...value].length <= 500, "too_big"),
@@ -107,6 +141,8 @@ function parseStrict(schema, value) {
 
 module.exports = {
   audioMetadataSchema,
+  cloudConnectRequestSchema,
+  cloudDisconnectRequestSchema,
   floorSettingsSchema,
   parseFloorSettings,
   parseStrict,
