@@ -71,7 +71,7 @@ test("join handler forwards configured tokens in header and form body only", asy
     assert.equal(securedResponse.header, "test-join-value-123");
     assert.equal(new URLSearchParams(securedResponse.body).get("joinToken"), "test-join-value-123");
 
-    const unsecured = createToolHandlers({ base });
+    const unsecured = createToolHandlers({ base, auth: "" }); // hermetic: ignore any ambient JOIN_SHARED_TOKEN (#215 r2)
     const unsecuredResponse = JSON.parse((await unsecured.joinMeeting({ meetingUrl: "https://meet.example/b" })).content[0].text);
     assert.equal(unsecuredResponse.header, undefined);
     assert.equal(new URLSearchParams(unsecuredResponse.body).has("joinToken"), false);
