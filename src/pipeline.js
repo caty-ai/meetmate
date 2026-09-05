@@ -71,8 +71,12 @@ function withLlmResponseStatus(error, openclaw) {
   return match ? { statusCode: Number(match[1]) } : error;
 }
 
-function scrubErrorMessage(err, secret) {
-  return scrubLogMessage(err && err.message ? err.message : err, secret);
+function scrubErrorMessage(err, secret, ...additionalSecrets) {
+  let message = scrubLogMessage(err && err.message ? err.message : err, secret);
+  for (const additionalSecret of additionalSecrets) {
+    message = scrubLogMessage(message, additionalSecret);
+  }
+  return message;
 }
 
 // Cancel word detection: strict boundary match to avoid false positives
@@ -545,6 +549,17 @@ function cloneSpeakerMeta(speaker) {
   return cloned;
 }
 
+function speakerTag(speaker) {
+  const speakerId = String(speaker?.id ?? "");
+  if (!speakerId || speakerId === UNKNOWN_SPEAKER_ID) return "";
+  const tag = typeof speaker.displayName === "string" && speaker.displayName.length > 0
+    ? speaker.displayName
+    : typeof speaker.platform === "string" && speaker.platform.length > 0
+      ? `${speaker.platform}:${speakerId}`
+      : speakerId;
+  return ` [${tag}]`;
+}
+
 /**
  * Create the decomposed voice pipeline.
  *
@@ -709,6 +724,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   const dgKey = config.dgKey;
   const fishKey = config.fishKey;
   const gatewayToken = config.llm.gateway?.token;
+  const hubAuthToken = config.hub?.authToken;
   const selectedAgentIds = Array.isArray(options.selectedAgentIds) ? options.selectedAgentIds.filter(Boolean) : [];
   const hasSelectedAgents = selectedAgentIds.length > 0;
   const agents = options.agents || {};
@@ -725,7 +741,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     ? (options.floorClient || new FloorClient({
         url: config.hub.url,
         roomCode: config.hub.roomCode,
-        authToken: config.hub.authToken,
+        authToken: hubAuthToken,
         debug: config.hub.debug,
         agentId: currentAgentId,
         displayName: agentProfile?.displayName || agentProfile?.name || currentAgentId,
@@ -734,7 +750,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         onReady: ({ members }) => {
           if (typeof onChatMessage === "function") {
             Promise.resolve(onChatMessage(`調停ON / room=${config.hub.roomCode} / members=${members.length}`))
-              .catch((error) => console.warn("⚠️  floor status chat failed:", scrubErrorMessage(error, gatewayToken)));
+              .catch((error) => console.warn("⚠️  floor status chat failed:", scrubErrorMessage(error, gatewayToken, hubAuthToken)));
           }
         },
       }))
@@ -1805,9 +1821,9 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     closeSpeakerSlot(current);
   }
 
-  function onSttTranscript(text, isFinal, confidence) {
+  function onSttTranscript(text, isFinal, confidence, speaker = null) {
     if (isFinal) {
-      console.log(`🎤  [interim→final] ${text}`);
+      console.log(`🎤  [interim→final]${speakerTag(speaker)} ${text}`);
       return;
     }
 
@@ -1894,7 +1910,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   function attachSttListeners(stream, speakerResolver, slot = null) {
     stream.on("transcript", (text, isFinal, confidence) => {
       if (slot && !currentSlotFor(slot)) return;
-      onSttTranscript(text, isFinal, confidence);
+      onSttTranscript(text, isFinal, confidence, speakerResolver());
     });
     stream.on("utterance_end", (userText) => {
       if (slot && !currentSlotFor(slot)) return;
@@ -1953,7 +1969,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       await sleep(POST_UTTERANCE_BUFFER_MS);
     }
 
-    console.log(`💬  [user] ${cleanedText}`);
+    console.log(`💬  [user]${speakerTag(attributedSpeaker)} ${cleanedText}`);
 
     let currentWakeEntry = null;
     let hubAuthorized = false;
@@ -1980,7 +1996,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         try {
           verdict = await floorTurn?.verdictPromise;
         } catch (error) {
-          console.warn("⚠️  farewell floor verdict failed:", scrubErrorMessage(error, gatewayToken));
+          console.warn("⚠️  farewell floor verdict failed:", scrubErrorMessage(error, gatewayToken, hubAuthToken));
           verdict = { kind: "degraded", delayMs: floorClient.fallbackDelayMs() };
         }
         if (
@@ -1993,7 +2009,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
             hubAuthorized = true;
             entry.addressed = true;
           } catch (error) {
-            console.warn("⚠️  farewell floor acquire failed:", error.code || scrubErrorMessage(error, gatewayToken));
+            console.warn("⚠️  farewell floor acquire failed:", error.code || scrubErrorMessage(error, gatewayToken, hubAuthToken));
           }
         } else if (
           verdict?.kind === "assigned"
@@ -2020,7 +2036,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         try {
           verdict = await floorTurn?.verdictPromise;
         } catch (error) {
-          console.warn("⚠️  floor verdict failed:", scrubErrorMessage(error, gatewayToken));
+          console.warn("⚠️  floor verdict failed:", scrubErrorMessage(error, gatewayToken, hubAuthToken));
           verdict = { kind: "degraded", delayMs: floorClient.fallbackDelayMs() };
         }
 
@@ -2032,7 +2048,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
             entry.injectToLlm = true;
             currentWakeEntry = entry;
           } catch (error) {
-            console.warn("⚠️  floor acquire failed:", error.code || scrubErrorMessage(error, gatewayToken));
+            console.warn("⚠️  floor acquire failed:", error.code || scrubErrorMessage(error, gatewayToken, hubAuthToken));
             entry.injectToLlm = false;
             appendConversationEntry("user", `[会議音声・未指名] ${cleanedText}`, currentAgentId || null, attributedSpeaker);
             await reopenGateAndRescan("floor_acquire_failed");
@@ -2064,7 +2080,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
           setFloorFallbackActive(false);
           entry.addressed = false;
           entry.injectToLlm = false;
-          console.log(`🔇  [会議音声・非指名] "${cleanedText.slice(0, 50)}..."`);
+          console.log(`🔇  [会議音声・非指名]${speakerTag(attributedSpeaker)} "${cleanedText.slice(0, 50)}..."`);
           appendConversationEntry("user", `[会議音声・未指名] ${cleanedText}`, currentAgentId || null, attributedSpeaker);
           await reopenGateAndRescan("not_assigned");
           return;
@@ -2142,7 +2158,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       if (!wakeResult.detected) {
         // No wake word: keep for wake re-scan/ops logs, but don't inject into LLM context.
         pushTranscriptEntry(entry);
-        console.log(`🔇  [会議音声・未指名] "${cleanedText.slice(0, 50)}..."`);
+        console.log(`🔇  [会議音声・未指名]${speakerTag(attributedSpeaker)} "${cleanedText.slice(0, 50)}..."`);
         appendConversationEntry("user", `[会議音声・未指名] ${cleanedText}`, currentAgentId || null, attributedSpeaker);
         return;
       }
@@ -2285,12 +2301,33 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     let llmFirstResponseTimedOut = false;
     let forcedDelegationFired = false;
     let llmTimeoutFallbackPlayed = false;
+    let llmRequestStartedAt = 0;
+    let llmResponseStatus = null;
+    let llmResponseAt = 0;
+    let llmFirstEventAt = 0;
     let handoffAttempted = false;
     let ttsPlaybackStartRecorded = false;
     let scheduledGatewayFallbackRetry = false;
     const shortSkipReason = gatewayEventsEnabled && !circuitBreakerOpen
       ? getShortUtteranceSkipReason(ackSourceText, gatewayEventsConfig.shortUtteranceSkipChars ?? 24, resolvedRegex)
       : null;
+    const normalizeLlmResponseStatus = (statusCode) => {
+      const parsed = Number(statusCode);
+      return Number.isInteger(parsed) && parsed >= 100 && parsed <= 999 ? parsed : null;
+    };
+    const relativeMsLabel = (timestamp) => {
+      if (!(llmRequestStartedAt > 0) || !(timestamp > 0)) return "none";
+      return `+${Math.max(0, timestamp - llmRequestStartedAt)}ms`;
+    };
+    const buildLlmTimeoutStageSummary = () => {
+      const stage = llmResponseAt > 0
+        ? (llmFirstEventAt > 0 ? "stream_no_content" : "agent_no_output")
+        : "gateway_no_response";
+      const gatewayResponse = llmResponseAt > 0
+        ? `HTTP ${llmResponseStatus ?? "unknown"} ${relativeMsLabel(llmResponseAt)}`
+        : "none";
+      return `[stage=${stage}; request_sent=${llmRequestStartedAt > 0 ? "+0ms" : "none"}; gateway_response=${gatewayResponse}; stream_event=${relativeMsLabel(llmFirstEventAt)}; tts=${ttsPlaybackStartRecorded ? "started" : "not_started"}]`;
+    };
 
     const stopProgressTimer = () => {
       if (progressTimer) {
@@ -2484,7 +2521,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       llmTimeoutTimer = setTimeout(() => {
         if (firstChunkSeen || abort.signal.aborted || !isProcessing) return;
         llmFirstResponseTimedOut = true;
-        console.warn(`⏱️  LLM first-response timeout (${timeoutMs}ms) — aborting`);
+        console.warn(`⏱️  LLM first-response timeout (${timeoutMs}ms) — aborting ${buildLlmTimeoutStageSummary()}`);
         stopFirstResponseTimers();
         abortPlayback(abort, "llm_response_timeout");
       }, timeoutMs);
@@ -2667,6 +2704,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
 
       llmStreamOpen = true;
       try {
+        llmRequestStartedAt = Date.now();
         for await (const chunk of llmProvider.streamChat(
           llmMessages,
           {
@@ -2685,6 +2723,14 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
               sessionHeader: config.llm.openaiCompatible?.sessionHeader,
               streamingEquivalentEnabled: config.llm.openaiCompatible?.streamingEquivalentEnabled,
             } : {}),
+            onResponseStart: (payload) => {
+              const statusCode = payload && typeof payload === "object" ? payload.statusCode : undefined;
+              if (!(llmResponseAt > 0)) llmResponseAt = Date.now();
+              if (llmResponseStatus === null) llmResponseStatus = normalizeLlmResponseStatus(statusCode);
+            },
+            onFirstEvent: () => {
+              if (!(llmFirstEventAt > 0)) llmFirstEventAt = Date.now();
+            },
             signal: abort.signal,
           }
         )) {

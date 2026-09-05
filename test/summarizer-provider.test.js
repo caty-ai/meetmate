@@ -191,6 +191,91 @@ test("summarizer uses a provider-neutral error label", async () => {
   }
 });
 
+test("summarizer operator logs scrub the configured API key and preserve benign messages", async (t) => {
+  const originalProvider = require.cache[providerPath];
+  const originalSummarizer = require.cache[summarizerPath];
+  const apiKey = ["sum", "184", "key"].join("");
+  const errors = [];
+  const originalError = console.error;
+  let providerMessage;
+
+  console.error = (...args) => errors.push(args);
+  try {
+    require.cache[providerPath] = { exports: {
+      createLlmProvider: () => ({
+        complete: async () => { throw new Error(providerMessage); },
+      }),
+    } };
+    delete require.cache[summarizerPath];
+    const { summarizeConversation } = require("../src/summarizer");
+    const options = {
+      llm: {
+        provider: "openai-compatible",
+        model: "local-model",
+        openaiCompatible: { baseUrl: "https://llm.test/v1", apiKey },
+      },
+    };
+
+    providerMessage = `provider rejected ${apiKey}`;
+    await summarizeConversation([{ role: "user", content: "hello" }], options);
+    providerMessage = "provider temporarily unavailable";
+    await summarizeConversation([{ role: "user", content: "hello" }], options);
+
+    await t.test("secret row", () => assert.deepEqual(
+      errors[0],
+      ["⚠️  Summarizer error:", "provider rejected [REDACTED]"],
+    ));
+    await t.test("benign row", () => assert.deepEqual(
+      errors[1],
+      ["⚠️  Summarizer error:", "provider temporarily unavailable"],
+    ));
+  } finally {
+    console.error = originalError;
+    delete require.cache[summarizerPath];
+    if (originalSummarizer) require.cache[summarizerPath] = originalSummarizer;
+    if (originalProvider === undefined) delete require.cache[providerPath];
+    else require.cache[providerPath] = originalProvider;
+  }
+});
+
+test("summarizer operator logs scrub the configured gateway token", async () => {
+  const originalProvider = require.cache[providerPath];
+  const originalSummarizer = require.cache[summarizerPath];
+  const gatewayToken = ["gw", "184", "key"].join("");
+  const errors = [];
+  const originalError = console.error;
+  console.error = (...args) => errors.push(args);
+  try {
+    require.cache[providerPath] = { exports: {
+      createLlmProvider: () => ({
+        complete: async () => { throw new Error("gateway rejected " + gatewayToken); },
+      }),
+    } };
+    delete require.cache[summarizerPath];
+    const { summarizeConversation } = require("../src/summarizer");
+    const gatewayCfg = (url, token) => ({ url, token });
+    await summarizeConversation([{ role: "user", content: "hello" }], {
+      llm: {
+        provider: "openclaw",
+        model: "agent",
+        gateway: gatewayCfg("https://gw.test", gatewayToken),
+      },
+    });
+
+    assert.deepEqual(
+      errors[0],
+      ["⚠️  Summarizer error:", "gateway rejected [REDACTED]"],
+    );
+    assert.equal(errors[0].join(" ").includes(gatewayToken), false);
+  } finally {
+    console.error = originalError;
+    delete require.cache[summarizerPath];
+    if (originalSummarizer) require.cache[summarizerPath] = originalSummarizer;
+    if (originalProvider === undefined) delete require.cache[providerPath];
+    else require.cache[providerPath] = originalProvider;
+  }
+});
+
 test("meeting-end task extraction reads the restart-required boot value", () => {
   const resolver = require("../src/settings/resolver");
   const startup = Object.freeze({

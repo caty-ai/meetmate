@@ -3,6 +3,11 @@
 
 const https = require("https");
 const { DEFAULT_MESSAGES } = require("./messages");
+const { scrubLogMessage } = require("./log-scrub");
+
+function scrubErrorMessage(err, secret) {
+  return scrubLogMessage(err && err.message ? err.message : err, secret);
+}
 
 const STATE_EMOJI = DEFAULT_MESSAGES.slack.stateEmoji;
 
@@ -146,7 +151,7 @@ class SlackNotifier {
         }
       }
     } catch (err) {
-      console.error(`⚠️  Slack postStatus error (session=${sessionId}):`, err.message);
+      console.error(`⚠️  Slack postStatus error (session=${sessionId}):`, scrubErrorMessage(err, this._botToken));
     }
   }
 
@@ -202,7 +207,7 @@ class SlackNotifier {
         ...(sameChannel ? { thread_ts: statusRef.ts } : {}),
       });
     } catch (err) {
-      console.error(`⚠️  Slack postSummary error (session=${lifecycle.sessionId}):`, err.message);
+      console.error(`⚠️  Slack postSummary error (session=${lifecycle.sessionId}):`, scrubErrorMessage(err, this._botToken));
     }
   }
 
@@ -226,7 +231,7 @@ class SlackNotifier {
         ...(sameChannel ? { thread_ts: statusRef.ts } : {}),
       });
     } catch (err) {
-      console.error(`⚠️  Slack postTranscript error (session=${lifecycle.sessionId}):`, err.message);
+      console.error(`⚠️  Slack postTranscript error (session=${lifecycle.sessionId}):`, scrubErrorMessage(err, this._botToken));
     }
   }
 

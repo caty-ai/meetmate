@@ -5,6 +5,20 @@ const http = require("http");
 const https = require("https");
 const { filterSilentRepliesStream } = require("./speech-policy");
 const { buildVoiceAddendumFromMessages, resolveMessages } = require("./messages");
+const { scrubLogMessage } = require("./log-scrub");
+
+function scrubErrorMessage(err, secret) {
+  return scrubLogMessage(err && err.message ? err.message : err, secret);
+}
+
+function invokeOptionalCallback(callback, payload) {
+  if (typeof callback !== "function") return;
+  try {
+    callback(payload);
+  } catch {
+    // Callback errors must not affect streaming behavior.
+  }
+}
 
 function resolveCompletionPath(gatewayUrl) {
   // Design #114 explicitly permits base URLs with path prefixes.
@@ -131,7 +145,7 @@ function timeoutHandoff(params) {
       resolveHandoff(true);
       return;
     }
-    console.error("❌  Timeout handoff request error:", err.message);
+    console.error("❌  Timeout handoff request error:", scrubErrorMessage(err, params.openclawToken));
     resolveHandoff(false);
   });
 
@@ -278,19 +292,29 @@ async function* streamOpenClaw(messages, options) {
     req.end();
   });
 
+  invokeOptionalCallback(options.onResponseStart, { statusCode: response.statusCode });
+
   if (response.statusCode !== 200) {
     let errBody = "";
     for await (const chunk of response) errBody += chunk;
     throw new Error(`OpenClaw Gateway error (${response.statusCode}): ${errBody.slice(0, 200)}`);
   }
 
-  yield* filterSilentRepliesStream(parseSSE(response, options.signal));
+  yield* filterSilentRepliesStream(parseSSE(response, options.signal, options.onFirstEvent));
 }
 
 // ── SSE parser ──────────────────────────────────────────────────────
 
-async function* parseSSE(response, signal) {
+async function* parseSSE(response, signal, onFirstEvent) {
   let buffer = "";
+  let firstEventSeen = false;
+
+  const markFirstEvent = () => {
+    if (firstEventSeen) return;
+    firstEventSeen = true;
+    invokeOptionalCallback(onFirstEvent);
+  };
+
   for await (const chunk of response) {
     if (signal?.aborted) break;
 
@@ -301,6 +325,7 @@ async function* parseSSE(response, signal) {
     for (const line of lines) {
       const trimmed = line.trim();
       if (!trimmed || !trimmed.startsWith("data: ")) continue;
+      markFirstEvent();
       const data = trimmed.slice(6);
       if (data === "[DONE]") return;
 
@@ -318,6 +343,7 @@ async function* parseSSE(response, signal) {
   if (buffer.trim()) {
     const trimmed = buffer.trim();
     if (trimmed.startsWith("data: ") && trimmed.slice(6) !== "[DONE]") {
+      markFirstEvent();
       try {
         const parsed = JSON.parse(trimmed.slice(6));
         const content = parsed.choices?.[0]?.delta?.content;
@@ -325,6 +351,8 @@ async function* parseSSE(response, signal) {
       } catch {
         // skip
       }
+    } else if (trimmed === "data: [DONE]") {
+      markFirstEvent();
     }
   }
 }
