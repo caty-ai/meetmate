@@ -63,7 +63,7 @@ npx meetmate start    # サーバーを起動し、設定 UI の URL を表示�
 
 **ブラウザから設定する。** 日常的な調整はすべて同じ設定 UI の裏にあります——ベンダーキー、ウェイクワード、挨拶文、ボイスプリセット、接続テストなど——タブごとに整理され、各項目には変更が即時反映されるか再起動が必要かの注記が付いています。リポジトリをクローンしたり JSON を手編集したりする必要はありません。Gateway の URL/Token のような接続系の値（と自動生成の共有トークン）だけは、環境変数として `.env` に残ります。
 
-<img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-page-basic.png" alt="セットアップ完了後の設定 UI の「基本」タブ — 緑色の読み込み完了バナーと、エージェント・音声・接続の主要項目" width="100%">
+<img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-page-basic.png" alt="セットアップ完了後の設定 UI の「基本」タブ — 緑色の読み込み完了バナーと、エージェントの主要項目・LLM プロバイダー" width="100%">
 
 タブごとの詳しい内訳は[設定リファレンス](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#設定リファレンスsettings-ui)を参照してください。
 

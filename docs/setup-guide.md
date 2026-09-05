@@ -79,7 +79,7 @@ Settings UI: http://localhost:<port>/settings
 
 `config.json` がまだ無い状態で `start` しても、サーバーはエラー終了せず setup mode で起動し、同じ1行を表示する。つまり `init` を飛ばしていきなり `start` しても、ベンダーキーや基本項目はブラウザから埋められる。ただし **LLM 接続情報（`OPENCLAW_GATEWAY_URL` / `OPENCLAW_GATEWAY_TOKEN`、または `OPENAI_COMPATIBLE_API_KEY`）だけは設定 UI から書けない** — `init` ウィザードが `.env` に書き込む値なので、`init` を飛ばした場合は `.env` に自分で用意する。
 
-1. 表示された URL をブラウザで開く。未設定の項目がある間はヘッダーのバッジが **`セットアップ中`**、黄色の `setup mode` バナー（`必須設定を入力して保存すると、ミーティングを開始できる状態へ進めます。`）と、`設定の確認が必要です` バナー（未設定・不正な項目が `<項目名>: <理由>` の形式で並ぶ。例: `必須値が未設定です`, `LLM 接続情報が不足しています`）が出る:
+1. 表示された URL をブラウザで開く。未設定の項目がある間はヘッダーのバッジが **`セットアップ中`**、黄色の `setup mode` バナー（`必須設定を入力して保存し、meetmate を再起動してから Join してください（保存 → 再起動 → Join）。`）と、`設定の確認が必要です` バナー（未設定・不正な項目が `<項目名>: <理由>` の形式で並ぶ。例: `必須値が未設定です`, `LLM 接続情報が不足しています`）が出る:
 
    <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/setup-mode-settings.png" alt="setup mode の設定画面。セットアップ中バッジと2つの黄色バナー、空欄の必須項目が並んでいる" width="100%">
 

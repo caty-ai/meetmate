@@ -63,7 +63,7 @@ npx meetmate start    # 启动服务器并打印设置界面 URL
 
 **在浏览器里配置。** 日常需要调整的一切都在同一个设置界面背后——服务商密钥、唤醒词、问候语、语音预设、连接测试——按标签页分类，每个字段都会注明改动是即时生效还是需要重启。不用克隆仓库，也不用手改 JSON；只有网关 URL/Token 这类连接值（以及少数自动生成的令牌）仍以环境变量的形式留在 `.env` 中。
 
-<img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-page-basic.png" alt="设置完成后设置界面的「基本」标签页 — 绿色的加载完成横幅，以及核心智能体、语音和连接相关字段" width="100%">
+<img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-page-basic.png" alt="设置完成后设置界面的「基本」标签页 — 绿色的加载完成横幅、核心智能体字段和 LLM 提供商" width="100%">
 
 完整的分标签页说明见[设置参考](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#設定リファレンスsettings-ui)。
 

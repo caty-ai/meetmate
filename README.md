@@ -64,7 +64,7 @@ The [Setup guide](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide
 
 **Configure from the browser.** Every day-to-day setting lives behind that same settings UI — vendor keys, the wake word, the greeting, voice presets, connection tests — organized into tabs, with per-field notes on whether a change applies live or needs a restart. There's no repo to clone or JSON to hand-edit; only connection values like the gateway URL/token (and a couple of generated tokens) stay in `.env` as environment values.
 
-<img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-page-basic.png" alt="The settings UI's Basic tab after setup is complete — a green loaded banner and the core agent, voice, and connection fields" width="100%">
+<img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-page-basic.png" alt="The settings UI's Basic tab after setup is complete — a green loaded banner, core agent fields, and the LLM provider" width="100%">
 
 See the [settings reference](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#設定リファレンスsettings-ui) for the full tab-by-tab breakdown.
 
