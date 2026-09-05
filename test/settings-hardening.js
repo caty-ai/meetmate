@@ -1254,9 +1254,7 @@ test("T12-06/T12-07 settings HTTP negative matrix conceals forwarding and return
   assert.equal((serverSource.match(/settingsStatus\.(?:setupMode|meetingReady|issues)/g) || []).length, 3);
 });
 
-test("T12-07 empty-home server bootstrap stays alive and serves health plus setup-gated join in a child process", (t) => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-setup-spawn-"));
-  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+function runSetupServer(directory, { connected = false, env = {} } = {}) {
   const script = String.raw`
     const { EventEmitter } = require("node:events");
     const { Readable } = require("node:stream");
@@ -1290,6 +1288,11 @@ test("T12-07 empty-home server bootstrap stays alive and serves health plus setu
       server.listen = (_port, callback) => {
         callback();
         setImmediate(async () => {
+          const readiness = require(${JSON.stringify(path.join(ROOT, "src/settings/readiness.js"))});
+          if (${connected}) {
+            for (const system of readiness.gateSystems()) readiness.reportRuntimeSuccess(system);
+          }
+          const payload = readiness.getReadiness();
           const health = await run(handler, "GET", "/health");
           const join = await run(handler, "POST", "/join-meeting");
           const tunnelHome = await run(handler, "GET", "/", "public.ngrok.app:5005");
@@ -1300,7 +1303,7 @@ test("T12-07 empty-home server bootstrap stays alive and serves health plus setu
             const socket = { destroy() { settingsUpgradeDestroyed.push(url); } };
             server.emit("upgrade", { url }, socket, Buffer.alloc(0));
           }
-          process.stdout.write("SETUP_RESULT=" + JSON.stringify({ health, join, tunnelHome, tunnelHealth, tunnelSettings, settingsUpgradeDestroyed, alive: process.exitCode == null }) + "\n");
+          process.stdout.write("SETUP_RESULT=" + JSON.stringify({ payload, health, join, tunnelHome, tunnelHealth, tunnelSettings, settingsUpgradeDestroyed, alive: process.exitCode == null }) + "\n");
           process.exit(0);
         });
         return server;
@@ -1309,12 +1312,18 @@ test("T12-07 empty-home server bootstrap stays alive and serves health plus setu
     };
     require(${JSON.stringify(path.join(ROOT, "src/server.js"))});
   `;
-  const child = spawnSync(process.execPath, ["-e", script], {
+  return spawnSync(process.execPath, ["-e", script], {
     cwd: directory,
-    env: { ...process.env, AI_MEET_HOME: directory, PORT: "5005", WAKE_CALIBRATE_ENABLED: "" },
+    env: { ...process.env, AI_MEET_HOME: directory, PORT: "5005", WAKE_CALIBRATE_ENABLED: "", ...env },
     encoding: "utf8",
     timeout: 10_000,
   });
+}
+
+test("T12-07 empty-home server bootstrap stays alive and serves health plus setup-gated join in a child process", (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-setup-spawn-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const child = runSetupServer(directory);
   assert.equal(child.status, 0, child.stderr);
   const match = child.stdout.match(/SETUP_RESULT=(\{.*\})/);
   assert.ok(match, child.stdout);
@@ -1688,4 +1697,55 @@ test("touched public UI sources do not contain circled step-number literals", ()
     const source = fs.readFileSync(path.join(publicDir, filename), "utf8");
     assert.doesNotMatch(source, /[②③]/, filename);
   }
+});
+
+test("#201 legacy readiness notices preserve health, join, secrets, and config bytes", (t) => {
+  for (const name of ["registry", "schemas", "routes", "resolver", "audio"]) {
+    assert.doesNotMatch(fs.readFileSync(path.join(ROOT, `src/settings/${name}.js`), "utf8"), /\bagents\b/);
+  }
+  const parsed = {
+    agent: { id: "caty", displayName: "Caty", name: "Caty", wakeWords: ["ケイティ"] },
+    llm: { provider: "openclaw", model: "main" },
+    stt: { provider: "soniox", sonioxApiKey: "soniox-key" },
+    tts: { provider: "fish-audio", apiKey: "fish-key", voiceId: "voice-id" },
+    attendee: { apiKey: "attendee-key", baseUrl: "app.attendee.dev" },
+    server: { ngrokDomain: "meetmate.example" },
+    slack: { notifications: { enabled: false } },
+  };
+  const results = [];
+  for (const legacy of [false, true]) {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-legacy-notices-"));
+    t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+    const document = structuredClone(parsed);
+    if (legacy) {
+      document.agents = [{ apiKey: "legacy.secret.value" }];
+      document.agent.messages = { groupGreetingTemplate: "secret-template" };
+    }
+    const configPath = path.join(directory, "config.json");
+    const bytes = Buffer.from(`${JSON.stringify(document, null, 2)}\n`);
+    fs.writeFileSync(configPath, bytes);
+    const child = runSetupServer(directory, {
+      connected: true,
+      env: {
+        AGENT_ID: "", OPENCLAW_GATEWAY_URL: "https://gateway.example", OPENCLAW_GATEWAY_TOKEN: "gateway-token",
+        JOIN_SHARED_TOKEN: "", AI_MEET_JOIN_TOKEN: "",
+      },
+    });
+    assert.equal(child.status, 0, child.stderr);
+    assert.doesNotMatch(child.stdout + child.stderr, /legacy\.secret\.value|secret-template/);
+    const match = child.stdout.match(/SETUP_RESULT=(\{.*\})/);
+    assert.ok(match, child.stdout);
+    const result = JSON.parse(match[1]);
+    assert.equal(result.health.status, 200);
+    assert.equal(result.payload.ready, true);
+    assert.equal(result.payload.notices.length, legacy ? 2 : 0);
+    assert.notEqual(result.join.status, 503);
+    assert.deepEqual(fs.readFileSync(configPath), bytes);
+    results.push(result);
+  }
+  const [baseline, legacy] = results;
+  assert.deepEqual({ ...legacy.payload, notices: [] }, baseline.payload);
+  assert.deepEqual(JSON.parse(legacy.health.body).settingsIssues, JSON.parse(baseline.health.body).settingsIssues);
+  assert.equal(JSON.parse(legacy.health.body).meetingReady, JSON.parse(baseline.health.body).meetingReady);
+  assert.equal(legacy.join.status, baseline.join.status);
 });

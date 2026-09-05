@@ -113,15 +113,21 @@ function clearProfileCache() {
 
 registerCacheInvalidator(clearProfileCache);
 
-/** Warn about unsupported keys without reading their potentially secret values. */
-function warnLegacyMultiAgentKeys(parsed, logger = console) {
-  if (!parsed || typeof parsed !== "object") return;
+/** Collect unsupported key names without reading their potentially secret values. */
+function collectLegacyMultiAgentKeys(parsed) {
+  if (!parsed || typeof parsed !== "object") return [];
   const keys = [];
   if (Object.prototype.hasOwnProperty.call(parsed, "agents")) keys.push("agents");
   if (parsed?.agent?.messages
       && Object.prototype.hasOwnProperty.call(parsed.agent.messages, "groupGreetingTemplate")) {
     keys.push("agent.messages.groupGreetingTemplate");
   }
+  return keys;
+}
+
+/** Warn about unsupported keys without reading their potentially secret values. */
+function warnLegacyMultiAgentKeys(parsed, logger = console) {
+  const keys = collectLegacyMultiAgentKeys(parsed);
   if (keys.length === 0) return;
   const agentId = typeof parsed.agent?.id === "string" ? parsed.agent.id : "unset";
   logger.warn(`Legacy multi-agent keys are ignored (this server runs one agent: "${agentId}"): ${keys.join(", ")} — run one Meetmate instance per agent; see docs/setup-guide.md`);
@@ -131,5 +137,6 @@ module.exports = {
   AgentNotFoundError,
   resolveAgentProfile,
   clearProfileCache,
+  collectLegacyMultiAgentKeys,
   warnLegacyMultiAgentKeys,
 };
