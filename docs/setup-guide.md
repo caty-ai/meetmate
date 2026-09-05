@@ -390,7 +390,7 @@ Meetmate は Google Meet / Zoom に加えて、**Discord の音声チャンネ�
 | 項目 | 内容 |
 |---|---|
 | 環境変数 | `LLM_RESPONSE_TIMEOUT_MS`（ミリ秒・整数・`0`〜`3600000`）。`0` にすると会議中の first-response タイムアウトを無効化する（会議サマリー生成だけは固定の 30 秒に戻る）。`openclaw` provider では `FIRST_TOKEN_DELEGATE_MS` も併せて設定する |
-| 現在値の確認 | 設定画面 → **デプロイ** タブ → `llm response timeout ms` 行（`openclaw` なら `first token delegate ms` 行も）。値と出所（`default` = コード既定値 / `.env-seed` = home の `.env` / `os-env` = 起動時の環境変数）が並ぶ。範囲外や小数の値はデプロイタブでは無効扱い（`default` 表示）になる一方、実行時はその値がそのまま使われて表示と実値がずれるので、必ず範囲内の整数を書くこと |
+| 現在値の確認 | 設定画面 → **デプロイ** タブ → `llm response timeout ms` 行（`openclaw` なら `first token delegate ms` 行も）。値と出所（`default` = コード既定値 / `.env-seed` = home の `.env` / `os-env` = 起動時の環境変数）が並ぶ。範囲外や小数の値はデプロイタブではその段が無効扱いになり次の段（最終的に `default`）の値が表示される一方、実行時はその値がそのまま使われて表示と実値がずれるので、必ず範囲内の整数を書くこと |
 | 変更方法 | home（`resolved_home` に表示されるディレクトリ）の `.env` に `LLM_RESPONSE_TIMEOUT_MS=60000` のように書いて**再起動**する。起動時の環境変数で渡してもよい（こちらが `.env` より優先）。設定画面からは編集できない（読み取り専用の診断値） |
 | 目安 | 接続先エージェントが天気・検索などの**ツールを呼ぶ turn** や、Claude/tool turn を使う gateway では、最初のチャンクまで 35 秒を超えることがある。まず **60 秒前後**（`60000`）から始め、上流 gateway 側の deadline より短くしすぎないこと |
 
