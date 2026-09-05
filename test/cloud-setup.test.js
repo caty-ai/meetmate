@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
+const { spawnSync } = require("node:child_process");
 const { Readable } = require("node:stream");
 const { EventEmitter } = require("node:events");
 
@@ -130,6 +131,13 @@ function fakeServerFactory() {
     },
   };
 }
+
+test("settings UI explains that connected cloud arbitration is not active yet", () => {
+  const html = fs.readFileSync(path.join(__dirname, "..", "public", "settings.html"), "utf8");
+  const script = fs.readFileSync(path.join(__dirname, "..", "public", "settings.js"), "utf8");
+  assert.match(html, /クラウド調停は次のリリース（会議 URL からの部屋コード導出）で有効になります。現在は接続情報の保存のみです。/);
+  assert.match(script, /activationNotice\.hidden = !connected/);
+});
 
 test("PKCE callback rejects the wrong state, accepts one setup code, and then closes", async () => {
   let openedUrl;
@@ -347,6 +355,98 @@ test("settings cloud status and settings GET never expose token or room salt", {
   assert.deepEqual(settings.json.fields.hub_room_salt, { state: "set", value: MASK });
   assert.equal(settings.body.includes(INSTALLATION.hub_token), false);
   assert.equal(settings.body.includes(INSTALLATION.room_salt), false);
+});
+
+test("settings export/import moves only the user-entered cloud URL among hub settings", { concurrency: false }, async (t) => {
+  const nonTransferableValues = {
+    hub_installation_id: INSTALLATION.installation_id,
+    hub_cloud_hub_url: INSTALLATION.hub_url,
+    hub_url: "wss://shared.example.test/ws",
+    hub_room_salt_version: INSTALLATION.room_salt_version,
+    hub_plan_id: INSTALLATION.plan_id,
+    hub_expires_at: INSTALLATION.expires_at,
+    hub_config_refreshed_at: "2026-09-05T00:00:00.000Z",
+  };
+  const { handler, revision } = fixture(t, { hub: {
+    cloudUrl: "https://cloud.example.test",
+    token: INSTALLATION.hub_token,
+    installationId: INSTALLATION.installation_id,
+    cloudHubUrl: INSTALLATION.hub_url,
+    url: "wss://shared.example.test/ws",
+    roomSalt: INSTALLATION.room_salt,
+    roomSaltVersion: INSTALLATION.room_salt_version,
+    planId: INSTALLATION.plan_id,
+    expiresAt: INSTALLATION.expires_at,
+    configRefreshedAt: "2026-09-05T00:00:00.000Z",
+  } }, { now: () => new Date("2026-09-05T12:00:00.000Z") });
+
+  const exported = await invoke(handler, "GET", "/api/settings/export");
+  assert.equal(exported.status, 200, exported.body);
+  assert.equal(exported.json.settings.hub_cloud_url, "https://cloud.example.test");
+  assert.deepEqual(Object.keys(exported.json.settings).filter((id) => id.startsWith("hub_")), ["hub_cloud_url"]);
+
+  for (const [id, value] of Object.entries(nonTransferableValues)) {
+    const imported = await invoke(handler, "POST", "/api/settings/import", {
+      revision,
+      document: {
+        format: "meetmate-settings",
+        version: 1,
+        exportedAt: "2026-09-05T12:00:00.000Z",
+        settings: { [id]: value },
+      },
+    });
+    assert.equal(imported.status, 422, `${id}: ${imported.body}`);
+    assert.equal(imported.json.error.code, "SETTINGS_VALIDATION_FAILED");
+  }
+});
+
+test("shared settings export imports into a clean store without breaking startup", { concurrency: false }, async (t) => {
+  const { handler } = fixture(t, { hub: {
+    cloudUrl: "https://cloud.example.test",
+    url: "wss://shared.example.test/ws",
+    roomCode: "shared-room",
+    sharedToken: "shared-token",
+  } }, { now: () => new Date("2026-09-05T12:00:00.000Z") });
+  const exported = await invoke(handler, "GET", "/api/settings/export");
+  assert.equal(exported.status, 200, exported.body);
+  assert.equal(Object.hasOwn(exported.json.settings, "hub_url"), false);
+
+  const cleanHome = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-cloud-import-clean-"));
+  t.after(() => fs.rmSync(cleanHome, { recursive: true, force: true }));
+  const cleanConfigPath = path.join(cleanHome, "config.json");
+  fs.writeFileSync(cleanConfigPath, "{}\n", { mode: 0o600 });
+  const cleanState = readConfigState(cleanConfigPath);
+  resetRuntimeForTest();
+  initializeRuntime({
+    state: cleanState,
+    startup: Object.freeze({
+      preDotenvEnv: Object.freeze({}),
+      dotenvSeeds: Object.freeze({}),
+      resolvedHome: cleanHome,
+      configPath: cleanConfigPath,
+      connection: Object.freeze({ openclawUrl: "", openclawToken: "", openaiApiKey: "" }),
+    }),
+  });
+  const cleanHandler = createSettingsHandler({ port: 5005, readinessController: HERMETIC_READINESS });
+  const imported = await invoke(cleanHandler, "POST", "/api/settings/import", {
+    revision: cleanState.revision,
+    document: exported.json,
+  });
+  assert.equal(imported.status, 200, imported.body);
+  const stored = readConfigState(cleanConfigPath).parsed;
+  assert.equal(stored.hub.cloudUrl, "https://cloud.example.test");
+  assert.equal(stored.hub.url, undefined);
+
+  const childEnv = { ...process.env, AI_MEET_HOME: cleanHome };
+  for (const name of ["HUB_URL", "HUB_ROOM_CODE", "HUB_SHARED_TOKEN", "HUB_TOKEN", "CATY_CLOUD_URL"]) delete childEnv[name];
+  const booted = spawnSync(process.execPath, ["-e", `
+    const config = require(${JSON.stringify(path.join(__dirname, "..", "src", "config.js"))});
+    process.stdout.write(JSON.stringify(config.HUB_CONFIG));
+  `], { cwd: cleanHome, env: childEnv, encoding: "utf8" });
+  assert.equal(booted.status, 0, booted.stderr);
+  assert.deepEqual(JSON.parse(booted.stdout), {
+    mode: "shared", enabled: false, url: null, roomCode: null, authToken: "", tailMs: 500,
+  });
 });
 
 test("concurrent connect requests start one listener and reject the second", { concurrency: false }, async (t) => {

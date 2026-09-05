@@ -234,7 +234,7 @@ function getFloorSettings() {
   if (parsed.token) {
     return {
       hub: {
-        enabled: Boolean(parsed.cloudHubUrl && parsed.token),
+        enabled: Boolean(parsed.cloudHubUrl && parsed.token && parsed.roomCode),
         url: parsed.cloudHubUrl || null,
         roomCode: null,
         authToken: parsed.token,

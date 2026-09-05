@@ -2,9 +2,9 @@
 
 Version: **v1.3.0**
 
-Changelog: hub cloud group + class-1 `hub_token`/`room_salt` — owner approval pending in PR.
+Changelog: hub cloud group + class-1 `hub_token`/`room_salt`, four cloud admin routes, and non-transferable shared/hosted hub state — owner approved via PR #195 labels on 2026-09-05.
 
-Status: **approved baseline — CP#1 owner approval recorded 2026-08-29 ([#29 comment](https://github.com/caty-ai/meetmate/issues/29#issuecomment-5460738835)); v1.3.0 amendment pending owner approval in PR**. This contract augments the existing Node `http` server and vanilla-JavaScript dashboard on `localhost:5005`. It does not authorize another application, UI framework, persistence store, or port. `config.json` in the resolved home remains the only settings store. The settings UI, admin API, import/export, connection tests, TTS preview, and audio ingest form one allowlisted admin plane; meeting transport remains a separate data plane.
+Status: **approved baseline — CP#1 owner approval recorded 2026-08-29 ([#29 comment](https://github.com/caty-ai/meetmate/issues/29#issuecomment-5460738835)); v1.3.0 amendment approved via PR #195 labels on 2026-09-05**. This contract augments the existing Node `http` server and vanilla-JavaScript dashboard on `localhost:5005`. It does not authorize another application, UI framework, persistence store, or port. `config.json` in the resolved home remains the only settings store. The settings UI, admin API, import/export, connection tests, TTS preview, and audio ingest form one allowlisted admin plane; meeting transport remains a separate data plane.
 
 The credential classes used below are fixed:
 
@@ -311,6 +311,10 @@ The single existing server continues to listen on port 5005 (or its existing por
 | `PUT /api/settings` | `SettingsMutation` below | `SettingsEnvelope` with new revision |
 | `GET /api/settings/export` | none | `ExportDocument` in §8 as attachment |
 | `POST /api/settings/import` | `ImportRequest` below | `SettingsEnvelope` plus `import` report |
+| `POST /api/settings/cloud/connect` | Strict `{revision:Sha256Revision,cloudUrl?:https-url}`; local-admin + same-origin + committed-revision gates; single-flight and one start/second rate limit | `{ok:true,authorizeUrl,expiresAt}`; route-specific errors: `400 SETTINGS_CLOUD_URL_INVALID`, `409 SETTINGS_CLOUD_CONNECT_IN_PROGRESS`, `409 SETTINGS_CLOUD_CONNECT_CANCELLED`, `429 SETTINGS_CLOUD_CONNECT_RATE_LIMITED`, `502 SETTINGS_CLOUD_CONNECT_FAILED` |
+| `GET /api/settings/cloud/status` | Local-admin gate; no same-origin, revision, or rate-limit gate | Hosted status shape below; stale-refresh failure retains last-good state and does not fail the status response |
+| `POST /api/settings/cloud/refresh` | Strict `{revision:Sha256Revision}`; local-admin + same-origin + committed-revision gates; no route rate limit | `{ok:true,revision,refreshAfterSeconds}`; route-specific errors: `400 SETTINGS_CLOUD_NOT_CONNECTED`, `502 SETTINGS_CLOUD_REFRESH_FAILED` |
+| `POST /api/settings/cloud/disconnect` | Strict `{revision:Sha256Revision,force?:bool}`; local-admin + same-origin + committed-revision gates; no route rate limit | `{ok:true,revision,forced}`; route-specific error: `502 SETTINGS_CLOUD_DISCONNECT_FAILED` unless `force:true` |
 | `POST /api/settings/connections/:provider/test` | `{revision}` where provider is `soniox|deepgram|fish-audio|elevenlabs|openai-compatible|attendee|llm|tunnel|slack|discord` (the §6 connection-test provider table) | `{ok, provider, code, message, durationMs}`, or `501 TEST_NOT_IMPLEMENTED` for the not-yet-implemented tier (`slack` only) |
 | `POST /api/settings/migrate-env-class1` | `{revision}` | `{imported:[fieldId], skipped:[fieldId], revision}` |
 | `POST /api/settings/tts-preview` | `{revision,text}` | buffered `audio/wav` per §9 |
@@ -334,6 +338,7 @@ type WritableFieldId = EditableSettingId;
 type ImportableFieldId = RegistryIdWhere<{
   writeSurface: "settings";
   credential: "none";
+  transferable: true;
 }>;
 type RestartRequiredFieldId = RegistryIdWhere<{
   writeSurface: "settings";
@@ -496,7 +501,7 @@ Export is `Content-Type: application/json` with the strict `ExportDocument` sche
 {"format":"meetmate-settings","version":1,"exportedAt":"ISO-8601","settings":{"agent_display_name":"…"}}
 ```
 
-The four top-level keys are required and no others are accepted; `format` is the literal `meetmate-settings`, `version` is the literal integer `1`, `exportedAt` is a UTC RFC 3339 timestamp, and `settings` is a strict object of writable, noncredential `basic|detail` registry IDs. It excludes `audio_clips`, all credentials in classes 1, 2, and 3, deployment diagnostics, effective/source diagnostics, revisions, absolute paths, and unknown whole-config keys. Template presets use the same secret-free shape and may contain only documented nonsecret settings; they never carry blank-looking credential presets or dummy secrets.
+The four top-level keys are required and no others are accepted; `format` is the literal `meetmate-settings`, `version` is the literal integer `1`, `exportedAt` is a UTC RFC 3339 timestamp, and `settings` is a strict object of writable, noncredential `basic|detail` registry IDs whose `transferable` metadata is `true`. It excludes `audio_clips`, all credentials in classes 1, 2, and 3, deployment diagnostics, effective/source diagnostics, revisions, absolute paths, unknown whole-config keys, the shared-mode `hub_url`, and the server-owned hosted fields `hub_installation_id`, `hub_cloud_hub_url`, `hub_room_salt_version`, `hub_plan_id`, `hub_expires_at`, and `hub_config_refreshed_at`. The user-entered `hub_cloud_url` is the only transferable `hub.*` setting. Template presets use the same secret-free shape and may contain only documented nonsecret settings; they never carry blank-looking credential presets or dummy secrets.
 
 Import accepts version 1 strictly and has no version-0 migrator. Negative, noninteger, zero, unknown-format, or future versions return `409 SETTINGS_IMPORT_VERSION_UNSUPPORTED`. Unknown setting IDs in a recognized version return `422` rather than being ignored. Import merges validated allowlisted values into the whole config, so unknown existing config keys remain preserved. Success adds exactly `"import":{"imported":[ImportableFieldId],"skipped":[ImportableFieldId]}` to `SettingsEnvelope`; both arrays are sorted/unique and all other envelope fields retain §6's schema.
 

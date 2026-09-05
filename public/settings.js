@@ -1188,6 +1188,7 @@ if (typeof document !== "undefined") {
     function renderCloudStatus(status) {
       const badge = document.getElementById("cloudStatusBadge");
       const text = document.getElementById("cloudStatusText");
+      const activationNotice = document.getElementById("cloudActivationNotice");
       const connected = Boolean(status?.connected);
       const pending = cloudPending && !connected && Date.now() < cloudPendingUntil;
       badge.textContent = pending ? "認証待ち" : connected ? "接続済み" : "未接続";
@@ -1196,6 +1197,7 @@ if (typeof document !== "undefined") {
         ? [status.plan_id, status.hub_url, status.room_salt_version && `salt ${status.room_salt_version}`].filter(Boolean).join(" / ")
         : "Cloud arbitration は接続されていません。";
       text.textContent = details;
+      activationNotice.hidden = !connected;
       connectCloudButton.disabled = pending;
       refreshCloudButton.disabled = !connected || pending;
       disconnectCloudButton.disabled = !connected && !pending;
