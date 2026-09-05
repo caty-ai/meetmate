@@ -85,10 +85,11 @@ function contractRegistry() {
   const contract = fs.readFileSync(path.join(ROOT, "docs/settings-contract.md"), "utf8");
   const rows = [];
   for (const line of contract.split(/\r?\n/)) {
-    const match = line.match(/^\| `([^`]+)` \| ([^|]+) \| ([^|]+) \| ([^|]+) \| ([^|]+) \| ([^|]+) \| ([^|]+) \|$/);
+    const match = line.match(/^\| `([^`]+)` \| ([^|]+) \| ([^|]+) \| ([^|]+) \| ([^|]+) \| ([^|]+) \| ([^|]+) \| ([^|]+) \|$/);
     if (!match) continue;
-    const [, id, rawPath, typeDefault, ux, credential, apply, rawAlias] = match.map((value) => value.trim());
+    const [, id, rawPath, typeDefault, ux, credential, apply, rawAlias, rawTransferable] = match.map((value) => value.trim());
     if (!SETTINGS_REGISTRY.some((entry) => entry.id === id)) continue;
+    assert.equal(["default", "false"].includes(rawTransferable), true, `${id} transferable marker`);
     const expectedDefault = parseDefault(typeDefault);
     rows.push({
       id,
@@ -98,6 +99,7 @@ function contractRegistry() {
       apply,
       envAlias: rawAlias === "none" ? null : rawAlias.replaceAll("`", ""),
       writeSurface: id === "audio_clips" ? "audio-only" : ux === "deployment-readonly" ? "none" : "settings",
+      transferable: rawTransferable !== "false",
       hasDefault: expectedDefault.present,
       defaultValue: expectedDefault.value,
       type: typeDefault.split(/\s\/\s/, 1)[0].replaceAll("`", ""),
@@ -184,6 +186,7 @@ test("T12-01 registry metadata and generated mutation/effective surfaces deep-ma
     apply: entry.apply,
     envAlias: entry.envAlias,
     writeSurface: entry.writeSurface,
+    transferable: entry.transferable,
     hasDefault: Object.prototype.hasOwnProperty.call(entry, "defaultValue"),
     defaultValue: entry.defaultValue,
   }));

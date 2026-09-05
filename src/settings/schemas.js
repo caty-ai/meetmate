@@ -3,18 +3,10 @@
 const { z } = require("zod");
 const { MASK, SETTINGS_REGISTRY } = require("./registry");
 
-const SERVER_OWNED_HOSTED_IDENTITY_IDS = new Set([
-  "hub_installation_id",
-  "hub_cloud_hub_url",
-  "hub_plan_id",
-  "hub_expires_at",
-  "hub_config_refreshed_at",
-]);
-
 function isImportableSetting(entry) {
   return entry.writeSurface === "settings"
     && entry.credential === "none"
-    && !SERVER_OWNED_HOSTED_IDENTITY_IDS.has(entry.id);
+    && entry.transferable !== false;
 }
 
 const sha256RevisionSchema = z.string().regex(/^[a-f0-9]{64}$/);

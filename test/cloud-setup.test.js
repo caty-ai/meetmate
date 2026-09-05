@@ -10,9 +10,10 @@ const { Readable } = require("node:stream");
 const { EventEmitter } = require("node:events");
 
 const { createCloudSetup, refreshHubConfigIfStale, _test } = require("../src/cloud-setup");
-const { MASK } = require("../src/settings/registry");
+const { MASK, SETTINGS_REGISTRY } = require("../src/settings/registry");
 const { initializeRuntime, resetRuntimeForTest } = require("../src/settings/resolver");
 const { createSettingsHandler } = require("../src/settings/routes");
+const { exportSettingsSchema } = require("../src/settings/schemas");
 const { readConfigState, saveFields } = require("../src/settings/store");
 
 const INSTALLATION = Object.freeze({
@@ -355,6 +356,20 @@ test("settings cloud status and settings GET never expose token or room salt", {
   assert.deepEqual(settings.json.fields.hub_room_salt, { state: "set", value: MASK });
   assert.equal(settings.body.includes(INSTALLATION.hub_token), false);
   assert.equal(settings.body.includes(INSTALLATION.room_salt), false);
+});
+
+test("export schema keys exactly match transferable noncredential settings", () => {
+  const expected = SETTINGS_REGISTRY
+    .filter((entry) => entry.transferable !== false
+      && entry.credential === "none"
+      && entry.writeSurface === "settings")
+    .map((entry) => entry.id)
+    .sort();
+  const actual = Object.keys(exportSettingsSchema.shape).sort();
+
+  assert.deepEqual(actual, expected);
+  assert.equal(Object.hasOwn(exportSettingsSchema.shape, "hub_url"), false);
+  assert.equal(Object.hasOwn(exportSettingsSchema.shape, "hub_room_salt_version"), false);
 });
 
 test("settings export/import moves only the user-entered cloud URL among hub settings", { concurrency: false }, async (t) => {
