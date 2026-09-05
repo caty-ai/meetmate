@@ -371,3 +371,36 @@ test("an unavailable raw config does not break readiness notices", (t) => {
     require.cache[modulePath] = cached;
   }
 });
+
+test("#197 readiness IDs cover pending, connected, hard, static and restart states", () => {
+  const { diagnosticIdFor } = require("../src/settings/diagnostic-id");
+  initialize();
+  const controller = readiness.createReadinessController();
+  const pending = controller.getReadiness();
+  assert.deepEqual(pending.blockers, []);
+  for (const system of pending.systems) assert.equal(system.diagnosticId, diagnosticIdFor(system.id, "PENDING"));
+  for (const system of controller.gateSystems()) controller.setProbeObservation(system, { ok: true, code: "CONNECTED" });
+  assert.equal(controller.getReadiness().systems.every((system) => system.diagnosticId === null), true);
+  controller.reportRuntimeFailure("soniox", "PAYMENT_REQUIRED");
+  const failed = controller.getReadiness();
+  assert.ok(failed.blockers.length);
+  for (const system of failed.systems) assert.equal(system.diagnosticId, diagnosticIdFor(system.id, system.code));
+  for (const blocker of failed.blockers) assert.equal(blocker.diagnosticId, diagnosticIdFor(blocker.system, blocker.code));
+
+  const saved = document();
+  saved.stt.sonioxApiKey = "replacement";
+  resolver.publishState({ exists: true, valid: true, parsed: saved, revision: "b".repeat(64), fingerprint: "b".repeat(64) });
+  const restarted = controller.getReadiness();
+  const restart = restarted.blockers.find((blocker) => blocker.code === "RESTART_REQUIRED");
+  assert.ok(restart);
+  assert.equal(restart.diagnosticId, diagnosticIdFor(restart.system, "RESTART_REQUIRED"));
+  assert.equal(restarted.systems.find((system) => system.id === restart.system).diagnosticId, restart.diagnosticId);
+
+  const missing = document();
+  delete missing.stt.sonioxApiKey;
+  initialize(missing);
+  const staticState = readiness.createReadinessController().getReadiness();
+  const required = staticState.blockers.find((blocker) => blocker.system === "soniox" && blocker.code === "VALUE_REQUIRED");
+  assert.ok(required);
+  assert.equal(required.diagnosticId, "MM-STT-002");
+});

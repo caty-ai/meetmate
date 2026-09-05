@@ -209,6 +209,7 @@ Something not working? See [Troubleshooting](https://github.com/caty-ai/meetmate
 | Document | Contents |
 |---|---|
 | [docs/setup-guide.md](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md) | Zero-to-first-meeting, step by step |
+| [docs/diagnostic-ids.md](https://github.com/caty-ai/meetmate/blob/main/docs/diagnostic-ids.md) | Diagnostic IDs, meanings, and next steps (Japanese / English) |
 | [docs/TECHNICAL.md](https://github.com/caty-ai/meetmate/blob/main/docs/TECHNICAL.md) | Features in detail, architecture, providers, MCP, development |
 | [docs/architecture.md](https://github.com/caty-ai/meetmate/blob/main/docs/architecture.md) | Architecture deep dive |
 | [docs/operations.md](https://github.com/caty-ai/meetmate/blob/main/docs/operations.md) | Full operations and tuning reference |
