@@ -191,7 +191,7 @@ Entry points for the most common tweaks. The full reference is [docs/operations.
 | I want to… | Look at |
 |---|---|
 | Connect my own agent (OpenClaw Gateway) | [Setup guide](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md) |
-| Connect cloud arbitration | Settings UI › Connections › Cloud arbitration |
+| Connect cloud arbitration | [Hosted hub setup](https://github.com/caty-ai/meetmate/blob/main/docs/hub-hosted-setup.md) |
 | Use a generic OpenAI-compatible endpoint | [TECHNICAL.md — LLM providers](https://github.com/caty-ai/meetmate/blob/main/docs/TECHNICAL.md#llm-providers) |
 | Make responses come back faster | [Soniox tuning](https://github.com/caty-ai/meetmate/blob/main/docs/operations.md#stt-プロバイダ切替soniox-チューニング) |
 | Change the voice, speed, or TTS behavior | [Voice profile](https://github.com/caty-ai/meetmate/blob/main/docs/operations.md#音声プロファイルtts) |
@@ -213,7 +213,7 @@ Something not working? See [Troubleshooting](https://github.com/caty-ai/meetmate
 | [docs/architecture.md](https://github.com/caty-ai/meetmate/blob/main/docs/architecture.md) | Architecture deep dive |
 | [docs/operations.md](https://github.com/caty-ai/meetmate/blob/main/docs/operations.md) | Full operations and tuning reference |
 | [docs/deploy-checklist.md](https://github.com/caty-ai/meetmate/blob/main/docs/deploy-checklist.md) | Deployment checklist |
-| [Caty Cloud hub v1 contract](https://github.com/shojikumaru/caty-cloud/tree/epic/hosted-v1/docs/contracts/hub-v1) | Hosted hub setup, admission, token, and configuration contracts |
+| [docs/hub-hosted-setup.md](https://github.com/caty-ai/meetmate/blob/main/docs/hub-hosted-setup.md) | Hosted hub (cloud arbitration): first-time setup, what happens in a meeting, plans, what is sent |
 
 > ℹ️ Some documents under `docs/` are currently in Japanese; the reference tables and command snippets are language-neutral.
 
