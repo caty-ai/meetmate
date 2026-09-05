@@ -15,7 +15,12 @@ already localized by the pre-run review (see Checks 4 and 6) and are pre-registe
 
 ## Preconditions
 
-- Build: epic/41 at `3d1430b` or later (child #1 `98d1353` + #2a `4931645` + #2b `3d1430b` merged).
+- Build: `main` ≥ `49d46a2` (v8.13.0, EPIC #41 integration) — run against **v8.13.5** or later
+  (re-scope 2026-09-03: post-release verification of the shipped preview; findings become ordinary
+  bug lanes on main). The production join wiring gap #142 is fixed (PR #145) — Discord settings
+  are entered in the settings UI (`discord_bot_token` masked field + `discord_guild_allowlist`) and
+  are `restart-required`: **save → restart the server → then Join**. Do not leave a stale
+  `DISCORD_BOT_TOKEN` in the launch shell (os-env outranks the settings store).
 - Checkpoint-1 posture (approved 2026-08-31, unchanged): owner's 身内 server only, guild allowlist
   set to that guild, intents `Guilds` + `GuildVoiceStates` only, bot permissions View Channel +
   Connect + Speak. Token handed via one-time secret → `.env` (0600) → shredded after the run.
@@ -32,6 +37,12 @@ already localized by the pre-run review (see Checks 4 and 6) and are pre-registe
   (`src/settings/routes.js` resolves `SETTINGS_REGISTRY` ids only). A settings-side toggle is
   therefore unexecutable, and any env change requires a **server restart** to take effect. The
   mechanism dispute in #135 is resolved empirically by this run's Block B ⚡ count (see Check 3).
+  *Update 2026-09-05*: #135 was fixed in v8.12.1 — the flag is now read at call time through the
+  startup diagnostics resolution (`src/settings/resolver.js:216-231`, `src/pipeline.js:424`), so
+  `ENABLE_IMMEDIATE_ACK=false` in the launch env (or `.env` seed) is honored. The lever is still
+  **launch env + restart** (no settings-UI toggle); the first-wake carve-out `forceImmediateAck`
+  (`src/pipeline.js:2217, 2256`) is unchanged. Block B therefore serves as the live regression
+  confirmation of the #135 fix rather than the deciding evidence.
 
 ## Measurement harness (no code changes)
 
@@ -60,8 +71,8 @@ Log anchors (all pre-existing lines in `src/pipeline.js`):
 | A2 | `🔔  Wake word detected! Gate → CLOSED` | wake accepted while gate OPEN (a wake landing mid-turn logs `⏳ … queuing` instead — that trial is void, rerun it) |
 | A3 | `⚡  Immediate ack:` | ack TTS enqueued |
 | A4 | `🗣️  <agent> speaking (first chunk):` | **absent whenever an ack ran** — the fast path is gated on `spokenSentenceCount === 0` and the ack sets it to 1 (`src/pipeline.js:2590, 2707`). Usable in ack-OFF blocks only |
-| A5 | `📥  [diag] firstChunk transition` | first LLM token (`src/pipeline.js:2690`) — works in both ack states |
-| A6 | `🚪  Exit command detected!` | exit command recognized (`src/pipeline.js:2070`) |
+| A5 | `📥  [diag] firstChunk transition` | first LLM token (`src/pipeline.js:2743`) — works in both ack states |
+| A6 | `🚪  Exit command detected!` | exit command recognized (`src/pipeline.js:2093`) |
 
 Derived metrics per trial:
 
@@ -152,7 +163,14 @@ likely NOT wired to a Discord leave — `transport-meet` subscribes to `exit_req
 play, **bot remains in the channel**. This check captures the actual behavior as the live half of
 that finding's evidence.
 
-Procedure: during an idle moment, speak an exit phrase (canonical list: `src/messages.js:187-190`).
+*Update 2026-09-05*: the gap above was filed as **#139 and fixed** (PR #153 `dc4597f` → main via
+`49d46a2`): `src/transport-discord/discord-session.js:627-631` now subscribes `exit_requested` and
+tears the session down. **Expected live behavior is now: A6 fires → farewell plays → bot leaves**
+(status `session: null`, voice-state 404/10065). This check's result is the evidence for
+**#139 Done-when 1** (attach the timestamped window there). Pass bar below is unchanged.
+
+Procedure: during an idle moment, speak an exit phrase (canonical list: `src/messages.js:186-191`,
+e.g. 「退出して」「退室して」).
 
 - Metrics: A6 observed? farewell played? then poll status + voice-state for 60s: does the bot
   actually leave (terminal + 404/10065) without manual intervention? Seconds from A6 to settled
@@ -175,17 +193,20 @@ Procedure: (re)join, then `POST /api/discord/leave` from loopback while the bot 
 - Pass bar: clean terminal without restart; an immediate re-join succeeds (mutex released).
 - Evidence: leave response (redacted), timestamped logs, re-join success record.
 
-## Check 6 — multi-speaker: functional separation (attribution observability is a known gap)
+## Check 6 — multi-speaker: functional separation + attribution (tags in the operator log)
 
-**Pre-registered gap (from the pre-run review)**: per-human attribution has NO external observable
-surface in a Discord live run — the D7 `user=discord-<sid>-…` gateway identity is one key per
-session (not per human; `src/session-user.js:9-17`), stdout transcript lines omit the D10
-`speaker` meta, `conversationLog` (which does carry per-entry speaker,
-`src/pipeline.js:1025-1038`) is neither persisted nor exported for Discord, and the LLM prompt
-does not render speaker names. Attribution correctness is therefore evidenced by the #115
-per-user STT test pins plus the functional checks below; a follow-up issue proposes a minimal
-observability surface (e.g. speaker displayName in the transcript log line). **Do not score
-attribution from the D7 sessionUser — that would false-PASS.**
+**Attribution surface (since v8.13.5 / PR #188)**: each per-utterance transcript line in the
+operator log carries the attributed speaker as ` [<displayName>]` (Discord display name) or
+` [discord:<user-id>]` when no display name is available; a line with **no** bracket tag means
+the utterance was attributed to the synthetic mixed-`unknown` speaker (overlap / undecidable,
+per D10). Score attribution **from these tags only** (`src/pipeline.js:552-561 speakerTag()`;
+carried by `🎤  [interim→final]` :1826, `💬  [user]` :1972, `🔇  [会議音声・非指名]` :2083,
+`🔇  [会議音声・未指名]` :2161; pinned by `test/pipeline-speaker-log.test.js`). The D7
+`user=discord-<sid>-…` gateway identity remains one key per session (not per human,
+`src/session-user.js:9-17`) and **must not** be used to score attribution — it would false-PASS.
+`conversationLog` is still neither persisted nor exported for Discord, and the LLM prompt still
+does not render speaker names (unchanged; not needed for this check). Both accounts should have
+distinct display names so the tag is unambiguous.
 
 Procedure: 2 real users in the channel. Interleave: user A wakes and asks; user B speaks without
 wake; user B wakes and asks; both talk briefly at once (overlapping speech may degrade to the
@@ -195,10 +216,14 @@ documented mixed-"unknown" posture — record, don't fail, per D10).
   user); (b) unnamed (no-wake) speech is not injected — the next answer does not reference it
   (behavioral non-reference test; `meeting_context_injection_enabled` defaults false so
   non-injection is structural — the behavioral test is the live confirmation); (c) during the
-  overlap moment, the session neither crashes nor wedges.
-- Pass bar: 100% of addressed turns answered; zero unnamed-content references; no crash/wedge.
-- Evidence: log lines per addressed turn (paired by transcript text) + the answer text that
-  proves non-reference.
+  overlap moment, the session neither crashes nor wedges; **(a′) attribution**: for every addressed
+  turn, the `💬  [user] [<tag>]` line names the human who actually spoke (compare with the room).
+  Mis-attributed tag = FAIL of this sub-metric; a bare line (no tag) during the overlap moment is
+  the documented mixed-`unknown` posture — record, do not fail.
+- Pass bar: 100% of addressed turns answered; zero unnamed-content references; no crash/wedge;
+  zero mis-attributed tags on addressed turns.
+- Evidence: log lines per addressed turn **including the `[<tag>]`** (paired by transcript text
+  and by the speaker's Discord display name / id) + the answer text that proves non-reference.
 
 ## Check 7 — disconnect handling (two distinct code paths)
 
@@ -264,9 +289,9 @@ violation if the lever failed — decisive for #135 either way).
 | 1 join & announce | | |
 | 2 wake latency | | |
 | 3 ack A/B | (record-only) | |
-| 4 exit command | (expected FAIL — gap capture) | |
+| 4 exit command | (#139 Done-when 1 evidence — PASS expected after the fix) | |
 | 5 manual stop | | |
-| 6 multi-speaker functional | | |
+| 6 multi-speaker functional + attribution | | |
 | 7a kick / 7b network drop | | |
 | 8 config inventory | (record-only) | |
 
@@ -281,8 +306,9 @@ Every live finding lands in exactly one bucket, recorded in the Results section:
 Pre-registered triage: Check 3 block A overlap ≥3/5 scored trials → follow-up issue
 (Discord-specific ack gating). Check 3 block B lever failure → evidence to #135. Check 4 bot
 remains in channel → follow-up issue (exit_requested unsubscribed, code lines above). Check 6
-attribution observability → follow-up issue (minimal surface proposal). Check 7 outcome "wedged"
-→ evidence to #116. Latency findings that localize to transcode/pacing → follow-up issue on the
+attribution observability → **closed by #140 / PR #188** (tags now in the log). Check 7 outcome "wedged"
+→ evidence to #116. Check 6 mis-attributed tag → follow-up issue on the attribution path
+(#140 successor, with the log lines). Latency findings that localize to transcode/pacing → follow-up issue on the
 transport, with T-felt-answer − T-first data.
 
 ## Pass bar for this cycle
