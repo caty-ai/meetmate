@@ -225,12 +225,12 @@ test("T12-01 registry/schema/type lock keeps the write allowlist strict", () => 
 
 test("public_origin accepts only the HTTPS origin contract without normalizing spelling", () => {
   const schema = REGISTRY_BY_ID.public_origin.schema;
-  for (const value of ["", "https://funnel.example.ts.net:8443", "https://meetmate.example", "https://h:443", "https://Mixed.Example"]) {
+  for (const value of ["", "https://funnel.example.ts.net:8443", "https://meetmate.example", "https://h:443", "https://Mixed.Example", "https://[::1]:8443", "https://bücher.example"]) {
     const parsed = schema.safeParse(value);
     assert.equal(parsed.success, true, value);
     assert.equal(parsed.data, value);
   }
-  for (const value of ["https://h/path", "https://h/", "http://h", "wss://h", "https://u:p@h", "https://h?x=1", "https://h#f", "h:8443", " https://h"]) {
+  for (const value of ["HTTPS://h", "https://h:", "https:////h", "https://h:0443", "https://h/foo/..", "https://h/.", "https://h/path", "https://h/", "http://h", "wss://h", "https://u:p@h", "https://h?x=1", "https://h#f", "h:8443", " https://h"]) {
     assert.equal(schema.safeParse(value).success, false, value);
   }
 });

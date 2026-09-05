@@ -36,6 +36,7 @@ const RESERVED_SESSION_HEADER_NAMES = Object.freeze([
 const sessionHeader = z.string()
   .regex(/^([A-Za-z0-9!#$%&'*+.^_`|~-]{1,128})?$/)
   .refine((value) => !RESERVED_SESSION_HEADER_NAMES.includes(value.toLowerCase()), "reserved_header");
+const HTTPS_ORIGIN_SHAPE = /^https:\/\/(?:\[[0-9A-Fa-f:.]+\]|[^\s/?#@:\[\]]+)(?::[1-9][0-9]{0,4})?$/;
 
 function exactUrl(protocols, allowEmpty = false) {
   return z.string().refine((value) => {
@@ -56,7 +57,7 @@ function exactUrl(protocols, allowEmpty = false) {
 function httpsOrigin(allowEmpty = false) {
   return z.string().refine((value) => {
     if (allowEmpty && value === "") return true;
-    if (value !== value.trim() || value.endsWith("/")) return false;
+    if (!HTTPS_ORIGIN_SHAPE.test(value)) return false;
     try {
       const parsed = new URL(value);
       return parsed.protocol === "https:" && !parsed.username && !parsed.password

@@ -430,6 +430,7 @@ function createReadinessController(options = {}) {
     bootstrap,
     classifyRuntimeFailure,
     configure,
+    fieldFor,
     gateSystems,
     getReadiness,
     inspect,

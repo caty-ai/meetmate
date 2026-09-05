@@ -1253,7 +1253,7 @@ async function handleHttp(req, res) {
         ? {
             system: "tunnel",
             code: "MISMATCH",
-            fieldId: "server_ngrok_domain",
+            fieldId: readiness.fieldFor("tunnel", "MISMATCH"),
             message: identity.message || "入力された公開URLは別のサーバーを指しています",
           }
         : null;
