@@ -173,9 +173,6 @@ test("real hub arbitrates two pipelines across DW0-DW3 and DW6", async (t) => {
           end: start + (buffer.length / 2 / config.tts.sampleRate * 1_000),
         });
       }, config, {
-        agents: { [profile.agentId]: profile },
-        selectedAgentIds: [profile.agentId],
-        defaultAgentId: profile.agentId,
         agentProfile: profile,
         floorClient: new FloorClient({
           url: hub.url,

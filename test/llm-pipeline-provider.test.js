@@ -112,9 +112,7 @@ async function withPipeline(provider, configOverrides, fn, testOptions = {}) {
       () => {},
       config,
       {
-        agents: { alpha: { wakeWords: ["alpha"] }, beta: { wakeWords: ["beta"] } },
-        selectedAgentIds: ["alpha", "beta"],
-        defaultAgentId: "alpha",
+        agentProfile: { agentId: "alpha", wakeWords: ["alpha"] },
         _testExposeInternals: true,
       },
     );
@@ -135,7 +133,7 @@ async function withPipeline(provider, configOverrides, fn, testOptions = {}) {
   }
 }
 
-test("standalone history is capped, session-isolated, and discards aborted/error turns", { concurrency: false }, async () => {
+test("single-agent standalone history is capped and discards aborted/error turns", { concurrency: false }, async () => {
   const calls = [];
   const provider = {
     name: "openai-compatible",
@@ -172,11 +170,8 @@ test("standalone history is capped, session-isolated, and discards aborted/error
     await pipeline._test.processUserInput("four");
     assert.equal(calls[3].some((message) => message.content === "one"), false, "oldest turn is truncated");
 
-    pipeline._test.switchAgent("beta");
-    await pipeline._test.processUserInput("beta-one");
-    assert.deepEqual(calls[4].map((message) => message.content), ["standalone system", "beta-one"]);
+    assert.equal(pipeline.getSessionUsers().parent, "meet-provider-pipeline-alpha");
 
-    pipeline._test.switchAgent("alpha");
     const aborted = pipeline._test.processUserInput("ABORT");
     await sleep(10);
     pipeline._test.abortCurrent();
@@ -244,13 +239,12 @@ test("standalone provider receives the exact session user contract and optional 
     },
   }, async (pipeline) => {
     await pipeline._test.processUserInput("alpha-one");
-    pipeline._test.switchAgent("beta");
-    await pipeline._test.processUserInput("beta-one");
+    await pipeline._test.processUserInput("alpha-two");
   });
 
   assert.deepEqual(calls.map((call) => call.options.sessionUser), [
     "meet-provider-pipeline-alpha",
-    "meet-provider-pipeline-beta",
+    "meet-provider-pipeline-alpha",
   ]);
   assert.deepEqual(calls.map((call) => call.messages), [
     [
@@ -259,7 +253,7 @@ test("standalone provider receives the exact session user contract and optional 
     ],
     [
       { role: "system", content: "standalone system" },
-      { role: "user", content: "beta-one" },
+      { role: "user", content: "alpha-two" },
     ],
   ]);
   assert.deepEqual(calls.map((call) => call.options.emptyResponseRetry), [false, false]);

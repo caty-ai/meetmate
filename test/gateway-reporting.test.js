@@ -675,9 +675,7 @@ function createTestPipeline(createPipeline, options = {}) {
   const pipeline = createPipeline(session, turnState, () => {}, config, {
     transport: options.transport,
     capabilities: options.capabilities,
-    agents: { caty: { wakeWords: ["ケイティ"] } },
-    selectedAgentIds: ["caty"],
-    defaultAgentId: "caty",
+    agentProfile: { agentId: "caty", wakeWords: ["ケイティ"] },
     onChatMessage: options.onChatMessage,
     _testExposeInternals: true,
   });

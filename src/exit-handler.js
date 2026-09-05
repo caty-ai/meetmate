@@ -35,13 +35,10 @@ function _normalizeKana(text) {
  * Checks against exit commands (default or agent-specific).
  *
  * @param {string} text - User utterance
- * @param {object} [agents] - All loaded agents
- * @param {string[]} [selectedAgentIds] - Currently selected agent IDs
- * @param {string} [defaultAgentId] - Default agent ID
  * @param {object} [agentProfile] - Agent profile for exit commands
  * @returns {boolean}
  */
-function detectExitIntent(text, agents, selectedAgentIds, defaultAgentId, agentProfile) {
+function detectExitIntent(text, agentProfile) {
   const lower = text.toLowerCase().trim();
   const normalized = _normalizeKana(lower);
   const exitCmds = getExitCommands(agentProfile);
@@ -64,7 +61,7 @@ function detectExitIntent(text, agents, selectedAgentIds, defaultAgentId, agentP
  * @param {object} options.session - Session object
  * @param {object} [options.agentProfile] - Agent profile
  * @param {function} options.speakFn - async function(text, signal) to speak
- * @param {string} [options.currentAgentId] - Current agent ID for logging
+ * @param {string} [options.agentId] - Agent ID for the exit event
  * @param {number} [options.timeoutMs=5000] - Grace period timeout
  * @returns {Promise<{ok: boolean, reason?: string}>}
  */
@@ -74,7 +71,7 @@ async function runExitSequence(options) {
     session,
     agentProfile,
     speakFn,
-    currentAgentId,
+    agentId,
     timeoutMs = 5000,
   } = options;
 
@@ -99,7 +96,7 @@ async function runExitSequence(options) {
     emitter.emit("exit_requested", {
       sessionId: session.id,
       trigger: "voice_command",
-      agentId: currentAgentId || agentProfile?.agentId || null,
+      agentId: agentId || agentProfile?.agentId || null,
     });
 
     return { ok: true };

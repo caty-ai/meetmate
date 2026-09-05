@@ -778,7 +778,6 @@ async function withMeetRoutes(fn, options = {}) {
   });
   installMock(path.join(src, "gateway-warmup.js"), {
     warmUpGatewaySession: () => {},
-    warmUpMultipleAgents: () => {},
   });
   installMock(path.join(src, "session-events.js"), { SessionLifecycle: FakeLifecycle });
   installMock(path.join(src, "slack-notifier.js"), {

@@ -82,9 +82,7 @@ test("first utterance is preceded by TTS_LEAD_MS pad before TTS audio", async ()
           };
 
           const pipeline = createPipeline(session, turnState, (buffer) => audio.push(buffer), config, {
-            agents: { caty: { wakeWords: ["ケイティ"] } },
-            selectedAgentIds: ["caty"],
-            defaultAgentId: "caty",
+            agentProfile: { agentId: "caty", wakeWords: ["ケイティ"] },
             _testExposeInternals: true,
           });
 

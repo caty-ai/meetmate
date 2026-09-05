@@ -94,9 +94,7 @@ async function withPipeline(provider, fn) {
         echoCooldownMs: 0,
       },
       {
-        agents: { alpha: { wakeWords: ["alpha"] } },
-        selectedAgentIds: ["alpha"],
-        defaultAgentId: "alpha",
+        agentProfile: { agentId: "alpha", wakeWords: ["alpha"] },
         suppressGreeting: true,
         _testExposeInternals: true,
       },

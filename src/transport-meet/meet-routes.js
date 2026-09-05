@@ -18,7 +18,7 @@ const {
 const { createPipeline } = require("../pipeline");
 const { deriveTransportForAuth } = require("../adapter-registry");
 const { PIPELINE_TTS_PROVIDERS } = require("../tts-fish");
-const { warmUpGatewaySession, warmUpMultipleAgents } = require("../gateway-warmup");
+const { warmUpGatewaySession } = require("../gateway-warmup");
 const { SessionLifecycle } = require("../session-events");
 const { SlackNotifier } = require("../slack-notifier");
 const { summarizeConversation } = require("../summarizer");
@@ -817,21 +817,8 @@ function createHandler(session, turnState, onAudio) {
       model: session.config.model,
       wakeMode: session.config.wakeMode,
     }, null, profile, _configJson);
-    const singleAgentMap = {
-      [profile.agentId]: {
-        ...profile,
-        voiceId: profile.voiceId,
-        model: profile.model,
-      },
-    };
     const pipeline = createPipeline(session, turnState, onAudio, config, {
-      agents: singleAgentMap,
-      selectedAgentIds: [profile.agentId],
-      defaultAgentId: profile.agentId,
       agentProfile: profile,
-      onAgentSwitch: (from, to) => {
-        console.log(`🔄  Agent switch: ${from || "none"} → ${to}`);
-      },
       onChatMessage: (text) => {
         const botInfo = sessionBotIds.get(session.id);
         if (!botInfo?.botId) {
@@ -1199,12 +1186,6 @@ async function handleHttp(req, res) {
         return;
       }
 
-      // Single-agent mode: always use config.json agent
-      const selectedAgentIds = [profile.agentId];
-      const defaultAgentId = profile.agentId;
-      const selectedAgentNames = [profile.name];
-      console.log(`🔒  Single-agent mode: ${profile.agentId}`);
-
       // Prevent duplicate joins — block if there's already an active session
       if (meetingSessions.size > 0) {
         const activeSids = [...meetingSessions.keys()];
@@ -1301,16 +1282,13 @@ async function handleHttp(req, res) {
           model: toSafeString(formData.model) || null,
           voice: toSafeString(formData.voice) || null,
           wakeMode: resolveWakeMode(conversationMode),
-          agentIds: selectedAgentIds,
-          defaultAgentId,
+          agentIds: [profile.agentId],
+          defaultAgentId: profile.agentId,
         },
         conversationLog: [],
-        // Per-agent conversation logs (scaffolding for future multi-agent log separation)
-        conversationLogs: selectedAgentIds.reduce((acc, id) => {
-          acc[id] = [];
-          return acc;
-        }, {}),
-        agents: selectedAgentNames,
+        // Keep the agent-keyed log shape for session consumers.
+        conversationLogs: { [profile.agentId]: [] },
+        agents: [profile.name],
       };
 
       let localAvatarLaunchUrl = null;
@@ -1375,8 +1353,8 @@ async function handleHttp(req, res) {
       const lifecycle = new SessionLifecycle(sessionId, "meet", {
         meetingUrl,
         conversationMode,
-        agents: selectedAgentNames,
-        agentIds: selectedAgentIds,
+        agents: [profile.name],
+        agentIds: [profile.agentId],
       });
       lifecycle.on("session_end", () => handleMeetSessionEnd(lifecycle));
       lifecycle.transition("initiating");
@@ -1391,7 +1369,7 @@ async function handleHttp(req, res) {
         exitDetection: conversationMode !== "group",
       }, null, profile, _configJson);
       // Must include the agentId — pipeline.js builds sessionUser as
-      // `meet-${sessionId}-${agentId}` (see switchAgent in pipeline.js).
+      // `meet-${sessionId}-${agentId}` (see the agentState initialiser in pipeline.js).
       // Warming the bare `meet-${sessionId}` key left the agent session
       // cold and contributed to first-turn latency / timeout fallbacks.
       warmUpGatewaySession(sessionUserFor("meet", sessionId, profile.agentId), warmupConfig, briefing);
@@ -1401,19 +1379,9 @@ async function handleHttp(req, res) {
       console.log("🔗  WebSocket URL:", wsWithSession.replace(/token=[^&]+/, "token=***"));
       console.log("🧾  Session ID:", sessionId);
       console.log("💬  Conversation Mode:", conversationMode, `(${session.config.wakeMode})`);
-      if (selectedAgentIds.length > 0) {
-        console.log("🤖  Selected agents:", selectedAgentIds.join(", "));
-      }
 
-      // Derive default bot name from agent profile or selected agents
-      let defaultBotName;
-      if (selectedAgentNames.length > 0) {
-        defaultBotName = `${selectedAgentNames.join(", ")} (AI)`;
-      } else if (profile) {
-        defaultBotName = `${profile.name || profile.agentId} (${profile.displayName || "AI"})`;
-      } else {
-        defaultBotName = "AI Agent";
-      }
+      // Derive the default bot name from the single agent profile.
+      const defaultBotName = `${profile.name} (AI)`;
 
       const botPayload = {
         meeting_url: meetingUrl,

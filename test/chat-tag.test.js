@@ -121,9 +121,7 @@ describe("pipeline chat tags", () => {
             const config = basePipelineConfig();
 
             const pipeline = createPipeline(session, turnState, () => {}, config, {
-              agents: { caty: { wakeWords: ["ケイティ"] } },
-              selectedAgentIds: ["caty"],
-              defaultAgentId: "caty",
+              agentProfile: { agentId: "caty", wakeWords: ["ケイティ"] },
               onChatMessage: (text) => chats.push(text),
               _testExposeInternals: true,
             });
@@ -208,9 +206,7 @@ async function runPipelineChatStream(chunks) {
           const config = basePipelineConfig();
 
           const pipeline = createPipeline(session, turnState, () => {}, config, {
-            agents: { caty: { wakeWords: ["ケイティ"] } },
-            selectedAgentIds: ["caty"],
-            defaultAgentId: "caty",
+            agentProfile: { agentId: "caty", wakeWords: ["ケイティ"] },
             onChatMessage: (text) => chats.push(text),
             _testExposeInternals: true,
           });

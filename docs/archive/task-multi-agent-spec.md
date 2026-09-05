@@ -1,3 +1,5 @@
+> Archived 2026-09-05 — in-meeting agent switching was removed in #127 (1 gateway = 1 agent; multi-agent meetings run one instance per agent, arbitrated by meet-floor-hub). Historical reference only.
+
 # Task: Multi-Agent Support (Phase 3)
 
 ## Overview

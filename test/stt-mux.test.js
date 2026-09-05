@@ -177,17 +177,15 @@ async function withMuxHarness(run, options = {}) {
         delegation: {},
       },
     };
-    const agents = options.agents || {
-      caty: { wakeWords: ["ケイティ"], voiceId: "voice-id", model: "test-model", greeting: "default greeting" },
+    const agentProfile = options.agentProfile || {
+      agentId: "caty", wakeWords: ["ケイティ"], voiceId: "voice-id", model: "test-model", greeting: "default greeting",
     };
     pipeline = createPipeline(session, turnState, (buffer, metadata) => {
       observedAudio.push({ buffer: Buffer.from(buffer), metadata: { ...metadata } });
     }, config, {
       transport: "discord",
       capabilities: { echoesOwnOutput: false, perSpeakerAudio: true },
-      agents,
-      selectedAgentIds: options.selectedAgentIds || Object.keys(agents),
-      defaultAgentId: options.defaultAgentId || "caty",
+      agentProfile,
       onChatMessage: options.onChatMessage,
       _testExposeInternals: true,
       ...options.pipelineOptions,
@@ -599,24 +597,7 @@ test("close closes slot streams before the mixed stream and swallows close rejec
   assert.deepEqual(unhandled, []);
 });
 
-test("suppressGreeting preserves the default-agent switch but skips speech, while the default path still speaks", { concurrency: false }, async () => {
-  await withMuxHarness(async ({ pipeline, spoken }) => {
-    assert.deepEqual(pipeline._test.switchAgent("other"), { oldId: "caty" });
-    assert.equal(pipeline.getSessionUsers().parent, "discord-mux-session-other");
-
-    await pipeline._test.sendGreeting();
-
-    assert.deepEqual(spoken, []);
-    assert.equal(pipeline.getSessionUsers().parent, "discord-mux-session-caty");
-  }, {
-    agents: {
-      caty: { wakeWords: ["ケイティ"], voiceId: "voice-id", model: "test-model", greeting: "default greeting" },
-      other: { wakeWords: ["シエル"], voiceId: "voice-2", model: "test-model", greeting: "other greeting" },
-    },
-    selectedAgentIds: ["caty", "other"],
-    pipelineOptions: { suppressGreeting: true },
-  });
-
+test("the default greeting path still speaks", { concurrency: false }, async () => {
   await withMuxHarness(async ({ pipeline, spoken, session }) => {
     await pipeline._test.sendGreeting();
     assert.deepEqual(spoken, ["default greeting"]);

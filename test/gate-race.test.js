@@ -119,9 +119,7 @@ test("utterance handling serializes rapid wake turns without dropping the replay
     };
 
     const pipeline = createPipeline(session, turnState, () => {}, config, {
-      agents: { caty: { wakeWords: ["ケイティ"] } },
-      selectedAgentIds: ["caty"],
-      defaultAgentId: "caty",
+      agentProfile: { agentId: "caty", wakeWords: ["ケイティ"] },
     });
 
     sttEmitter.emit("utterance_end", "ケイティ、タスクA");
@@ -240,9 +238,7 @@ test("pending queue replays a wake turn observed while the gate is closed", asyn
     };
 
     const pipeline = createPipeline(session, turnState, () => {}, config, {
-      agents: { caty: { wakeWords: ["ケイティ"] } },
-      selectedAgentIds: ["caty"],
-      defaultAgentId: "caty",
+      agentProfile: { agentId: "caty", wakeWords: ["ケイティ"] },
       _testExposeInternals: true,
     });
 
@@ -374,9 +370,7 @@ test("hub pending reports arbitrate before replay and non-assigned exit reopens 
       hub: { enabled: true, url: "ws://fake", roomCode: "race", authToken: "x", tailMs: 0 },
       greeting: "", echoCooldownMs: 0,
     }, {
-      agents: { caty: { wakeWords: ["ケイティ"] } },
-      selectedAgentIds: ["caty"],
-      defaultAgentId: "caty",
+      agentProfile: { agentId: "caty", wakeWords: ["ケイティ"] },
       floorClient: floor,
       _testExposeInternals: true,
     });
@@ -482,9 +476,7 @@ test("grant fence drops PCM produced after a mid-stream revoke", async () => {
         greeting: "", echoCooldownMs: 0,
       },
       {
-        agents: { caty: { wakeWords: ["ケイティ"] } },
-        selectedAgentIds: ["caty"],
-        defaultAgentId: "caty",
+        agentProfile: { agentId: "caty", wakeWords: ["ケイティ"] },
         floorClient: floor,
         _testExposeInternals: true,
       },

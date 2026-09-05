@@ -1381,7 +1381,6 @@ async function withMeetRoutes(fn, { ttsProvider = "fish-audio", ngrokDomain = "m
   installMock(path.join(src, "pipeline.js"), { createPipeline: () => new EventEmitter() });
   installMock(path.join(src, "gateway-warmup.js"), {
     warmUpGatewaySession: () => {},
-    warmUpMultipleAgents: () => {},
   });
   installMock(path.join(src, "session-events.js"), { SessionLifecycle: FakeLifecycle });
   installMock(path.join(src, "slack-notifier.js"), { SlackNotifier: FakeSlackNotifier });

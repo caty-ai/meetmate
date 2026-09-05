@@ -460,62 +460,6 @@ test("CIRCUIT_BREAKER_TIMEOUTS=0 disables breaker opening", async () => {
   assert.equal(events.some((event) => event.type === "circuit_breaker" && event.state === "open"), false);
 });
 
-test("gateway fallback retry cancels the outer first-response timers", async () => {
-  const handoffRequests = [];
-  const metricsDir = fs.mkdtempSync(path.join(os.tmpdir(), "gateway-fallback-timers-"));
-  const spoken = [];
-  const streamCalls = [];
-
-  await withFreshPipeline(
-    async ({ createPipeline, metrics }) => {
-      const { pipeline } = createTestPipeline(createPipeline, {
-        firstTokenDelegateMs: 80,
-        responseTimeoutMs: 90,
-        agents: {
-          caty: { wakeWords: ["ケイティ"] },
-          analyst: { wakeWords: ["アナリスト"], gatewayUrl: "http://analyst.test" },
-        },
-        selectedAgentIds: ["caty", "analyst"],
-        defaultAgentId: "caty",
-      });
-
-      await pipeline._test.handleUtteranceEnd("アナリスト、調べてまとめて", "turn-d");
-      await sleep(90);
-      pipeline.close();
-      await metrics._test.flush();
-    },
-    {
-      metricsDir,
-      spoken,
-      handoffRequests,
-      llm: {
-        streamChat: async function* (_messages, opts) {
-          streamCalls.push(opts.sessionUser);
-          if (opts.sessionUser.endsWith("-analyst")) {
-            await sleep(20);
-            throw new Error("ECONNREFUSED analyst gateway");
-          }
-
-          await sleep(40);
-          yield "通常のフォールバック応答です。";
-        },
-        VOICE_SYSTEM_ADDENDUM: "",
-        buildVoiceAddendum: () => "",
-      }
-    }
-  );
-
-  const events = readMetrics(metricsDir);
-
-  assert.deepEqual(streamCalls, ["meet-forced-delegation-test-analyst", "meet-forced-delegation-test-caty"]);
-  assert.equal(spoken.includes("通常のフォールバック応答です。"), true);
-  assert.equal(spoken.includes(DELEGATION_LINE), false);
-  assert.equal(handoffRequests.length, 0);
-  assert.equal(events.some((event) => event.type === "first_token" && event.turn_id === "turn-d"), true);
-  assert.equal(events.some((event) => event.type === "forced_delegation_fired" && event.turn_id === "turn-d"), false);
-  assert.equal(events.some((event) => event.type === "tts_playback_start" && event.source === "forced_delegation"), false);
-});
-
 test("gateway events enabled makes Timer A abort the server run and handoff on delegate session", async () => {
   const handoffRequests = [];
   const abortUsers = [];
@@ -1125,9 +1069,7 @@ function createTestPipeline(createPipeline, options) {
   };
 
   const pipeline = createPipeline(session, turnState, () => {}, config, {
-    agents: options.agents || { caty: { wakeWords: ["ケイティ"] } },
-    selectedAgentIds: options.selectedAgentIds || ["caty"],
-    defaultAgentId: options.defaultAgentId || "caty",
+    agentProfile: options.agentProfile || { agentId: "caty", wakeWords: ["ケイティ"] },
     onChatMessage: options.onChatMessage,
     _testExposeInternals: true,
   });

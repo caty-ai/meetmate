@@ -646,9 +646,7 @@ test("cached immediate ack keeps agent speaking until paced playback finishes", 
     };
 
     const pipeline = createPipeline(session, turnState, (buffer) => audio.push(buffer), config, {
-      agents: { caty: { wakeWords: ["ケイティ"] } },
-      selectedAgentIds: ["caty"],
-      defaultAgentId: "caty",
+      agentProfile: { agentId: "caty", wakeWords: ["ケイティ"] },
     });
 
     sttEmitter.emit("utterance_end", "ケイティ、確認して");

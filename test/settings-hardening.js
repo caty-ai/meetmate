@@ -1024,12 +1024,11 @@ test("class-2 scan and strip are symmetric while unrelated unknowns survive", ()
   assert.deepEqual(scanLegacyClass2(stripped), []);
 });
 
-test("T12-15 settings remain singular-agent while the frozen multi-agent warmup API stays compatible", () => {
+test("T12-15 settings remain singular-agent; legacy `agents` is never consumed", () => {
   const settingsSurface = ["registry.js", "schemas.js", "routes.js", "resolver.js", "audio.js"]
     .map((name) => fs.readFileSync(path.join(ROOT, "src/settings", name), "utf8")).join("\n");
   assert.doesNotMatch(settingsSurface, /\bagents\b/);
   const warmup = fs.readFileSync(path.join(ROOT, "src/gateway-warmup.js"), "utf8");
-  assert.equal(typeof require("../src/gateway-warmup").warmUpMultipleAgents, "function");
   assert.doesNotMatch(warmup, /config\?\.warmupTimeoutMs|baseConfig\?\.warmupTimeoutMs/);
   assert.match(warmup, /getEffectiveValue\("gateway_warmup_timeout_ms"\)/);
   assert.equal(SETTINGS_REGISTRY.some((entry) => entry.id === "agents" || entry.path?.startsWith("agents")), false);

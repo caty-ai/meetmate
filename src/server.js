@@ -32,7 +32,9 @@ try {
   console.warn("Settings config could not be read; continuing in setup mode.");
 }
 initializeRuntime({ state: initialSettingsState, startup });
+const { warnLegacyMultiAgentKeys } = require("./agent-profile");
 if (initialSettingsState.valid) warnLegacyClass2(initialSettingsState.parsed);
+if (initialSettingsState.valid) warnLegacyMultiAgentKeys(initialSettingsState.parsed);
 
 const meetRoutes = require("./transport-meet/meet-routes");
 const { createDiscordAdapter } = require("./transport-discord");

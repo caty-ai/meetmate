@@ -105,7 +105,7 @@ function _buildProfileFromConfig(config, effectiveAgentId) {
 }
 
 /**
- * Clear the cached profile (useful for testing or agent switching).
+ * Clear the cached profile (useful for testing).
  */
 function clearProfileCache() {
   _cached = null;
@@ -113,8 +113,23 @@ function clearProfileCache() {
 
 registerCacheInvalidator(clearProfileCache);
 
+/** Warn about unsupported keys without reading their potentially secret values. */
+function warnLegacyMultiAgentKeys(parsed, logger = console) {
+  if (!parsed || typeof parsed !== "object") return;
+  const keys = [];
+  if (Object.prototype.hasOwnProperty.call(parsed, "agents")) keys.push("agents");
+  if (parsed?.agent?.messages
+      && Object.prototype.hasOwnProperty.call(parsed.agent.messages, "groupGreetingTemplate")) {
+    keys.push("agent.messages.groupGreetingTemplate");
+  }
+  if (keys.length === 0) return;
+  const agentId = typeof parsed.agent?.id === "string" ? parsed.agent.id : "unset";
+  logger.warn(`Legacy multi-agent keys are ignored (this server runs one agent: "${agentId}"): ${keys.join(", ")} — run one Meetmate instance per agent; see docs/setup-guide.md`);
+}
+
 module.exports = {
   AgentNotFoundError,
   resolveAgentProfile,
   clearProfileCache,
+  warnLegacyMultiAgentKeys,
 };

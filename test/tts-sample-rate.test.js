@@ -196,9 +196,7 @@ test("sentence-boundary silence uses the TTS sample rate", async () => {
         };
         const audio = [];
         const pipeline = createPipeline(session, turnState, (buffer) => audio.push(buffer), config, {
-          agents: { caty: { wakeWords: ["ケイティ"] } },
-          selectedAgentIds: ["caty"],
-          defaultAgentId: "caty",
+          agentProfile: { agentId: "caty", wakeWords: ["ケイティ"] },
           _testExposeInternals: true,
         });
 
