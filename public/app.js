@@ -26,14 +26,12 @@ function floorRecoveryHint(reason) {
   return FLOOR_RECOVERY_HINTS[reason] || "";
 }
 
-async function requestFloorContinuation({ sessionId, joinToken, fetchImpl, promptImpl, storeToken }) {
-  const body = new URLSearchParams({ sessionId: String(sessionId || "") });
+async function requestWithJoinToken({ path, init, joinToken, fetchImpl, promptImpl, storeToken }) {
   const send = (token) => {
     const normalizedToken = typeof token === "string" ? token.trim() : "";
-    return fetchImpl("/floor/continue-without-arbitration", {
-      method: "POST",
-      ...(normalizedToken ? { headers: { "x-join-token": normalizedToken } } : {}),
-      body,
+    return fetchImpl(path, {
+      ...init,
+      ...(normalizedToken ? { headers: { ...init.headers, "x-join-token": normalizedToken } } : {}),
     });
   };
 
@@ -44,6 +42,22 @@ async function requestFloorContinuation({ sessionId, joinToken, fetchImpl, promp
   if (!promptedToken) return response;
   storeToken(promptedToken);
   return send(promptedToken);
+}
+
+async function requestFloorContinuation({ sessionId, joinToken, fetchImpl, promptImpl, storeToken }) {
+  return requestWithJoinToken({
+    path: "/floor/continue-without-arbitration",
+    init: { method: "POST", body: new URLSearchParams({ sessionId: String(sessionId || "") }) },
+    joinToken, fetchImpl, promptImpl, storeToken,
+  });
+}
+
+async function requestJoinMeeting({ body, joinToken, fetchImpl, promptImpl, storeToken }) {
+  return requestWithJoinToken({
+    path: "/join-meeting",
+    init: { method: "POST", body },
+    joinToken, fetchImpl, promptImpl, storeToken,
+  });
 }
 
 function isDiscordSnowflake(value) {
@@ -298,6 +312,8 @@ if (typeof module !== "undefined" && module.exports) module.exports = {
   parseJoinErrorText,
   readinessDisplayRows,
   requestFloorContinuation,
+  requestJoinMeeting,
+  requestWithJoinToken,
   floorRecoveryHint,
   settingsPortFromReadiness,
 };
@@ -306,6 +322,9 @@ if (typeof document !== "undefined") (function () {
   const pageJoinToken = new URLSearchParams(window.location.search).get("joinToken")?.trim() || "";
   const storedJoinToken = () => {
     try { return sessionStorage.getItem("meetmate.joinToken")?.trim() || ""; } catch { return ""; }
+  };
+  const storeJoinToken = (token) => {
+    try { sessionStorage.setItem("meetmate.joinToken", token); } catch { /* retry still uses the in-memory token */ }
   };
   const root = document.documentElement;
   const form = document.getElementById("joinForm");
@@ -971,9 +990,7 @@ if (typeof document !== "undefined") (function () {
         joinToken: storedJoinToken() || pageJoinToken,
         fetchImpl: fetch,
         promptImpl: (message) => window.prompt(message),
-        storeToken: (token) => {
-          try { sessionStorage.setItem("meetmate.joinToken", token); } catch { /* retry still uses the in-memory token */ }
-        },
+        storeToken: storeJoinToken,
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok || !payload?.ok) throw new Error(payload?.error || `HTTP ${response.status}`);
@@ -1264,8 +1281,11 @@ if (typeof document !== "undefined") (function () {
           setStatus("error", parseDiscordJoinErrorText(text, response.status));
         }
       } else {
-        const response = await fetch("/join-meeting", {
-          method: "POST",
+        const response = await requestJoinMeeting({
+          joinToken: storedJoinToken() || pageJoinToken,
+          fetchImpl: fetch,
+          promptImpl: (message) => window.prompt(message),
+          storeToken: storeJoinToken,
           body: buildMeetJoinFormData({
             meetingUrl: extractedMeetingUrl,
             availableAgents,
