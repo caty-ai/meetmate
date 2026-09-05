@@ -122,7 +122,7 @@ MM-<AREA>-<NNN>
 | 面 | 今 | v1 |
 |---|---|---|
 | `/readiness` JSON | `systems[].code` / `blockers[].{system,code,fieldId,message}` | 両方に `diagnosticId` を追加（**既存フィールドは不変**・後方互換） |
-| Join 失敗 `MEETING_NOT_READY` / `MEETING_SETUP_REQUIRED`（`src/transport-meet/meet-routes.js:1177,1270,1284`） | blockers / issues を同梱 | 同じオブジェクトなので自動で ID が乗る |
+| Join 失敗 `MEETING_NOT_READY` / `MEETING_SETUP_REQUIRED`（`src/transport-meet/meet-routes.js:1177,1270,1284`） | blockers / issues を同梱 | `MEETING_NOT_READY` の `blockers[]` は readiness と同じオブジェクトなので自動で ID が乗る（v1 実装済み）。`MEETING_SETUP_REQUIRED` の `issues[]` は resolver の生 issue（`meet-routes.js` 側・宣言外）で v1 では ID なし＝後続 Issue（#197 delta-2 訂正） |
 | メイン画面 readiness 行（`public/app.js:185` `readinessDisplayRows`） | `message` + 設定リンク | 先頭に `[MM-…]`・末尾に「対処法」リンク（docs アンカー） |
 | 設定画面 接続テスト結果（`public/settings.js:1131`）・readiness サマリ（`:129`） | `label: CODE — 説明` | `label: [MM-…] 説明` |
 | operator ログ（timeout 行 `src/pipeline.js:2323`・STT runtime 失敗行） | `[stage=…]` | `diagnostic=MM-LLM-51x` を追記 |
