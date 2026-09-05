@@ -124,4 +124,3 @@ hosted hub の設定は通常 24 時間ごとに更新対象となり、古く�
 | [セットアップガイド](setup-guide.md) | Meetmate 全体の初期設定と最初の会議までの手順 |
 | [運用ガイド](operations.md) | 運用設定、調整、トラブル時の確認事項 |
 | [技術リファレンス](TECHNICAL.md) | アーキテクチャ、プロバイダー、開発情報 |
-| [Hosted v1 design](https://github.com/caty-ai/meet-floor-hub/blob/main/docs/design/hosted-v1-design.md) | hosted hub の設計と契約上の背景 |

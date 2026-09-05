@@ -214,7 +214,6 @@ Something not working? See [Troubleshooting](https://github.com/caty-ai/meetmate
 | [docs/operations.md](https://github.com/caty-ai/meetmate/blob/main/docs/operations.md) | Full operations and tuning reference |
 | [docs/deploy-checklist.md](https://github.com/caty-ai/meetmate/blob/main/docs/deploy-checklist.md) | Deployment checklist |
 | [docs/hub-hosted-setup.md](https://github.com/caty-ai/meetmate/blob/main/docs/hub-hosted-setup.md) | Hosted hub (cloud arbitration): first-time setup, what happens in a meeting, plans, what is sent |
-| [Hosted hub design (meet-floor-hub)](https://github.com/caty-ai/meet-floor-hub/blob/main/docs/design/hosted-v1-design.md) | Hosted hub design: admission, token, lease, and configuration background |
 
 > ℹ️ Some documents under `docs/` are currently in Japanese; the reference tables and command snippets are language-neutral.
 
