@@ -327,3 +327,36 @@ test("main UI displays notices after setup and blockers without gating join", ()
     { kind: "blocker", text: "b", fieldId: "agent_id" }, { kind: "warning", text: "m" },
   ]);
 });
+
+test("#197 readiness screens render payload IDs and preserve legacy rows and settings links", () => {
+  const { readinessSummary } = require("../public/settings.js");
+  const { readinessDisplayRows } = require("../public/app.js");
+  const blocker = { system: "soniox", code: "AUTH_FAILED", message: "認証情報を確認してください", fieldId: "soniox_api_key" };
+  const systems = [{ id: "soniox", code: "AUTH_FAILED", ok: false }, { id: "llm", code: "PENDING", ok: false }, { id: "tunnel", code: "TIMEOUT", ok: false }];
+  const legacy = readinessDisplayRows({ blockers: [blocker], systems });
+  assert.deepEqual(legacy, [
+    { kind: "blocker", text: "認証情報を確認してください", fieldId: "soniox_api_key" },
+    { kind: "pending", text: "llm: 確認中…" },
+    { kind: "warning", text: "tunnel: TIMEOUT（一時的な問題の可能性があります。Join はブロックしません）" },
+  ]);
+  assert.equal(readinessSummary({ systems }), "soniox: AUTH_FAILED / llm: PENDING / tunnel: TIMEOUT");
+  const { diagnosticIdFor } = require("../src/settings/diagnostic-id");
+  for (const system of systems) system.diagnosticId = diagnosticIdFor(system.id, system.code);
+  blocker.diagnosticId = diagnosticIdFor(blocker.system, blocker.code);
+  const rows = readinessDisplayRows({ blockers: [blocker], systems });
+  assert.deepEqual(rows, legacy.map((row, i) => ({ ...row, text: `[${systems[i].diagnosticId}] ${row.text}` })));
+  assert.equal(readinessSummary({ systems }), "soniox: [MM-STT-100] AUTH_FAILED / llm: [MM-LLM-301] PENDING / tunnel: [MM-TUN-201] TIMEOUT");
+  const stale = { id: "attendee", code: "CONNECTED", ok: true, stale: true, diagnosticId: null };
+  assert.deepEqual(readinessDisplayRows({ systems: [stale] }), [{ kind: "warning", text: "attendee: 前回の接続確認結果が古くなっています" }]);
+});
+
+test("#197 connection result prefixes only string IDs and leaves current payload output unchanged", () => {
+  const source = require("node:fs").readFileSync(require.resolve("../public/settings.js"), "utf8");
+  const assignment = source.split("\n").find((line) => line.includes("result.textContent = `${label}: ${body.code}"));
+  assert.ok(assignment);
+  const render = new Function("body", "label", "explanation", `const result = {}; ${assignment}; return result.textContent;`);
+  const body = { code: "AUTH_FAILED", durationMs: 12 };
+  const expected = "Soniox: AUTH_FAILED — 認証情報を確認してください (12 ms)";
+  for (const diagnosticId of [undefined, null, 123, {}]) assert.equal(render({ ...body, diagnosticId }, "Soniox", "認証情報を確認してください"), expected);
+  assert.equal(render({ ...body, diagnosticId: "MM-STT-100" }, "Soniox", "認証情報を確認してください"), "Soniox: AUTH_FAILED — [MM-STT-100] 認証情報を確認してください (12 ms)");
+});

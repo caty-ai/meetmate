@@ -205,6 +205,7 @@ flowchart LR
 | เอกสาร | เนื้อหา |
 |---|---|
 | [docs/setup-guide.md](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md) | จากศูนย์ถึงการประชุมครั้งแรก ทีละขั้นตอน |
+| [docs/diagnostic-ids.md](https://github.com/caty-ai/meetmate/blob/main/docs/diagnostic-ids.md) | รหัสวินิจฉัย ความหมาย และขั้นตอนถัดไป (ญี่ปุ่น / อังกฤษ) |
 | [docs/TECHNICAL.md](https://github.com/caty-ai/meetmate/blob/main/docs/TECHNICAL.md) | ฟีเจอร์แบบละเอียด สถาปัตยกรรม ผู้ให้บริการ MCP การพัฒนา |
 | [docs/architecture.md](https://github.com/caty-ai/meetmate/blob/main/docs/architecture.md) | เจาะลึกสถาปัตยกรรม |
 | [docs/operations.md](https://github.com/caty-ai/meetmate/blob/main/docs/operations.md) | อ้างอิงการดำเนินงานและการปรับจูนฉบับเต็ม |

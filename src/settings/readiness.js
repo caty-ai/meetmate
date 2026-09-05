@@ -1,6 +1,7 @@
 "use strict";
 
 const probes = require("./probes");
+const { diagnosticIdFor } = require("./diagnostic-id");
 const {
   buildEnvelope,
   getPublishedValue,
@@ -336,7 +337,7 @@ function createReadinessController(options = {}) {
     const blockers = [];
     for (const system of gateSystems()) {
       const fieldId = Object.keys(FIELD_SYSTEMS).find((id) => changed.has(id) && FIELD_SYSTEMS[id].includes(system));
-      if (fieldId) blockers.push({ system, code: "RESTART_REQUIRED", fieldId, message: MESSAGES.RESTART_REQUIRED });
+      if (fieldId) blockers.push({ system, code: "RESTART_REQUIRED", fieldId, message: MESSAGES.RESTART_REQUIRED, diagnosticId: diagnosticIdFor(system, "RESTART_REQUIRED") });
     }
     return blockers;
   }
@@ -358,6 +359,7 @@ function createReadinessController(options = {}) {
         code,
         stale: isStale(record),
         fieldId,
+        diagnosticId: diagnosticIdFor(system, code),
       };
     });
 
@@ -368,6 +370,7 @@ function createReadinessController(options = {}) {
           code: issue.code,
           fieldId: issue.fieldId,
           message: "ミーティング開始に必要な設定を確認してください",
+          diagnosticId: diagnosticIdFor(system, issue.code),
         });
       }
     }
@@ -381,6 +384,7 @@ function createReadinessController(options = {}) {
         code: record.code,
         fieldId: fieldFor(system, record.code, record.message),
         message: messageFor(system, record.code, record.message),
+        diagnosticId: diagnosticIdFor(system, record.code),
       });
     }
     const settled = systems.every((system) => system.code !== "PENDING");

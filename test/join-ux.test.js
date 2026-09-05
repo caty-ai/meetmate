@@ -247,3 +247,13 @@ test("Discord status formatter reports missing connectionReady as 未取得", ()
     "Discord 接続状態: ok=OK / configured=未完了 / session=initiating / initiating / connectionReady=未取得",
   );
 });
+
+test("#197 join error causes prefix supplied diagnostic IDs and preserve legacy text", () => {
+  const { parseJoinErrorText } = require("../public/app.js");
+  const blockers = [{ message: "認証情報を確認してください", code: "AUTH_FAILED" }, { code: "NOT_ENABLED" }, null];
+  const text = () => JSON.stringify({ error: { code: "MEETING_NOT_READY", message: "接続設定を確認してください", blockers } });
+  assert.equal(parseJoinErrorText(text()), "接続設定を確認してください / 認証情報を確認してください / NOT_ENABLED");
+  blockers[0].diagnosticId = "MM-STT-100";
+  blockers[1].diagnosticId = "MM-LLM-103";
+  assert.equal(parseJoinErrorText(text()), "接続設定を確認してください / [MM-STT-100] 認証情報を確認してください / [MM-LLM-103] NOT_ENABLED");
+});

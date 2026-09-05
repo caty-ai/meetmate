@@ -300,10 +300,10 @@ test("T12-02/T12-13/T12-14 contract and template pins stay synchronized", () => 
   assert.equal(JSON.parse(template).discord.botToken, "your_discord_bot_token", "config example Discord bot-token sentinel drifted");
 });
 
-test("T12-03 startup/bootstrap boundary allows exactly twelve settings modules", () => {
+test("T12-03 startup/bootstrap boundary allows exactly thirteen settings modules", () => {
   const directory = path.join(__dirname, "..", "src", "settings");
   const files = fs.readdirSync(directory).filter((name) => name.endsWith(".js")).sort();
-  assert.deepEqual(files, ["audio.js", "avatar-assets.js", "bootstrap.js", "class2-migration.js", "multipart.js", "probes.js", "readiness.js", "registry.js", "resolver.js", "routes.js", "schemas.js", "store.js"]);
+  assert.deepEqual(files, ["audio.js", "avatar-assets.js", "bootstrap.js", "class2-migration.js", "diagnostic-id.js", "multipart.js", "probes.js", "readiness.js", "registry.js", "resolver.js", "routes.js", "schemas.js", "store.js"]);
   for (const file of files) {
     if (file === "bootstrap.js") continue;
     assert.doesNotMatch(fs.readFileSync(path.join(directory, file), "utf8"), /process\.env|dotenv\.parse|\benvPath\b|\.env["'`]/, file);

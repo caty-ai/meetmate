@@ -592,3 +592,25 @@ test("join rejects PENDING but permits settled soft readiness failures", { concu
   assert.equal(soft.status, 400);
   assert.match(soft.text, /公開 HTTPS origin/);
 });
+
+test("#197 readiness JSON and join 503 preserve diagnostic IDs", { concurrency: false }, async (t) => {
+  const { diagnosticIdFor } = require("../src/settings/diagnostic-id");
+  const routes = await initializeConnectedRoutes(t);
+  readiness.reportRuntimeFailure("fish-audio", "PAYMENT_REQUIRED");
+  const response = await invoke(routes, "GET", "/readiness");
+  assert.equal(response.status, 200);
+  assert.ok(response.body.systems.length);
+  assert.ok(response.body.blockers.length);
+  for (const system of response.body.systems) assert.equal(system.diagnosticId, diagnosticIdFor(system.id, system.code));
+  for (const blocker of response.body.blockers) assert.equal(blocker.diagnosticId, diagnosticIdFor(blocker.system, blocker.code));
+  const join = await invoke(routes, "POST", "/join-meeting", {
+    meetingUrl: "https://meet.google.com/abc-defg-hij",
+    wsUrl: "wss://meetmate.example/realtime",
+    conversationMode: "group",
+    joinToken: "join-secret",
+  });
+  assert.equal(join.status, 503);
+  assert.equal(join.body.error.code, "MEETING_NOT_READY");
+  assert.deepEqual(join.body.error.blockers, response.body.blockers);
+  for (const blocker of join.body.error.blockers) assert.match(blocker.diagnosticId, /^MM-[A-Z]{3}-\d{3}$/);
+});

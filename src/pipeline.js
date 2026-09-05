@@ -61,6 +61,7 @@ const MEETING_CONTEXT_RAW_CHARS = positiveInt(process.env.MEETING_CONTEXT_RAW_CH
 // unaddressed-context experiment; effective only in wake/group meetings.
 const ENABLE_MEETING_CONTEXT_INJECTION = String(process.env.ENABLE_MEETING_CONTEXT_INJECTION || "false").toLowerCase() === "true";
 const readiness = require("./settings/readiness");
+const { diagnosticIdFor } = require("./settings/diagnostic-id");
 
 function withLlmResponseStatus(error, openclaw) {
   if (readiness.runtimeStatus(error)) return error;
@@ -2277,7 +2278,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       const gatewayResponse = llmResponseAt > 0
         ? `HTTP ${llmResponseStatus ?? "unknown"} ${relativeMsLabel(llmResponseAt)}`
         : "none";
-      return `[stage=${stage}; request_sent=${llmRequestStartedAt > 0 ? "+0ms" : "none"}; gateway_response=${gatewayResponse}; stream_event=${relativeMsLabel(llmFirstEventAt)}; tts=${ttsPlaybackStartRecorded ? "started" : "not_started"}]`;
+      return `[stage=${stage}; request_sent=${llmRequestStartedAt > 0 ? "+0ms" : "none"}; gateway_response=${gatewayResponse}; stream_event=${relativeMsLabel(llmFirstEventAt)}; tts=${ttsPlaybackStartRecorded ? "started" : "not_started"}; diagnostic=${diagnosticIdFor("llm", stage)}]`;
     };
 
     const stopProgressTimer = () => {
