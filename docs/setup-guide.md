@@ -359,7 +359,7 @@ Meetmate は Google Meet / Zoom に加えて、**Discord の音声チャンネ�
 | 基本 | 日常的に使う設定 — エージェント ID / エージェント名 / 表示名 / 言語 / Wake Words / LLM プロバイダー / LLM モデル / Soniox・Deepgram の API key と音声認識プロバイダー / Fish Audio の API key・Voice ID と音声合成プロバイダー / Attendee API key / Slack Bot token・Slack 通知・Slack 通知先 / 会議サマリー（あいさつ・感情タグは音声プリセットタブ側） |
 | 音声プリセット | 会話中の定型文と感情表現（`ライブ設定` バッジつき＝保存後すぐ反映）— 感情タグ toggle、あいさつ、応答確認、進捗 Ping、退出あいさつ、キャンセル確認、タイムアウト、固定の感情タグ（読み取り専用）、Fish Audio プレビュー、事前録音 MP3 |
 | 詳細 | Soniox のチューニング・endpointing、Fish のモデル/速度/レイテンシ/サンプルレート/キャッシュ、Attendee host、Slack チャンネル、gateway warmup、ngrok ドメイン、feature flags など。多くは再起動が必要 |
-| デプロイ | 読み取り専用の診断情報 — 実際に bind されたポート（`server_port`）、解決済み home（`resolved_home`）、その他の環境診断値（例: AI 応答の待機時間 `llm_response_timeout_ms`）。環境診断値の各行は「名前 / 現在値 / 出所（`default` / `.env-seed` / `os-env`）」の3列（`server_port` と `resolved_home` の出所は `runtime`）。ここでは編集できない — 環境診断値の変更は home の `.env` か起動時の環境変数で行い、再起動で反映される（`resolved_home` だけは起動時の `AI_MEET_HOME` のみで決まり、`.env` では変えられない）。例は [AI 応答の待機時間](#ai-応答の待機時間タイムアウト) |
+| デプロイ | 読み取り専用の診断情報 — 実際に bind されたポート（`server_port`）、解決済み home（`resolved_home`）、その他の環境診断値（例: AI 応答の待機時間 `llm_response_timeout_ms`）。環境診断値の各行は「名前 / 現在値 / 出所（`default` / `.env-seed` / `os-env`）」の3列（`server_port` と `resolved_home` の出所は `runtime`）。ここでは編集できない — 環境診断値の変更は home の `.env` か起動時の環境変数で行い、再起動で反映される（`resolved_home` だけは起動時の `AI_MEET_HOME`（未設定なら起動ディレクトリ）で決まり、`.env` では変えられない）。例は [AI 応答の待機時間](#ai-応答の待機時間タイムアウト) |
 | 接続テスト | 各サービスへの疎通確認（詳細は [接続テスト・試聴・MP3](#接続テスト試聴mp3)） |
 | エクスポート・インポート | 非機密設定の書き出し／取り込み、8.x からのベンダー値移行（詳細は [8.x からの移行](#8x-からの移行) / [2人目のエージェントを増やす](#2人目のエージェントを増やすエクスポートインポート)） |
 
@@ -390,7 +390,7 @@ Meetmate は Google Meet / Zoom に加えて、**Discord の音声チャンネ�
 | 項目 | 内容 |
 |---|---|
 | 環境変数 | `LLM_RESPONSE_TIMEOUT_MS`（ミリ秒・整数・`0`〜`3600000`）。`0` にすると会議中の first-response タイムアウトを無効化する（会議サマリー生成だけは固定の 30 秒に戻る）。`openclaw` provider では `FIRST_TOKEN_DELEGATE_MS` も併せて設定する |
-| 現在値の確認 | 設定画面 → **デプロイ** タブ → `llm response timeout ms` 行（`openclaw` なら `first token delegate ms` 行も）。値と出所（`default` = コード既定値 / `.env-seed` = home の `.env` / `os-env` = 起動時の環境変数）が並ぶ。範囲外や小数の値は無効として扱われ `default` 表示に戻る |
+| 現在値の確認 | 設定画面 → **デプロイ** タブ → `llm response timeout ms` 行（`openclaw` なら `first token delegate ms` 行も）。値と出所（`default` = コード既定値 / `.env-seed` = home の `.env` / `os-env` = 起動時の環境変数）が並ぶ。範囲外や小数の値はデプロイタブでは無効扱い（`default` 表示）になる一方、実行時はその値がそのまま使われて表示と実値がずれるので、必ず範囲内の整数を書くこと |
 | 変更方法 | home（`resolved_home` に表示されるディレクトリ）の `.env` に `LLM_RESPONSE_TIMEOUT_MS=60000` のように書いて**再起動**する。起動時の環境変数で渡してもよい（こちらが `.env` より優先）。設定画面からは編集できない（読み取り専用の診断値） |
 | 目安 | 接続先エージェントが天気・検索などの**ツールを呼ぶ turn** や、Claude/tool turn を使う gateway では、最初のチャンクまで 35 秒を超えることがある。まず **60 秒前後**（`60000`）から始め、上流 gateway 側の deadline より短くしすぎないこと |
 
