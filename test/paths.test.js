@@ -204,10 +204,10 @@ function settingsRequest(method, url, headers = {}, body = "") {
 }
 
 test("T12-01 registry/schema/type lock keeps the write allowlist strict", () => {
-  assert.equal(SETTINGS_REGISTRY.length, 75);
+  assert.equal(SETTINGS_REGISTRY.length, 85);
   assert.equal(ENV_DIAGNOSTICS.length, 59);
   assert.equal(new Set(SETTINGS_REGISTRY.map((entry) => entry.id)).size, SETTINGS_REGISTRY.length);
-  assert.equal(SETTINGS_REGISTRY.filter((entry) => entry.credential === "class-1").length, 8);
+  assert.equal(SETTINGS_REGISTRY.filter((entry) => entry.credential === "class-1").length, 10);
   assert.deepEqual(SETTINGS_REGISTRY.filter((entry) => entry.writeSurface === "audio-only").map((entry) => entry.id), ["audio_clips"]);
   const visible = JSON.stringify(SETTINGS_REGISTRY.map(({ id, path: configPath }) => ({ id, path: configPath })));
   for (const forbidden of ["gateway.token", "gateway.url", "openaiCompatible.apiKey", "WS_SHARED_TOKEN", "JOIN_SHARED_TOKEN"]) {

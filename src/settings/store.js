@@ -246,6 +246,58 @@ function saveFields({ configPath, revision, fields }) {
   });
 }
 
+function saveCloudFields({ configPath, revision, fields, refreshAfterSeconds }) {
+  if (!Number.isFinite(refreshAfterSeconds) || refreshAfterSeconds <= 0) {
+    throw settingsError("SETTINGS_VALIDATION_FAILED", "Request validation failed", 422);
+  }
+  const byId = new Map(SETTINGS_REGISTRY.map((entry) => [entry.id, entry]));
+  return commitWholeConfig({
+    configPath,
+    revision,
+    mutate(document) {
+      for (const [id, value] of Object.entries(fields)) {
+        const entry = byId.get(id);
+        if (!entry || entry.writeSurface !== "settings") continue;
+        applyPath(document, entry.path, entry.credential === "class-1" && value === null ? undefined : value);
+      }
+      // Server-owned cache metadata is deliberately outside the user-editable
+      // registry, but is committed atomically with the last-good hub config.
+      applyPath(document, "hub.configRefreshAfterSeconds", refreshAfterSeconds);
+    },
+  });
+}
+
+function deleteFields({ configPath, revision, ids }) {
+  const byId = new Map(SETTINGS_REGISTRY.map((entry) => [entry.id, entry]));
+  return commitWholeConfig({
+    configPath,
+    revision,
+    mutate(document) {
+      for (const id of ids) {
+        const entry = byId.get(id);
+        if (!entry || entry.writeSurface !== "settings") continue;
+        applyPath(document, entry.path, undefined);
+      }
+    },
+  });
+}
+
+function deleteCloudFields({ configPath, revision, ids }) {
+  const byId = new Map(SETTINGS_REGISTRY.map((entry) => [entry.id, entry]));
+  return commitWholeConfig({
+    configPath,
+    revision,
+    mutate(document) {
+      for (const id of ids) {
+        const entry = byId.get(id);
+        if (!entry || entry.writeSurface !== "settings") continue;
+        applyPath(document, entry.path, undefined);
+      }
+      applyPath(document, "hub.configRefreshAfterSeconds", undefined);
+    },
+  });
+}
+
 function saveAudioClips({ configPath, revision, clips, preserveInvalid = false }) {
   const entry = SETTINGS_REGISTRY.find((item) => item.id === "audio_clips");
   if (!Array.isArray(clips)) throw settingsError("SETTINGS_VALIDATION_FAILED", "Request validation failed", 422);
@@ -274,9 +326,12 @@ function saveAudioClips({ configPath, revision, clips, preserveInvalid = false }
 
 module.exports = {
   commitWholeConfig,
+  deleteCloudFields,
+  deleteFields,
   readConfigState,
   rejectSymlink,
   saveAudioClips,
+  saveCloudFields,
   saveFields,
   settingsError,
   _test: { acquireLock, assertRevision, fsyncDirectory, sha256, writeTemp },

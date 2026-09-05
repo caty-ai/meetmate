@@ -156,6 +156,21 @@
       </section>
 
       <section id="panel-connections" class="tab-panel" role="tabpanel" aria-labelledby="tab-connections" tabindex="0" hidden>
+        <section class="settings-panel" aria-labelledby="cloudArbitrationTitle">
+          <div class="panel-heading">
+            <div><h2 id="cloudArbitrationTitle">Cloud arbitration</h2><p>ブラウザで Google 認証を行い、この Meetmate を hosted hub に接続します。</p></div>
+            <span class="status-badge pending" id="cloudStatusBadge">確認中</span>
+          </div>
+          <div class="tts-preview-controls">
+            <button class="btn-secondary" id="connectCloud" type="button">接続</button>
+            <button class="btn-secondary" id="refreshCloud" type="button" disabled>設定を更新</button>
+            <button class="btn-text danger-text" id="disconnectCloud" type="button" disabled>切断</button>
+          </div>
+          <p id="cloudStatusText">クラウド接続状態を確認しています。</p>
+          <p class="field-help">切断は保存済みの資格情報を削除します。起動環境の <code>HUB_TOKEN</code> は削除されません。</p>
+          <p id="cloudAuthorizeFallback" hidden>ブラウザが開かない場合: <a id="cloudAuthorizeLink" href="#" target="_blank" rel="noopener noreferrer">認証ページを開く</a></p>
+          <div class="action-result" id="cloudResult" role="status" aria-live="polite"></div>
+        </section>
         <section class="settings-panel" aria-labelledby="connectionTestsTitle">
           <div class="panel-heading"><div><h2 id="connectionTestsTitle">接続テスト</h2><p>保存済みの接続情報で各サービスへの接続を確認します。資格情報を保存した後は、meetmate を再起動してから Join してください。</p></div></div>
           <div class="connection-grid" id="connectionTests"></div>
