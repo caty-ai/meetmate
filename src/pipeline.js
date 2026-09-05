@@ -626,6 +626,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   }
 
   function deliverAudio(buffer, speakChain = null, deliveryOptions = {}) {
+    if (floorEnabled && floorClient?.isMuted?.() && deliveryOptions.manual !== true) return false;
     if (
       speakChain?.rearmEnvelopeEpoch
       && !speakChain.delivered
@@ -637,7 +638,12 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     if (speakChain) speakChain.delivered = true;
 
     let outputBuffer = buffer;
-    if (floorEnabled && deliveryOptions.floorExempt === true && !floorFallbackActive) {
+    if (
+      floorEnabled
+      && deliveryOptions.floorExempt === true
+      && deliveryOptions.manual !== true
+      && !floorFallbackActive
+    ) {
       const paddingFence = speakChain?.floorFence || floorClient?.fence();
       if (!floorClient?.isFenceCurrent(paddingFence)) outputBuffer = Buffer.alloc(buffer.length);
     }
@@ -730,6 +736,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         url: config.hub.url,
         roomCode: config.hub.roomCode,
         authToken: hubAuthToken,
+        mode: config.hub.mode,
         debug: config.hub.debug,
         agentId,
         displayName: agentProfile?.displayName || agentProfile?.name || agentId,
@@ -771,6 +778,10 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   let consecutiveTimerATimeouts = 0;
   let circuitBreakerOpen = false;
   let circuitBreakerNoticeQueued = false;
+  let floorReason = config?.hub?.reason || null;
+  let terminalChatPosted = false;
+  let outageChatPosted = false;
+  let mutedLogPosted = false;
 
   // Preserve the prior boot-time profile-over-session voice/model precedence (#127).
   // The agent-scoped session user must be set before every greeting path.
@@ -823,6 +834,83 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     return true;
   }
 
+  function suppressForFloorMute(source = "speech", options = {}) {
+    if (options.manual === true) return false;
+    if (!floorClient?.isMuted?.()) return false;
+    setFloorFallbackActive(false);
+    if (!mutedLogPosted) {
+      mutedLogPosted = true;
+      console.warn(`🔇  Self-initiated speech suppressed while floor is muted (${source})`);
+    }
+    return true;
+  }
+
+  function floorChatMessage(message) {
+    const displayName = agentProfile?.displayName || agentProfile?.name || agentId;
+    switch (message?.code) {
+      case "auth_failed":
+        return `${displayName} は調停に参加できません（設定の確認が必要です）`;
+      case "plan_meeting_quota":
+        return "調停OFF（今月の無料枠 5/5 を使い切りました）。この会議では自動発話を停止します";
+      case "plan_agent_limit": {
+        const limit = message.agentLimit ?? message.limit ?? message.maxAgents ?? 2;
+        return `${displayName} は調停に参加できません（この部屋の同時エージェント上限 ${limit}体）`;
+      }
+      case "plan_room_limit":
+        return "調停OFF（同時に開ける会議は1つまで）";
+      case "room_expired":
+        return "2時間の上限に達したため調停を終了しました（入り直すと次の1回としてカウントされます）";
+      case "proto_mismatch":
+        return "調停OFF（プロトコル不一致・meetmate の更新が必要です）";
+      case "hub_unavailable":
+        return "調停OFF（クラウド調停に接続できません・自動で再試行します）";
+      default:
+        return null;
+    }
+  }
+
+  function postFloorChat(message) {
+    const text = floorChatMessage(message);
+    if (!text || typeof onChatMessage !== "function") return;
+    Promise.resolve(onChatMessage(text)).catch((error) => {
+      console.warn("⚠️  floor status chat failed:", scrubErrorMessage(error, gatewayToken, hubAuthToken));
+    });
+  }
+
+  function handleHubError(message) {
+    floorReason = message?.code || "hub_error";
+    if (message?.terminal === true) {
+      handleFloorAbort(floorReason);
+      if (!terminalChatPosted) {
+        terminalChatPosted = true;
+        postFloorChat(message);
+      }
+      return;
+    }
+    if (message?.code === "hub_unavailable" && !outageChatPosted) {
+      outageChatPosted = true;
+      postFloorChat(message);
+    }
+  }
+
+  function handleFloorState(event) {
+    if (floorClient?.isMuted?.()) {
+      floorReason = floorClient.terminalReason?.() || event?.cause || "floor_muted";
+      handleFloorAbort(floorReason);
+      if (!terminalChatPosted && floorClient.terminal) {
+        terminalChatPosted = true;
+        postFloorChat({ terminal: true, ...floorClient.terminal });
+      }
+    }
+    if (event?.state === FLOOR_STATES.READY) {
+      setFloorFallbackActive(false);
+      floorReason = null;
+      terminalChatPosted = false;
+      outageChatPosted = false;
+      mutedLogPosted = false;
+    }
+  }
+
   function isFloorAssignmentCurrent(assignment) {
     return typeof floorClient?.isAssignmentCurrent !== "function"
       || floorClient.isAssignmentCurrent(assignment);
@@ -870,6 +958,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
 
   async function acquireFloorPermission(purpose = "speech", signal = null) {
     if (!floorEnabled) return null;
+    if (suppressForFloorMute(purpose)) return null;
     if (floorFallbackActive) return null;
     const held = floorClient.fence();
     if (floorClient.isFenceCurrent(held)) return held;
@@ -879,6 +968,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     });
     if (readyWait.kind === "aborted") return null;
     const ready = readyWait.kind === "value" && readyWait.value === true;
+    if (suppressForFloorMute(purpose)) return null;
     if (!ready) {
       const fallbackGeneration = setFloorFallbackActive(true);
       const delayMs = floorClient.fallbackDelayMs();
@@ -912,6 +1002,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     const verdict = verdictWait.kind === "value"
       ? verdictWait.value
       : { kind: "degraded", delayMs: floorClient.fallbackDelayMs() };
+    if (suppressForFloorMute(purpose)) return null;
     if (verdict.kind === "verdict_timeout" || verdict.kind === "degraded") {
       fallbackGeneration = setFloorFallbackActive(true);
       return null;
@@ -947,6 +1038,8 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     if (floorClient.isFenceCurrent(fence)) floorClient.release(cause);
   }
 
+  floorClient?.on?.("hub_error", handleHubError);
+  floorClient?.on?.("state", handleFloorState);
   floorClient?.connect();
 
   // Multi-participant meeting mode: Injection Gate (wake mode only)
@@ -1416,6 +1509,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   function enqueueReportVoiceLine(line) {
     if (!gatewayEventsEnabled || gatewayEventsConfig.reportVoiceEnabled === false) return;
     if (stopped) return;
+    if (suppressForFloorMute("report")) return;
     if (reportQueue.length >= REPORT_QUEUE_MAX) {
       reportQueue.shift();
       console.warn("⚠️  report voice queue overflow; dropped oldest line");
@@ -1825,8 +1919,9 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   function onSttUtteranceEnd(userText, speaker = null, slot = null) {
     const cleanedText = String(userText || "").trim();
     const floorTurn = { cancelled: false, fallbackGeneration: null, verdictPromise: null };
-    const waitingAssignment = floorClient?.claimAssignment() || null;
-    const reportedVerdictPromise = floorClient?.reportText(cleanedText, {
+    const muted = suppressForFloorMute("wake");
+    const waitingAssignment = muted ? null : floorClient?.claimAssignment() || null;
+    const reportedVerdictPromise = muted ? null : floorClient?.reportText(cleanedText, {
       onFallbackCancel: () => {
         floorTurn.cancelled = true;
         handleFloorAbort("late_assignment", floorTurn.fallbackGeneration);
@@ -1918,6 +2013,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   async function handleUtteranceEnd(userText, metricsTurnId = null, floorTurn = null, speaker = null) {
     const cleanedText = String(userText || "").trim();
     if (!cleanedText) return;
+    if (suppressForFloorMute("wake")) return;
     lastUserSpeechAt = Date.now();
     liveUserSpeechUntil = Date.now() + LIVE_USER_SPEECH_HOLD_MS;
     const attributedSpeaker = cloneSpeakerMeta(speaker);
@@ -2229,6 +2325,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
 
   // ── Process user input: LLM → TTS ──────────────────────────────
   async function processUserInput(userText, options = {}) {
+    if (suppressForFloorMute("turn")) return;
     gateState = "CLOSED";
     turnState.gateState = gateState;
     const {
@@ -2899,26 +2996,34 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   }
 
   async function speakSentence(text, signal, opts = {}) {
+    // `manual` is the operator/gateway-injected speech escape hatch required
+    // to remain audible while automatic floor-controlled speech is muted.
+    if (suppressForFloorMute(opts.role || "speech", opts)) return;
+    const deliveryOptions = opts.manual === true
+      ? { floorExempt: true, manual: true }
+      : {};
     if (!floorEnabled) {
       return withTtsLock(async (speakChain) => {
         if (signal?.aborted) return;
         if (!ttsHasSpoken) {
           if (TTS_LEAD_MS > 0) {
             const lead = generateSilence(TTS_LEAD_MS, config.tts.sampleRate);
-            deliverAudio(lead, speakChain, { floorExempt: true });
+            deliverAudio(lead, speakChain, { floorExempt: true, manual: opts.manual === true });
           }
         } else if (TTS_GAP_MS > 0) {
           const gap = generateSilence(TTS_GAP_MS, config.tts.sampleRate);
-          deliverAudio(gap, speakChain, { floorExempt: true });
+          deliverAudio(gap, speakChain, { floorExempt: true, manual: opts.manual === true });
         }
         ttsHasSpoken = true;
-        await _speakSentenceRaw(text, signal, opts, speakChain);
+        await _speakSentenceRaw(text, signal, opts, speakChain, deliveryOptions);
       });
     }
     const ownedController = signal ? null : new AbortController();
     const controller = ownedController || currentAbort;
     const effectiveSignal = signal || ownedController.signal;
-    const floorFence = await acquireFloorPermission(opts.role || "speech", effectiveSignal);
+    const floorFence = opts.manual === true
+      ? null
+      : await acquireFloorPermission(opts.role || "speech", effectiveSignal);
     if (controller) floorSpeechControllers.add(controller);
     try {
       return await withTtsLock(async (speakChain) => {
@@ -2926,21 +3031,21 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       if (!ttsHasSpoken) {
         if (TTS_LEAD_MS > 0) {
           const lead = generateSilence(TTS_LEAD_MS, config.tts.sampleRate);
-          deliverAudio(lead, speakChain, { floorExempt: true });
+          deliverAudio(lead, speakChain, { floorExempt: true, manual: opts.manual === true });
         }
       } else if (TTS_GAP_MS > 0) {
         const gap = generateSilence(TTS_GAP_MS, config.tts.sampleRate);
-        deliverAudio(gap, speakChain, { floorExempt: true });
+        deliverAudio(gap, speakChain, { floorExempt: true, manual: opts.manual === true });
       }
       ttsHasSpoken = true;
-      await _speakSentenceRaw(text, effectiveSignal, opts, speakChain);
+      await _speakSentenceRaw(text, effectiveSignal, opts, speakChain, deliveryOptions);
       }, floorFence, controller);
     } finally {
       if (controller) floorSpeechControllers.delete(controller);
     }
   }
 
-  async function _speakSentenceRaw(text, signal, opts = {}, speakChain = null) {
+  async function _speakSentenceRaw(text, signal, opts = {}, speakChain = null, deliveryOptions = {}) {
     const cleaned = stripEmojis(text);
     if (!cleaned.trim() && String(text || "").trim()) {
       console.log("🧹 emoji-only utterance skipped");
@@ -2963,7 +3068,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         signal,
         onAudio: (chunk) => {
           if (signal?.aborted) return;
-          const delivered = deliverAudio(chunk, speakChain);
+          const delivered = deliverAudio(chunk, speakChain, deliveryOptions);
           if (delivered !== false && !playbackStarted) {
             playbackStarted = true;
             try {
@@ -3012,6 +3117,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   async function sendGreeting() {
     if (stopped) return;
     if (suppressGreeting) return;
+    if (suppressForFloorMute("greeting")) return;
 
     let greeting = resolveGreetingText();
     if (!greeting) return;
@@ -3148,6 +3254,24 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     handleGatewayAnnounceInjected,
     getDelegationResults() {
       return [...reportResults];
+    },
+    floorStatus() {
+      if (!floorClient) return null;
+      return {
+        mode: config?.hub?.mode || "shared",
+        state: floorClient.state,
+        muted: floorClient.isMuted?.() === true,
+        reason: floorClient.terminalReason?.() || floorReason,
+        roomOccupied: floorClient.terminal?.roomOccupied ?? null,
+        continueWithoutArbitration: { available: floorClient.isMuted?.() === true },
+      };
+    },
+    continueWithoutArbitration() {
+      if (!floorClient) return null;
+      floorClient.continueWithoutArbitration?.();
+      setFloorFallbackActive(true);
+      mutedLogPosted = false;
+      return api.floorStatus();
     },
     getSessionUsers() {
       return {
