@@ -1,5 +1,6 @@
 "use strict";
 
+const { checkJoinAuthorization } = require("../join-auth");
 const { getDiagnosticValue } = require("../settings/resolver");
 const { scrubDiscordLogMessage } = require("./log-scrub");
 
@@ -57,6 +58,12 @@ async function handleSessionCommand(req, res, options, command, verb) {
     writeJsonResponse(res, 400, { ok: false, code: "DISCORD_BAD_REQUEST", message: error.message });
     return;
   }
+  if (!checkJoinAuthorization(req, body)) {
+    writeJsonResponse(res, 401, { ok: false, code: "DISCORD_UNAUTHORIZED", message: "Unauthorized: invalid join token" });
+    return;
+  }
+  delete body.joinToken;
+  delete body.token;
   try {
     const result = await command(body);
     writeJsonResponse(res, result.status || 200, result.body || { ok: true }, result.headers);

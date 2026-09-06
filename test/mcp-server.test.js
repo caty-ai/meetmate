@@ -171,9 +171,28 @@ test("leaveMeeting sends the sessionId only when provided", async () => {
     seen.push(await readBody(request));
     response.end("ok");
   }, async (base) => {
-    const handlers = createToolHandlers({ base });
+    const handlers = createToolHandlers({ base, auth: "" });
     await handlers.leaveMeeting({ sessionId: "session-abc" });
     await handlers.leaveMeeting();
     assert.deepEqual(seen, ["sessionId=session-abc", ""]);
+  });
+});
+
+
+test("#230 leaveMeeting forwards the join credential header", async () => {
+  const seen = [];
+  const credential = "test-leave-value";
+  await withServer(async (request, response) => {
+    seen.push({ token: request.headers["x-join-token"], body: await readBody(request) });
+    response.end("ok");
+  }, async (base) => {
+    for (const auth of [credential, ""]) {
+      const result = await createToolHandlers({ base, auth }).leaveMeeting({ sessionId: "session-abc" });
+      assert.equal(result.isError, undefined);
+    }
+    assert.deepEqual(seen, [
+      { token: credential, body: "sessionId=session-abc" },
+      { token: undefined, body: "sessionId=session-abc" },
+    ]);
   });
 });

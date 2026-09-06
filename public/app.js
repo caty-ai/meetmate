@@ -10,6 +10,7 @@ const DISCORD_ERROR_MESSAGES = Object.freeze({
   DISCORD_MUTEX_BUSY: "別の通話が動作中です",
   DISCORD_JOIN_FAILED: "Discord への参加に失敗しました",
   DISCORD_LEAVE_FAILED: "Discord からの退出に失敗しました",
+  DISCORD_UNAUTHORIZED: "参加トークンが無効です",
 });
 const FLOOR_RECOVERY_HINTS = Object.freeze({
   auth_failed: "設定を確認してください",
@@ -21,7 +22,6 @@ const FLOOR_RECOVERY_HINTS = Object.freeze({
   hub_unavailable: "自動再試行します。続く場合は設定を確認してください",
 });
 const JOIN_TOKEN_PROMPT = `参加トークン（${["JOIN", "SHARED", "TOKEN"].join("_")}）を入力してください`;
-
 function floorRecoveryHint(reason) {
   return FLOOR_RECOVERY_HINTS[reason] || "";
 }
@@ -56,6 +56,38 @@ async function requestJoinMeeting({ body, joinToken, fetchImpl, promptImpl, stor
   return requestWithJoinToken({
     path: "/join-meeting",
     init: { method: "POST", body },
+    joinToken, fetchImpl, promptImpl, storeToken,
+  });
+}
+
+async function requestLeaveMeeting({ sessionId, joinToken, fetchImpl, promptImpl, storeToken }) {
+  return requestWithJoinToken({
+    path: "/leave-meeting",
+    init: { method: "POST", body: new URLSearchParams({ sessionId: String(sessionId || "") }) },
+    joinToken, fetchImpl, promptImpl, storeToken,
+  });
+}
+
+async function requestDiscordJoin({ payload, joinToken, fetchImpl, promptImpl, storeToken }) {
+  return requestWithJoinToken({
+    path: "/api/discord/join",
+    init: {
+      method: "POST",
+      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+    joinToken, fetchImpl, promptImpl, storeToken,
+  });
+}
+
+async function requestDiscordLeave({ joinToken, fetchImpl, promptImpl, storeToken }) {
+  return requestWithJoinToken({
+    path: "/api/discord/leave",
+    init: {
+      method: "POST",
+      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      body: "{}",
+    },
     joinToken, fetchImpl, promptImpl, storeToken,
   });
 }
@@ -314,6 +346,9 @@ if (typeof module !== "undefined" && module.exports) module.exports = {
   requestFloorContinuation,
   requestJoinMeeting,
   requestWithJoinToken,
+  requestLeaveMeeting,
+  requestDiscordJoin,
+  requestDiscordLeave,
   floorRecoveryHint,
   settingsPortFromReadiness,
 };
@@ -946,10 +981,11 @@ if (typeof document !== "undefined") (function () {
 
     try {
       if (activeTransport === "discord") {
-        const res = await fetch("/api/discord/leave", {
-          method: "POST",
-          headers: { Accept: "application/json", "Content-Type": "application/json" },
-          body: "{}",
+        const res = await requestDiscordLeave({
+          joinToken: storedJoinToken() || pageJoinToken,
+          fetchImpl: fetch,
+          promptImpl: (message) => window.prompt(message),
+          storeToken: storeJoinToken,
         });
         const text = await res.text();
         if (res.ok) {
@@ -960,10 +996,13 @@ if (typeof document !== "undefined") (function () {
           setStatus("error", parseDiscordJoinErrorText(text, res.status));
         }
       } else {
-        const body = new URLSearchParams({
-          sessionId: activeSessionId || "",
+        const res = await requestLeaveMeeting({
+          sessionId: activeSessionId,
+          joinToken: storedJoinToken() || pageJoinToken,
+          fetchImpl: fetch,
+          promptImpl: (message) => window.prompt(message),
+          storeToken: storeJoinToken,
         });
-        const res = await fetch("/leave-meeting", { method: "POST", body });
         const text = await res.text();
 
         if (res.ok) {
@@ -1266,10 +1305,12 @@ if (typeof document !== "undefined") (function () {
           guildId: discordGuildIdEl.value,
           channelId: discordChannelIdEl.value,
         });
-        const response = await fetch("/api/discord/join", {
-          method: "POST",
-          headers: { Accept: "application/json", "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
+        const response = await requestDiscordJoin({
+          payload,
+          joinToken: storedJoinToken() || pageJoinToken,
+          fetchImpl: fetch,
+          promptImpl: (message) => window.prompt(message),
+          storeToken: storeJoinToken,
         });
         const text = await response.text();
         if (response.ok) {
