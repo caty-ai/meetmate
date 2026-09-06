@@ -13,6 +13,10 @@ function startupValue(name) {
   return typeof startup.dotenvSeeds[name] === "string" ? startup.dotenvSeeds[name].trim() : "";
 }
 
+function joinCredential() {
+  return startupValue("AI_MEET_JOIN_TOKEN") || startupValue("JOIN_SHARED_TOKEN");
+}
+
 function joinTimeoutMs() {
   const configured = Number(startupValue("AI_MEET_JOIN_TIMEOUT_MS"));
   return Number.isFinite(configured) && configured > 0 ? configured : 60_000;
@@ -69,7 +73,7 @@ function resultFor(response, path, includeStatus = false) {
   };
 }
 
-function createToolHandlers({ base = startupValue("AI_MEET_BASE_URL"), auth = startupValue("AI_MEET_JOIN_TOKEN") } = {}) {
+function createToolHandlers({ base = startupValue("AI_MEET_BASE_URL"), auth = joinCredential() } = {}) {
   const resolvedBase = normalizeBase(base);
   const authValue = auth || undefined;
   const guarded = (fn) => async (args) => {

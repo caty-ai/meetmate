@@ -144,7 +144,7 @@ A thin stdio MCP server lets LLM clients (Claude Code, other agents) control mee
 claude mcp add meetmate -- npx meetmate mcp
 ```
 
-Environment: `AI_MEET_BASE_URL` selects the Meetmate REST API to control (default `http://localhost:5005`); `AI_MEET_JOIN_TOKEN` is optional and forwarded as the `x-join-token` header and `joinToken` field; `AI_MEET_JOIN_TIMEOUT_MS` adjusts the `join_meeting` call budget (default 60000 ms — joins can take up to ~50 s server-side; the other tools time out at 15 s).
+Environment: `AI_MEET_BASE_URL` selects the Meetmate REST API to control (default `http://localhost:5005`); the MCP join credential is `AI_MEET_JOIN_TOKEN` if set, otherwise `JOIN_SHARED_TOKEN` (the value `meetmate init` generates), each read from the launch environment then the resolved-home `.env`, and is forwarded as the `x-join-token` header and `joinToken` field; `AI_MEET_JOIN_TIMEOUT_MS` adjusts the `join_meeting` call budget (default 60000 ms — joins can take up to ~50 s server-side; the other tools time out at 15 s). Since v8.16.x, `/join-meeting` rejects token-less requests with 401 whenever `JOIN_SHARED_TOKEN` is set, so an MCP process running with a different home must either point `AI_MEET_HOME` at the server's home, export `JOIN_SHARED_TOKEN` in its launch environment, or set `AI_MEET_JOIN_TOKEN` explicitly.
 
 | Tool | Action |
 |---|---|
