@@ -1,5 +1,6 @@
 "use strict";
 
+const { checkJoinAuthorization } = require("../join-auth");
 const { getDiagnosticValue } = require("../settings/resolver");
 const { scrubDiscordLogMessage } = require("./log-scrub");
 
@@ -46,17 +47,23 @@ function getDiscordLogSecret(getDiscordConfig) {
 }
 
 // Request parsing and the session command are caught separately: a parse failure is the caller's own
-// body (400 DISCORD_BAD_REQUEST with the parser's text), but an exception escaping joinSession /
+// body (400 DISCORD_BAD_REQUEST with a fixed message), but an exception escaping joinSession /
 // leaveSession may carry dependency or vendor text, so it never reaches the client — the response is
 // the fixed per-code message and the diagnostic goes to the operator log after credential scrubbing.
 async function handleSessionCommand(req, res, options, command, verb) {
   let body;
   try {
     body = await parseJsonRequestBody(req, options.bodyLimitBytes);
-  } catch (error) {
-    writeJsonResponse(res, 400, { ok: false, code: "DISCORD_BAD_REQUEST", message: error.message });
+  } catch {
+    writeJsonResponse(res, 400, { ok: false, code: "DISCORD_BAD_REQUEST", message: "Discord request body must be a JSON object" });
     return;
   }
+  if (!checkJoinAuthorization(req, body)) {
+    writeJsonResponse(res, 401, { ok: false, code: "DISCORD_UNAUTHORIZED", message: "Unauthorized: invalid join token" });
+    return;
+  }
+  delete body.joinToken;
+  delete body.token;
   try {
     const result = await command(body);
     writeJsonResponse(res, result.status || 200, result.body || { ok: true }, result.headers);

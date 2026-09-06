@@ -10,7 +10,88 @@ const DISCORD_ERROR_MESSAGES = Object.freeze({
   DISCORD_MUTEX_BUSY: "別の通話が動作中です",
   DISCORD_JOIN_FAILED: "Discord への参加に失敗しました",
   DISCORD_LEAVE_FAILED: "Discord からの退出に失敗しました",
+  DISCORD_UNAUTHORIZED: "参加トークンが無効です",
 });
+const FLOOR_RECOVERY_HINTS = Object.freeze({
+  auth_failed: "設定を確認してください",
+  hub_config_missing: "設定を確認してください",
+  plan_meeting_quota: "翌月まで待つか、プランをアップグレードしてください",
+  plan_agent_limit: "プランをアップグレードしてください",
+  plan_room_limit: "プランをアップグレードしてください",
+  room_expired: "会議へ入り直すと再開できます",
+  hub_unavailable: "自動再試行します。続く場合は設定を確認してください",
+});
+const JOIN_TOKEN_PROMPT = `参加トークン（${["JOIN", "SHARED", "TOKEN"].join("_")}）を入力してください`;
+
+function floorRecoveryHint(reason) {
+  return FLOOR_RECOVERY_HINTS[reason] || "";
+}
+
+async function requestWithJoinToken({ path, init, joinToken, fetchImpl, promptImpl, storeToken }) {
+  const send = (token) => {
+    const normalizedToken = typeof token === "string" ? token.trim() : "";
+    return fetchImpl(path, {
+      ...init,
+      ...(normalizedToken ? { headers: { ...init.headers, "x-join-token": normalizedToken } } : {}),
+    });
+  };
+
+  const response = await send(joinToken);
+  if (response.status !== 401) return response;
+
+  const promptedToken = String(promptImpl(JOIN_TOKEN_PROMPT) || "").trim();
+  if (!promptedToken) return response;
+  storeToken(promptedToken);
+  return send(promptedToken);
+}
+
+async function requestFloorContinuation({ sessionId, joinToken, fetchImpl, promptImpl, storeToken }) {
+  return requestWithJoinToken({
+    path: "/floor/continue-without-arbitration",
+    init: { method: "POST", body: new URLSearchParams({ sessionId: String(sessionId || "") }) },
+    joinToken, fetchImpl, promptImpl, storeToken,
+  });
+}
+
+async function requestJoinMeeting({ body, joinToken, fetchImpl, promptImpl, storeToken }) {
+  return requestWithJoinToken({
+    path: "/join-meeting",
+    init: { method: "POST", body },
+    joinToken, fetchImpl, promptImpl, storeToken,
+  });
+}
+
+async function requestLeaveMeeting({ sessionId, joinToken, fetchImpl, promptImpl, storeToken }) {
+  return requestWithJoinToken({
+    path: "/leave-meeting",
+    init: { method: "POST", body: new URLSearchParams({ sessionId: String(sessionId || "") }) },
+    joinToken, fetchImpl, promptImpl, storeToken,
+  });
+}
+
+async function requestDiscordJoin({ payload, joinToken, fetchImpl, promptImpl, storeToken }) {
+  return requestWithJoinToken({
+    path: "/api/discord/join",
+    init: {
+      method: "POST",
+      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+    joinToken, fetchImpl, promptImpl, storeToken,
+  });
+}
+
+async function requestDiscordLeave({ joinToken, fetchImpl, promptImpl, storeToken }) {
+  return requestWithJoinToken({
+    path: "/api/discord/leave",
+    init: {
+      method: "POST",
+      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      body: "{}",
+    },
+    joinToken, fetchImpl, promptImpl, storeToken,
+  });
+}
 
 function isDiscordSnowflake(value) {
   return DISCORD_SNOWFLAKE_RE.test(String(value || "").trim());
@@ -263,10 +344,24 @@ if (typeof module !== "undefined" && module.exports) module.exports = {
   parseDiscordJoinErrorText,
   parseJoinErrorText,
   readinessDisplayRows,
+  requestFloorContinuation,
+  requestJoinMeeting,
+  requestWithJoinToken,
+  requestLeaveMeeting,
+  requestDiscordJoin,
+  requestDiscordLeave,
+  floorRecoveryHint,
   settingsPortFromReadiness,
 };
 
 if (typeof document !== "undefined") (function () {
+  const pageJoinToken = new URLSearchParams(window.location.search).get("joinToken")?.trim() || "";
+  const storedJoinToken = () => {
+    try { return sessionStorage.getItem("meetmate.joinToken")?.trim() || ""; } catch { return ""; }
+  };
+  const storeJoinToken = (token) => {
+    try { sessionStorage.setItem("meetmate.joinToken", token); } catch { /* retry still uses the in-memory token */ }
+  };
   const root = document.documentElement;
   const form = document.getElementById("joinForm");
   const statusEl = document.getElementById("status");
@@ -287,8 +382,10 @@ if (typeof document !== "undefined") (function () {
   const activeStateEl = document.getElementById("activeState");
   const activeWsEl = document.getElementById("activeWs");
   const activeAgentsEl = document.getElementById("activeAgents");
+  const activeFloorEl = document.getElementById("activeFloor");
   const elapsedTimerEl = document.getElementById("elapsedTimer");
   const leaveBtn = document.getElementById("leaveBtn");
+  const continueWithoutFloorBtn = document.getElementById("continueWithoutFloorBtn");
   const agentInfoEl = document.getElementById("agentInfoDisplay");
   const calibrateLink = document.getElementById("calibrateLink");
   const modeBadge = document.getElementById("modeBadge");
@@ -698,11 +795,29 @@ if (typeof document !== "undefined") (function () {
     activeTransport = selectedTransport();
     activeSessionId = null;
     activeAgentsEl.textContent = "エージェント: -";
+    activeFloorEl.classList.add("is-hidden");
+    continueWithoutFloorBtn.classList.add("is-hidden");
     stopElapsedTimer();
     if (Date.now() < endedShownUntilMs) return;
     activeCard.classList.add("is-hidden");
     activeCard.classList.remove("ended");
     leaveBtn.classList.remove("is-hidden");
+  }
+
+  function renderFloorStatus(floor) {
+    if (!floor) {
+      activeFloorEl.classList.add("is-hidden");
+      continueWithoutFloorBtn.classList.add("is-hidden");
+      return;
+    }
+    const reason = floor.reason || "なし";
+    const hint = floorRecoveryHint(floor.reason);
+    activeFloorEl.textContent = `調停: ${floor.state || "unknown"} / 理由: ${reason}${hint ? ` / ${hint}` : ""}`;
+    activeFloorEl.classList.remove("is-hidden");
+    continueWithoutFloorBtn.classList.toggle(
+      "is-hidden",
+      floor.continueWithoutArbitration?.available !== true,
+    );
   }
 
   function renderMeetActiveBanner(session) {
@@ -712,7 +827,7 @@ if (typeof document !== "undefined") (function () {
     activeTransport = "meet";
     activeSessionId = session.sessionId;
     activeLabelEl.textContent = "通話中";
-    activeUrlEl.textContent = session.meetingUrl || "";
+    activeUrlEl.textContent = session.meetingUrl || "クラウド調停（会議 URL は非表示）";
     activeStateEl.textContent = stateLabel(session.state);
     activeWsEl.textContent = session.hasConnection ? "WS 接続 OK" : "WS 未接続";
     const fallbackName = availableAgents.length ? availableAgents[0].displayName : "エージェント";
@@ -720,6 +835,7 @@ if (typeof document !== "undefined") (function () {
       ? session.agentDisplayNames.join(", ")
       : fallbackName;
     activeAgentsEl.textContent = `エージェント: ${names}`;
+    renderFloorStatus(session.floor);
     activeCard.classList.remove("is-hidden", "ended");
     startElapsedTimer(startedAtMs);
     endedShownUntilMs = 0;
@@ -752,6 +868,7 @@ if (typeof document !== "undefined") (function () {
     activeStateEl.textContent = discordSessionLabel(session.state || session.lifecycle);
     activeWsEl.textContent = discordConnectionLine(status);
     activeAgentsEl.textContent = `Discord 状態: ${status?.ok === false ? "エラー" : "OK"} / 設定: ${status?.configured ? "完了" : "未完了"}`;
+    renderFloorStatus(null);
     activeCard.classList.remove("is-hidden", "ended");
     if (previousTransport !== "discord" || activeStartedAtMs === null) {
       startElapsedTimer(parseStartedAt(session.startedAt));
@@ -865,10 +982,11 @@ if (typeof document !== "undefined") (function () {
 
     try {
       if (activeTransport === "discord") {
-        const res = await fetch("/api/discord/leave", {
-          method: "POST",
-          headers: { Accept: "application/json", "Content-Type": "application/json" },
-          body: "{}",
+        const res = await requestDiscordLeave({
+          joinToken: storedJoinToken() || pageJoinToken,
+          fetchImpl: fetch,
+          promptImpl: (message) => window.prompt(message),
+          storeToken: storeJoinToken,
         });
         const text = await res.text();
         if (res.ok) {
@@ -879,10 +997,13 @@ if (typeof document !== "undefined") (function () {
           setStatus("error", parseDiscordJoinErrorText(text, res.status));
         }
       } else {
-        const body = new URLSearchParams({
-          sessionId: activeSessionId || "",
+        const res = await requestLeaveMeeting({
+          sessionId: activeSessionId,
+          joinToken: storedJoinToken() || pageJoinToken,
+          fetchImpl: fetch,
+          promptImpl: (message) => window.prompt(message),
+          storeToken: storeJoinToken,
         });
-        const res = await fetch("/leave-meeting", { method: "POST", body });
         const text = await res.text();
 
         if (res.ok) {
@@ -898,6 +1019,27 @@ if (typeof document !== "undefined") (function () {
       isLeaving = false;
       leaveBtn.disabled = false;
       leaveBtn.textContent = "退出する";
+    }
+  }
+
+  async function continueWithoutArbitration() {
+    continueWithoutFloorBtn.disabled = true;
+    try {
+      const response = await requestFloorContinuation({
+        sessionId: activeSessionId,
+        joinToken: storedJoinToken() || pageJoinToken,
+        fetchImpl: fetch,
+        promptImpl: (message) => window.prompt(message),
+        storeToken: storeJoinToken,
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload?.ok) throw new Error(payload?.error || `HTTP ${response.status}`);
+      renderFloorStatus(payload.floor);
+      setStatus("success", "調停なしで続行します");
+    } catch (error) {
+      setStatus("error", `調停の切り替えに失敗しました: ${error.message}`);
+    } finally {
+      continueWithoutFloorBtn.disabled = false;
     }
   }
 
@@ -1164,10 +1306,12 @@ if (typeof document !== "undefined") (function () {
           guildId: discordGuildIdEl.value,
           channelId: discordChannelIdEl.value,
         });
-        const response = await fetch("/api/discord/join", {
-          method: "POST",
-          headers: { Accept: "application/json", "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
+        const response = await requestDiscordJoin({
+          payload,
+          joinToken: storedJoinToken() || pageJoinToken,
+          fetchImpl: fetch,
+          promptImpl: (message) => window.prompt(message),
+          storeToken: storeJoinToken,
         });
         const text = await response.text();
         if (response.ok) {
@@ -1179,8 +1323,11 @@ if (typeof document !== "undefined") (function () {
           setStatus("error", parseDiscordJoinErrorText(text, response.status));
         }
       } else {
-        const response = await fetch("/join-meeting", {
-          method: "POST",
+        const response = await requestJoinMeeting({
+          joinToken: storedJoinToken() || pageJoinToken,
+          fetchImpl: fetch,
+          promptImpl: (message) => window.prompt(message),
+          storeToken: storeJoinToken,
           body: buildMeetJoinFormData({
             meetingUrl: extractedMeetingUrl,
             availableAgents,
@@ -1223,6 +1370,7 @@ if (typeof document !== "undefined") (function () {
     updateDiscordTargetStatus();
   });
   leaveBtn.addEventListener("click", leaveMeeting);
+  continueWithoutFloorBtn.addEventListener("click", continueWithoutArbitration);
   readinessRecheck.addEventListener("click", recheckReadiness);
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") {

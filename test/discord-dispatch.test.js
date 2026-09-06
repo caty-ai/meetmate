@@ -707,3 +707,116 @@ test("discord route failure logs scrub the configured bot token and tolerate mis
     console.error = originalConsoleError;
   }
 });
+
+
+test("#230 discord join/leave require the shared join token in addition to the loopback gate", async () => {
+  const previous = process.env.JOIN_SHARED_TOKEN;
+  process.env.JOIN_SHARED_TOKEN = "join-secret";
+  try {
+    const calls = [];
+    const handler = createHttpRoutes({
+      joinSession: async (body) => { calls.push(["join", body]); return { status: 200 }; },
+      leaveSession: async (body) => { calls.push(["leave", body]); return { status: 200 }; },
+    });
+    for (const verb of ["join", "leave"]) {
+      const requestOptions = { method: "POST", url: `/api/discord/${verb}` };
+      for (const headers of [{}, { "x-join-token": "wrong" }]) {
+        const before = calls.length;
+        const response = await runHttp(handler, createRequest({ ...requestOptions, headers }), "{}");
+        assert.equal(response.statusCode, 401);
+        assert.deepEqual(JSON.parse(response.body), {
+          ok: false, code: "DISCORD_UNAUTHORIZED", message: "Unauthorized: invalid join token",
+        });
+        assert.doesNotMatch(response.body, /join-secret/);
+        assert.equal(calls.length, before);
+      }
+      for (const [headers, body] of [
+        [{ "x-join-token": "join-secret" }, { guildId: "123", joinToken: "wrong", token: "wrong" }],
+        [{}, { guildId: "123", joinToken: "join-secret" }],
+        [{}, { guildId: "123", token: "join-secret" }],
+      ]) {
+        const before = calls.length;
+        const response = await runHttp(handler, createRequest({ ...requestOptions, headers }), JSON.stringify(body));
+        assert.equal(response.statusCode, 200);
+        assert.equal(calls.length, before + 1);
+        assert.deepEqual(calls.at(-1), [verb, { guildId: "123" }]);
+      }
+      const before = calls.length;
+      const remote = await runHttp(handler, createRequest({
+        ...requestOptions, remoteAddress: "203.0.113.8", headers: { "x-join-token": "join-secret" },
+      }), "{}");
+      assert.equal(remote.statusCode, 404);
+      assert.equal(remote.body, "Not Found");
+      assert.equal(calls.length, before);
+      // JSON parsing precedes authentication for local requests.
+      const malformed = await runHttp(handler, createRequest(requestOptions), "not-json");
+      assert.equal(malformed.statusCode, 400);
+      assert.equal(calls.length, before);
+    }
+    const status = await runHttp(handler, createRequest());
+    assert.equal(status.statusCode, 200);
+  } finally {
+    if (previous === undefined) delete process.env.JOIN_SHARED_TOKEN;
+    else process.env.JOIN_SHARED_TOKEN = previous;
+  }
+});
+
+test("#230 discord join/leave stay open when JOIN_SHARED_TOKEN is unset", async () => {
+  const previous = process.env.JOIN_SHARED_TOKEN;
+  delete process.env.JOIN_SHARED_TOKEN;
+  try {
+    const calls = [];
+    const handler = createHttpRoutes({
+      joinSession: async (body) => { calls.push(["join", body]); return { status: 200 }; },
+      leaveSession: async (body) => { calls.push(["leave", body]); return { status: 200 }; },
+    });
+    for (const verb of ["join", "leave"]) {
+      const response = await runHttp(handler, createRequest({ method: "POST", url: `/api/discord/${verb}` }), "{}");
+      assert.equal(response.statusCode, 200);
+    }
+    assert.deepEqual(calls, [["join", {}], ["leave", {}]]);
+  } finally {
+    if (previous === undefined) delete process.env.JOIN_SHARED_TOKEN;
+    else process.env.JOIN_SHARED_TOKEN = previous;
+  }
+});
+
+
+test("#230 discord join rejects every request when JOIN_SHARED_TOKEN is whitespace-only", { concurrency: false }, async () => {
+  const previous = process.env.JOIN_SHARED_TOKEN;
+  process.env.JOIN_SHARED_TOKEN = "   ";
+  try {
+    const calls = [];
+    const handler = createHttpRoutes({
+      joinSession: async (body) => { calls.push(body); return { status: 200 }; },
+    });
+    for (const headers of [{}, { "x-join-token": "   " }, { "x-join-token": "join-secret" }]) {
+      const response = await runHttp(handler, createRequest({ method: "POST", url: "/api/discord/join", headers }), "{}");
+      assert.equal(response.statusCode, 401);
+      assert.equal(calls.length, 0);
+    }
+  } finally {
+    if (previous === undefined) delete process.env.JOIN_SHARED_TOKEN;
+    else process.env.JOIN_SHARED_TOKEN = previous;
+  }
+});
+
+test("#230 discord parse errors never echo the malformed body", { concurrency: false }, async () => {
+  const previous = process.env.JOIN_SHARED_TOKEN;
+  process.env.JOIN_SHARED_TOKEN = "join-secret";
+  try {
+    const calls = [];
+    const handler = createHttpRoutes({
+      joinSession: async (body) => { calls.push(body); return { status: 200 }; },
+    });
+    const response = await runHttp(handler, createRequest({ method: "POST", url: "/api/discord/join" }), '{"token":join-secret}');
+    assert.equal(response.statusCode, 400);
+    assert.equal(JSON.parse(response.body).code, "DISCORD_BAD_REQUEST");
+    assert.equal(JSON.parse(response.body).message, "Discord request body must be a JSON object");
+    assert.doesNotMatch(response.body, /join-secret/);
+    assert.equal(calls.length, 0);
+  } finally {
+    if (previous === undefined) delete process.env.JOIN_SHARED_TOKEN;
+    else process.env.JOIN_SHARED_TOKEN = previous;
+  }
+});
