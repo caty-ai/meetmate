@@ -655,7 +655,7 @@ test("#215 join without token passes when JOIN_SHARED_TOKEN is unset", { concurr
 });
 
 
-test("#230 leave without any token returns 401 when JOIN_SHARED_TOKEN is set", async (t) => {
+test("#230 leave without any token returns 401 when JOIN_SHARED_TOKEN is set", { concurrency: false }, async (t) => {
   const routes = await initializeConnectedRoutes(t, { joinToken: "join-secret" });
   const response = await invoke(routes, "POST", "/leave-meeting", {});
   assert.equal(response.status, 401);
@@ -664,19 +664,20 @@ test("#230 leave without any token returns 401 when JOIN_SHARED_TOKEN is set", a
   assert.notEqual(response.text, "アクティブなセッションがありません。");
 });
 
-test("#230 leave with a wrong header token returns 401", async (t) => {
+test("#230 leave with a wrong header token returns 401", { concurrency: false }, async (t) => {
   const routes = await initializeConnectedRoutes(t, { joinToken: "join-secret" });
-  const response = await invoke(routes, "POST", "/leave-meeting", {}, undefined, { "x-join-token": "wrong" });
-  assert.equal(response.status, 401);
+  for (const token of ["wrong", "join-secret, wrong"]) {
+    const response = await invoke(routes, "POST", "/leave-meeting", {}, undefined, { "x-join-token": token });
+    assert.equal(response.status, 401);
+  }
 });
 
-test("#230 leave accepts the token from header and from body field", async (t) => {
+test("#230 leave accepts the token from header and from body field", { concurrency: false }, async (t) => {
   const routes = await initializeConnectedRoutes(t, { joinToken: "join-secret" });
   for (const [form, headers] of [
     [{}, { "x-join-token": "join-secret" }],
     [{ joinToken: " join-secret " }, {}],
     [{ token: "join-secret" }, {}],
-    [{}, { "x-join-token": [" join-secret ", "wrong"] }],
   ]) {
     const response = await invoke(routes, "POST", "/leave-meeting", form, undefined, headers);
     assert.equal(response.status, 404);
@@ -684,8 +685,17 @@ test("#230 leave accepts the token from header and from body field", async (t) =
   }
 });
 
-test("#230 leave without token passes when JOIN_SHARED_TOKEN is unset", async (t) => {
+test("#230 leave without token passes when JOIN_SHARED_TOKEN is unset", { concurrency: false }, async (t) => {
   const routes = await initializeConnectedRoutes(t, { joinToken: undefined });
   const response = await invoke(routes, "POST", "/leave-meeting", {});
   assert.equal(response.status, 404);
+});
+
+
+test("#230 leave rejects every request when JOIN_SHARED_TOKEN is whitespace-only", { concurrency: false }, async (t) => {
+  const routes = await initializeConnectedRoutes(t, { joinToken: "   " });
+  for (const headers of [{}, { "x-join-token": "   " }, { "x-join-token": "join-secret" }]) {
+    const response = await invoke(routes, "POST", "/leave-meeting", {}, undefined, headers);
+    assert.equal(response.status, 401);
+  }
 });

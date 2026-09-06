@@ -5,7 +5,7 @@ function toSafeString(value) {
 }
 
 function checkJoinAuthorization(req, formData) {
-  const sharedToken = (process.env.JOIN_SHARED_TOKEN || "").trim();
+  const sharedToken = process.env.JOIN_SHARED_TOKEN || "";
   if (!sharedToken) return true;
 
   const headerToken = req.headers?.["x-join-token"];

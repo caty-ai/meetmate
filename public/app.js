@@ -22,6 +22,7 @@ const FLOOR_RECOVERY_HINTS = Object.freeze({
   hub_unavailable: "自動再試行します。続く場合は設定を確認してください",
 });
 const JOIN_TOKEN_PROMPT = `参加トークン（${["JOIN", "SHARED", "TOKEN"].join("_")}）を入力してください`;
+
 function floorRecoveryHint(reason) {
   return FLOOR_RECOVERY_HINTS[reason] || "";
 }

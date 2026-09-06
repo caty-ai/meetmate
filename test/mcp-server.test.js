@@ -181,7 +181,7 @@ test("leaveMeeting sends the sessionId only when provided", async () => {
 
 test("#230 leaveMeeting forwards the join credential header", async () => {
   const seen = [];
-  const credential = "test-leave-value";
+  const credential = "leave-cred";
   await withServer(async (request, response) => {
     seen.push({ token: request.headers["x-join-token"], body: await readBody(request) });
     response.end("ok");

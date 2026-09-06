@@ -780,3 +780,43 @@ test("#230 discord join/leave stay open when JOIN_SHARED_TOKEN is unset", async 
     else process.env.JOIN_SHARED_TOKEN = previous;
   }
 });
+
+
+test("#230 discord join rejects every request when JOIN_SHARED_TOKEN is whitespace-only", { concurrency: false }, async () => {
+  const previous = process.env.JOIN_SHARED_TOKEN;
+  process.env.JOIN_SHARED_TOKEN = "   ";
+  try {
+    const calls = [];
+    const handler = createHttpRoutes({
+      joinSession: async (body) => { calls.push(body); return { status: 200 }; },
+    });
+    for (const headers of [{}, { "x-join-token": "   " }, { "x-join-token": "join-secret" }]) {
+      const response = await runHttp(handler, createRequest({ method: "POST", url: "/api/discord/join", headers }), "{}");
+      assert.equal(response.statusCode, 401);
+      assert.equal(calls.length, 0);
+    }
+  } finally {
+    if (previous === undefined) delete process.env.JOIN_SHARED_TOKEN;
+    else process.env.JOIN_SHARED_TOKEN = previous;
+  }
+});
+
+test("#230 discord parse errors never echo the malformed body", { concurrency: false }, async () => {
+  const previous = process.env.JOIN_SHARED_TOKEN;
+  process.env.JOIN_SHARED_TOKEN = "join-secret";
+  try {
+    const calls = [];
+    const handler = createHttpRoutes({
+      joinSession: async (body) => { calls.push(body); return { status: 200 }; },
+    });
+    const response = await runHttp(handler, createRequest({ method: "POST", url: "/api/discord/join" }), '{"token":join-secret}');
+    assert.equal(response.statusCode, 400);
+    assert.equal(JSON.parse(response.body).code, "DISCORD_BAD_REQUEST");
+    assert.equal(JSON.parse(response.body).message, "Discord request body must be a JSON object");
+    assert.doesNotMatch(response.body, /join-secret/);
+    assert.equal(calls.length, 0);
+  } finally {
+    if (previous === undefined) delete process.env.JOIN_SHARED_TOKEN;
+    else process.env.JOIN_SHARED_TOKEN = previous;
+  }
+});
