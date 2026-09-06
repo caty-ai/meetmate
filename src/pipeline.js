@@ -3273,6 +3273,22 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       mutedLogPosted = false;
       return api.floorStatus();
     },
+    /**
+     * Explicit operator/gateway-initiated speech. Passes the muted-degraded gate
+     * (contract 04 §4 carve-out) without changing mute state; every other
+     * (automatic) speech path stays suppressed while muted. No production entry
+     * calls this yet — see #216 (option C) — transports/MCP may wire it later.
+     * Returns true when accepted and dispatched to the speech path; false when
+     * rejected (empty/whitespace text, pipeline closed, or signal already aborted).
+     * Callers that need audibility should observe the audio sink / `signal`.
+     */
+    async speakManual(text, signal = null) {
+      if (signal?.aborted) return false;
+      const body = String(text ?? "").trim();
+      if (!body || stopped) return false;
+      await speakSentence(body, signal, { manual: true, cacheable: false });
+      return true;
+    },
     getSessionUsers() {
       return {
         parent: agentState.sessionUser,
