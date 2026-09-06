@@ -309,3 +309,63 @@ test("#215 dashboard join reuses the join-token credential path", async () => {
     });
   }
 });
+
+test("#230 dashboard leave and discord join/leave reuse the join-token credential path", async () => {
+  const { requestLeaveMeeting, requestDiscordJoin, requestDiscordLeave, parseDiscordJoinErrorText } = require("../public/app.js");
+  const payload = { guildId: "123", channelId: "456" };
+  const jsonHeaders = { Accept: "application/json", "Content-Type": "application/json" };
+  const helpers = [
+    { request: requestLeaveMeeting, path: "/leave-meeting", args: { sessionId: "session-abc" } },
+    { request: requestDiscordJoin, path: "/api/discord/join", args: { payload }, headers: jsonHeaders, body: JSON.stringify(payload) },
+    { request: requestDiscordLeave, path: "/api/discord/leave", args: {}, headers: jsonHeaders, body: "{}" },
+  ];
+  const cases = [
+    { statuses: [200], expectedTokens: [undefined], prompts: 0, stored: [] },
+    { statuses: [401, 200], prompted: "  operator-token  ", expectedTokens: [undefined, "operator-token"], prompts: 1, stored: ["operator-token"] },
+    { joinToken: " stale-token ", statuses: [401, 401], prompted: "operator-token", expectedTokens: ["stale-token", "operator-token"], prompts: 1, stored: ["operator-token"] },
+    { statuses: [401], prompted: "  ", expectedTokens: [undefined], prompts: 1, stored: [] },
+    { statuses: [401], prompted: null, expectedTokens: [undefined], prompts: 1, stored: [] },
+    { joinToken: " operator-token ", statuses: [200], expectedTokens: ["operator-token"], prompts: 0, stored: [] },
+  ];
+  for (const helper of helpers) {
+    for (const scenario of cases) {
+      const responses = scenario.statuses.map((status) => ({ status }));
+      const requests = [];
+      const stored = [];
+      let prompts = 0;
+      const response = await helper.request({
+        ...helper.args,
+        joinToken: scenario.joinToken,
+        fetchImpl: async (url, init) => {
+          requests.push({ url, init });
+          return responses[requests.length - 1];
+        },
+        promptImpl: (message) => {
+          assert.equal(message, "参加トークン（JOIN_SHARED_TOKEN）を入力してください");
+          prompts += 1;
+          return scenario.prompted;
+        },
+        storeToken: (token) => stored.push(token),
+      });
+      assert.equal(response, responses.at(-1));
+      assert.equal(prompts, scenario.prompts);
+      assert.deepEqual(stored, scenario.stored);
+      assert.equal(requests.length, scenario.statuses.length);
+      requests.forEach(({ url, init }, index) => {
+        assert.equal(url, helper.path);
+        assert.equal(init.method, "POST");
+        if (helper.body !== undefined) {
+          assert.equal(init.body, helper.body);
+          assert.equal(Object.hasOwn(JSON.parse(init.body), "joinToken"), false);
+          assert.equal(Object.hasOwn(JSON.parse(init.body), "token"), false);
+        } else {
+          assert.ok(init.body instanceof URLSearchParams);
+          assert.deepEqual([...init.body.entries()], [["sessionId", "session-abc"]]);
+        }
+        const token = scenario.expectedTokens[index];
+        assert.deepEqual(init.headers, token ? { ...helper.headers, "x-join-token": token } : helper.headers);
+      });
+    }
+  }
+  assert.equal(parseDiscordJoinErrorText(JSON.stringify({ ok: false, code: "DISCORD_UNAUTHORIZED" }), 401), "参加トークンが無効です");
+});

@@ -53,7 +53,7 @@ const ATTENDEE_API_BASE_URL = getEffectiveValue("attendee_base_url");
 const SESSION_GRACE_CLOSE_MS = Number(process.env.SESSION_GRACE_CLOSE_MS || 15_000);
 const ECHO_LOOP_COOLDOWN_MS = Number(process.env.ECHO_LOOP_COOLDOWN_MS || 300);
 const ECHO_GATE_CLOSED_BYPASS = String(process.env.ECHO_GATE_CLOSED_BYPASS || "false").toLowerCase() === "true";
-const JOIN_SHARED_TOKEN = process.env.JOIN_SHARED_TOKEN || "";
+const { checkJoinAuthorization } = require("../join-auth");
 const WS_SHARED_TOKEN = process.env.WS_SHARED_TOKEN || "";
 const LOCAL_AVATAR_EXPERIMENT = "hybrid-local-l0";
 const LOCAL_AVATAR_FRAMES_EXPERIMENT = "hybrid-local-frames";
@@ -410,15 +410,6 @@ function buildWsUrlWithSession(baseWsUrl, sessionId) {
     u.searchParams.set("token", WS_SHARED_TOKEN);
   }
   return u.toString();
-}
-
-function checkJoinAuthorization(req, formData) {
-  if (!JOIN_SHARED_TOKEN) return true;
-
-  const headerToken = req.headers["x-join-token"];
-  const bodyToken = formData.joinToken || formData.token;
-  const candidate = toSafeString(Array.isArray(headerToken) ? headerToken[0] : headerToken) || toSafeString(bodyToken);
-  return candidate && candidate === JOIN_SHARED_TOKEN;
 }
 
 function parseRequestBody(req) {
@@ -1115,6 +1106,10 @@ async function handleHttp(req, res) {
   if (req.method === "POST" && url.pathname === "/leave-meeting") {
     try {
       const formData = await parseRequestBody(req);
+      if (!checkJoinAuthorization(req, formData)) {
+        writePlainResponse(res, 401, "Unauthorized: invalid join token");
+        return;
+      }
       const targetSid = toSafeString(formData.sessionId);
 
       if (!targetSid || !meetingSessions.has(targetSid)) {

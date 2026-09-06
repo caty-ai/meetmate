@@ -118,11 +118,13 @@ function createToolHandlers({ base = startupValue("AI_MEET_BASE_URL"), auth = jo
 
     leaveMeeting: guarded(async ({ sessionId } = {}) => {
       const body = sessionId ? new URLSearchParams({ sessionId }).toString() : "";
+      const headers = { "content-type": "application/x-www-form-urlencoded" };
+      if (authValue) headers["x-join-token"] = authValue;
       return resultFor(await callApi({
         method: "POST",
         path: "/leave-meeting",
         base: resolvedBase,
-        headers: { "content-type": "application/x-www-form-urlencoded" },
+        headers,
         body,
       }), "/leave-meeting");
     }),
