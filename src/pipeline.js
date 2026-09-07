@@ -1713,7 +1713,23 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   }
 
   // ── STT ──────────────────────────────────────────────────────────
-  const sttExtraKeyterms = [...(agentProfile.keyterms || []), ...(agentProfile.wakeWords || [])];
+  // Soniox documents roughly 10,000 characters for the entire context object.
+  // Reserve headroom for provider terms; own terms are never dropped.
+  const SONIOX_CONTEXT_TERMS_MAX_CHARS = 8000;
+  const sttOwnKeyterms = [...(agentProfile.keyterms || []), ...(agentProfile.wakeWords || [])];
+
+  function resolveSttKeyterms() {
+    if (!floorClient) return sttOwnKeyterms.slice();
+    const terms = [...new Set(sttOwnKeyterms)];
+    let chars = terms.reduce((total, term) => total + term.length, 0);
+    for (const term of new Set(floorClient.peerContextTerms?.() || [])) {
+      if (terms.includes(term)) continue;
+      if (chars + term.length > SONIOX_CONTEXT_TERMS_MAX_CHARS) break;
+      terms.push(term);
+      chars += term.length;
+    }
+    return terms;
+  }
 
   const stt = createSTT(dgKey, {
     provider: config.stt.provider,
@@ -1723,11 +1739,21 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     sampleRate: config.stt.sampleRate,
     endpointingMs: config.stt.endpointingMs,
     utteranceEndMs: config.stt.utteranceEndMs,
-    keyterms: sttExtraKeyterms,
+    keyterms: floorClient ? resolveSttKeyterms : sttOwnKeyterms,
     soniox: config.stt.soniox,
   });
   const mixedSpeakerState = { current: null };
   const speakerSlots = new Map();
+  function refreshSttContextTerms() {
+    for (const stream of [stt, ...[...speakerSlots.values()].map((slot) => slot.stt)]) {
+      try {
+        stream?.refreshContext?.();
+      } catch (error) {
+        console.warn("⚠️  STT context refresh failed:", scrubErrorMessage(error, gatewayToken, hubAuthToken));
+      }
+    }
+  }
+  floorClient?.on?.("members", refreshSttContextTerms);
   const mixedWindowFrames = new Map();
   const mixedWindowSamples = Math.max(1, Math.round((config.stt.sampleRate || 16_000) * MIXED_STT_WINDOW_MS / 1000));
   let mixedWindowAnchorMs = null;
@@ -1745,7 +1771,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       sampleRate: config.stt.sampleRate,
       endpointingMs: config.stt.endpointingMs,
       utteranceEndMs: config.stt.utteranceEndMs,
-      keyterms: sttExtraKeyterms,
+      keyterms: floorClient ? resolveSttKeyterms : sttOwnKeyterms,
       soniox: config.stt.soniox,
     });
   }
@@ -3302,6 +3328,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   };
   if (options._testExposeInternals) {
     api._test = {
+      resolveSttKeyterms,
       handleUtteranceEnd,
       processUserInput,
       sendGreeting,

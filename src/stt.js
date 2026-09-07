@@ -21,6 +21,7 @@ function buildKeyterms(extraKeyterms = []) {
 
   const extraTerms = [];
 
+  if (typeof extraKeyterms === "function") extraKeyterms = extraKeyterms();
   const dynamicTerms = Array.isArray(extraKeyterms)
     ? extraKeyterms.map((w) => String(w || "").trim()).filter(Boolean)
     : [];
@@ -79,6 +80,7 @@ function createSTT(dgKey, options = {}) {
   let opened = false;
   let closedByUser = false;
   let retriedWithoutKeywords = false;
+  const keyterms = buildKeyterms(options.keyterms || []);
 
   function connect({ withKeywords = true } = {}) {
     if (closedByUser) return;
@@ -96,7 +98,6 @@ function createSTT(dgKey, options = {}) {
       vad_events: true,
     };
 
-    const keyterms = buildKeyterms(options.keyterms || []);
     const wakeKeywords = buildWakeKeywords(keyterms);
     const isNova3 = model.includes("nova-3");
 

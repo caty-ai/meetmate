@@ -32,7 +32,9 @@ function createSTT(deepgramKey, options = {}) {
       language: options.language,
       sampleRate: options.sampleRate,
       // Merge dynamic wake/agent keyterms with config-defined context terms.
-      keyterms: [...(options.keyterms || []), ...(sx.contextTerms || [])],
+      keyterms: typeof options.keyterms === "function"
+        ? () => [...options.keyterms(), ...(sx.contextTerms || [])]
+        : [...(options.keyterms || []), ...(sx.contextTerms || [])],
       endpointSensitivity: sx.endpointSensitivity,
       maxEndpointDelayMs: sx.maxEndpointDelayMs,
       endpointLatencyLevel: sx.endpointLatencyLevel,

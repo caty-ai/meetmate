@@ -96,12 +96,18 @@ function createSonioxSTT(apiKey, options = {}) {
   let reconnectAttempt = 0;
   let pendingDropCount = 0;
   let finalCloseEmitted = false;
+  let contextReconnect = false;
   const pending = []; // audio buffered until the socket is open
 
   const buildKeyterms = options._buildKeyterms || require("./stt").buildKeyterms;
-  const keyterms = buildKeyterms(options.keyterms || []);
+  function resolveKeyterms() {
+    return buildKeyterms(typeof options.keyterms === "function"
+      ? options.keyterms() : (options.keyterms || [])).slice();
+  }
+  let keyterms = resolveKeyterms();
 
   function buildConfig() {
+    keyterms = resolveKeyterms();
     const config = {
       api_key: apiKey,
       model,
@@ -331,6 +337,17 @@ function createSonioxSTT(apiKey, options = {}) {
         return;
       }
 
+      if (contextReconnect) {
+        contextReconnect = false;
+        flushAccumulatedBeforeReconnect();
+        clearReconnectTimer();
+        reconnectTimer = setTimeout(() => {
+          reconnectTimer = null;
+          connect();
+        }, 0);
+        return;
+      }
+
       flushAccumulatedBeforeReconnect();
       scheduleReconnect();
     });
@@ -360,6 +377,31 @@ function createSonioxSTT(apiKey, options = {}) {
     } catch (err) {
       console.error("❌  STT(Soniox) send error:", scrubErrorMessage(err, apiKey));
     }
+  };
+
+  emitter.refreshContext = function () {
+    if (closedByUser) return false;
+    const next = resolveKeyterms();
+    if (next.length === keyterms.length && next.every((term, index) => term === keyterms[index])) return false;
+    if (!opened || contextReconnect) return true;
+    const added = next.filter((term) => !keyterms.includes(term)).length;
+    const removed = keyterms.filter((term) => !next.includes(term)).length;
+    console.log(`🔁  STT(Soniox): 文脈語の更新で再接続します (+${added}/-${removed} terms)`);
+    contextReconnect = true;
+    opened = false;
+    clearKeepAlive();
+    flushAccumulatedBeforeReconnect();
+    try {
+      if (ws?.readyState === WebSocketCtor.OPEN) ws.send("");
+    } catch {
+      // The socket close handler owns recovery.
+    }
+    try {
+      ws?.close();
+    } catch {
+      // The socket close handler owns recovery.
+    }
+    return true;
   };
 
   emitter.close = function () {

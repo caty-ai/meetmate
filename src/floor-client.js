@@ -233,6 +233,7 @@ class FloorClient extends EventEmitter {
       case "member_joined":
         this.members = [...this.members.filter((member) => member.memberId !== message.memberId), {
           memberId: message.memberId,
+          agentId: message.agentId,
           displayName: message.displayName,
           wakeWords: Array.isArray(message.wakeWords) ? message.wakeWords.slice() : [],
           sttWakeVariants: Array.isArray(message.sttWakeVariants) ? message.sttWakeVariants.slice() : [],
@@ -272,6 +273,17 @@ class FloorClient extends EventEmitter {
       default:
         this.emit("message", message);
     }
+  }
+
+  peerContextTerms() {
+    const terms = this.members
+      .filter((member) => member.memberId !== this.memberId
+        && !(member.agentId != null && member.agentId === this.agentId))
+      .flatMap((member) => [...(member.wakeWords || []), ...(member.sttWakeVariants || [])])
+      .filter((term) => typeof term === "string")
+      .map((term) => term.trim())
+      .filter(Boolean);
+    return [...new Set(terms)];
   }
 
   handleWelcome(message) {
