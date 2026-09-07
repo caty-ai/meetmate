@@ -80,10 +80,10 @@ function createSTT(dgKey, options = {}) {
   let opened = false;
   let closedByUser = false;
   let retriedWithoutKeywords = false;
-  const keyterms = buildKeyterms(options.keyterms || []);
 
   function connect({ withKeywords = true } = {}) {
     if (closedByUser) return;
+    const keyterms = buildKeyterms(options.keyterms || []);
 
     const baseOptions = {
       model,

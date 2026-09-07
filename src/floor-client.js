@@ -279,7 +279,8 @@ class FloorClient extends EventEmitter {
     const terms = this.members
       .filter((member) => member.memberId !== this.memberId
         && !(member.agentId != null && member.agentId === this.agentId))
-      .flatMap((member) => [...(member.wakeWords || []), ...(member.sttWakeVariants || [])])
+      .flatMap((member) => [...(Array.isArray(member.wakeWords) ? member.wakeWords : []),
+        ...(Array.isArray(member.sttWakeVariants) ? member.sttWakeVariants : [])])
       .filter((term) => typeof term === "string")
       .map((term) => term.trim())
       .filter(Boolean);
@@ -295,6 +296,8 @@ class FloorClient extends EventEmitter {
     this.connectionEpoch = message.connectionEpoch;
     this.members = Array.isArray(message.members) ? message.members.map((member) => ({
       ...member,
+      agentId: member.agentId,
+      sttWakeVariants: Array.isArray(member.sttWakeVariants) ? member.sttWakeVariants.slice() : [],
       wakeWords: Array.isArray(member.wakeWords) ? member.wakeWords.slice() : [],
     })) : [];
     this.hasBeenReady = true;
@@ -319,6 +322,7 @@ class FloorClient extends EventEmitter {
     };
     this.onReady(ready);
     this.emit("ready", ready);
+    this.emit("members", this.members.slice());
   }
 
   reportWake(hits, options = {}) {

@@ -97,17 +97,30 @@ function createSonioxSTT(apiKey, options = {}) {
   let pendingDropCount = 0;
   let finalCloseEmitted = false;
   let contextReconnect = false;
+  let contextRefreshPending = false;
+  let contextRefreshTimer = null;
+  let contextCloseTimer = null;
+  const contextDebounceMs = positiveInt(options._contextDebounceMs, 300);
+  const contextCloseTimeoutMs = positiveInt(options._contextCloseTimeoutMs, 3000);
   const pending = []; // audio buffered until the socket is open
 
   const buildKeyterms = options._buildKeyterms || require("./stt").buildKeyterms;
+  let keyterms = [];
   function resolveKeyterms() {
-    return buildKeyterms(typeof options.keyterms === "function"
-      ? options.keyterms() : (options.keyterms || [])).slice();
+    let terms = options.keyterms || [];
+    if (typeof terms === "function") {
+      try {
+        terms = terms();
+      } catch (err) {
+        console.warn("⚠️  STT(Soniox): 文脈語の解決に失敗・直前の語を使います:", scrubErrorMessage(err, apiKey));
+        return keyterms.slice();
+      }
+    }
+    return buildKeyterms(terms).slice();
   }
-  let keyterms = resolveKeyterms();
 
   function buildConfig() {
-    keyterms = resolveKeyterms();
+    const nextKeyterms = resolveKeyterms();
     const config = {
       api_key: apiKey,
       model,
@@ -117,9 +130,9 @@ function createSonioxSTT(apiKey, options = {}) {
       language_hints: [language],
       enable_endpoint_detection: true,
     };
-    if (keyterms.length > 0) {
+    if (nextKeyterms.length > 0) {
       // Soniox "context.terms" is the equivalent of Deepgram keyterms.
-      config.context = { terms: keyterms };
+      config.context = { terms: nextKeyterms };
     }
     // Optional endpoint tuning (resolved from config.js / env in #51).
     if (endpointSensitivity !== null) {
@@ -131,6 +144,7 @@ function createSonioxSTT(apiKey, options = {}) {
     if (endpointLatencyLevel !== null) {
       config.endpoint_latency_adjustment_level = endpointLatencyLevel;
     }
+    keyterms = nextKeyterms;
     return config;
   }
 
@@ -146,6 +160,14 @@ function createSonioxSTT(apiKey, options = {}) {
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
     }
+  }
+
+  function clearContextTimers() {
+    clearTimeout(contextRefreshTimer);
+    contextRefreshTimer = null;
+    contextRefreshPending = false;
+    clearTimeout(contextCloseTimer);
+    contextCloseTimer = null;
   }
 
   function startKeepAlive(socket) {
@@ -274,6 +296,7 @@ function createSonioxSTT(apiKey, options = {}) {
         emitter.emit("utterance_end", utterance);
       }
     }
+    if (contextRefreshPending && !contextRefreshTimer) reconnectForContext();
   }
 
   function connect() {
@@ -289,6 +312,7 @@ function createSonioxSTT(apiKey, options = {}) {
         socket.send(JSON.stringify(buildConfig()));
       } catch (err) {
         emitter.emit("error", err);
+        try { socket.close(); } catch {}
         return;
       }
 
@@ -326,6 +350,7 @@ function createSonioxSTT(apiKey, options = {}) {
     socket.on("close", () => {
       if (socket !== ws) return;
       clearKeepAlive();
+      clearContextTimers();
       opened = false;
 
       if (closedByUser) {
@@ -379,33 +404,61 @@ function createSonioxSTT(apiKey, options = {}) {
     }
   };
 
-  emitter.refreshContext = function () {
-    if (closedByUser) return false;
+  function sameKeyterms(next) {
+    return next.length === keyterms.length && next.every((term, index) => term === keyterms[index]);
+  }
+
+  function reconnectForContext() {
+    if (closedByUser || !contextRefreshPending || !opened || contextReconnect || accumulated.trim()) return;
     const next = resolveKeyterms();
-    if (next.length === keyterms.length && next.every((term, index) => term === keyterms[index])) return false;
-    if (!opened || contextReconnect) return true;
+    contextRefreshPending = false;
+    if (sameKeyterms(next)) return;
     const added = next.filter((term) => !keyterms.includes(term)).length;
     const removed = keyterms.filter((term) => !next.includes(term)).length;
     console.log(`🔁  STT(Soniox): 文脈語の更新で再接続します (+${added}/-${removed} terms)`);
     contextReconnect = true;
     opened = false;
     clearKeepAlive();
-    flushAccumulatedBeforeReconnect();
+    const socket = ws;
+    contextCloseTimer = setTimeout(() => {
+      contextCloseTimer = null;
+      if (socket === ws && contextReconnect) {
+        try {
+          if (typeof socket.terminate === "function") socket.terminate?.();
+          else socket.close();
+        } catch {}
+      }
+    }, contextCloseTimeoutMs);
     try {
-      if (ws?.readyState === WebSocketCtor.OPEN) ws.send("");
+      if (socket.readyState === WebSocketCtor.OPEN) socket.send("");
     } catch {
       // The socket close handler owns recovery.
     }
     try {
-      ws?.close();
+      socket.close();
     } catch {
-      // The socket close handler owns recovery.
+      // The watchdog terminates a socket that cannot close gracefully.
     }
+  }
+
+  emitter.refreshContext = function () {
+    if (closedByUser) return false;
+    const next = resolveKeyterms();
+    clearTimeout(contextRefreshTimer);
+    contextRefreshTimer = null;
+    contextRefreshPending = !sameKeyterms(next);
+    if (!contextRefreshPending) return false;
+    if (!opened || contextReconnect) return true;
+    contextRefreshTimer = setTimeout(() => {
+      contextRefreshTimer = null;
+      reconnectForContext();
+    }, contextDebounceMs);
     return true;
   };
 
   emitter.close = function () {
     closedByUser = true;
+    clearContextTimers();
     clearKeepAlive();
     clearReconnectTimer();
     accumulated = "";

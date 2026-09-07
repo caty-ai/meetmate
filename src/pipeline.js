@@ -1715,6 +1715,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   // ── STT ──────────────────────────────────────────────────────────
   // Soniox documents roughly 10,000 characters for the entire context object.
   // Reserve headroom for provider terms; own terms are never dropped.
+  // Budget covers own + peer terms only; downstream agent_wake_words / soniox.contextTerms use ~2,000 chars of headroom.
   const SONIOX_CONTEXT_TERMS_MAX_CHARS = 8000;
   const sttOwnKeyterms = [...(agentProfile.keyterms || []), ...(agentProfile.wakeWords || [])];
 
@@ -3272,6 +3273,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       clearMixedWindowFlushTimer();
       mixedWindowFrames.clear();
       for (const slot of [...speakerSlots.values()]) closeSpeakerSlot(slot);
+      floorClient?.off?.("members", refreshSttContextTerms);
       stt.close();
     },
     handleGatewaySubagentSpawn,
