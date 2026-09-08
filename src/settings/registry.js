@@ -174,6 +174,7 @@ const SETTINGS_REGISTRY = Object.freeze([
   d("openai_compatible_tts_base_url", "tts.openaiCompatibleTts.baseUrl", exactUrl(["http:", "https:"]), { ux: "basic", envAlias: "OPENAI_COMPATIBLE_TTS_BASE_URL", defaultValue: "https://api.openai.com", visibleWhen: { id: "tts_provider", value: "openai-compatible" } }),
   d("openai_compatible_tts_model", "tts.openaiCompatibleTts.model", trimmedString(128), { envAlias: "OPENAI_COMPATIBLE_TTS_MODEL", defaultValue: "gpt-4o-mini-tts", visibleWhen: { id: "tts_provider", value: "openai-compatible" } }),
   d("openai_compatible_tts_voice", "tts.openaiCompatibleTts.voice", trimmedString(128), { envAlias: "OPENAI_COMPATIBLE_TTS_VOICE", defaultValue: "alloy", visibleWhen: { id: "tts_provider", value: "openai-compatible" } }),
+  d("openai_compatible_tts_source_sample_rate", "tts.openaiCompatibleTts.sourceSampleRate", integer(8000, 96000), { envAlias: "OPENAI_COMPATIBLE_TTS_SOURCE_SAMPLE_RATE", defaultValue: 24000, visibleWhen: { id: "tts_provider", value: "openai-compatible" } }),
   d("tts_sample_rate", "tts.sampleRate", integer(8000, 96000), { envAlias: "TTS_SAMPLE_RATE", defaultValue: 24000 }),
   d("tts_cache_enabled", "tts.cache.enabled", bool, { envAlias: "TTS_CACHE_ENABLED", defaultValue: true }),
   d("tts_cache_prewarm", "tts.cache.prewarm", bool, { envAlias: "TTS_CACHE_PREWARM", defaultValue: true }),

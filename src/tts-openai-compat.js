@@ -2,7 +2,7 @@
 
 const { stripCanonicalEmotionTags } = require("./messages");
 const readiness = require("./settings/readiness");
-const { readPcmBody, withRequestTimeout } = require("./tts-pcm-stream");
+const { readPcmBody, withRequestTimeout, createPcmResampler } = require("./tts-pcm-stream");
 const { isOpenAiHostedBaseUrl } = require("./url-utils");
 
 const DEFAULT_BASE_URL = "https://api.openai.com";
@@ -31,7 +31,11 @@ async function synthesize(text, options = {}) {
   if (!voice) throw new Error("OPENAI_COMPATIBLE_TTS_VOICE is required for TTS");
   if (!options.onAudio) throw new Error("onAudio callback is required");
   const sampleRate = options.sampleRate || 24_000;
-  if (sampleRate !== 24_000) throw new Error("OpenAI-compatible PCM output requires a 24000 Hz TTS sample rate");
+  const sourceSampleRate = options.sourceSampleRate || sampleRate;
+  if (sampleRate !== 24_000) throw new Error("OpenAI-compatible PCM output requires a 24000 Hz TTS sample rate (set openai_compatible_tts_source_sample_rate to the server's native rate instead)");
+  if (!Number.isInteger(sourceSampleRate) || sourceSampleRate < 8000 || sourceSampleRate > 96000) {
+    throw new Error("OPENAI_COMPATIBLE_TTS_SOURCE_SAMPLE_RATE must be an integer between 8000 and 96000");
+  }
   const input = requestText(text);
   if (!input) return;
 
@@ -52,13 +56,26 @@ async function synthesize(text, options = {}) {
         error.statusCode = response.status;
         throw error;
       }
+      const resampler = createPcmResampler(sourceSampleRate, sampleRate);
       await readPcmBody(
         response,
-        { ...options, sampleRate },
+        {
+          ...options,
+          sampleRate: sourceSampleRate,
+          onAudio(chunk) {
+            if (options.signal?.aborted) return;
+            const out = resampler.push(chunk);
+            if (out.length) options.onAudio(out);
+          },
+        },
         controller,
         "OpenAI-compatible",
         "OpenAI-compatible TTS returned no audio stream",
       );
+      if (!options.signal?.aborted) {
+        const tail = resampler.flush();
+        if (tail.length) options.onAudio(tail);
+      }
     });
     if (!options.signal?.aborted) readiness.reportRuntimeSuccess("openai-compatible");
   } catch (error) {

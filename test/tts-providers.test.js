@@ -131,7 +131,7 @@ test("ElevenLabs adapter maps request fields, streams PCM, and never places its 
   assert.equal(readiness.inspect("elevenlabs").code, "AUTH_FAILED");
 });
 
-test("OpenAI-compatible adapter maps hosted auth, permits keyless local servers, and enforces 24 kHz PCM", async () => {
+test("OpenAI-compatible adapter maps hosted auth, permits keyless local servers, and enforces 24 kHz output", async () => {
   initialize();
   const { synthesize } = require("../src/tts-openai-compat");
   const calls = [];
@@ -369,4 +369,132 @@ test("new adapters classify 402 with the same PAYMENT_REQUIRED readiness code as
     fetchFn: async () => new Response("payment", { status: 402 }),
   }), (error) => error.statusCode === 402);
   assert.equal(readiness.inspect("openai-compatible").code, "PAYMENT_REQUIRED");
+});
+
+function unevenPcmResponse(pcm) {
+  return new Response(new ReadableStream({
+    start(controller) {
+      controller.enqueue(pcm.subarray(0, 4001));
+      controller.enqueue(pcm.subarray(4001, 4008));
+      controller.enqueue(pcm.subarray(4008));
+      controller.close();
+    },
+  }));
+}
+
+const localPcmOptions = { baseUrl: "http://localhost:9000", model: "irodori", voice: "local", sampleRate: 24_000 };
+
+test("OpenAI-compatible source sample rate registry validates the declared contract", () => {
+  const entry = REGISTRY_BY_ID.openai_compatible_tts_source_sample_rate;
+  assert.equal(entry.defaultValue, 24000);
+  assert.equal(entry.envAlias, "OPENAI_COMPATIBLE_TTS_SOURCE_SAMPLE_RATE");
+  assert.deepEqual(entry.visibleWhen, { id: "tts_provider", value: "openai-compatible" });
+  for (const rate of [8000, 24000, 48000, 96000]) assert.equal(entry.schema.safeParse(rate).success, true);
+  for (const rate of [7999, 96001, 44100.5, "48000"]) assert.equal(entry.schema.safeParse(rate).success, false);
+});
+
+test("OpenAI-compatible resamples a 3.36 s 48 kHz fixture with preserved duration and pitch", async (t) => {
+  initialize();
+  const pcm = Buffer.alloc(322_560);
+  for (let i = 0; i < pcm.length / 2; i++) pcm.writeInt16LE(Math.round(20000 * Math.sin(2 * Math.PI * 440 * i / 48000)), i * 2);
+  const audio = [];
+  let body;
+  await require("../src/tts-openai-compat").synthesize("fixture", {
+    ...localPcmOptions, sourceSampleRate: 48_000,
+    onAudio: (chunk) => { assert.equal(chunk.length % 2, 0); audio.push(chunk); },
+    fetchFn: async (_url, options) => { body = JSON.parse(options.body); return unevenPcmResponse(pcm); },
+  });
+  const delivered = Buffer.concat(audio);
+  assert.ok(delivered.length >= 159667 && delivered.length <= 162893);
+  const decimated = Buffer.alloc(pcm.length / 2);
+  for (let i = 0; i < decimated.length / 2; i++) decimated.writeInt16LE(pcm.readInt16LE(i * 4), i * 2);
+  assert.deepEqual(delivered, decimated, "every output sample must match 2:1 decimation, including chunk boundaries");
+  assert.deepEqual(body, { model: "irodori", input: "fixture", voice: "local", response_format: "pcm" });
+  t.diagnostic(`48 kHz fixture: source=${pcm.length} delivered=${delivered.length} bytes; decimation matches=${decimated.length / 2} samples, mismatches=0`);
+});
+
+test("OpenAI-compatible explicit and default 24 kHz source pass through byte-identically", async () => {
+  initialize();
+  const pcm = Buffer.alloc(5000);
+  for (let i = 0; i < pcm.length; i++) pcm[i] = i % 256;
+  for (const rateOptions of [{ sourceSampleRate: 24_000 }, {}]) {
+    const audio = [];
+    await require("../src/tts-openai-compat").synthesize("passthrough", {
+      ...localPcmOptions, ...rateOptions, onAudio: (chunk) => audio.push(chunk),
+      fetchFn: async () => unevenPcmResponse(pcm),
+    });
+    assert.deepEqual(Buffer.concat(audio), pcm);
+  }
+});
+
+test("OpenAI-compatible 15 s cap is measured in source bytes at 48 kHz", async () => {
+  initialize();
+  const caps = [];
+  const audio = [];
+  await assert.rejects(() => require("../src/tts-openai-compat").synthesize("cap", {
+    ...localPcmOptions, sourceSampleRate: 48_000, onAudio: (chunk) => audio.push(chunk),
+    fetchFn: async () => unevenPcmResponse(Buffer.alloc(1_536_000)),
+    onDurationCapExceeded: (details) => { caps.push(details); return new Error("source cap"); },
+  }), /source cap/);
+  assert.equal(caps.length, 1);
+  assert.equal(caps[0].maxBytes, 1_440_000);
+  assert.equal(caps[0].totalBytesReceived, 4008);
+  assert.equal(Buffer.concat(audio).length, 2004);
+});
+
+test("OpenAI-compatible rejects invalid source rates", async () => {
+  for (const sourceSampleRate of [4000, 48000.5, 96001, "48000"]) {
+    await assert.rejects(() => require("../src/tts-openai-compat").synthesize("invalid", {
+      ...localPcmOptions, sourceSampleRate, onAudio: () => {},
+    }), /8000 and 96000/);
+  }
+});
+
+test("dispatcher resolves the source sample rate and permits an explicit override", async () => {
+  initialize({ provider: "openai-compatible", openaiCompatibleTts: {
+    baseUrl: localPcmOptions.baseUrl, model: "irodori", voice: "local", sourceSampleRate: 48000,
+  } });
+  for (const [rateOptions, expectedBytes] of [[{}, 2400], [{ sourceSampleRate: 24000 }, 4800]]) {
+    const audio = [];
+    await require("../src/tts-fish").synthesize("dispatcher", {
+      ...rateOptions, sampleRate: 24000, onAudio: (chunk) => audio.push(chunk),
+      fetchFn: async () => pcmResponse(Buffer.alloc(4800)),
+    });
+    assert.equal(Buffer.concat(audio).length, expectedBytes);
+  }
+});
+
+test("PCM resampler interpolates across chunks, carries odd bytes, passes equal rates through, and resets", () => {
+  const { createPcmResampler } = require("../src/tts-pcm-stream");
+  for (const rates of [[0, 24000], [8000, -1], [8000.5, 24000], [8000, NaN]]) {
+    assert.throws(() => createPcmResampler(...rates), TypeError);
+  }
+  const ramp = Buffer.alloc(4);
+  ramp.writeInt16LE(3000, 2);
+  const same = createPcmResampler(24000, 24000);
+  assert.equal(same.push(ramp), ramp);
+  assert.equal(same.flush().length, 0);
+  const resampler = createPcmResampler(8000, 24000);
+  const parts = [resampler.push(ramp.subarray(0, 1)), resampler.push(ramp.subarray(1, 3)), resampler.push(ramp.subarray(3)), resampler.flush()];
+  const values = [];
+  const result = Buffer.concat(parts);
+  for (let i = 0; i < result.length; i += 2) values.push(result.readInt16LE(i));
+  assert.ok(values.length >= 5 && values.length <= 7);
+  assert.deepEqual(values.slice(0, 3), [0, 1000, 2000]);
+  assert.ok(values.every((v, i) => i === 0 || v >= values[i - 1]));
+  assert.equal(values.at(-1), 3000);
+  assert.equal(resampler.flush().length, 0);
+  assert.deepEqual(Buffer.concat([resampler.push(ramp), resampler.flush()]), result);
+});
+
+test("OpenAI-compatible does not flush audio after cancellation", async () => {
+  initialize();
+  const controller = new AbortController();
+  let callbacks = 0;
+  await require("../src/tts-openai-compat").synthesize("abort", {
+    ...localPcmOptions, sourceSampleRate: 8000, signal: controller.signal,
+    onAudio: () => { assert.equal(controller.signal.aborted, false); callbacks++; controller.abort(); },
+    fetchFn: async () => pcmResponse([0, 0, 1, 0]),
+  });
+  assert.equal(callbacks, 1);
 });

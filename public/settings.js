@@ -41,6 +41,7 @@ const ELEVENLABS_TTS_FIELDS = new Set([
 const OPENAI_COMPATIBLE_TTS_FIELDS = new Set([
   "openai_compatible_tts_api_key", "openai_compatible_tts_base_url",
   "openai_compatible_tts_model", "openai_compatible_tts_voice",
+  "openai_compatible_tts_source_sample_rate",
 ]);
 const ARRAY_FIELDS = new Set([
   "agent_wake_words", "agent_keyterms", "agent_stt_wake_variants", "agent_ack_variants", "agent_progress_pings",
@@ -183,6 +184,7 @@ if (typeof document !== "undefined") {
       openai_compatible_tts_base_url: "OpenAI-compatible TTS Base URL",
       openai_compatible_tts_model: "OpenAI-compatible TTS モデル",
       openai_compatible_tts_voice: "OpenAI-compatible TTS Voice",
+      openai_compatible_tts_source_sample_rate: "OpenAI-compatible TTS サーバー側サンプルレート",
       tts_sample_rate: "サンプルレート", tts_cache_enabled: "音声キャッシュ",
       tts_cache_prewarm: "音声キャッシュの事前生成", attendee_api_key: "Attendee API key",
       attendee_base_url: "Attendee ホスト名", slack_bot_token: "Slack Bot token",
@@ -205,7 +207,8 @@ if (typeof document !== "undefined") {
       agent_progress_pings: "処理中に使う文言を1行に1件入力します。",
       agent_emotion_tags: "Fish Audio の固定タグをプロンプトへ含めます。",
       openai_compatible_tts_api_key: "api.openai.com では必須です。ローカルまたは独自サーバーでは省略できます。",
-      tts_sample_rate: "Fish Audio は設定値を使用します。ElevenLabs は対応する PCM 形式を選択し、OpenAI-compatible は 24000 Hz が必要です。",
+      openai_compatible_tts_source_sample_rate: "サーバーが返す PCM の実際のサンプルレート（Hz）。Irodori-TTS は 48000。24000 以外は Meetmate 側で 24000 Hz にリサンプルします。",
+      tts_sample_rate: "Fish Audio は設定値を使用します。ElevenLabs は対応する PCM 形式を選択し、OpenAI-compatible は出力 24000 Hz 固定です（サーバーのレートは「サーバー側サンプルレート」で指定）。",
       avatar_experiment: "次回の会議参加から反映されます",
       avatar_rig_background_mode: "2.5Dリグとフレームセットの両方に適用され、次回の会議参加から反映されます。画像モードで背景画像が未埋め込みの場合: このビルドには背景画像が埋め込まれていません",
       avatar_rig_background_color: "2.5Dリグとフレームセットの両方で、単色または画像の読み込み失敗時に使う #rrggbb 形式の色です。次回の会議参加から反映されます",

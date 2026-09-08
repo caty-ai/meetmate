@@ -123,7 +123,7 @@ Meetmate: [warm] 有两处变化——年度折扣改成了 15%，还新增了�
 | [Deepgram](https://console.deepgram.com/signup) 账号 + API 密钥 | 可选的替代语音转文字 | `STT_PROVIDER=deepgram`, `DEEPGRAM_API_KEY` | 可选 | 仅在你切换出 Soniox 时需要。 |
 | [Fish Audio](https://fish.audio/) 账号 + 语音 | 默认文字转语音 | `TTS_PROVIDER=fish-audio`, `FISH_AUDIO_API_KEY`, `FISH_AUDIO_VOICE_ID` | 默认 | 现有配置无需修改，仍会使用此服务商。 |
 | [ElevenLabs](https://elevenlabs.io/) 账号 + 语音 | 可选文字转语音 | `TTS_PROVIDER=elevenlabs`, `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID` | 可选 | 在设置界面指定模型；PCM 输出跟随 TTS 采样率。 |
-| OpenAI 兼容 TTS | OpenAI 托管或本地文字转语音 | `TTS_PROVIDER=openai-compatible`, `OPENAI_COMPATIBLE_TTS_BASE_URL`, `OPENAI_COMPATIBLE_TTS_MODEL`, `OPENAI_COMPATIBLE_TTS_VOICE` | 可选 | `api.openai.com` 必须提供密钥；Irodori-TTS 等非默认本地服务器可省略。PCM 需要 24 kHz。 |
+| OpenAI 兼容 TTS | OpenAI 托管或本地文字转语音 | `TTS_PROVIDER=openai-compatible`, `OPENAI_COMPATIBLE_TTS_BASE_URL`, `OPENAI_COMPATIBLE_TTS_MODEL`, `OPENAI_COMPATIBLE_TTS_VOICE`, `OPENAI_COMPATIBLE_TTS_SOURCE_SAMPLE_RATE` | 可选 | `api.openai.com` 必须提供密钥；Irodori-TTS 等非默认本地服务器可省略。PCM 输出固定为 24 kHz；如果服务器返回其他采样率，请设置 `OPENAI_COMPATIBLE_TTS_SOURCE_SAMPLE_RATE`（默认 24000，Irodori-TTS：48000），Meetmate 会进行重采样。 |
 | [OpenClaw Gateway](https://openclaw.ai/) 或其他 OpenAI 兼容 LLM 网关 | 真正的语音大脑 | `LLM_PROVIDER`, `OPENCLAW_GATEWAY_URL`, `OPENCLAW_GATEWAY_TOKEN`,或 `OPENAI_COMPATIBLE_BASE_URL`, `OPENAI_COMPATIBLE_API_KEY` | 始终 | OpenClaw 是主路径;有状态的 OpenAI 兼容网关记录在安装指南中。 |
 | [ngrok](https://ngrok.com/) 或 [Tailscale](https://tailscale.com/) | 机器人 WebSocket 的公网可达路径 | ngrok 用 `server.ngrokDomain` | 视情况而定 | `ngrok` 是常见路径。如果你的网络和 Attendee 部署允许,Tailscale 是一种替代方案。价格/免费方案细节可能变化。 |
 | 允许机器人加入的 Google Meet 权限 | 让机器人进入会议 | Meet UI 的"Ask to join"批准 | Google Meet | 你必须在 Meet 中批准加入请求。 |

@@ -98,4 +98,58 @@ async function withRequestTimeout(options, serviceName, request) {
   }
 }
 
-module.exports = { readPcmBody, withRequestTimeout };
+function createPcmResampler(sourceRate, targetRate) {
+  if (!Number.isInteger(sourceRate) || sourceRate <= 0 || !Number.isInteger(targetRate) || targetRate <= 0) {
+    throw new TypeError("PCM sample rates must be positive integers");
+  }
+  if (sourceRate === targetRate) {
+    return { push: (chunk) => chunk, flush: () => Buffer.alloc(0) };
+  }
+
+  const step = sourceRate / targetRate;
+  let pos = 0;
+  let retained = Buffer.alloc(0);
+  let oddByte = Buffer.alloc(0);
+
+  return {
+    push(chunk) {
+      const bytes = Buffer.concat([retained, oddByte, chunk]);
+      const evenLength = bytes.length & ~1;
+      oddByte = Buffer.from(bytes.subarray(evenLength));
+      const samples = evenLength / 2;
+      if (!samples) return Buffer.alloc(0);
+      const output = Buffer.alloc(Math.max(0, Math.ceil((samples - 1 - pos) / step) + 1) * 2);
+      let written = 0;
+      while (Math.floor(pos) + 1 < samples) {
+        const i = Math.floor(pos);
+        const frac = pos - i;
+        const left = bytes.readInt16LE(i * 2);
+        const right = bytes.readInt16LE((i + 1) * 2);
+        output.writeInt16LE(Math.round(left + (right - left) * frac), written);
+        written += 2;
+        pos += step;
+      }
+      // Retain one sample for interpolation; pos also preserves any downsampling skip.
+      retained = Buffer.from(bytes.subarray(evenLength - 2, evenLength));
+      pos -= samples - 1;
+      return output.subarray(0, written);
+    },
+    flush() {
+      const output = [];
+      if (retained.length) {
+        while (pos < 1) {
+          output.push(retained.readInt16LE(0));
+          pos += step;
+        }
+      }
+      const bytes = Buffer.alloc(output.length * 2);
+      output.forEach((sample, i) => bytes.writeInt16LE(sample, i * 2));
+      pos = 0;
+      retained = Buffer.alloc(0);
+      oddByte = Buffer.alloc(0);
+      return bytes;
+    },
+  };
+}
+
+module.exports = { readPcmBody, withRequestTimeout, createPcmResampler };
