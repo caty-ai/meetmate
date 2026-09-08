@@ -98,7 +98,7 @@ Settings UI: http://localhost:<port>/settings
 
 - `fish-audio`（既定）: 既存の `tts.apiKey` / `tts.voiceId` / `tts.model` をそのまま使う。既存設定の編集は不要
 - `elevenlabs`: API key、Voice ID、モデルを入力する。`tts_sample_rate` は ElevenLabs の PCM 対応値（8000 / 16000 / 22050 / 24000 / 44100 Hz）を指定する
-- `openai-compatible`: Base URL、モデル、Voice を入力する。`tts_sample_rate` は `24000` のまま（出力は 24 kHz 固定）。サーバーが 24 kHz 以外の PCM を返す場合は `openai_compatible_tts_source_sample_rate`（`config.json` では `tts.openaiCompatibleTts.sourceSampleRate`・環境変数 `OPENAI_COMPATIBLE_TTS_SOURCE_SAMPLE_RATE`）にサーバーの実レートを設定すると Meetmate 側で 24 kHz にリサンプルする。Irodori-TTS は 48000。
+- `openai-compatible`: Base URL、モデル、Voice を入力する。`tts_sample_rate` は `24000` のまま（出力は 24 kHz 固定）。サーバーが 24 kHz 以外の PCM を返す場合は `openai_compatible_tts_source_sample_rate`（`config.json` では `tts.openaiCompatibleTts.sourceSampleRate`・環境変数 `OPENAI_COMPATIBLE_TTS_SOURCE_SAMPLE_RATE`）にサーバーの実レートを設定すると Meetmate 側で 24 kHz にリサンプルする。Irodori-TTS は 48000。リサンプルは線形補間（アンチエイリアスなし）。音声合成の出力には十分だが、ハイレゾ音源の忠実度は保証しない。
 
 ローカル OpenAI 互換サーバー（例: Irodori-TTS）を key なしで使う `config.json` の例:
 

@@ -43,6 +43,8 @@ function synthesisIdentity(options = {}) {
       voiceId: options.referenceId || options.voice || options.voiceId || getEffectiveValue("openai_compatible_tts_voice") || null,
       model: options.model || getEffectiveValue("openai_compatible_tts_model"),
       sampleRate: options.sampleRate || DEFAULT_SAMPLE_RATE,
+      // Source rate intentionally changes every OpenAI-compatible key once so pre-#234 raw server-rate PCM labelled 24 kHz is never served again.
+      sourceSampleRate: options.sourceSampleRate ?? getEffectiveValue("openai_compatible_tts_source_sample_rate") ?? DEFAULT_SAMPLE_RATE,
       speed: null,
     };
   }

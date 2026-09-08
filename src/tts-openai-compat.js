@@ -31,7 +31,7 @@ async function synthesize(text, options = {}) {
   if (!voice) throw new Error("OPENAI_COMPATIBLE_TTS_VOICE is required for TTS");
   if (!options.onAudio) throw new Error("onAudio callback is required");
   const sampleRate = options.sampleRate || 24_000;
-  const sourceSampleRate = options.sourceSampleRate || sampleRate;
+  const sourceSampleRate = options.sourceSampleRate ?? sampleRate;
   if (sampleRate !== 24_000) throw new Error("OpenAI-compatible PCM output requires a 24000 Hz TTS sample rate (set openai_compatible_tts_source_sample_rate to the server's native rate instead)");
   if (!Number.isInteger(sourceSampleRate) || sourceSampleRate < 8000 || sourceSampleRate > 96000) {
     throw new Error("OPENAI_COMPATIBLE_TTS_SOURCE_SAMPLE_RATE must be an integer between 8000 and 96000");

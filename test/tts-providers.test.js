@@ -374,9 +374,10 @@ test("new adapters classify 402 with the same PAYMENT_REQUIRED readiness code as
 function unevenPcmResponse(pcm) {
   return new Response(new ReadableStream({
     start(controller) {
-      controller.enqueue(pcm.subarray(0, 4001));
-      controller.enqueue(pcm.subarray(4001, 4008));
-      controller.enqueue(pcm.subarray(4008));
+      controller.enqueue(pcm.subarray(0, 4002));
+      controller.enqueue(pcm.subarray(4002, 4008));
+      controller.enqueue(pcm.subarray(4008, 6006));
+      controller.enqueue(pcm.subarray(6006));
       controller.close();
     },
   }));
@@ -413,6 +414,30 @@ test("OpenAI-compatible resamples a 3.36 s 48 kHz fixture with preserved duratio
   t.diagnostic(`48 kHz fixture: source=${pcm.length} delivered=${delivered.length} bytes; decimation matches=${decimated.length / 2} samples, mismatches=0`);
 });
 
+test("#234 OpenAI-compatible 32 kHz chunks match an unchunked reference linear interpolator sample-exactly", async () => {
+  initialize();
+  const sourceRate = 32_000;
+  const targetRate = 24_000;
+  const pcm = Buffer.alloc(sourceRate * 2);
+  for (let i = 0; i < sourceRate; i++) pcm.writeInt16LE(Math.round(20000 * Math.sin(2 * Math.PI * 440 * i / sourceRate)), i * 2);
+  const expected = Buffer.alloc(Math.ceil(sourceRate * targetRate / sourceRate) * 2);
+  for (let n = 0; n < expected.length / 2; n++) {
+    const numerator = n * sourceRate;
+    const leftIndex = Math.floor(numerator / targetRate);
+    const fraction = (numerator % targetRate) / targetRate;
+    const left = pcm.readInt16LE(leftIndex * 2);
+    const right = pcm.readInt16LE(Math.min(leftIndex + 1, sourceRate - 1) * 2);
+    expected.writeInt16LE(Math.round(left + (right - left) * fraction), n * 2);
+  }
+  const audio = [];
+  await require("../src/tts-openai-compat").synthesize("non-integer fixture", {
+    ...localPcmOptions, sourceSampleRate: sourceRate,
+    onAudio: (chunk) => audio.push(chunk),
+    fetchFn: async () => unevenPcmResponse(pcm),
+  });
+  assert.deepEqual(Buffer.concat(audio), expected);
+});
+
 test("OpenAI-compatible explicit and default 24 kHz source pass through byte-identically", async () => {
   initialize();
   const pcm = Buffer.alloc(5000);
@@ -438,12 +463,12 @@ test("OpenAI-compatible 15 s cap is measured in source bytes at 48 kHz", async (
   }), /source cap/);
   assert.equal(caps.length, 1);
   assert.equal(caps[0].maxBytes, 1_440_000);
-  assert.equal(caps[0].totalBytesReceived, 4008);
-  assert.equal(Buffer.concat(audio).length, 2004);
+  assert.equal(caps[0].totalBytesReceived, 6006);
+  assert.equal(Buffer.concat(audio).length, 3002);
 });
 
 test("OpenAI-compatible rejects invalid source rates", async () => {
-  for (const sourceSampleRate of [4000, 48000.5, 96001, "48000"]) {
+  for (const sourceSampleRate of [0, 4000, 48000.5, 96001, "48000"]) {
     await assert.rejects(() => require("../src/tts-openai-compat").synthesize("invalid", {
       ...localPcmOptions, sourceSampleRate, onAudio: () => {},
     }), /8000 and 96000/);
@@ -485,6 +510,17 @@ test("PCM resampler interpolates across chunks, carries odd bytes, passes equal 
   assert.equal(values.at(-1), 3000);
   assert.equal(resampler.flush().length, 0);
   assert.deepEqual(Buffer.concat([resampler.push(ramp), resampler.flush()]), result);
+});
+
+test("#234 PCM resampler emits exact counts for 8000→24000 and 44100→24000", (t) => {
+  const { createPcmResampler } = require("../src/tts-pcm-stream");
+  for (const [sourceRate, inputSamples, expectedSamples] of [[8000, 100_000, 300_000], [44100, 44_100, 24_000]]) {
+    const resampler = createPcmResampler(sourceRate, 24000);
+    const output = Buffer.concat([resampler.push(Buffer.alloc(inputSamples * 2)), resampler.flush()]);
+    // Positions k * sourceRate / targetRate < N yield exactly ceil(N * targetRate / sourceRate) samples.
+    assert.equal(output.length / 2, expectedSamples, `${sourceRate}→24000 output count`);
+    t.diagnostic(`${sourceRate}→24000: input=${inputSamples}, output=${output.length / 2} samples`);
+  }
 });
 
 test("OpenAI-compatible does not flush audio after cancellation", async () => {
