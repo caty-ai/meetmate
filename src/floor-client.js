@@ -233,6 +233,7 @@ class FloorClient extends EventEmitter {
       case "member_joined":
         this.members = [...this.members.filter((member) => member.memberId !== message.memberId), {
           memberId: message.memberId,
+          agentId: message.agentId,
           displayName: message.displayName,
           wakeWords: Array.isArray(message.wakeWords) ? message.wakeWords.slice() : [],
           sttWakeVariants: Array.isArray(message.sttWakeVariants) ? message.sttWakeVariants.slice() : [],
@@ -274,6 +275,18 @@ class FloorClient extends EventEmitter {
     }
   }
 
+  peerContextTerms() {
+    const terms = this.members
+      .filter((member) => member.memberId !== this.memberId
+        && !(member.agentId != null && member.agentId === this.agentId))
+      .flatMap((member) => [...(Array.isArray(member.wakeWords) ? member.wakeWords : []),
+        ...(Array.isArray(member.sttWakeVariants) ? member.sttWakeVariants : [])])
+      .filter((term) => typeof term === "string")
+      .map((term) => term.trim())
+      .filter(Boolean);
+    return [...new Set(terms)];
+  }
+
   handleWelcome(message) {
     if (message.proto !== undefined && message.proto !== 1) {
       this.emit("protocol_error", new Error(`unsupported hub proto ${message.proto}`));
@@ -283,6 +296,8 @@ class FloorClient extends EventEmitter {
     this.connectionEpoch = message.connectionEpoch;
     this.members = Array.isArray(message.members) ? message.members.map((member) => ({
       ...member,
+      agentId: member.agentId,
+      sttWakeVariants: Array.isArray(member.sttWakeVariants) ? member.sttWakeVariants.slice() : [],
       wakeWords: Array.isArray(member.wakeWords) ? member.wakeWords.slice() : [],
     })) : [];
     this.hasBeenReady = true;
@@ -307,6 +322,7 @@ class FloorClient extends EventEmitter {
     };
     this.onReady(ready);
     this.emit("ready", ready);
+    this.emit("members", this.members.slice());
   }
 
   reportWake(hits, options = {}) {

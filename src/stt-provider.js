@@ -31,8 +31,10 @@ function createSTT(deepgramKey, options = {}) {
       wsUrl: sx.wsUrl,
       language: options.language,
       sampleRate: options.sampleRate,
-      // Merge dynamic wake/agent keyterms with config-defined context terms.
-      keyterms: [...(options.keyterms || []), ...(sx.contextTerms || [])],
+      // Resolve the merged list lazily so Soniox can retain all terms if the resolver throws.
+      keyterms: typeof options.keyterms === "function"
+        ? () => [...options.keyterms(), ...(sx.contextTerms || [])]
+        : [...(options.keyterms || []), ...(sx.contextTerms || [])],
       endpointSensitivity: sx.endpointSensitivity,
       maxEndpointDelayMs: sx.maxEndpointDelayMs,
       endpointLatencyLevel: sx.endpointLatencyLevel,
