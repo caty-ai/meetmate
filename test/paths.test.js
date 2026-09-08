@@ -204,7 +204,7 @@ function settingsRequest(method, url, headers = {}, body = "") {
 }
 
 test("T12-01 registry/schema/type lock keeps the write allowlist strict", () => {
-  assert.equal(SETTINGS_REGISTRY.length, 86);
+  assert.equal(SETTINGS_REGISTRY.length, 87);
   assert.equal(ENV_DIAGNOSTICS.length, 59);
   assert.equal(new Set(SETTINGS_REGISTRY.map((entry) => entry.id)).size, SETTINGS_REGISTRY.length);
   assert.equal(SETTINGS_REGISTRY.filter((entry) => entry.credential === "class-1").length, 10);
@@ -251,6 +251,58 @@ test("T12-02 precedence table is pre-dotenv OS > config > .env seed > default", 
     });
     assert.equal(buildEnvelope().effective.agent_language, expected);
     assert.equal(buildEnvelope().sources.agent_language, source);
+  }
+});
+
+test("#234 registry-derived numeric env aliases resolve as numbers", (t) => {
+  t.after(resetRuntimeForTest);
+  const failures = [];
+  const skipped = SETTINGS_REGISTRY.filter(e => e.envAlias && e.writeSurface !== "settings").map(e => e.id);
+  const checked = [];
+  for (const entry of SETTINGS_REGISTRY) {
+    if (entry.writeSurface !== "settings") continue;
+    if (!entry.envAlias || entry.schema.safeParse("1").success) continue;
+    let schema = entry.schema;
+    while (typeof schema.unwrap === "function") schema = schema.unwrap();
+    const sample = Number.isFinite(entry.defaultValue) ? entry.defaultValue
+      : Number.isFinite(schema.minValue) ? schema.minValue : 1;
+    // Include bounded rates that reject both 1 and 0.5, as well as nullable numbers.
+    if (![1, 0.5, sample].some((value) => entry.schema.safeParse(value).success)) {
+      assert.notEqual(schema.type, "number", `Cannot derive a numeric sample for ${entry.id}`);
+      continue;
+    }
+    assert.ok(Number.isFinite(sample) && entry.schema.safeParse(sample).success,
+      `Cannot derive a valid numeric sample for ${entry.id}`);
+    checked.push(entry.id);
+    resetRuntimeForTest();
+    initializeRuntime({
+      state: settingsState({}),
+      startup: settingsStartup({ preDotenvEnv: { [entry.envAlias]: String(sample) } }),
+    });
+    const { effective, sources } = buildEnvelope();
+    if (typeof effective[entry.id] !== "number" || effective[entry.id] !== sample || sources[entry.id] !== "os-env") {
+      failures.push(entry.id);
+    }
+  }
+  assert.ok(checked.includes("openai_compatible_tts_source_sample_rate"));
+  assert.ok(checked.includes("soniox_endpoint_sensitivity"));
+  t.diagnostic(`numeric alias guard: checked=${checked.length}; skipped ids=${JSON.stringify(skipped)}; failing ids=${JSON.stringify(failures)}`);
+  assert.deepEqual(failures, [], "numeric env aliases must retain their value and os-env source");
+});
+
+test("#234 source sample rate env aliases resolve on both tiers and reject invalid strings", (t) => {
+  t.after(resetRuntimeForTest);
+  for (const [tier, source] of [["preDotenvEnv", "os-env"], ["dotenvSeeds", ".env-seed"]]) {
+    for (const [raw, expected, expectedSource] of [["48000", 48000, source], ["abc", 24000, "default"]]) {
+      resetRuntimeForTest();
+      initializeRuntime({
+        state: settingsState({}),
+        startup: settingsStartup({ [tier]: { OPENAI_COMPATIBLE_TTS_SOURCE_SAMPLE_RATE: raw } }),
+      });
+      const { effective, sources } = buildEnvelope();
+      assert.equal(effective.openai_compatible_tts_source_sample_rate, expected, `${tier}: ${raw}`);
+      assert.equal(sources.openai_compatible_tts_source_sample_rate, expectedSource, `${tier}: ${raw}`);
+    }
   }
 });
 

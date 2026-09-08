@@ -98,7 +98,7 @@ Settings UI: http://localhost:<port>/settings
 
 - `fish-audio`（既定）: 既存の `tts.apiKey` / `tts.voiceId` / `tts.model` をそのまま使う。既存設定の編集は不要
 - `elevenlabs`: API key、Voice ID、モデルを入力する。`tts_sample_rate` は ElevenLabs の PCM 対応値（8000 / 16000 / 22050 / 24000 / 44100 Hz）を指定する
-- `openai-compatible`: Base URL、モデル、Voice を入力し、`tts_sample_rate` は `24000` にする。`api.openai.com` では API key が必須。既定外の Base URL では key を省略できる
+- `openai-compatible`: Base URL、モデル、Voice を入力する。`tts_sample_rate` は `24000` のまま（出力は 24 kHz 固定）。サーバーが 24 kHz 以外の PCM を返す場合は `openai_compatible_tts_source_sample_rate`（`config.json` では `tts.openaiCompatibleTts.sourceSampleRate`・環境変数 `OPENAI_COMPATIBLE_TTS_SOURCE_SAMPLE_RATE`）にサーバーの実レートを設定すると Meetmate 側で 24 kHz にリサンプルする。Irodori-TTS は 48000。リサンプルは線形補間（アンチエイリアスなし）。音声合成の出力には十分だが、ハイレゾ音源の忠実度は保証しない。
 
 ローカル OpenAI 互換サーバー（例: Irodori-TTS）を key なしで使う `config.json` の例:
 
@@ -110,13 +110,14 @@ Settings UI: http://localhost:<port>/settings
     "openaiCompatibleTts": {
       "baseUrl": "http://127.0.0.1:8080",
       "model": "irodori-tts",
-      "voice": "default"
+      "voice": "default",
+      "sourceSampleRate": 48000
     }
   }
 }
 ```
 
-Meetmate はこの Base URL に `/v1/audio/speech` を付け、`response_format: "pcm"` で呼び出す。ローカルサーバー側も mono PCM16 / 24 kHz を返す必要がある。公開サーバーや `api.openai.com` へ key なしで接続するためのフォールバックはない。
+Meetmate はこの Base URL に `/v1/audio/speech` を付け、`response_format: "pcm"` で呼び出す。ローカルサーバーは mono PCM16 を返す必要がある（レートは `sourceSampleRate` で申告。既定 24000）。公開サーバーや `api.openai.com` へ key なしで接続するためのフォールバックはない。
 
 ---
 

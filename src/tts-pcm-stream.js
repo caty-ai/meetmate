@@ -98,4 +98,60 @@ async function withRequestTimeout(options, serviceName, request) {
   }
 }
 
-module.exports = { readPcmBody, withRequestTimeout };
+// Linear interpolation has no anti-alias low-pass: integer downsampling decimates, folding content above targetRate / 2.
+// Known limitation acceptable for TTS speech (Irodori 48 kHz has little energy above 12 kHz); see the setup guide.
+function createPcmResampler(sourceRate, targetRate) {
+  if (!Number.isInteger(sourceRate) || sourceRate <= 0 || !Number.isInteger(targetRate) || targetRate <= 0) {
+    throw new TypeError("PCM sample rates must be positive integers");
+  }
+  if (sourceRate === targetRate) {
+    return { push: (chunk) => chunk, flush: () => Buffer.alloc(0) };
+  }
+
+  const posDen = targetRate;
+  let posNum = 0;
+  let retained = Buffer.alloc(0);
+  let oddByte = Buffer.alloc(0);
+
+  return {
+    push(chunk) {
+      const bytes = Buffer.concat([retained, oddByte, chunk]);
+      const evenLength = bytes.length & ~1;
+      oddByte = Buffer.from(bytes.subarray(evenLength));
+      const samples = evenLength / 2;
+      if (!samples) return Buffer.alloc(0);
+      const output = Buffer.alloc(Math.max(0, Math.ceil(((samples - 1) * posDen - posNum) / sourceRate) + 1) * 2);
+      let written = 0;
+      while (posNum < (samples - 1) * posDen) {
+        const i = Math.floor(posNum / posDen);
+        const frac = (posNum - i * posDen) / posDen;
+        const left = bytes.readInt16LE(i * 2);
+        const right = bytes.readInt16LE((i + 1) * 2);
+        output.writeInt16LE(Math.round(left + (right - left) * frac), written);
+        written += 2;
+        posNum += sourceRate;
+      }
+      // Retain one sample for interpolation; the rational position preserves any downsampling skip.
+      retained = Buffer.from(bytes.subarray(evenLength - 2, evenLength));
+      posNum -= (samples - 1) * posDen;
+      return output.subarray(0, written);
+    },
+    flush() {
+      const output = [];
+      if (retained.length) {
+        while (posNum < posDen) {
+          output.push(retained.readInt16LE(0));
+          posNum += sourceRate;
+        }
+      }
+      const bytes = Buffer.alloc(output.length * 2);
+      output.forEach((sample, i) => bytes.writeInt16LE(sample, i * 2));
+      posNum = 0;
+      retained = Buffer.alloc(0);
+      oddByte = Buffer.alloc(0);
+      return bytes;
+    },
+  };
+}
+
+module.exports = { readPcmBody, withRequestTimeout, createPcmResampler };

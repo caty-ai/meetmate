@@ -342,6 +342,7 @@ async function synthesize(text, options = {}) {
       baseUrl: getEffectiveValue("openai_compatible_tts_base_url"),
       model: getEffectiveValue("openai_compatible_tts_model"),
       voice: options.referenceId || options.voice || options.voiceId || getEffectiveValue("openai_compatible_tts_voice"),
+      sourceSampleRate: options.sourceSampleRate || getEffectiveValue("openai_compatible_tts_source_sample_rate"),
     });
   }
   throw new Error(`Unsupported TTS provider: ${provider}`);

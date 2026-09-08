@@ -16,7 +16,7 @@ const SENTINELS = new Set([
 const NUMERIC_IDS = new Set([
   "llm_temperature", "llm_max_tokens", "llm_history_max_turns", "soniox_endpoint_sensitivity",
   "soniox_max_endpoint_delay_ms", "soniox_endpoint_latency_level", "listen_endpointing_ms",
-  "listen_utterance_end_ms", "fish_audio_speed", "tts_sample_rate", "gateway_warmup_timeout_ms", "server_port",
+  "listen_utterance_end_ms", "fish_audio_speed", "tts_sample_rate", "openai_compatible_tts_source_sample_rate", "gateway_warmup_timeout_ms", "server_port",
 ]);
 const BOOLEAN_IDS = new Set([
   "agent_emotion_tags", "openai_empty_response_retry", "openai_trusted_agent_tools", "tts_cache_enabled",

@@ -81,6 +81,41 @@ test("OpenAI-compatible cache identity includes the canonical backend base URL",
   );
 });
 
+test("#234 OpenAI-compatible cache identity includes explicit and effective source sample rates", (t) => {
+  const resolver = require("../src/settings/resolver");
+  const directory = tempDir();
+  t.after(() => {
+    resolver.resetRuntimeForTest();
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+  const startup = Object.freeze({
+    preDotenvEnv: Object.freeze({}), dotenvSeeds: Object.freeze({}),
+    resolvedHome: directory, configPath: path.join(directory, "config.json"),
+    connection: Object.freeze({ openclawUrl: "", openclawToken: "", openaiApiKey: "" }),
+  });
+  initializeTtsRuntime({
+    provider: "openai-compatible", openaiCompatibleTts: { sourceSampleRate: 48000 },
+  }, "a".repeat(64), startup);
+  assert.equal(resolver.getEffectiveValue("openai_compatible_tts_source_sample_rate"), 48_000);
+  const common = {
+    provider: "openai-compatible", baseUrl: "https://tts-a.example",
+    voice: "voice", model: "model", sampleRate: 24_000,
+  };
+  const key24 = _test.cacheKey("same text", { ...common, sourceSampleRate: 24_000 });
+  const key48 = _test.cacheKey("same text", { ...common, sourceSampleRate: 48_000 });
+  t.diagnostic(`source-rate cache keys: 24000=${key24.slice(0, 12)}; 48000=${key48.slice(0, 12)}`);
+  assert.notEqual(key24, key48);
+  assert.equal(_test.cacheKey("same text", common), key48);
+  const fish = { provider: "fish-audio", referenceId: "legacy-voice", model: "s2-pro", sampleRate: 24_000, speed: 1 };
+  // Fish identity has no source-rate field (its key is pinned verbatim by the
+  // "upgrade-compatible" test above), so a stray option never changes it.
+  const fishKey = _test.cacheKey("upgrade-compatible fish", fish);
+  assert.deepEqual(_test.synthesisIdentity({ ...fish, sourceSampleRate: 48_000 }), {
+    referenceId: "legacy-voice", model: "s2-pro", sampleRate: 24_000, speed: 1,
+  });
+  assert.equal(_test.cacheKey("upgrade-compatible fish", { ...fish, sourceSampleRate: 48_000 }), fishKey);
+});
+
 test("a Fish cache entry is never served after switching to ElevenLabs for the same text", async (t) => {
   const resolver = require("../src/settings/resolver");
   const directory = tempDir();
@@ -93,13 +128,7 @@ test("a Fish cache entry is never served after switching to ElevenLabs for the s
     resolvedHome: directory, configPath: path.join(directory, "config.json"),
     connection: Object.freeze({ openclawUrl: "", openclawToken: "", openaiApiKey: "" }),
   });
-  const initialize = (tts, revision) => {
-    resolver.resetRuntimeForTest();
-    resolver.initializeRuntime({
-      state: { exists: true, valid: true, parsed: { tts: { ...tts, cache: { enabled: true } } }, revision, fingerprint: revision },
-      startup,
-    });
-  };
+  const initialize = (tts, revision) => initializeTtsRuntime(tts, revision, startup);
   const calls = [];
   const cache = createTtsCache({
     dir: directory,
@@ -744,6 +773,15 @@ test("a post-dotenv process env value does not become the launch tier", () => {
     assert.equal(shouldSendImmediateAck("確認して"), true);
   });
 });
+
+function initializeTtsRuntime(tts, revision, startup) {
+  const resolver = require("../src/settings/resolver");
+  resolver.resetRuntimeForTest();
+  resolver.initializeRuntime({
+    state: { exists: true, valid: true, parsed: { tts: { ...tts, cache: { enabled: true } } }, revision, fingerprint: revision },
+    startup,
+  });
+}
 
 function tempDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "tts-cache-test-"));
