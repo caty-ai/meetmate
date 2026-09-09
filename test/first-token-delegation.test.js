@@ -6,6 +6,7 @@ const path = require("node:path");
 const { EventEmitter } = require("node:events");
 
 const DELEGATION_LINE = "ちょっと時間がかかってるから、詳細はあとでSlackで共有するね。";
+const MEET_DELEGATION_LINE = "ちょっと時間がかかってるから、裏でまとめておくね。";
 const TIMEOUT_LINE = "[empathetic, unhurried] ごめん、ちょっと時間がかかってるね。少し待ってもらえるかな？";
 
 test("getPipelineConfig parses FIRST_TOKEN_DELEGATE_MS default, override, disabled, empty, and invalid", () => {
@@ -113,6 +114,42 @@ test("fixed TTS prewarm phrases keep gateway-only Meet lines behind the gateway 
       collectFixedTtsPhrases({ ...baseConfig, gatewayEvents: { enabled: true } }, "").slice(-3),
       gatewayOnly
     );
+  });
+});
+
+test("#239 fixed TTS prewarm includes the Meet forced-delegation fallback only when gateway events and delegation are both on", () => {
+  withEnv({ METRICS_DISABLED: "1" }, () => {
+    const pipelinePath = path.join(__dirname, "..", "src", "pipeline.js");
+    delete require.cache[require.resolve(pipelinePath)];
+    const { collectFixedTtsPhrases } = require(pipelinePath)._test;
+    const baseConfig = {
+      ackVariants: [],
+      progressPings: [],
+      greeting: "",
+      cancelAck: "",
+      llm: { firstTokenDelegateMs: 15_000 },
+      gatewayEvents: { enabled: false },
+    };
+    const enabledPhrases = collectFixedTtsPhrases({ ...baseConfig, gatewayEvents: { enabled: true } }, "");
+    assert.ok(enabledPhrases.includes(MEET_DELEGATION_LINE));
+    assert.ok(enabledPhrases.indexOf(MEET_DELEGATION_LINE) > enabledPhrases.indexOf(DELEGATION_LINE));
+    assert.ok(enabledPhrases.indexOf(MEET_DELEGATION_LINE) < enabledPhrases.indexOf("[soft voice] 続きは裏に回したよ。まとまったらチャットに貼るね。"));
+
+    assert.ok(!collectFixedTtsPhrases(baseConfig, "").includes(MEET_DELEGATION_LINE));
+
+    const disabledPhrases = collectFixedTtsPhrases({
+      ...baseConfig,
+      llm: { firstTokenDelegateMs: 0 },
+      gatewayEvents: { enabled: true },
+    }, "");
+    assert.ok(!disabledPhrases.includes(MEET_DELEGATION_LINE));
+    assert.ok(!disabledPhrases.includes(DELEGATION_LINE));
+
+    assert.ok(!collectFixedTtsPhrases({
+      ...baseConfig,
+      llm: { firstTokenDelegateMs: 15_000, provider: "openai-compatible" },
+      gatewayEvents: { enabled: true },
+    }, "").includes(MEET_DELEGATION_LINE));
   });
 });
 
