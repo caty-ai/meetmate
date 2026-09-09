@@ -1075,3 +1075,34 @@ test("#238 prune remains best-effort when logging throws and precedes missing sy
   }
   assert.deepEqual(calls, ["first", "second"]);
 });
+
+test("#238 delta-1 prune works with a relative cache dir", async (t) => {
+  const parent = tempDir();
+  t.after(() => fs.rmSync(parent, { recursive: true, force: true }));
+  const originalCwd = process.cwd();
+  const originalLog = console.log;
+  const logs = [];
+  try {
+    process.chdir(parent);
+    fs.mkdirSync("relcache");
+    const phrase = "はい。";
+    const opts = { referenceId: "voice-current", sampleRate: 24_000, speed: 1 };
+    const cache = createTtsCache({ dir: "relcache", synthesizeFn: async () => assert.fail("unexpected synthesis") });
+    const current = cache.fileFor(phrase, opts);
+    const orphan = cache.fileFor(phrase, { ...opts, referenceId: "voice-old" });
+    const pcm = Buffer.from([1, 2, 3, 4]);
+    fs.writeFileSync(current, pcm);
+    fs.writeFileSync(orphan, Buffer.alloc(1024));
+    console.log = (...args) => logs.push(args.join(" "));
+    await cache.prewarm([phrase], opts);
+    assert.equal(fs.existsSync(orphan), false);
+    assert.deepEqual(fs.readFileSync(current), pcm);
+    assert.deepEqual(logs, [
+      "🧹 TTS cache prune plan: 1 orphan .pcm (1 KB) in relcache",
+      "🧹 TTS cache pruned 1/1 orphan .pcm (1 KB)",
+    ]);
+  } finally {
+    console.log = originalLog;
+    process.chdir(originalCwd);
+  }
+});

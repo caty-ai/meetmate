@@ -98,7 +98,7 @@ function pruneOrphanPcm(dir, keepFiles) {
     for (const name of fs.readdirSync(dir)) {
       if (!CACHE_FILE_RE.test(name)) continue;
       const full = path.join(dir, name);
-      if (path.dirname(full) !== path.resolve(dir)) continue;
+      if (path.resolve(path.dirname(full)) !== path.resolve(dir)) continue;
       try {
         const st = fs.lstatSync(full);
         if (!st.isFile() || keepFiles.has(full)) continue;
