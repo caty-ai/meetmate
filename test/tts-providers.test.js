@@ -376,6 +376,7 @@ function unevenPcmResponse(pcm) {
     start(controller) {
       controller.enqueue(pcm.subarray(0, 4002));
       controller.enqueue(pcm.subarray(4002, 4008));
+      // The 5001 split exercises readPcmBody's odd-byte carry; createPcmResampler's oddByte path needs its direct unit test.
       controller.enqueue(pcm.subarray(4008, 5001));
       controller.enqueue(pcm.subarray(5001, 6006));
       controller.enqueue(pcm.subarray(6006));
@@ -410,6 +411,7 @@ test("OpenAI-compatible resamples a 3.36 s 48 kHz fixture with preserved duratio
   assert.ok(delivered.length >= 159667 && delivered.length <= 162893);
   const decimated = Buffer.alloc(pcm.length / 2);
   for (let i = 0; i < decimated.length / 2; i++) decimated.writeInt16LE(pcm.readInt16LE(i * 4), i * 2);
+  assert.equal(delivered.length, decimated.length, "delivered byte count must match 2:1 decimation before comparing content");
   assert.deepEqual(delivered, decimated, "every output sample must match 2:1 decimation, including chunk boundaries");
   assert.deepEqual(body, { model: "irodori", input: "fixture", voice: "local", response_format: "pcm" });
   t.diagnostic(`48 kHz fixture: source=${pcm.length} delivered=${delivered.length} bytes; decimation matches=${decimated.length / 2} samples, mismatches=0`);
@@ -421,6 +423,7 @@ test("#234 OpenAI-compatible 32 kHz chunks match an unchunked reference linear i
   const targetRate = 24_000;
   const pcm = Buffer.alloc(sourceRate * 2);
   for (let i = 0; i < sourceRate; i++) pcm.writeInt16LE(Math.round(20000 * Math.sin(2 * Math.PI * 440 * i / sourceRate)), i * 2);
+  // Size the reference from the buffer, not the rate, so the test stays valid if the fixture length changes.
   const pcmSamples = pcm.length / 2;
   const expected = Buffer.alloc(Math.ceil(pcmSamples * targetRate / sourceRate) * 2);
   for (let n = 0; n < expected.length / 2; n++) {
