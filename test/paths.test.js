@@ -258,6 +258,8 @@ test("#234 registry-derived numeric env aliases resolve as numbers", (t) => {
   t.after(resetRuntimeForTest);
   const failures = [];
   const skipped = SETTINGS_REGISTRY.filter(e => e.envAlias && e.writeSurface !== "settings").map(e => e.id);
+  assert.deepEqual(skipped, ["server_port", "resolved_home"],
+    "non-settings env aliases must be explicitly allow-listed here; a new one must either be covered by this guard or added to this list on purpose");
   const checked = [];
   for (const entry of SETTINGS_REGISTRY) {
     if (entry.writeSurface !== "settings") continue;

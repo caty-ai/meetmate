@@ -376,7 +376,8 @@ function unevenPcmResponse(pcm) {
     start(controller) {
       controller.enqueue(pcm.subarray(0, 4002));
       controller.enqueue(pcm.subarray(4002, 4008));
-      controller.enqueue(pcm.subarray(4008, 6006));
+      controller.enqueue(pcm.subarray(4008, 5001));
+      controller.enqueue(pcm.subarray(5001, 6006));
       controller.enqueue(pcm.subarray(6006));
       controller.close();
     },
@@ -420,13 +421,14 @@ test("#234 OpenAI-compatible 32 kHz chunks match an unchunked reference linear i
   const targetRate = 24_000;
   const pcm = Buffer.alloc(sourceRate * 2);
   for (let i = 0; i < sourceRate; i++) pcm.writeInt16LE(Math.round(20000 * Math.sin(2 * Math.PI * 440 * i / sourceRate)), i * 2);
-  const expected = Buffer.alloc(Math.ceil(sourceRate * targetRate / sourceRate) * 2);
+  const pcmSamples = pcm.length / 2;
+  const expected = Buffer.alloc(Math.ceil(pcmSamples * targetRate / sourceRate) * 2);
   for (let n = 0; n < expected.length / 2; n++) {
     const numerator = n * sourceRate;
     const leftIndex = Math.floor(numerator / targetRate);
     const fraction = (numerator % targetRate) / targetRate;
     const left = pcm.readInt16LE(leftIndex * 2);
-    const right = pcm.readInt16LE(Math.min(leftIndex + 1, sourceRate - 1) * 2);
+    const right = pcm.readInt16LE(Math.min(leftIndex + 1, pcmSamples - 1) * 2);
     expected.writeInt16LE(Math.round(left + (right - left) * fraction), n * 2);
   }
   const audio = [];
@@ -487,6 +489,18 @@ test("dispatcher resolves the source sample rate and permits an explicit overrid
     });
     assert.equal(Buffer.concat(audio).length, expectedBytes);
   }
+});
+
+test("#237 dispatcher rejects an explicit zero source sample rate before HTTP", async () => {
+  initialize({ provider: "openai-compatible", openaiCompatibleTts: {
+    baseUrl: localPcmOptions.baseUrl, model: "irodori", voice: "local", sourceSampleRate: 48000,
+  } });
+  let fetchCalls = 0;
+  await assert.rejects(() => require("../src/tts-fish").synthesize("dispatcher-zero", {
+    sourceSampleRate: 0, sampleRate: 24000, onAudio: () => {},
+    fetchFn: async () => { fetchCalls++; return pcmResponse(); },
+  }), /8000 and 96000/);
+  assert.equal(fetchCalls, 0);
 });
 
 test("PCM resampler interpolates across chunks, carries odd bytes, passes equal rates through, and resets", () => {
