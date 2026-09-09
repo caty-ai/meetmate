@@ -455,6 +455,7 @@ function collectFixedTtsPhrases(config, greeting) {
     config.exitFarewell || messages.exitFarewell,
     config.cancelAck,
     ...(isOpenclaw && Number(config?.llm?.firstTokenDelegateMs || 0) > 0 ? [messages.forcedDelegationFallback] : []),
+    ...(gatewayEventsEnabled && Number(config?.llm?.firstTokenDelegateMs || 0) > 0 ? [messages.forcedDelegationFallbackMeet] : []),
     config.timeoutFallback || messages.timeoutFallback,
     messages.handoffSuccess,
     messages.handoffFailure,
