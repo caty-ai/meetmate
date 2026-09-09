@@ -847,3 +847,262 @@ async function waitFor(predicate, timeoutMs, label) {
   }
   assert.fail(`Timed out waiting for ${label}`);
 }
+
+test("#238 prewarm prunes .pcm keys outside the current phrase set and keeps current ones byte-identical", async (t) => {
+  const dir = tempDir();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const opts = { referenceId: "voice-current", sampleRate: 24_000, speed: 1 };
+  let calls = 0;
+  const cache = createTtsCache({ dir, synthesizeFn: async () => { calls += 1; } });
+  const current = cache.fileFor("はい。", opts);
+  const pcm = Buffer.from([1, 2, 3, 4]);
+  const orphan = path.join(dir, `${_test.cacheKey("はい。", {
+    ...opts, provider: "openai-compatible", baseUrl: "http://127.0.0.1:8088", voice: "v", model: "m",
+  })}.pcm`);
+  const oldFish = cache.fileFor("はい。", { ...opts, referenceId: "voice-old" });
+  fs.writeFileSync(current, pcm);
+  fs.writeFileSync(orphan, Buffer.alloc(1024));
+  fs.writeFileSync(oldFish, Buffer.alloc(2048));
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (...args) => logs.push(args.join(" "));
+  try {
+    await cache.prewarm(["はい。"], opts);
+  } finally {
+    console.log = originalLog;
+  }
+  assert.equal(calls, 0);
+  assert.deepEqual(fs.readFileSync(current), pcm);
+  assert.equal(fs.existsSync(orphan), false);
+  assert.equal(fs.existsSync(oldFish), false);
+  const kb = Math.round((1024 + 2048) / 1024);
+  assert.deepEqual(logs, [
+    `🧹 TTS cache prune plan: 2 orphan .pcm (${kb} KB) in ${dir}`,
+    `🧹 TTS cache pruned 2/2 orphan .pcm (${kb} KB)`,
+  ]);
+});
+
+test("#238 prune never follows or deletes symlinks", async (t) => {
+  const dir = tempDir();
+  const outsideDir = tempDir();
+  t.after(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(outsideDir, { recursive: true, force: true });
+  });
+  const cache = createTtsCache({ dir, synthesizeFn: async () => assert.fail("unexpected synthesis") });
+  const current = cache.fileFor("はい。");
+  const outside = path.join(outsideDir, "victim.pcm");
+  const link = cache.fileFor("symlink orphan");
+  const pcm = Buffer.from([1, 2, 3, 4]);
+  fs.writeFileSync(current, pcm);
+  fs.writeFileSync(outside, pcm);
+  fs.symlinkSync(outside, link);
+  await cache.prewarm(["はい。"]);
+  assert.equal(fs.lstatSync(link).isSymbolicLink(), true);
+  assert.deepEqual(fs.readFileSync(outside), pcm);
+  assert.deepEqual(_test.pruneOrphanPcm(dir, new Set([current])), { planned: 0, deleted: 0, bytes: 0 });
+});
+
+test("#238 prune ignores non-cache names, sub-directories and in-flight tmp files", async (t) => {
+  const dir = tempDir();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const cache = createTtsCache({ dir, synthesizeFn: async () => assert.fail("unexpected synthesis") });
+  const current = cache.fileFor("はい。");
+  fs.writeFileSync(current, Buffer.from([1, 2]));
+  const key = _test.cacheKey("ignored orphan");
+  const directoryName = `${_test.cacheKey("directory orphan")}.pcm`;
+  const ignored = ["notes.txt", "sub", `${key}.pcm.tmp-1234-abcdef`, `${key.toUpperCase()}.pcm`, directoryName];
+  for (const name of ignored) {
+    const full = path.join(dir, name);
+    if (name === "sub" || name === directoryName) fs.mkdirSync(full);
+    else fs.writeFileSync(full, "unchanged");
+  }
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (...args) => logs.push(args.join(" "));
+  try {
+    await cache.prewarm(["はい。"]);
+    assert.deepEqual(_test.pruneOrphanPcm(dir, new Set([current])), { planned: 0, deleted: 0, bytes: 0 });
+  } finally {
+    console.log = originalLog;
+  }
+  for (const name of ignored) assert.equal(fs.existsSync(path.join(dir, name)), true);
+  assert.deepEqual(logs, []);
+});
+
+test("#238 prune is skipped when the cache is disabled or the phrase list is empty", async (t) => {
+  const dir = tempDir();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const cache = createTtsCache({ dir, synthesizeFn: async () => assert.fail("unexpected synthesis") });
+  const orphan = cache.fileFor("orphan");
+  fs.writeFileSync(orphan, Buffer.from([1, 2]));
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (...args) => logs.push(args.join(" "));
+  try {
+    await withEnvAsync({ TTS_CACHE_ENABLED: "false" }, () => cache.prewarm(["はい。"]));
+    assert.equal(fs.existsSync(orphan), true);
+    await withEnvAsync({ TTS_CACHE_ENABLED: "true" }, async () => {
+      for (const phrases of [[], ["   "], [null, {}]]) {
+        await cache.prewarm(phrases);
+        assert.equal(fs.existsSync(orphan), true);
+      }
+    });
+  } finally {
+    console.log = originalLog;
+  }
+  assert.deepEqual(logs, []);
+});
+
+test("#238 an unlink failure leaves the others pruned and does not throw", async (t) => {
+  const dir = tempDir();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const cache = createTtsCache({ dir, synthesizeFn: async () => assert.fail("unexpected synthesis") });
+  const current = cache.fileFor("はい。");
+  const blocked = cache.fileFor("blocked orphan");
+  const removable = cache.fileFor("removable orphan");
+  fs.writeFileSync(current, Buffer.from([1, 2]));
+  fs.writeFileSync(blocked, Buffer.alloc(1024));
+  fs.writeFileSync(removable, Buffer.alloc(2048));
+  const unlink = fs.unlinkSync;
+  const mocked = t.mock.method(fs, "unlinkSync", function (file, ...args) {
+    if (file === blocked) throw new Error("simulated unlink failure");
+    return unlink.call(this, file, ...args);
+  });
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (...args) => logs.push(args.join(" "));
+  try {
+    await assert.doesNotReject(cache.prewarm(["はい。"]));
+  } finally {
+    console.log = originalLog;
+    mocked.mock.restore();
+  }
+  assert.equal(fs.existsSync(blocked), true);
+  assert.equal(fs.existsSync(removable), false);
+  assert.deepEqual(logs, [
+    `🧹 TTS cache prune plan: 2 orphan .pcm (3 KB) in ${dir}`,
+    "🧹 TTS cache pruned 1/2 orphan .pcm (2 KB)",
+  ]);
+});
+
+test("#238 pre-aborted and empty-effective-text prewarm never prune", async (t) => {
+  const dir = tempDir();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const cache = createTtsCache({ dir, synthesizeFn: async () => assert.fail("unexpected synthesis") });
+  const orphan = cache.fileFor("orphan");
+  fs.writeFileSync(orphan, Buffer.from([1, 2]));
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (...args) => logs.push(args.join(" "));
+  try {
+    await cache.prewarm(["はい。"], { signal: AbortSignal.abort() });
+    assert.equal(fs.existsSync(orphan), true);
+    await withEnvAsync({}, async () => {
+      require("../src/settings/resolver").initializeRuntime({
+        state: {
+          exists: true, valid: true, parsed: { agent: { emotionTags: false } },
+          revision: "prune-empty-text", fingerprint: "prune-empty-text",
+        },
+      });
+      assert.equal(_test.effectiveSynthesisText("[soft voice]"), "");
+      await cache.prewarm(["[soft voice]"]);
+    });
+    assert.equal(fs.existsSync(orphan), true);
+  } finally {
+    console.log = originalLog;
+  }
+  assert.deepEqual(logs, []);
+});
+
+test("#238 prune rechecks planned files and tolerates filesystem read failures", (t) => {
+  const dir = tempDir();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const candidate = path.join(dir, `${_test.cacheKey("planned orphan")}.pcm`);
+  const victim = path.join(dir, "victim.txt");
+  fs.writeFileSync(candidate, Buffer.alloc(1024));
+  fs.writeFileSync(victim, "intact");
+  const lstat = fs.lstatSync;
+  let checks = 0;
+  const mocked = t.mock.method(fs, "lstatSync", function (file, ...args) {
+    if (file === candidate && ++checks === 2) {
+      fs.unlinkSync(candidate);
+      fs.symlinkSync(victim, candidate);
+    }
+    return lstat.call(this, file, ...args);
+  });
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (...args) => logs.push(args.join(" "));
+  try {
+    assert.deepEqual(_test.pruneOrphanPcm(dir, new Set()), { planned: 1, deleted: 0, bytes: 0 });
+    assert.equal(fs.lstatSync(candidate).isSymbolicLink(), true);
+    assert.equal(fs.readFileSync(victim, "utf8"), "intact");
+    assert.deepEqual(logs, [
+      `🧹 TTS cache prune plan: 1 orphan .pcm (1 KB) in ${dir}`,
+      "🧹 TTS cache pruned 0/1 orphan .pcm (0 KB)",
+    ]);
+    logs.length = 0;
+    mocked.mock.restore();
+    t.mock.method(fs, "lstatSync", () => { throw new Error("unreadable entry"); });
+    assert.deepEqual(_test.pruneOrphanPcm(dir, new Set()), { planned: 0, deleted: 0, bytes: 0 });
+    assert.deepEqual(_test.pruneOrphanPcm(path.join(dir, "missing"), new Set()), { planned: 0, deleted: 0, bytes: 0 });
+    assert.deepEqual(logs, []);
+  } finally {
+    console.log = originalLog;
+    t.mock.restoreAll();
+  }
+});
+
+test("#238 prune remains best-effort when logging throws and precedes missing synthesis", async (t) => {
+  const dir = tempDir();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const calls = [];
+  const cache = createTtsCache({ dir, synthesizeFn: async (text) => {
+    assert.equal(fs.existsSync(orphan), false);
+    calls.push(text);
+  } });
+  const orphan = cache.fileFor("orphan");
+  fs.writeFileSync(orphan, Buffer.alloc(2048));
+  const originalLog = console.log;
+  console.log = () => { throw new Error("logging unavailable"); };
+  try {
+    assert.deepEqual(_test.pruneOrphanPcm(dir, new Set()), { planned: 1, deleted: 1, bytes: 2048 });
+    fs.writeFileSync(orphan, Buffer.alloc(1024));
+    await assert.doesNotReject(cache.prewarm(["first", "second"]));
+  } finally {
+    console.log = originalLog;
+  }
+  assert.deepEqual(calls, ["first", "second"]);
+});
+
+test("#238 delta-1 prune works with a relative cache dir", async (t) => {
+  const parent = tempDir();
+  t.after(() => fs.rmSync(parent, { recursive: true, force: true }));
+  const originalCwd = process.cwd();
+  const originalLog = console.log;
+  const logs = [];
+  try {
+    process.chdir(parent);
+    fs.mkdirSync("relcache");
+    const phrase = "はい。";
+    const opts = { referenceId: "voice-current", sampleRate: 24_000, speed: 1 };
+    const cache = createTtsCache({ dir: "relcache", synthesizeFn: async () => assert.fail("unexpected synthesis") });
+    const current = cache.fileFor(phrase, opts);
+    const orphan = cache.fileFor(phrase, { ...opts, referenceId: "voice-old" });
+    const pcm = Buffer.from([1, 2, 3, 4]);
+    fs.writeFileSync(current, pcm);
+    fs.writeFileSync(orphan, Buffer.alloc(1024));
+    console.log = (...args) => logs.push(args.join(" "));
+    await cache.prewarm([phrase], opts);
+    assert.equal(fs.existsSync(orphan), false);
+    assert.deepEqual(fs.readFileSync(current), pcm);
+    assert.deepEqual(logs, [
+      "🧹 TTS cache prune plan: 1 orphan .pcm (1 KB) in relcache",
+      "🧹 TTS cache pruned 1/1 orphan .pcm (1 KB)",
+    ]);
+  } finally {
+    console.log = originalLog;
+    process.chdir(originalCwd);
+  }
+});

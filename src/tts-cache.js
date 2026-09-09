@@ -88,6 +88,51 @@ function unlinkBestEffort(file) {
   } catch { /* ignore */ }
 }
 
+const CACHE_FILE_RE = /^[0-9a-f]{64}\.pcm$/;
+
+function pruneOrphanPcm(dir, keepFiles) {
+  const candidates = [];
+  let bytes = 0;
+  // Stage 1: plan only direct regular cache files, never symlinks or tmp files.
+  try {
+    for (const name of fs.readdirSync(dir)) {
+      if (!CACHE_FILE_RE.test(name)) continue;
+      const full = path.join(dir, name);
+      if (path.resolve(path.dirname(full)) !== path.resolve(dir)) continue;
+      try {
+        const st = fs.lstatSync(full);
+        if (!st.isFile() || keepFiles.has(full)) continue;
+        candidates.push({ full, size: st.size });
+        bytes += st.size;
+      } catch { /* ignore inaccessible or vanished entries */ }
+    }
+  } catch {
+    return { planned: 0, deleted: 0, bytes: 0 };
+  }
+  const n = candidates.length;
+  if (!n) return { planned: 0, deleted: 0, bytes: 0 };
+  try {
+    console.log(`🧹 TTS cache prune plan: ${n} orphan .pcm (${Math.round(bytes / 1024)} KB) in ${dir}`);
+  } catch { /* logging must not interrupt prewarm */ }
+
+  // Stage 2: delete exactly the plan, checking file type again before unlink.
+  let deleted = 0;
+  let bytesDeleted = 0;
+  for (const { full } of candidates) {
+    try {
+      const st = fs.lstatSync(full);
+      if (!st.isFile()) continue;
+      fs.unlinkSync(full);
+      deleted += 1;
+      bytesDeleted += st.size;
+    } catch { /* one failed deletion must not prevent the others */ }
+  }
+  try {
+    console.log(`🧹 TTS cache pruned ${deleted}/${n} orphan .pcm (${Math.round(bytesDeleted / 1024)} KB)`);
+  } catch { /* logging must not interrupt prewarm */ }
+  return { planned: n, deleted, bytes: bytesDeleted };
+}
+
 function previewText(text) {
   const s = String(text || "");
   return `${s.slice(0, 24)}${s.length > 24 ? "…" : ""}`;
@@ -221,6 +266,8 @@ function createTtsCache({ dir = defaultCacheDir(), synthesizeFn } = {}) {
   async function prewarm(phrases, baseOptions = {}) {
     if (!isCacheEnabled()) return;
 
+    const keep = new Set();
+    const items = [];
     for (const phrase of phrases || []) {
       if (baseOptions.signal?.aborted) return;
       const item = typeof phrase === "string" ? { text: phrase } : phrase;
@@ -235,6 +282,13 @@ function createTtsCache({ dir = defaultCacheDir(), synthesizeFn } = {}) {
       const effectiveText = effectiveSynthesisText(text);
       if (!effectiveText) continue;
       const file = fileFor(effectiveText, options);
+      keep.add(file);
+      items.push({ text, options, file });
+    }
+    if (!items.length) return;
+    if (!baseOptions.signal?.aborted) pruneOrphanPcm(dir, keep);
+    for (const { text, options, file } of items) {
+      if (baseOptions.signal?.aborted) return;
       if (isValidPcmFile(file)) continue;
       if (fs.existsSync(file)) unlinkBestEffort(file);
 
@@ -262,6 +316,7 @@ module.exports = {
     effectiveSynthesisText,
     emitPacedPcm,
     normalizeSpeed,
+    pruneOrphanPcm,
     synthesisIdentity,
   },
 };

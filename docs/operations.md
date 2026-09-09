@@ -105,6 +105,8 @@ metrics は `logs/metrics.jsonl` に JSONL 追記、集計は `node scripts/aggr
 
 cache key は `voiceId` / `FISH_AUDIO_SPEED` / `FISH_AUDIO_MODEL` / `TTS_SAMPLE_RATE` の影響を受けます。いずれかを変えた後は再実行しないと古い seeded PCM はヒットせず、Fish Audio の live synthesis へ静かに戻ります。`config.json` の `agent.ackVariants` / `progressPings` / `exitFarewell` / `greeting` / `timeoutFallback` には、manifest 内のテキストを文字・句読点まで完全一致（感情タグなしのプレーン文言）で入れてください。
 
+起動時（`tts.cache.prewarm=true` のとき）には、現在の設定で使う固定フレーズの cache key 集合に無い `<64hex>.pcm` を自動削除します（#238）。対象は cache dir 直下の通常ファイルのみで、symlink・サブディレクトリ・`.pcm.tmp-*` は触りません。削除候補があるときだけ `🧹 TTS cache prune plan: …` と `🧹 TTS cache pruned …` の2行がログに出ます。voice / model / sample rate / `sourceSampleRate`（#234）を変えた後の古い PCM はこれで片付きます。固定フレーズのリストが空の場合は削除しません。注意: 複数の meetmate インスタンスが同じ `TTS_CACHE_DIR` を別の voice / provider で共有すると、起動のたびに互いのエントリを消し合います（音が出なくなることはなく、次回利用時に再生成されます）。避けたい場合は instance ごとに `TTS_CACHE_DIR` を分けるか `tts.cache.prewarm=false` にしてください。seed script の `--voice-id` を実行時 voice と違う値にした場合も同様に削除されます。
+
 ## LCM（Lossless Context Management）
 
 Meet セッションは OpenClaw の LCM で自動記録。セッション終了時に ingest され、長期記憶に保存されます。
