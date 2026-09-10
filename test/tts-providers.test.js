@@ -440,7 +440,9 @@ test("#234 OpenAI-compatible 32 kHz chunks match an unchunked reference linear i
     onAudio: (chunk) => audio.push(chunk),
     fetchFn: async () => unevenPcmResponse(pcm),
   });
-  assert.deepEqual(Buffer.concat(audio), expected);
+  const delivered = Buffer.concat(audio);
+  assert.equal(delivered.length, expected.length, "delivered byte count must match the reference interpolator length before comparing content");
+  assert.deepEqual(delivered, expected, "every output sample must match the unchunked reference interpolator, including chunk boundaries");
 });
 
 test("OpenAI-compatible explicit and default 24 kHz source pass through byte-identically", async () => {
