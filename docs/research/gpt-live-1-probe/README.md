@@ -77,6 +77,37 @@ Four sessions: `solo-1`, `two-speaker-1`, `two-speaker-2` (stronger silence inst
 | Usage from session.closed | 41 s + 71 s + 71 s + 43 s = 226 s | `session.usage.updated` arrives every 15 s; `session.closed.usage.seconds` is the billed figure. |
 | Actual cost from OpenAI usage page | Estimated USD 0.19 (226 s × 0.05/60). Usage page not yet checked. | owner to confirm on https://platform.openai.com/usage |
 
+### Path 3 re-synthesis
+
+Replay recorded output transcripts through Fish Audio, using node builtins and the existing WAV helpers. From this directory:
+
+```bash
+node path3-resynth.mjs --run runs/solo-1/ --dry-run
+# Set FISH_API_KEY in your environment before a live run.
+node path3-resynth.mjs --run runs/solo-1/
+node path3-resynth.mjs --run runs/interrupt-1/ --skip-backchannels
+```
+
+Writes `path3/<run-basename>/output.wav`, `metrics.json`, and `metrics.md` next to the script. Re-running the same name replaces those outputs, including when switching from dry-run to live; save comparisons separately. Input paths resolve from the working directory. Default voice: `0089dce5fefb4c6ba9b9f2f0debe1ddc` (`--voice` overrides). Fish requests use `s2.1-pro`, PCM16 mono 16000 Hz, and low latency. Missing `FISH_API_KEY` fails before reading the run or making a request. No OpenAI key is needed.
+
+Assembly is deterministic in JSONL receive order, using server output transcript deltas only. A sentence closes before the next delta when its trimmed text ends in `。？！?!、` and the next `start_ms` is greater than the preceding `end_ms`, or when consecutive `start_ms` values differ by more than `--gap-ms` (default 600). Such a closure uses the next delta's receive time as `closed_t_ms`; that delta starts the next sentence. A delta bringing text length to `--max-chars` (default 40) closes immediately without splitting the delta. EOF flushes remaining text at the last recorded event time. No speculative gap timer is modeled. `first_delta_start_ms` and `last_delta_end_ms` retain the transcript timestamps; `first_delta_t_ms` retains the first delta's receive time.
+
+Fragments have fewer than 3 characters, or end without the listed punctuation before a consecutive-start gap greater than 1500 ms. Backchannels match only `うん`, `はい`, `なるほど`, or `ええ` with optional listed punctuation. Both flags remain in reports even when skipped. `--skip-fragments` defaults on (`--no-skip-fragments` includes them); `--skip-backchannels` defaults off. A two-character backchannel can also be a fragment and therefore be skipped by the default fragment policy. Character counts use JavaScript `text.length` (UTF-16 code units), including punctuation; Fish billing may count differently.
+
+- `ttfb_ms`: request start to first nonempty response body bytes; `total_ms`: request start through the completed stream.
+- `--start-on close` (default): `start_t_i = closed_t_ms`. `--start-on first` uses `first_delta_t_ms`, an optimistic bound requiring foreknowledge of the complete sentence.
+- Placement: `start_i = max(start_t_i + ttfb_i, end_previous)`; `end_i = start_i + PCM_duration_i`. Skipped rows do not occupy the timeline. WAV positions round to the nearest 16 kHz sample; reported times retain millisecond precision. An empty result emits one silent sample.
+- `original_first_audio_t_ms`: receive time of the first server output audio delta with positive `audio_bytes` at or after the sentence's `first_delta_t_ms`; fallback is that first transcript receive time. `added_delay_ms = start_i - original_first_audio_t_ms`. This baseline can contain digital silence (see below), and delays can be negative. It does not measure against transcript audio timestamps or detect audible speech.
+- `added_delay_p50_ms` is the median of synthesized sentences (average of two middle values for an even count); max uses the same population. Both are null when no sentences are synthesized. Counts of fragments/backchannels include skipped sentences; `fish_chars_total` counts only synthesized text.
+- Cost is an **assumption**, default USD 15 per million characters, adjustable with `--fish-usd-per-1m-chars`. It is not verified pricing or an invoice. Dry-run estimates hypothetical cost and incurs none.
+
+Synthesis requests run sequentially in original order; a Bridge would pipeline them. The reconstructed timeline applies the formula above independently of the serial request wall clock, so it does not add preceding HTTP request durations. It also assumes each complete PCM response can play continuously from TTFB, without modeling later stream stalls. Dry-run uses a virtual fixed 350 ms TTFB (no wall-clock sleep) and silence lasting `text.length × 180 ms`; it verifies plumbing and math, not voice quality or live latency.
+
+| Run | Added delay p50 (ms) | Max (ms) | Backchannel count | Fragment count | Fish chars | Listening note |
+|---|---|---|---|---|---|---|
+| solo-1 | | | | | | |
+| interrupt-1 | | | | | | |
+
 ### Known metric limitation (fix in a follow-up)
 
 `gpt-live-1` streams `session.output_audio.delta` continuously, including digital silence, for the whole session (676 deltas / 2.16 MB for a 67 s two-speaker session). `unaddressed_response_count` and `interruption_handled` treat *any* received audio bytes as speech, so they report false positives (6/6) and false negatives (`false`). They must be redefined on audio energy (RMS per window above a threshold) or on `session.output_transcript.delta` presence. The transcript-based reconstruction and the RMS scan above are the audited ground truth for this table.
