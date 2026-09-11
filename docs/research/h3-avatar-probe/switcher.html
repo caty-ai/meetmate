@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="ja">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>H3 clip-library avatar probe</title>
+<style>
+  body { margin: 24px auto; padding: 0 16px; max-width: 960px; background: #101522; color: #e6ecf7; font: 16px/1.6 system-ui, sans-serif; }
+  #stage { position: relative; aspect-ratio: 16 / 9; background: #202939; overflow: hidden; border-radius: 12px; }
+  video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; opacity: 0; transition: opacity 150ms linear; }
+  video.active { opacity: 1; }
+  #overlay { position: absolute; bottom: 10px; left: 10px; z-index: 2; padding: 4px 10px; background: #000b; font: 14px monospace; }
+  audio { display: block; width: 100%; margin-top: 16px; }
+  button, input { font: inherit; margin: 8px 8px 8px 0; }
+  #notice { color: #f6d58c; white-space: pre-line; }
+</style>
+<h1>H3 clip-library avatar probe</h1>
+<p>音声ファイルを選び再生してください。推奨: <code>../gpt-live-1-probe/path3/solo-1/output.wav</code>。Space で再生／一時停止。</p>
+<label for="audio-file">音声ファイル</label> <input id="audio-file" type="file" accept="audio/*">
+<button id="toggle" type="button">再生／一時停止</button>
+<div id="stage" aria-label="アバター動画">
+  <video id="idle" muted loop playsinline preload="auto" class="active"></video>
+  <video id="talk" muted loop playsinline preload="auto"></video>
+  <video id="nod" muted loop playsinline preload="auto"></video>
+  <video id="smile" muted loop playsinline preload="auto"></video>
+  <output id="overlay">state=idle RMS=0.000 level=0 elapsed=0.00s</output>
+</div>
+<audio id="audio" controls></audio>
+<p id="notice" role="status"></p>
+<p>閾値 0.375／0.75、RMS 計測 40 ms。無音側は 300 ms 超で切替。nod／smile は存在するときだけ一度再生します。</p>
+<script>
+'use strict';
+const audio = document.getElementById('audio');
+const picker = document.getElementById('audio-file');
+const toggleButton = document.getElementById('toggle');
+const overlay = document.getElementById('overlay');
+const notice = document.getElementById('notice');
+const videos = Object.fromEntries(['idle', 'talk', 'nod', 'smile'].map(name => [name, document.getElementById(name)]));
+const available = new Set();
+const messages = new Set();
+let state = 'idle', talkSince = null, quietSince = null, nextGesture = 'nod';
+let context, analyser, samples, objectUrl;
+function report(message) { messages.add(message); notice.textContent = [...messages].join('\n'); }
+function playVideo(name) {
+  const video = videos[name];
+  video.play().catch(() => {
+    if (state !== name) return;
+    report(`${name}: 動画を再生できません。ファイル形式とブラウザの再生許可を確認してください。`);
+    if (name === 'nod' || name === 'smile') enter('idle');
+  });
+}
+function enter(name, now = performance.now()) {
+  if (name === state) return;
+  const previous = state;
+  state = name;
+  for (const [key, video] of Object.entries(videos)) video.classList.toggle('active', key === name);
+  if (previous === 'nod' || previous === 'smile') videos[previous].pause();
+  quietSince = null;
+  talkSince = name === 'talk' ? now : null;
+  if (name === 'nod' || name === 'smile') {
+    videos[name].loop = false;
+    videos[name].currentTime = 0;
+  }
+  if (available.has(name)) playVideo(name);
+}
+const directory = new URLSearchParams(location.search).get('clips') || 'clips';
+try {
+  const base = new URL(directory.replace(/\/*$/, '/'), location.href);
+  if (!['file:', 'https:', 'http:'].includes(base.protocol)) throw new Error('unsupported protocol');
+  for (const [name, video] of Object.entries(videos)) {
+    video.muted = true;
+    video.addEventListener('canplay', () => {
+      available.add(name);
+      if (name === state || name === 'idle' || name === 'talk') playVideo(name);
+    });
+    video.addEventListener('error', () => {
+      available.delete(name);
+      report(`${name}.mp4: 未配置または再生非対応${['nod', 'smile'].includes(name) ? '（省略して続行）' : ''}`);
+      if (state === name && name !== 'idle') enter('idle');
+    });
+    video.addEventListener('ended', () => { if (state === name && ['nod', 'smile'].includes(name)) enter('idle'); });
+    video.src = new URL(`${name}.mp4`, base).href;
+  }
+} catch { report('clips ディレクトリの URL が不正です。'); }
+async function prepareAudio() {
+  if (!context) {
+    context = new AudioContext();
+    analyser = context.createAnalyser();
+    analyser.fftSize = 2048;
+    samples = new Float32Array(analyser.fftSize);
+    const source = context.createMediaElementSource(audio);
+    source.connect(analyser);
+    analyser.connect(context.destination);
+  }
+  await context.resume();
+}
+picker.addEventListener('change', () => {
+  audio.pause();
+  enter('idle');
+  if (objectUrl) URL.revokeObjectURL(objectUrl);
+  objectUrl = undefined;
+  if (!picker.files[0]) { audio.removeAttribute('src'); audio.load(); return; }
+  objectUrl = URL.createObjectURL(picker.files[0]);
+  audio.src = objectUrl;
+  audio.load();
+});
+async function toggle() {
+  if (!audio.src) { report('音声ファイルを選択してください。'); return; }
+  try {
+    if (audio.paused) { await prepareAudio(); await audio.play(); }
+    else audio.pause();
+  } catch (error) { report(`音声再生エラー: ${error.message}`); }
+}
+toggleButton.addEventListener('click', toggle);
+document.addEventListener('keydown', event => {
+  if (event.code !== 'Space' || event.repeat || event.target.closest('input, button, audio, textarea, select, [contenteditable]')) return;
+  event.preventDefault();
+  void toggle();
+});
+audio.addEventListener('play', () => { prepareAudio().catch(error => { audio.pause(); report(`AudioContext: ${error.message}`); }); });
+audio.addEventListener('pause', () => enter('idle'));
+audio.addEventListener('ended', () => enter('idle'));
+audio.addEventListener('seeking', () => enter('idle'));
+audio.addEventListener('error', () => { enter('idle'); report('音声ファイルを読み込めません。'); });
+setInterval(() => {
+  const now = performance.now();
+  let rms = 0;
+  if (analyser && !audio.paused && !audio.ended) {
+    analyser.getFloatTimeDomainData(samples);
+    rms = Math.sqrt(samples.reduce((sum, value) => sum + value * value, 0) / samples.length);
+    if (rms >= 0.375) {
+      quietSince = null;
+      if (available.has('talk')) enter('talk', now);
+    } else if (state === 'talk') {
+      if (quietSince === null) quietSince = now;
+      if (now - quietSince > 300) {
+        const longTalk = quietSince - talkSince >= 1500;
+        const fallback = nextGesture === 'nod' ? 'smile' : 'nod';
+        const gesture = available.has(nextGesture) ? nextGesture : (available.has(fallback) ? fallback : null);
+        if (longTalk && gesture) {
+          nextGesture = gesture === 'nod' ? 'smile' : 'nod';
+          enter(gesture, now);
+        } else enter('idle', now);
+      }
+    }
+  }
+  const level = rms < 0.375 ? 0 : rms < 0.75 ? 1 : 2;
+  overlay.textContent = `state=${state} RMS=${rms.toFixed(3)} level=${level} elapsed=${audio.currentTime.toFixed(2)}s`;
+}, 40);
+window.addEventListener('pagehide', () => { if (objectUrl) URL.revokeObjectURL(objectUrl); });
+</script>
+</html>
