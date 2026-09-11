@@ -54,10 +54,13 @@ Live mode writes `clips/<name>.mp4` and `<name>.json`: request ID, UTC submissio
 
 | Clip | generation_s | File size (bytes) | Cost estimate (USD) | Viewing note |
 |---|---|---|---|---|
-| idle | | | | |
-| talk | | | | |
-| nod | | | | |
-| smile | | | | |
+| idle | 196.0 | 1,089,615 | 0.30 | base H3 `reference-to-video`, 1344×768, 24 fps, 5.18 s, AAC track; owner to fill |
+| talk | 136.5 | 2,025,942 | 0.30 | same; reference audio `caty-talk-8s.mp3`; owner to fill |
+| nod | 200.9 | 1,409,729 | 0.30 | duration raised 4→5 (API minimum is 5; first attempt 422); owner to fill |
+| smile | 130.0 | 2,084,263 | 0.30 | same fix; owner to fill |
+| talk-h3max-home2home (manual, not in plan) | **inference 1.41 s** (submit round-trip 4.4 s with data-URI image) | 4,490,542 | ~0.10 (768P, 5 s, discounted list) | `minimax/h3-max/image-to-video`, `image_url` = `end_image_url` = `refs/caty_home.png`, 768×768, 5.18 s, AAC; identity held; last frame did not visibly return to home (hand raised) — recheck |
+
+**Reading (2026-09-11):** base H3 is 130–200 s per 5 s clip → pre-generation only. H3 Max image-to-video is ~1.4 s inference → viable for per-utterance clips (2026-09-09 Plan B), but it takes **no audio input**, so mouth motion is generic rather than lip-synced to Fish. Lip-sync to our audio exists only in `minimax/h3-max/director` (5.6–7.2 s reaction, per-minute billing; 09-09 lab). Plan B for this lane: idle loops home→home via h3-max i2v, per-utterance home→home clips on speech, double-buffered switcher, Fish audio played by the Bridge.
 
 ## Local switcher
 

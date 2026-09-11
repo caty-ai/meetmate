@@ -3,8 +3,8 @@
    "prompt":"The character in image 1, in the exact flat 2D style of image 2, sits still facing the viewer, gently breathing, blinks twice, mouth closed, no camera motion, plain soft background, seamless loop."},
   {"name":"talk","duration":5,"resolution":"768P","images":["refs/caty_talk1.png","refs/caty-style.png"],"audio":["refs/caty-talk-8s.mp3"],"seed":12,
    "prompt":"The character in image 1, in the exact flat 2D style of image 2, speaks Japanese matching the rhythm of audio 1: mouth opens and closes with the speech, small natural head movements, friendly expression, no camera motion, plain soft background."},
-  {"name":"nod","duration":4,"resolution":"768P","images":["refs/caty_idle.png","refs/caty-style.png"],"audio":[],"seed":13,
+  {"name":"nod","duration": 5,"resolution":"768P","images":["refs/caty_idle.png","refs/caty-style.png"],"audio":[],"seed":13,
    "prompt":"The character in image 1, in the exact flat 2D style of image 2, nods once slowly and smiles a little, mouth closed, returns to neutral, no camera motion, plain soft background."},
-  {"name":"smile","duration":4,"resolution":"768P","images":["refs/caty_idle.png","refs/caty-style.png"],"audio":[],"seed":14,
+  {"name":"smile","duration": 5,"resolution":"768P","images":["refs/caty_idle.png","refs/caty-style.png"],"audio":[],"seed":14,
    "prompt":"The character in image 1, in the exact flat 2D style of image 2, breaks into a warm smile and tilts the head slightly, then returns to neutral, no camera motion, plain soft background."}
 ]
