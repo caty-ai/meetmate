@@ -1,0 +1,3 @@
+# generated locally by make-fixtures.sh and probe.mjs; never commit audio or run logs
+fixtures/
+runs/
