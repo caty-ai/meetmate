@@ -63,14 +63,20 @@ node --test docs/research/gpt-live-1-probe/ # from repository root
 
 `index.js` only enables the directory command on Node 26.5. Tests generate PCM in OS temp, fake the clock and socket, and test reports from synthetic JSONL without API access. To recompute reports from a recorded log, import `metrics(events, segments)` or `writeReports(out, events, segments, pcmBuffers)` from `probe.mjs`. Get `segments` from the `kind:probe,name:run` row. Audio cannot be recovered from redacted JSONL; pass `parseWav(readFileSync('output.wav'))` as the sole PCM buffer. Imports never open a socket.
 
-## Results (complete only after live runs)
+## Results (live runs 2026-09-11, gpt-live-1, voice quartz, 16 kHz PCM in/out)
+
+Four sessions: `solo-1`, `two-speaker-1`, `two-speaker-2` (stronger silence instruction appended after `session.started`), `interrupt-1`. Raw runs are git-ignored; the reviewer audited them with a per-second RMS scan of `output.wav` (audible = > -50 dBFS) because of the metric limitation described below.
 
 | Measurement | Result | Run / notes |
 |---|---|---|
-| Solo latency p50 | | |
-| Backchannel observed | | |
-| Interruption OK | | |
-| Unaddressed responses (out of 6 unaddressed lines) | | |
-| Japanese quality (free text) | | |
-| Usage from session.closed | | |
-| Actual cost from OpenAI usage page | | |
+| Solo latency p50 | ~108 ms (9 / 108 / 134 ms per utterance) | `solo-1`. Measured from fixture speech end to first output audio. The model already emits a short 「うん」 while the user is still speaking, so first-audio latency is near zero by construction; treat as "no perceptible gap" rather than a precise number. |
+| Backchannel observed | Yes | `solo-1`: on the weather question a client delegation was created at 18.8 s; while the simulated backend was "thinking" (3.5 s) the model said 「うん、ちょっと調べてみるね。確認してるよ、もう少し待ってね」, then paraphrased the commentary honestly (「今のは接続テスト用の回答みたいで、実際には確認できてないの」). `interrupt-1`: 「うん、ちょっと確認するね」. |
+| Interruption OK | Yes (by audio audit; automatic metric said `false`, see limitation) | `interrupt-1`: intro answer audible 3–9 s; interruption 「ちょっと待って、違う話をしたい」 injected at 6.0 s; the model cut the intro and answered 「はい。うん、どうぞ、聞かせて」, silent from 9 s until the next question. |
+| Unaddressed responses (out of 6 unaddressed lines) | **0 / 6** in both runs (automatic metric said 6/6, see limitation) | `two-speaker-1` and `two-speaker-2`: output audible only 42–50 s, i.e. the single answer to 「キャティ、おすすめのランチある？」. No audible sound, not even a backchannel, during the five preceding lunch lines or the trailing unaddressed line. The appended instruction in run 2 made no observable difference. Caveat: synthetic `say` voices, clean audio, name spoken clearly. |
+| Japanese quality (free text) | Natural, short, warm; persona held (「キャティだよ」, casual register as instructed). Minor: one fused phrase in `interrupt-1` (「やさしくはい。」) at the cut point. No English leakage, no over-long answers. Voice `quartz` sounds adult-female neutral, not a character voice. | all runs |
+| Usage from session.closed | 41 s + 71 s + 71 s + 43 s = 226 s | `session.usage.updated` arrives every 15 s; `session.closed.usage.seconds` is the billed figure. |
+| Actual cost from OpenAI usage page | Estimated USD 0.19 (226 s × 0.05/60). Usage page not yet checked. | owner to confirm on https://platform.openai.com/usage |
+
+### Known metric limitation (fix in a follow-up)
+
+`gpt-live-1` streams `session.output_audio.delta` continuously, including digital silence, for the whole session (676 deltas / 2.16 MB for a 67 s two-speaker session). `unaddressed_response_count` and `interruption_handled` treat *any* received audio bytes as speech, so they report false positives (6/6) and false negatives (`false`). They must be redefined on audio energy (RMS per window above a threshold) or on `session.output_transcript.delta` presence. The transcript-based reconstruction and the RMS scan above are the audited ground truth for this table.

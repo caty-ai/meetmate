@@ -1,5 +1,15 @@
 # Live voice engine — follow-up L Issue skeleton
 
+## Probe evidence (2026-09-11, see `docs/research/gpt-live-1-probe/README.md#results`)
+
+- Full-duplex behaviour confirmed in Japanese: backchannel 「うん」 during user speech, no perceptible gap before answers, honest paraphrase of client-delegation commentary.
+- Fillers during delegation are produced by the model itself (「ちょっと調べてみるね。確認してるよ、もう少し待ってね」); the Bridge's local filler/progress-ping logic in `src/pipeline.js` would duplicate them and should be disabled under the Live engine.
+- Silent-unless-addressed held 6/6 unaddressed lines in two runs with synthetic two-speaker audio; the model did not even backchannel. This is prompt-based, so the Bridge must still own the authoritative policy (mute input / append instruction) for noisy real meetings; the probe shows the model will cooperate rather than fight it.
+- Interruption: the model cut its own speech within the same second and acknowledged the interrupter.
+- Wire facts: `session.output_audio.delta` streams continuously including silence (~32 kB/s at 16 kHz), so the Bridge needs energy-based "is speaking" detection for floor/echo logic, not delta presence. `session.usage.updated` every 15 s; `session.closed.usage.seconds` is the billed figure. Output at the negotiated 16 kHz was correct (playback speed normal).
+- Cost of the four probe sessions: 226 billed seconds, ~USD 0.19.
+- Open: voice is preset-only (`quartz` tested; adult-female neutral). Character voice needs OpenAI custom voice (sales) or a different composition.
+
 ## Integration point
 
 - Verified: `src/transport-meet/meet-routes.js:createHandler` selects `createPipeline` or a legacy agent and exposes `send`/`close` plus delegation and floor callbacks. TODO: define a Live alternative implementing the required handler lifecycle (unverified).
