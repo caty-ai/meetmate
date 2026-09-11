@@ -387,6 +387,22 @@ function unevenPcmResponse(pcm) {
 
 const localPcmOptions = { baseUrl: "http://localhost:9000", model: "irodori", voice: "local", sampleRate: 24_000 };
 
+function assertPcmBuffersEqual(actual, expected, lengthMessage, contentMessage) {
+  assert.equal(actual.length, expected.length, lengthMessage);
+  let firstMismatch = -1;
+  let mismatchedBytes = 0;
+  for (let i = 0; i < expected.length; i++) {
+    if (actual[i] !== expected[i]) {
+      if (firstMismatch === -1) firstMismatch = i;
+      mismatchedBytes++;
+    }
+  }
+  if (firstMismatch !== -1) {
+    assert.fail(`${contentMessage} (first mismatch at byte ${firstMismatch} = sample ${Math.floor(firstMismatch / 2)}; ${mismatchedBytes} of ${expected.length} bytes differ)`);
+  }
+  assert.deepEqual(actual, expected, contentMessage);
+}
+
 test("OpenAI-compatible source sample rate registry validates the declared contract", () => {
   const entry = REGISTRY_BY_ID.openai_compatible_tts_source_sample_rate;
   assert.equal(entry.defaultValue, 24000);
@@ -411,13 +427,12 @@ test("OpenAI-compatible resamples a 3.36 s 48 kHz fixture with preserved duratio
   assert.ok(delivered.length >= 159667 && delivered.length <= 162893);
   const decimated = Buffer.alloc(pcm.length / 2);
   for (let i = 0; i < decimated.length / 2; i++) decimated.writeInt16LE(pcm.readInt16LE(i * 4), i * 2);
-  assert.equal(delivered.length, decimated.length, "delivered byte count must match 2:1 decimation before comparing content");
-  assert.deepEqual(delivered, decimated, "every output sample must match 2:1 decimation, including chunk boundaries");
+  assertPcmBuffersEqual(delivered, decimated, "delivered byte count must match 2:1 decimation before comparing content", "every output sample must match 2:1 decimation, including chunk boundaries");
   assert.deepEqual(body, { model: "irodori", input: "fixture", voice: "local", response_format: "pcm" });
   t.diagnostic(`48 kHz fixture: source=${pcm.length} delivered=${delivered.length} bytes; decimation matches=${decimated.length / 2} samples, mismatches=0`);
 });
 
-test("#234 OpenAI-compatible 32 kHz chunks match an unchunked reference linear interpolator sample-exactly", async () => {
+test("#234 OpenAI-compatible 32 kHz chunks match an unchunked reference linear interpolator sample-exactly", async (t) => {
   initialize();
   const sourceRate = 32_000;
   const targetRate = 24_000;
@@ -441,8 +456,8 @@ test("#234 OpenAI-compatible 32 kHz chunks match an unchunked reference linear i
     fetchFn: async () => unevenPcmResponse(pcm),
   });
   const delivered = Buffer.concat(audio);
-  assert.equal(delivered.length, expected.length, "delivered byte count must match the reference interpolator length before comparing content");
-  assert.deepEqual(delivered, expected, "every output sample must match the unchunked reference interpolator, including chunk boundaries");
+  assertPcmBuffersEqual(delivered, expected, "delivered byte count must match the reference interpolator length before comparing content", "every output sample must match the unchunked reference interpolator, including chunk boundaries");
+  t.diagnostic(`32 kHz fixture: source=${pcm.length} delivered=${delivered.length} bytes; reference matches=${expected.length / 2} samples, mismatches=0`);
 });
 
 test("OpenAI-compatible explicit and default 24 kHz source pass through byte-identically", async () => {
@@ -455,7 +470,7 @@ test("OpenAI-compatible explicit and default 24 kHz source pass through byte-ide
       ...localPcmOptions, ...rateOptions, onAudio: (chunk) => audio.push(chunk),
       fetchFn: async () => unevenPcmResponse(pcm),
     });
-    assert.deepEqual(Buffer.concat(audio), pcm);
+    assert.deepEqual(Buffer.concat(audio), pcm, "24 kHz source must pass through byte-identically without resampling");
   }
 });
 
