@@ -8,7 +8,8 @@
 - Interruption: the model cut its own speech within the same second and acknowledged the interrupter.
 - Wire facts: `session.output_audio.delta` streams continuously including silence (~32 kB/s at 16 kHz), so the Bridge needs energy-based "is speaking" detection for floor/echo logic, not delta presence. `session.usage.updated` every 15 s; `session.closed.usage.seconds` is the billed figure. Output at the negotiated 16 kHz was correct (playback speed normal).
 - Cost of the four probe sessions: 226 billed seconds, ~USD 0.19.
-- Open: voice is preset-only (`quartz` tested; adult-female neutral). Character voice needs OpenAI custom voice (sales) or a different composition.
+- Voice decision (#251, owner 2026-09-11): **Path 3** — discard gpt-live-1 audio, stream `session.output_transcript.delta` into Fish Audio `wss://api.fish.audio/v1/tts/live` (preset `fish-neutral-ja-v1`), play Fish PCM into `bot_output`. Measured: transcript leads audio by 0.3–1.2 s; Fish TTFB ~0.3 s; added delay 0.3–0.8 s; sentence-close buffering (6 s) rejected. Path 2 (Seed-VC conversion) rejected: unnatural Japanese intonation. Owner: pure Fish TTS is the ideal reference; Path 3 is acceptable. OpenAI custom voice stays a parallel owner action, not a dependency.
+- Consequences for the Bridge: (a) gpt-live-1 output audio is consumed only for is-speaking/energy signals and discarded; (b) interruption must cancel the Fish stream and drop queued text in the same tick that gpt-live-1 stops; (c) fragment policy (voice or drop cut-off text such as 「力を抜」) and backchannel policy (voice 「うん」 via Fish or drop) are Bridge settings to test live; (d) the existing sentence-split + per-sentence TTS path in `src/pipeline.js` is *not* reused — its close-on-punctuation rule is the 6 s failure mode.
 
 ## Integration point
 

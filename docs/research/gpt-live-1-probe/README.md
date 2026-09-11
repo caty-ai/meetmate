@@ -105,8 +105,8 @@ Synthesis requests run sequentially in original order; a Bridge would pipeline t
 
 | Run | Added delay p50 (ms) | Max (ms) | Backchannel count | Fragment count | Fish chars | Listening note |
 |---|---|---|---|---|---|---|
-| solo-1 (live, `--start-on first`) | 825 | 2346 | 1 (skipped as fragment) | 1 | 178 | owner to fill |
-| interrupt-1 (live, `--start-on first`) | 315 | 3157 | 2 | 0 | 91 | owner to fill |
+| solo-1 (live, `--start-on first`) | 825 | 2346 | 1 (skipped as fragment) | 1 | 178 | Owner 2026-09-11: "clearly better" than Path 2 and "not bad at all" on its own; pure Fish TTS (`path2/ref-caty-fish.wav`) remains the reference quality. |
+| interrupt-1 (live, `--start-on first`) | 315 | 3157 | 2 | 0 | 91 | same verdict |
 | solo-1 (dry-run, `--start-on close`) | 6350 | 7320 | 1 | 1 | 178 | not a listening artefact |
 
 Live Fish TTFB (2026-09-11, `s2.1-pro`, `latency: low`, PCM 16 kHz): 278–350 ms warm, 1112 ms on the first (cold) request. Total synthesis time per sentence 0.5–3.2 s.
@@ -120,7 +120,7 @@ Live Fish TTFB (2026-09-11, `s2.1-pro`, `latency: low`, PCM 16 kHz): 278–350 m
 
 ### Path 2 voice conversion
 
-See `path2-vc.md` for the Seed-VC zero-shot procedure, command, and result table (RTF 0.24 on Apple Silicon; output `path2/solo-1-vc-caty.wav`, target reference `path2/ref-caty-fish.wav`, both git-ignored). Listening note: owner to fill.
+See `path2-vc.md` for the Seed-VC zero-shot procedure, command, and result table (RTF 0.24 on Apple Silicon; output `path2/solo-1-vc-caty.wav`, target reference `path2/ref-caty-fish.wav`, both git-ignored). Listening note (owner, 2026-09-11): a Japanese listener hears unnatural intonation and pitch accent after conversion; rejected for now. **Decision: Path 3 (streaming transcript → Fish) is the voice path for the L Issue; Path 2 is not pursued.**
 
 ### Known metric limitation (fix in a follow-up)
 

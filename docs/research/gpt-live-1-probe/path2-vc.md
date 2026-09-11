@@ -35,7 +35,7 @@ uv pip install --python .venv/bin/python -r req-inference.txt
 | Output | `path2/solo-1-vc-caty.wav` (22.05 kHz, 40 s) |
 | Conversion time | ~20 s for 39 s of audio, RTF 0.24 on MPS (10 diffusion steps) |
 | Placeholder run | `path2/solo-1-vc-kyoko-placeholder.wav` (target = macOS `say -v Kyoko`), RTF 0.20 |
-| Listening note | owner to fill (similarity to preset voice / naturalness / artefacts) |
+| Listening note | Owner 2026-09-11: intonation and pitch accent sound off to a Japanese listener; voice similarity does not compensate. **Rejected** in favour of Path 3. |
 
 ## What this says about a realtime variant
 
