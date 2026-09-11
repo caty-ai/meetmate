@@ -487,7 +487,12 @@ function getPipelineConfig(overrides = {}, agent = null, agentProfile = null, co
   };
 }
 
+const VOICE_ENGINE = (process.env.VOICE_ENGINE || "pipeline").trim().toLowerCase();
+const LIVE_ECHO_MODE = (process.env.LIVE_ECHO_MODE || "full-duplex").trim().toLowerCase();
+
 module.exports = {
+  VOICE_ENGINE,
+  LIVE_ECHO_MODE,
   getPipelineConfig,
   SAMPLE_RATE,
   TTS_SAMPLE_RATE,

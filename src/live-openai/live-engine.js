@@ -1,0 +1,347 @@
+"use strict";
+
+const { EventEmitter } = require("node:events");
+const fs = require("node:fs");
+const path = require("node:path");
+const { performance } = require("node:perf_hooks");
+const WebSocket = require("ws");
+const { VOICE_ENGINE, TTS_SAMPLE_RATE, getPipelineConfig } = require("../config");
+const { getEffectiveValue } = require("../settings/resolver");
+const { streamChat } = require("../llm");
+const { encode, decodeOne } = require("./msgpack-lite");
+
+const FLUSH_IDLE_MS = 600;
+const MAX_QUEUED_AUDIO_MS = 15000;
+const SESSION_CAP_MS = 60 * 60 * 1000;
+const sessionStarts = new Map();
+// Read only when checking/starting a session, never at module load or on a
+// publicly inspectable handler/config. This is the sole direct credential read.
+function liveCredential() { return process.env.OPENAI_LIVE_API_KEY; }
+function liveEngineAvailable() {
+  if (VOICE_ENGINE !== "live") return "VOICE_ENGINE is not live";
+  if (!liveCredential()?.trim()) return "OPENAI_LIVE_API_KEY is missing";
+  if (getEffectiveValue("tts_provider") !== "fish-audio") return "Fish Audio is not the selected TTS provider";
+  if (!getEffectiveValue("fish_audio_api_key")?.trim()) return "Fish Audio key is missing";
+  if (!getPipelineConfig().tts.referenceId?.trim()) return "Fish reference id is missing";
+  return null;
+}
+function liveEngineActive() { return VOICE_ENGINE === "live" && !liveEngineAvailable(); }
+
+function detectInterruption(state, inputDelta) {
+  const text = inputDelta.text || "";
+  state.inputDeltas += 1;
+  state.inputChars += Array.from(text).length;
+  return state.pending && text.length > 0 && !state.recentOutputText.includes(text)
+    && (state.inputDeltas >= 2 || state.inputChars >= 4)
+    && state.firstAudioAt !== null && state.now - state.firstAudioAt >= 500;
+}
+
+function createLiveEngine(session, turnState, onAudio, options = {}) {
+  const config = options.config || getPipelineConfig({}, null, options.profile);
+  const now = options.now || (() => performance.now());
+  const later = options.setTimeout || setTimeout, every = options.setInterval || setInterval;
+  const cancelLater = options.clearTimeout || clearTimeout, cancelEvery = options.clearInterval || clearInterval;
+  const openaiFactory = options.openaiSocketFactory || ((...args) => new WebSocket(...args));
+  const fishFactory = options.fishSocketFactory || ((...args) => new WebSocket(...args));
+  const emitter = new EventEmitter(), timers = new Set(), intervals = new Set();
+  const delegations = new Map(), gatewayRecords = new Map(), turns = [], retries = [];
+  const state = { pending: false, recentOutputText: "", inputDeltas: 0, inputChars: 0, firstAudioAt: null, now: now() };
+  let openai, active, spare, started = false, closing = false, closed = false, failed = false, capped = false;
+  let currentEpoch = 0, sampleOffset = 0, sequence = 0, gatewaySequence = 0;
+  let queue = [], queuedBytes = 0, lastOutputAt = null, emptySince = null, overflowEpoch = null;
+  let flushTimer, startupTimer, closeTimer, closeResolve, closePromise;
+  let instructions = config.llm.systemPrompt || config.systemPrompt || "";
+  if (session.config?.wakeMode === "wake") {
+    try { instructions += "\n\n" + fs.readFileSync(path.resolve(__dirname, "../../docs/research/gpt-live-1-probe/prompts/silent-unless-addressed.txt"), "utf8"); }
+    catch { console.warn("⚠️  live-engine: wake instruction file missing; continuing with profile prompt"); }
+  }
+  const timeout = (fn, ms) => {
+    const timer = later(() => { timers.delete(timer); fn(); }, ms); timers.add(timer); return timer;
+  };
+  const clear = (timer) => { cancelLater(timer); timers.delete(timer); };
+  const safeClose = (socket) => { try { socket?.close(); } catch { /* Already gone. */ } };
+  function fishSend(socket, event) {
+    if (!socket || (socket.retired && !socket.reconnecting)) return;
+    if (!socket.ready || socket.reconnecting) { socket.pending.push(event); return; }
+    try { socket.ws.send(encode(event), (error) => { if (error) fishLost(socket); }); }
+    catch { fishLost(socket); }
+  }
+  function sendEvent(event) {
+    if (closed || failed || openai?.readyState !== WebSocket.OPEN) return;
+    try { openai.send(JSON.stringify(event), error => { if (error) fail("OpenAI send failed"); }); }
+    catch { fail("OpenAI send failed"); }
+  }
+  function cleanup() {
+    if (closed) return;
+    closed = true;
+    for (const timer of timers) cancelLater(timer);
+    for (const timer of intervals) cancelEvery(timer);
+    timers.clear(); intervals.clear();
+    for (const row of delegations.values()) row.controller?.abort();
+    // stop is terminal on Fish; it is never used for an interruption.
+    if (active?.ready && !active.retired) fishSend(active, { event: "stop" });
+    if (active) active.retired = true;
+    if (spare) spare.retired = true;
+    safeClose(active?.ws); safeClose(spare?.ws); safeClose(openai);
+    queue = []; queuedBytes = 0; turnState.isAgentSpeaking = false;
+    closeResolve?.();
+  }
+  function fail(reason) {
+    if (failed || closed) return;
+    failed = true;
+    console.error(`❌  live-engine: ${reason}`);
+    cleanup();
+    emitter.emit("engine_error", { message: reason });
+  }
+  function close() {
+    if (closePromise) return closePromise;
+    if (closed) return Promise.resolve();
+    closing = true;
+    closePromise = new Promise(resolve => { closeResolve = resolve; });
+    clear(startupTimer); clear(flushTimer);
+    for (const row of delegations.values()) row.controller?.abort();
+    closeTimer = timeout(() => fail("Timed out waiting for session.closed"), 10000);
+    sendEvent({ type: "session.close" });
+    return closePromise;
+  }
+  function recordTurn(role, text) {
+    if (turns.at(-1)?.role === role) turns.at(-1).content += text;
+    else turns.push({ role, content: text });
+    if (turns.length > 12) turns.shift();
+  }
+  function commentary(id, content) {
+    if (!started || closing || capped) return;
+    sendEvent({ type: "session.commentary.append", event_id: `event_${++sequence}`, delegation_id: id, content });
+  }
+  async function delegate(delegation) {
+    if (delegation.target !== "client" || typeof delegation.id !== "string") return;
+    const id = delegation.id;
+    if (delegations.has(id)) { console.warn("⚠️  live-engine: duplicate delegation id ignored"); return; }
+    const controller = new AbortController();
+    const row = { id, status: "pending", startedAt: now(), finishedAt: null, controller };
+    delegations.set(id, row);
+    const { id: _id, ...details } = delegation;
+    const messages = turns.map(turn => ({ ...turn }));
+    messages.push({ role: "user", content: typeof delegation.text === "string" ? delegation.text : JSON.stringify(details) });
+    let content = "";
+    try {
+      for await (const chunk of (options.streamChat || streamChat)(messages, {
+        openclawUrl: config.llm.gateway?.url,
+        openclawToken: config.llm.gateway?.token,
+        openclawSystemAddendum: config.llm.openclawSystemAddendum,
+        sessionUser: session.sessionUser ?? undefined,
+        model: config.llm.model,
+        temperature: config.llm.temperature,
+        maxTokens: config.llm.maxTokens,
+        signal: controller.signal,
+      })) content += chunk;
+      row.status = controller.signal.aborted ? "aborted" : "completed";
+    } catch {
+      row.status = controller.signal.aborted ? "aborted" : "error";
+      content = "確認できませんでした。もう一度聞いてもらえる？";
+    }
+    row.finishedAt = now();
+    if (!controller.signal.aborted) commentary(id, content);
+  }
+  function recordGateway(event, completed) {
+    if (closed || closing) return;
+    const key = event?.childKey || event?.id || `anonymous-${++gatewaySequence}`;
+    const previous = gatewayRecords.get(key);
+    gatewayRecords.set(key, {
+      id: previous?.id || `gateway-subagent-${++gatewaySequence}`,
+      status: completed ? "completed" : "pending",
+      startedAt: previous?.startedAt ?? now(),
+      finishedAt: completed ? now() : null,
+    });
+    console.log(`🎙️  live-engine: gateway subagent ${completed ? "completed" : "spawned"}`);
+  }
+  function pending() { return queuedBytes > 0 || Boolean(active?.inFlight); }
+  function forward(text) {
+    fishSend(active, { event: "text", text });
+    active.inFlight = true; active.textSerial += 1;
+    state.recentOutputText = Array.from(state.recentOutputText + text).slice(-40).join("");
+    state.inputDeltas = 0; state.inputChars = 0;
+    lastOutputAt = now();
+    clear(flushTimer);
+    flushTimer = timeout(() => fishSend(active, { event: "flush" }), FLUSH_IDLE_MS);
+  }
+  function interrupt() {
+    if (closed || closing || capped) return;
+    const cancelled = currentEpoch;
+    currentEpoch += 1;
+    clear(flushTimer);
+    if (active) { active.retired = true; active.reconnecting = false; safeClose(active.ws); }
+    active = spare; spare = null;
+    if (active) active.epoch = currentEpoch;
+    else active = openFish(currentEpoch);
+    queue = []; queuedBytes = 0; sampleOffset = 0; emptySince = null;
+    state.firstAudioAt = null; state.inputDeltas = 0; state.inputChars = 0;
+    state.recentOutputText = ""; lastOutputAt = null;
+    turnState.isAgentSpeaking = false;
+    spare = openFish(null);
+    emitter.emit("playback_cancelled", { outputEpoch: cancelled, reason: "interrupted", monotonicTime: now() });
+  }
+  function fishLost(socket) {
+    if (socket.retired || closed || closing) return;
+    socket.retired = true; socket.reconnecting = true; safeClose(socket.ws);
+    while (retries.length && now() - retries[0] >= 60000) retries.shift();
+    if (retries.length >= 3) { fail("Fish reconnect budget exhausted"); return; }
+    retries.push(now());
+    console.warn("⚠️  live-engine: Fish socket lost; retrying in 500 ms");
+    timeout(() => {
+      if (closed || closing) return;
+      if (socket === active) {
+        active = openFish(currentEpoch);
+        // Preserve unsent deltas only; replaying already-sent text duplicates speech.
+        active.pending.push(...socket.pending);
+        active.inFlight = socket.pending.some(e => e.event === "text");
+        active.textSerial = socket.textSerial;
+      } else if (socket === spare) spare = openFish(null);
+    }, 500);
+  }
+  function openFish(epoch) {
+    const socket = { epoch, reconnecting: false, ready: false, retired: false, pending: [], odd: Buffer.alloc(0), inFlight: false, textSerial: 0, audioSerial: -1, lastAudioAt: null };
+    try {
+      socket.ws = fishFactory("wss://api.fish.audio/v1/tts/live", {
+        headers: { Authorization: `Bearer ${getEffectiveValue("fish_audio_api_key")}`, model: "s2.1-pro" },
+        handshakeTimeout: 15000,
+      });
+    } catch { timeout(() => fishLost(socket), 0); return socket; }
+    socket.ws.on("open", () => {
+      if (closed || socket.retired) { safeClose(socket.ws); return; }
+      socket.ready = true;
+      fishSend(socket, { event: "start", request: { text: "", reference_id: config.tts.referenceId, format: "pcm", sample_rate: TTS_SAMPLE_RATE, latency: "low" } });
+      for (const event of socket.pending.splice(0)) fishSend(socket, event);
+    });
+    socket.ws.on("error", () => fishLost(socket));
+    socket.ws.on("close", () => fishLost(socket));
+    socket.ws.on("message", raw => {
+      if (closed || socket.retired) return;
+      try {
+        const event = decodeOne(Buffer.from(raw));
+        const type = event.event?.toString("utf8");
+        if (type === "audio") {
+          if (socket !== active || socket.epoch !== currentEpoch || !Buffer.isBuffer(event.audio)) return;
+          const bytes = Buffer.concat([socket.odd, event.audio]);
+          socket.odd = bytes.subarray(bytes.length - bytes.length % 2);
+          const pcm = bytes.subarray(0, bytes.length - bytes.length % 2);
+          socket.lastAudioAt = now(); socket.audioSerial = socket.textSerial;
+          if (pcm.length) { queue.push({ epoch: socket.epoch, pcm }); queuedBytes += pcm.length; }
+          const limit = TTS_SAMPLE_RATE * 2 * MAX_QUEUED_AUDIO_MS / 1000;
+          while (queuedBytes > limit) {
+            const first = queue[0], excess = queuedBytes - limit;
+            const drop = Math.min(first.pcm.length, excess);
+            first.pcm = first.pcm.subarray(drop); queuedBytes -= drop;
+            if (!first.pcm.length) queue.shift();
+            if (overflowEpoch !== currentEpoch) { console.warn("⚠️  live-engine: audio queue limit; dropping oldest audio"); overflowEpoch = currentEpoch; }
+          }
+        } else if (type === "finish") {
+          if (event.reason?.toString("utf8") === "error") fishLost(socket);
+          else { socket.inFlight = false; console.log("🎙️  live-engine: Fish finish"); }
+        } else console.log("🎙️  live-engine: unrecognized Fish event");
+      } catch { fail("Invalid Fish frame"); }
+    });
+    return socket;
+  }
+  function tick() {
+    if (closed) return;
+    const time = now();
+    // Fish has no per-flush completion event. After received audio drains and
+    // stays quiet for 200 ms, consider that batch complete; new text keeps it live.
+    if (!queuedBytes && active?.lastAudioAt !== null && active?.audioSerial === active?.textSerial
+        && time - active.lastAudioAt >= 200) active.inFlight = false;
+    if (!capped && !closing && lastOutputAt !== null && pending() && time - lastOutputAt >= 1500) interrupt();
+    const parts = []; let remaining = TTS_SAMPLE_RATE * 2 / 50;
+    while (queue.length && remaining > 0) {
+      const entry = queue[0];
+      if (entry.epoch !== currentEpoch) { queuedBytes -= entry.pcm.length; queue.shift(); continue; }
+      const n = Math.min(remaining, entry.pcm.length);
+      parts.push(entry.pcm.subarray(0, n)); entry.pcm = entry.pcm.subarray(n);
+      remaining -= n; queuedBytes -= n;
+      if (!entry.pcm.length) queue.shift();
+    }
+    if (parts.length) {
+      emptySince = queuedBytes ? null : time; turnState.isAgentSpeaking = true;
+      if (state.firstAudioAt === null) state.firstAudioAt = time;
+      const buffer = Buffer.concat(parts), firstSampleIndex = sampleOffset;
+      sampleOffset += buffer.length / 2;
+      onAudio(buffer, { outputEpoch: currentEpoch, firstSampleIndex, sampleRate: TTS_SAMPLE_RATE });
+    } else {
+      if (emptySince === null) emptySince = time;
+      if (time - emptySince >= 200) turnState.isAgentSpeaking = false;
+    }
+  }
+  function cap() {
+    if (closed || closing || capped) return;
+    capped = true; clear(flushTimer);
+    forward("時間の上限に達したので、ここで一度切りますね。");
+    clear(flushTimer); fishSend(active, { event: "flush" });
+    const deadline = now() + 5000;
+    const drain = () => {
+      if (closed || closing) return;
+      if (!pending() || now() >= deadline) { void close(); return; }
+      timeout(drain, 20);
+    };
+    timeout(drain, 20);
+  }
+  try {
+    openai = openaiFactory("wss://api.openai.com/v1/live/sessions", {
+      headers: { Authorization: `Bearer ${liveCredential()}` }, handshakeTimeout: 15000,
+    });
+    startupTimer = timeout(() => fail("Timed out waiting for session.started"), 20000);
+    openai.on("open", () => {
+      if (closed || closing) return;
+      sendEvent({ type: "session.start", event_id: "event_start", session: {
+        model: "gpt-live-1", instructions,
+        audio: { format: { type: "audio/pcm", rate: 16000 }, output: { voice: "quartz" } },
+        delegation: { type: "client" },
+      } });
+    });
+    openai.on("error", () => fail("OpenAI socket error"));
+    openai.on("close", () => { if (!closed) fail("OpenAI socket closed before session.closed"); });
+    openai.on("message", raw => {
+      if (closed) return;
+      try {
+        const event = JSON.parse(raw.toString());
+        if (event.type === "session.closed") {
+          const seconds = Number(event.usage?.seconds) || 0;
+          console.log(`🎙️  live-engine: usage.seconds=${seconds} estimated_usd=${seconds / 60 * 0.05}`);
+          clear(closeTimer); cleanup(); return;
+        }
+        if (event.type === "error") { fail("OpenAI server error"); return; }
+        if (closing) return;
+        if (event.type === "session.started") {
+          if (started) return;
+          started = true; clear(startupTimer);
+          if (!sessionStarts.has(session.id)) sessionStarts.set(session.id, now());
+          active = openFish(currentEpoch); spare = openFish(null);
+          intervals.add(every(tick, 20));
+          timeout(cap, Math.max(0, SESSION_CAP_MS - (now() - sessionStarts.get(session.id))));
+        } else if (started && !capped && event.type === "session.output_transcript.delta") {
+          recordTurn("assistant", event.delta); forward(event.delta);
+        } else if (started && !capped && event.type === "session.input_transcript.delta") {
+          const text = typeof event.delta === "string" ? event.delta : event.delta?.text || "";
+          recordTurn("user", text);
+          if (turnState.isAgentSpeaking) console.log(`🪞  live-engine echo-check: ${JSON.stringify(text)}`);
+          state.pending = pending(); state.now = now();
+          if ((options.detectInterruption || detectInterruption)(state, { text })) interrupt();
+        } else if (started && !capped && event.type === "session.delegation.created") void delegate(event.delegation || {});
+        else if (event.type === "session.usage.updated") console.log(`🎙️  live-engine: usage.seconds=${Number(event.usage?.seconds) || 0}`);
+        // session.output_audio.delta is deliberately discarded.
+      } catch { fail("Invalid OpenAI event"); }
+    });
+  } catch { timeout(() => fail("OpenAI connection failed"), 0); }
+  return {
+    send: buf => { if (started && !closing && !capped) sendEvent({ type: "session.input_audio.append", audio: buf.toString("base64") }); },
+    close,
+    on: emitter.on.bind(emitter),
+    handleGatewaySubagentSpawn: event => recordGateway(event, false),
+    handleGatewaySubagentCompletion: event => recordGateway(event, true),
+    handleGatewaySessionReply: text => commentary(`gateway-${++gatewaySequence}`, text),
+    handleGatewayAnnounceInjected: text => commentary(`gateway-${++gatewaySequence}`, text),
+    getDelegationResults: () => [...delegations.values(), ...gatewayRecords.values()].map(({ id, status, startedAt, finishedAt }) => ({ id, status, startedAt, finishedAt })),
+    floorStatus: () => ({ enabled: false, engine: "live" }),
+    continueWithoutArbitration: () => {},
+  };
+}
+module.exports = { createLiveEngine, liveEngineAvailable, liveEngineActive, detectInterruption, FLUSH_IDLE_MS, MAX_QUEUED_AUDIO_MS, SESSION_CAP_MS };

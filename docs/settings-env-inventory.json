@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "extractionCommand": "grep -rhoE 'process\\.env\\.[A-Z0-9_]+' src/ bin/ | sort -u",
-  "baselineUniqueDirectCount": 99,
+  "baselineUniqueDirectCount": 102,
   "classificationEnums": {
     "ux": [
       "basic",
@@ -395,6 +395,16 @@
       "remainingDirectReads": 0
     },
     {
+      "name": "LIVE_ECHO_MODE",
+      "references": [
+        "src/config.js:491"
+      ],
+      "ux": "deployment-readonly",
+      "credentialClass": "none",
+      "handling": "env-only-readonly-diagnostic",
+      "remainingDirectReads": 1
+    },
+    {
       "name": "LLM_PROVIDER",
       "references": [],
       "ux": "basic",
@@ -542,6 +552,16 @@
       "remainingDirectReads": 0
     },
     {
+      "name": "OPENAI_LIVE_API_KEY",
+      "references": [
+        "src/live-openai/live-engine.js:19"
+      ],
+      "ux": "hidden",
+      "credentialClass": "class-1-external-vendor",
+      "handling": "env-only-never-admin-exposed",
+      "remainingDirectReads": 1
+    },
+    {
       "name": "OPENCLAW_GATEWAY_TOKEN",
       "references": [],
       "ux": "hidden",
@@ -618,8 +638,8 @@
     {
       "name": "PUBLIC_WSS_URL",
       "references": [
-        "src/transport-meet/meet-routes.js:975",
-        "src/transport-meet/meet-routes.js:976"
+        "src/transport-meet/meet-routes.js:992",
+        "src/transport-meet/meet-routes.js:993"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -871,6 +891,16 @@
       "credentialClass": "none",
       "handling": "ordinary-setting",
       "remainingDirectReads": 0
+    },
+    {
+      "name": "VOICE_ENGINE",
+      "references": [
+        "src/config.js:490"
+      ],
+      "ux": "deployment-readonly",
+      "credentialClass": "none",
+      "handling": "env-only-readonly-diagnostic",
+      "remainingDirectReads": 1
     },
     {
       "name": "WAKE_CALIBRATE_ENABLED",

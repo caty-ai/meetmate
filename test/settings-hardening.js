@@ -351,7 +351,7 @@ function productionJavaScript() {
 test("T12-02 syntax-consuming environment inventory locks direct, computed, and rejected forms", () => {
   const inventory = JSON.parse(fs.readFileSync(path.join(ROOT, "docs/settings-env-inventory.json"), "utf8"));
   const inventoryByName = new Map(inventory.directReferences.map((entry) => [entry.name, entry]));
-  assert.equal(inventoryByName.size, 99);
+  assert.equal(inventoryByName.size, 102);
   assert.deepEqual(inventory.startupSnapshotReferences, [{
     name: "FFMPEG",
     references: ["src/settings/audio.js:361", "src/settings/audio.js:362"],

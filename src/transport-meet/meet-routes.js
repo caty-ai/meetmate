@@ -798,6 +798,23 @@ function createLegacyAgent(session, turnState, onAudio) {
 }
 
 function createHandler(session, turnState, onAudio) {
+  if (VOICE_ENGINE === "live") {
+    const reason = liveEngineAvailable();
+    if (reason) console.warn(`⚠️  VOICE_ENGINE=live requested but ${reason}; falling back to the pipeline engine`);
+    else {
+      const profile = currentAgentProfile();
+      const config = getPipelineConfig({
+        prompt: session.config.prompt,
+        greeting: session.config.greeting,
+        model: session.config.model,
+        wakeMode: session.config.wakeMode,
+      }, null, profile, _configJson);
+      delete config.hub;
+      if (HUB_CONFIG.enabled) console.warn("⚠️  HUB_* is configured, but floor arbitration is not available in the live voice engine prototype; disabling hub integration.");
+      console.log(`🎙️  live voice engine (gpt-live-1 + fish tts/live, echo=${LIVE_ECHO_MODE}) (sid=${session.id})`);
+      return createLiveEngine(session, turnState, onAudio, { profile, config });
+    }
+  }
   if (PIPELINE_TTS_PROVIDERS.has(TTS_PROVIDER)) {
     console.log(`🎙️  ${TTS_PROVIDER} TTS パイプラインモード (sid=${session.id})`);
     const profile = currentAgentProfile();
@@ -1860,6 +1877,10 @@ function handleWsConnection(client, req) {
     try {
       const parsed = JSON.parse(msg.toString());
       if (parsed.trigger === "realtime_audio.mixed" && parsed?.data?.chunk) {
+        if (liveEngineActive() && LIVE_ECHO_MODE === "full-duplex") {
+          handler.send(Buffer.from(parsed.data.chunk, "base64"));
+          return;
+        }
         const now = Date.now();
         if (turnState.isAgentSpeaking || now < turnState.inputCooldownUntil) {
           // Optional legacy cancel-word bypass; default keeps TTS echo out of STT.
@@ -1942,7 +1963,8 @@ const { DEFAULT_CONFIG_REFRESH_AFTER_S, refreshHubConfigIfStale } = require("../
 const { deriveRoomCode } = require("../room-code");
 const { readConfigState, saveCloudFields } = require("../settings/store");
 const readiness = require("../settings/readiness");
-const { HUB_CONFIG } = require("../config");
+const { HUB_CONFIG, VOICE_ENGINE, LIVE_ECHO_MODE } = require("../config");
+const { createLiveEngine, liveEngineAvailable, liveEngineActive } = require("../live-openai/live-engine");
 
 function logLegacyMode(session) {
   console.log(`🔊  Deepgram Voice Agent モード (sid=${session.id})`);

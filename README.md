@@ -101,6 +101,8 @@ Meetmate: [warm] Two changes — the annual discount moved to 15%, and a new
 
 Want the avatar to move? Two experiments already ship: a frame-swap lip-sync avatar that animates six PNGs in time with speech (v8.4.0), and a 2.5D-rig proof of concept. The static image stays the default — the [frame-swap avatar section of the setup guide](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#実験的なフレーム差し替えアバター) shows how to try the frame-swap one (it needs Fish Audio TTS and a public HTTPS origin); the rig PoC has no user docs yet.
 
+Experimental internal-test prototype: `VOICE_ENGINE=live` uses gpt-live-1 with Fish `tts/live` in Google Meet. Configuration is env-only (`OPENAI_LIVE_API_KEY`, optionally `LIVE_ECHO_MODE=gated`); it requires Fish Audio with a configured key and voice, disables hub arbitration, and caps each meeting at 60 minutes. Unset `VOICE_ENGINE` to use the normal pipeline. This prototype is for the unmerged internal test branch.
+
 ## Platform notes
 
 | Topic | Current reality |
