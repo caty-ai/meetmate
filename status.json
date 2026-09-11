@@ -4,14 +4,14 @@
   "generator_version": "repo-state-gen v1",
   "repo": "caty-ai/meetmate",
   "stamp_mode": "auto",
-  "generated_at": "2026-09-09T16:08:32Z",
-  "describes_commit": "9563d12affb0a01cceb2add9dea07211f79a3cac",
-  "describes_commit_date": "2026-09-09T16:08:32Z",
+  "generated_at": "2026-09-11T05:29:19Z",
+  "describes_commit": "88e1296aa5409454ed4e101ce4a44fb49c10e1ab",
+  "describes_commit_date": "2026-09-11T05:29:19Z",
   "branch": "main",
   "latest_tag": "v8.17.4",
   "latest_release_url": "https://github.com/caty-ai/meetmate/releases/tag/v8.17.4",
   "agents_entry": "AGENTS.md",
   "canonical_api": "https://api.github.com/repos/caty-ai/meetmate/commits/main",
-  "canonical_raw": "https://raw.githubusercontent.com/caty-ai/meetmate/9563d12affb0a01cceb2add9dea07211f79a3cac/status.json",
+  "canonical_raw": "https://raw.githubusercontent.com/caty-ai/meetmate/88e1296aa5409454ed4e101ce4a44fb49c10e1ab/status.json",
   "freshness_contract": "SHA comparison only; dates may only ever trigger distrust. Protocol: docs/repo-state/spec.md, section 'Reader protocol'."
 }
