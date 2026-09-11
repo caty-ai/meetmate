@@ -103,6 +103,13 @@ picker.addEventListener('change', () => {
   audio.src = objectUrl;
   audio.load();
 });
+// ?audio=<url> preloads an audio file so no file picker is needed (e.g. ?audio=clips/sample-caty-path3.wav).
+const presetAudio = new URLSearchParams(location.search).get('audio');
+if (presetAudio) {
+  audio.src = presetAudio;
+  audio.load();
+  report(`音声を読み込みました: ${presetAudio}（再生ボタンかスペースで開始）`);
+}
 async function toggle() {
   if (!audio.src) { report('音声ファイルを選択してください。'); return; }
   try {
