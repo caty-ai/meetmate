@@ -10,13 +10,16 @@ const { getEffectiveValue } = require("../settings/resolver");
 const { streamChat } = require("../llm");
 const { encode, decodeOne } = require("./msgpack-lite");
 
-const FLUSH_IDLE_MS = 600;
+const FLUSH_IDLE_MS = 300;
 const MAX_QUEUED_AUDIO_MS = 15000;
 const SESSION_CAP_MS = 60 * 60 * 1000;
 const sessionStarts = new Map();
 // Read only when checking/starting a session, never at module load or on a
 // publicly inspectable handler/config. This is the sole direct credential read.
 function liveCredential() { return process.env.OPENAI_LIVE_API_KEY; }
+const { EMOTION_TAGS, stripCanonicalEmotionTags } = require("../messages");
+const SEAM_TAG = EMOTION_TAGS.find(({ fallback }) => fallback).tag;
+const FLUSH_PUNCTUATION = "、。！？!?";
 // Disabled: output silence is normal while Fish is still producing the tail.
 // If enabled, only a lack of Fish audio while text is in flight is a stall.
 const SELF_STOP_WATCHDOG_MS = 0;
@@ -54,12 +57,14 @@ function createLiveEngine(session, turnState, onAudio, options = {}) {
   let currentEpoch = 0, sampleOffset = 0, sequence = 0, gatewaySequence = 0;
   let queue = [], queuedBytes = 0, firstDeltaAt = null, firstAudioLogged = false, emptySince = null, overflowEpoch = null;
   let playheadMs = 0, epochStartedAt = null, lastIdleSpareRetryAt = null;
+  let holdBuffer = "", holdTimer, seam = null, lastTextChar = "", unflushed = false;
   let flushTimer, startupTimer, closeTimer, closeResolve, closePromise;
   let instructions = config.llm.systemPrompt || config.systemPrompt || "";
   if (session.config?.wakeMode === "wake") {
     try { instructions += "\n\n" + fs.readFileSync(path.resolve(__dirname, "../../docs/research/gpt-live-1-probe/prompts/silent-unless-addressed.txt"), "utf8"); }
     catch { console.warn("⚠️  live-engine: wake instruction file missing; continuing with profile prompt"); }
   }
+  instructions += `\n\n音声はそのまま読み上げられるので、${EMOTION_TAGS.find(({ fallback }) => fallback).tag} などの感情タグや括弧書きの演出指示は出力しないでください。`;
   const timeout = (fn, ms) => {
     const timer = later(() => { timers.delete(timer); fn(); }, ms); timers.add(timer); return timer;
   };
@@ -79,6 +84,7 @@ function createLiveEngine(session, turnState, onAudio, options = {}) {
   function cleanup() {
     if (closed) return;
     closed = true;
+    holdBuffer = ""; seam = null;
     for (const timer of timers) cancelLater(timer);
     for (const timer of intervals) cancelEvery(timer);
     timers.clear(); intervals.clear();
@@ -103,7 +109,8 @@ function createLiveEngine(session, turnState, onAudio, options = {}) {
     if (closed) return Promise.resolve();
     closing = true;
     closePromise = new Promise(resolve => { closeResolve = resolve; });
-    clear(startupTimer); clear(flushTimer);
+    clear(startupTimer); clear(flushTimer); clear(holdTimer);
+    flush();
     for (const row of delegations.values()) row.controller?.abort();
     closeTimer = timeout(() => fail("Timed out waiting for session.closed"), 10000);
     sendEvent({ type: "session.close" });
@@ -161,22 +168,88 @@ function createLiveEngine(session, turnState, onAudio, options = {}) {
     console.log(`🎙️  live-engine: gateway subagent ${completed ? "completed" : "spawned"}`);
   }
   function pending() { return queuedBytes > 0 || Boolean(active?.inFlight); }
-  function forward(text) {
+  // Only incomplete bracket groups wait; ordinary speech streams immediately.
+  function filterText(force = false) {
+    let output = "";
+    const append = text => {
+      if (seam !== null) {
+        const whitespace = text.match(/^[ \t]*/)[0];
+        seam += whitespace;
+        text = text.slice(whitespace.length);
+        if (!text) return;
+        // Sentinels retain an internal seam while the shared normalizer trims
+        // a leading tag. Already-sent whitespace cannot be sent a second time.
+        const left = output.at(-1) || lastTextChar;
+        const prefix = left && !/[ \t]/.test(left) ? "x" : "";
+        output += stripCanonicalEmotionTags(prefix + seam + "x").slice(prefix.length, -1);
+        seam = null;
+      }
+      output += text;
+    };
+    while (holdBuffer) {
+      const start = holdBuffer.indexOf("[");
+      if (start < 0) { append(holdBuffer); holdBuffer = ""; break; }
+      append(holdBuffer.slice(0, start)); holdBuffer = holdBuffer.slice(start);
+      const end = holdBuffer.indexOf("]");
+      if (end >= 0) {
+        const group = holdBuffer.slice(0, end + 1);
+        if (EMOTION_TAGS.some(({ tag }) => tag === group)
+            || (Array.from(group).length <= 40 && !/[。！？]/.test(group))) {
+          // Normalize generous control tags through the canonical seam rules too.
+          const whitespace = output.match(/[ \t]*$/)[0];
+          output = output.slice(0, output.length - whitespace.length);
+          seam = (seam || "") + whitespace + SEAM_TAG;
+        } else append(group);
+        holdBuffer = holdBuffer.slice(end + 1);
+        clear(holdTimer); holdTimer = null;
+      } else if (force || Array.from(holdBuffer).length > 40) {
+        append(holdBuffer); holdBuffer = "";
+        clear(holdTimer); holdTimer = null;
+      } else {
+        if (!holdTimer) holdTimer = timeout(() => { holdTimer = null; flush(); }, 1500);
+        break;
+      }
+    }
+    if (force) { clear(holdTimer); holdTimer = null; seam = null; }
+    return output;
+  }
+  function flushFish() {
+    if (!unflushed) return;
+    fishSend(active, { event: "flush" }); unflushed = false;
+  }
+  function emitFiltered(text) {
+    if (!text) return;
     if (firstDeltaAt === null || !pending()) {
       firstDeltaAt = now(); firstAudioLogged = false;
     }
-    fishSend(active, { event: "text", text });
-    active.inFlight = true; active.textSerial += 1;
-    state.recentOutputText = Array.from(state.recentOutputText + text).slice(-40).join("");
-    state.inputDeltas = 0; state.inputChars = 0;
+    // Split only at punctuation so every occurrence flushes its preceding text.
+    const parts = text.match(/[^、。！？!?]*[、。！？!?]|[^、。！？!?]+$/gu) || [];
+    for (const part of parts) {
+      fishSend(active, { event: "text", text: part });
+      active.inFlight = true; active.textSerial += 1; unflushed = true;
+      state.recentOutputText = Array.from(state.recentOutputText + part).slice(-40).join("");
+      lastTextChar = part.at(-1);
+      if (FLUSH_PUNCTUATION.includes(lastTextChar)) flushFish();
+    }
+  }
+  function flush() {
     clear(flushTimer);
-    flushTimer = timeout(() => fishSend(active, { event: "flush" }), FLUSH_IDLE_MS);
+    emitFiltered(filterText(true));
+    flushFish();
+  }
+  function forward(text) {
+    state.inputDeltas = 0; state.inputChars = 0;
+    holdBuffer += text;
+    emitFiltered(filterText());
+    clear(flushTimer);
+    if (unflushed || holdBuffer || seam !== null) flushTimer = timeout(flush, FLUSH_IDLE_MS);
   }
   function interrupt() {
     if (closed || closing || capped) return;
     const cancelled = currentEpoch;
     currentEpoch += 1;
-    clear(flushTimer);
+    clear(flushTimer); clear(holdTimer); holdTimer = null;
+    holdBuffer = ""; seam = null; lastTextChar = ""; unflushed = false;
     if (active) { active.retired = true; active.reconnecting = false; safeClose(active.ws); }
     active = spare; spare = null;
     if (active) active.epoch = currentEpoch;
@@ -305,8 +378,9 @@ function createLiveEngine(session, turnState, onAudio, options = {}) {
   function cap() {
     if (closed || closing || capped) return;
     capped = true; clear(flushTimer);
+    flush();
     forward("時間の上限に達したので、ここで一度切りますね。");
-    clear(flushTimer); fishSend(active, { event: "flush" });
+    flush();
     const deadline = now() + 5000;
     const drain = () => {
       if (closed || closing) return;
@@ -375,4 +449,4 @@ function createLiveEngine(session, turnState, onAudio, options = {}) {
     continueWithoutArbitration: () => {},
   };
 }
-module.exports = { createLiveEngine, liveEngineAvailable, liveEngineActive, detectInterruption, FLUSH_IDLE_MS, MAX_QUEUED_AUDIO_MS, SESSION_CAP_MS, SELF_STOP_WATCHDOG_MS, LEAD_MS };
+module.exports = { createLiveEngine, liveEngineAvailable, liveEngineActive, detectInterruption, FLUSH_IDLE_MS, FLUSH_PUNCTUATION, MAX_QUEUED_AUDIO_MS, SESSION_CAP_MS, SELF_STOP_WATCHDOG_MS, LEAD_MS };

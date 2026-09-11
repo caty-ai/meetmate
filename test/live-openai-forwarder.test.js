@@ -6,6 +6,8 @@ const { spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const { encode, decodeOne } = require("../src/live-openai/msgpack-lite");
 const engine = require("../src/live-openai/live-engine");
+const { stripCanonicalEmotionTags, EMOTION_TAGS } = require("../src/messages");
+const noEmotionInstruction = `\n\n音声はそのまま読み上げられるので、${EMOTION_TAGS.find(({ fallback }) => fallback).tag} などの感情タグや括弧書きの演出指示は出力しないでください。`;
 const { TTS_SAMPLE_RATE } = require("../src/config");
 
 class Clock {
@@ -70,20 +72,20 @@ function harness(t, options = {}) {
   };
 }
 
-test("exact session protocol, warm Fish sockets, ordered raw deltas, flush at 600 not 599", t => {
+test("exact session protocol, warm Fish sockets, ordered deltas, flush at 300 not 299", t => {
   const h = harness(t);
   assert.equal(h.openai.url, "wss://api.openai.com/v1/live/sessions");
-  assert.deepEqual(h.openai.sent[0], { type: "session.start", event_id: "event_start", session: { model: "gpt-live-1", instructions: h.config.llm.systemPrompt, audio: { format: { type: "audio/pcm", rate: 16000 }, output: { voice: "quartz" } }, delegation: { type: "client" } } });
+  assert.deepEqual(h.openai.sent[0], { type: "session.start", event_id: "event_start", session: { model: "gpt-live-1", instructions: h.config.llm.systemPrompt + noEmotionInstruction, audio: { format: { type: "audio/pcm", rate: 16000 }, output: { voice: "quartz" } }, delegation: { type: "client" } } });
   for (const socket of h.fish) {
     assert.equal(socket.url, "wss://api.fish.audio/v1/tts/live");
     assert.equal(socket.options.headers.model, "s2.1-pro");
     assert.deepEqual(socket.sent, [{ event: "start", request: { text: "", reference_id: "test-voice", format: "pcm", sample_rate: TTS_SAMPLE_RATE, latency: "low" } }]);
   }
-  for (const text of ["うん", "、", "途中で", "切れ"]) h.output(text);
-  assert.deepEqual(h.fish[0].sent.slice(1), ["うん", "、", "途中で", "切れ"].map(text => ({ event: "text", text })));
-  h.clock.advance(599); assert.equal(h.fish[0].sent.at(-1).event, "text");
+  for (const text of ["うん", "そう", "途中で", "切れ"]) h.output(text);
+  assert.deepEqual(h.fish[0].sent.slice(1), ["うん", "そう", "途中で", "切れ"].map(text => ({ event: "text", text })));
+  h.clock.advance(299); assert.equal(h.fish[0].sent.at(-1).event, "text");
   h.clock.advance(1); assert.deepEqual(h.fish[0].sent.at(-1), { event: "flush" });
-  h.output("次"); h.clock.advance(599); assert.equal(h.fish[0].sent.at(-1).event, "text");
+  h.output("次"); h.clock.advance(299); assert.equal(h.fish[0].sent.at(-1).event, "text");
   h.clock.advance(1); assert.equal(h.fish[0].sent.at(-1).event, "flush");
   const pcm = Buffer.from([0, 1, 2, 3]); h.handler.send(pcm);
   assert.deepEqual(h.openai.sent.at(-1), { type: "session.input_audio.append", audio: pcm.toString("base64") });
@@ -216,7 +218,7 @@ test("cap at 60 minutes says closing line, drains then closes; recreated handler
   const h = harness(t, { clock, id });
   clock.advance(engine.SESSION_CAP_MS - 1); assert.equal(h.fish[0].sent.length, 1);
   clock.advance(1);
-  assert.deepEqual(h.fish[0].sent.slice(-2), [{ event: "text", text: "時間の上限に達したので、ここで一度切りますね。" }, { event: "flush" }]);
+  assert.deepEqual(h.fish[0].sent.slice(1), [{ event: "text", text: "時間の上限に達したので、" }, { event: "flush" }, { event: "text", text: "ここで一度切りますね。" }, { event: "flush" }]);
   assert.equal(h.openai.sent.some(e => e.type === "session.close"), false);
   h.fish[0].event({ event: "audio", audio: Buffer.alloc(960) }); clock.advance(220);
   assert.equal(h.openai.sent.at(-1).type, "session.close");
@@ -317,7 +319,7 @@ test("delegation errors use fixed response; close aborts pending delegation", as
 });
 test("wake mode appends checked-in silent-unless-addressed prompt", t => {
   const h = harness(t, { wakeMode: "wake" });
-  assert.equal(h.openai.sent[0].session.instructions, h.config.llm.systemPrompt + "\n\n" + fs.readFileSync(require("node:path").join(__dirname, "../docs/research/gpt-live-1-probe/prompts/silent-unless-addressed.txt"), "utf8"));
+  assert.equal(h.openai.sent[0].session.instructions, h.config.llm.systemPrompt + "\n\n" + fs.readFileSync(require("node:path").join(__dirname, "../docs/research/gpt-live-1-probe/prompts/silent-unless-addressed.txt"), "utf8") + noEmotionInstruction);
 });
 test("availability reports each missing piece and active shares the decision", () => {
   const configPath = require.resolve("../src/config"), resolverPath = require.resolve("../src/settings/resolver"), enginePath = require.resolve("../src/live-openai/live-engine");
@@ -372,7 +374,7 @@ test("Fish connecting/reconnecting keeps unsent deltas ordered; promotion before
   assert.deepEqual(h.fish[0].sent.map(e => e.event), ["start", "text", "text", "flush"]);
   h.fish[0].close(); h.output("接続中"); h.output("も転送");
   h.clock.advance(500); const replacement = h.fish.at(-1); replacement.open();
-  assert.deepEqual(replacement.sent.slice(1), [{ event: "text", text: "接続中" }, { event: "text", text: "も転送" }]);
+  assert.deepEqual(replacement.sent.slice(1), [{ event: "text", text: "接続中" }, { event: "text", text: "も転送" }, { event: "flush" }]);
   replacement.event({ event: "audio", audio: Buffer.alloc(TTS_SAMPLE_RATE * 4) });
   h.clock.advance(520); h.input("割り込みます");
   assert.equal(h.cancellations.length, 1);
@@ -422,4 +424,90 @@ test("Meet routes live branch disables hub and full-duplex alone bypasses speaki
     assert.match(child.stderr, /floor arbitration is not available in the live voice engine prototype/);
     assert.doesNotMatch(child.stdout, /Deepgram Voice Agent モード/);
   }
+});
+
+const fishText = h => h.fish[0].sent.filter(e => e.event === "text").map(e => e.text).join("");
+test("split emotion tag never reaches Fish, echo state, or the first-audio clock", t => {
+  const logs = [], echoes = [];
+  t.mock.method(console, "log", line => logs.push(line));
+  const h = harness(t, { engineOptions: { detectInterruption: state => { echoes.push(state.recentOutputText); return false; } } });
+  for (const delta of ["[", "so", "ft", " vo", "ice", "]", "こん", "にち", "は。"]) {
+    h.output(delta); h.input("確認"); h.clock.advance(200);
+  }
+  assert.equal(fishText(h), "こんにちは。");
+  assert.deepEqual(h.fish[0].sent.slice(-2), [{ event: "text", text: "は。" }, { event: "flush" }]);
+  assert.equal(echoes.some(text => /\[|soft|voice/.test(text)), false);
+  assert.equal(echoes.at(-1), "こんにちは。");
+  h.fish[0].event({ event: "audio", audio: Buffer.alloc(960) });
+  assert.equal(logs.find(line => line.includes("fish first-audio")), "🎙️  live-engine: fish first-audio 600 ms after delta (epoch 0)");
+});
+test("canonical and generous tags collapse leading and internal whitespace seams across deltas", t => {
+  for (const { tag } of [...EMOTION_TAGS, { tag: "[smiling]" }]) {
+    for (const prefix of ["", "前", "前 "]) {
+      const h = harness(t);
+      if (prefix) h.output(prefix);
+      for (const delta of [tag.slice(0, 2), tag.slice(2), " ", "\t", "後。"]) h.output(delta);
+      assert.equal(fishText(h), stripCanonicalEmotionTags(prefix + "[warm] \t後。"));
+    }
+  }
+});
+test("unclosed bracket releases at 1500 ms despite continuing deltas, without losing text", t => {
+  const h = harness(t); h.output("[");
+  for (let i = 0; i < 7; i++) { h.clock.advance(200); h.output("あ"); }
+  h.clock.advance(99); assert.equal(fishText(h), "");
+  h.clock.advance(1);
+  assert.equal(fishText(h), "[" + "あ".repeat(7));
+  assert.equal(h.fish[0].sent.at(-1).event, "flush");
+  h.output("続き"); assert.equal(fishText(h), "[" + "あ".repeat(7) + "続き");
+});
+test("idle flush releases held text first; complete tags never produce empty flushes", t => {
+  const h = harness(t); h.output("前[未完");
+  assert.equal(fishText(h), "前");
+  h.clock.advance(299); assert.equal(fishText(h), "前");
+  h.clock.advance(1);
+  assert.deepEqual(h.fish[0].sent.slice(1), [{ event: "text", text: "前" }, { event: "text", text: "[未完" }, { event: "flush" }]);
+  const tag = harness(t); tag.output("[warm] "); tag.clock.advance(2000);
+  assert.equal(tag.fish[0].sent.length, 1);
+});
+test("bracket length and sentence punctuation preserve literal groups", t => {
+  for (const text of ["[" + "あ".repeat(40), "[" + "a".repeat(39) + "]", "[本文。続き]", "[本文！]", "[本文？]"]) {
+    const h = harness(t); h.output(text);
+    assert.equal(fishText(h), text);
+  }
+  const h = harness(t); h.output("[" + "a".repeat(38) + "]本文");
+  assert.equal(fishText(h), "本文");
+});
+test("each punctuation flushes immediately once, including punctuation-only deltas", t => {
+  assert.equal(engine.FLUSH_IDLE_MS, 300);
+  assert.equal(engine.FLUSH_PUNCTUATION, "、。！？!?");
+  const h = harness(t);
+  for (const mark of engine.FLUSH_PUNCTUATION) {
+    h.output("本文"); const before = h.fish[0].sent.length;
+    h.output(mark);
+    assert.deepEqual(h.fish[0].sent.slice(before), [{ event: "text", text: mark }, { event: "flush" }]);
+  }
+  const before = h.fish[0].sent.length; h.output("一、二。続き");
+  assert.deepEqual(h.fish[0].sent.slice(before), [{ event: "text", text: "一、" }, { event: "flush" }, { event: "text", text: "二。" }, { event: "flush" }, { event: "text", text: "続き" }]);
+  h.clock.advance(300); assert.equal(h.fish[0].sent.at(-1).event, "flush");
+  const count = h.fish[0].sent.length; h.clock.advance(1500); assert.equal(h.fish[0].sent.length, count);
+});
+test("interruption clears held tags and their timers before the next epoch", t => {
+  const h = harness(t, { engineOptions: { detectInterruption: () => true } });
+  h.output("前[soft"); h.input("中断"); h.output("新しい本文。");
+  h.clock.advance(2000);
+  assert.equal(fishText(h), "前");
+  assert.deepEqual(h.fish[1].sent.slice(1), [{ event: "text", text: "新しい本文。" }, { event: "flush" }]);
+  assert.equal(h.cancellations.length, 1);
+});
+test("close releases incomplete text before flush and clears its timeout", async t => {
+  const h = harness(t); h.output("[未完"); const done = h.handler.close();
+  assert.deepEqual(h.fish[0].sent.slice(1), [{ event: "text", text: "[未完" }, { event: "flush" }]);
+  h.openai.event({ type: "session.closed" }); await done;
+  assert.equal(h.clock.timers.size, 0);
+});
+
+test("completed groups normalize whitespace on both sides within a delta", t => {
+  const h = harness(t); const text = "前  [warm] \t [thoughtful]   後。";
+  h.output(text);
+  assert.equal(fishText(h), stripCanonicalEmotionTags(text));
 });
