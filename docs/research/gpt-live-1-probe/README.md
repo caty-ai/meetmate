@@ -105,8 +105,22 @@ Synthesis requests run sequentially in original order; a Bridge would pipeline t
 
 | Run | Added delay p50 (ms) | Max (ms) | Backchannel count | Fragment count | Fish chars | Listening note |
 |---|---|---|---|---|---|---|
-| solo-1 | | | | | | |
-| interrupt-1 | | | | | | |
+| solo-1 (live, `--start-on first`) | 825 | 2346 | 1 (skipped as fragment) | 1 | 178 | owner to fill |
+| interrupt-1 (live, `--start-on first`) | 315 | 3157 | 2 | 0 | 91 | owner to fill |
+| solo-1 (dry-run, `--start-on close`) | 6350 | 7320 | 1 | 1 | 178 | not a listening artefact |
+
+Live Fish TTFB (2026-09-11, `s2.1-pro`, `latency: low`, PCM 16 kHz): 278–350 ms warm, 1112 ms on the first (cold) request. Total synthesis time per sentence 0.5–3.2 s.
+
+**Findings for the design note**
+
+- Transcript deltas *lead* the corresponding audible audio by roughly 0.3–1.2 s on `solo-1` (120 deltas compared against the cumulative output-audio position; `interrupt-1` 0.1–2.0 s). So the transcript is a script running slightly ahead of the voice, not a trailing caption. This is what makes Path 3 viable at all. Caveat: the cumulative-bytes audio position is approximate when the stream carries long silence (the `two-speaker-1` comparison gave ~3.2 s and is not trusted).
+- **Sentence-close buffering is not usable**: gpt-live-1 emits transcript at speaking pace, so waiting for 。 means waiting for the model to finish saying the sentence (dry-run p50 6.35 s). A Bridge must stream text into a streaming TTS (Fish `wss://api.fish.audio/v1/tts/live` accepts incremental `text` events) as deltas arrive; `--start-on first` is the closest offline proxy for that.
+- With streaming, the floor on added delay is Fish TTFB (~0.3 s). The measured p50 of 0.8 s on `solo-1` is inflated by queueing behind the long first sentence (3.2 s of Fish audio for 40 chars) and by the `--max-chars 40` cut landing mid-word (「大事にして｜るの。」). Streaming removes the max-chars rule.
+- Fragments and backchannels are real: the interrupted 「ストンと力を抜」 and the in-speech 「うん」 both appear. Under Path 3 the Bridge decides whether to voice them; under Path 2 they come through as-is.
+
+### Path 2 voice conversion
+
+See `path2-vc.md` for the Seed-VC zero-shot procedure, command, and result table (RTF 0.24 on Apple Silicon; output `path2/solo-1-vc-caty.wav`, target reference `path2/ref-caty-fish.wav`, both git-ignored). Listening note: owner to fill.
 
 ### Known metric limitation (fix in a follow-up)
 
