@@ -16,6 +16,15 @@ class Clock {
   clearTimeout = id => this.timers.delete(id);
   clearInterval = id => this.timers.delete(id);
   add(fn, ms, interval) { const id = ++this.next; this.timers.set(id, { fn, at: this.time + ms, interval }); return id; }
+  // Simulate one delayed timer delivery, without replaying missed interval ticks.
+  jump(ms) {
+    this.time += ms;
+    for (const [id, timer] of [...this.timers]) {
+      if (timer.at > this.time) continue;
+      if (timer.interval) timer.at = this.time + timer.interval; else this.timers.delete(id);
+      timer.fn();
+    }
+  }
   advance(ms) {
     const end = this.time + ms;
     for (;;) {
@@ -82,10 +91,12 @@ test("exact session protocol, warm Fish sockets, ordered raw deltas, flush at 60
   assert.equal(h.audio.length, 0);
 });
 test("interruption promotes warm spare, cancels old epoch and rejects late old audio", t => {
+  const warnings = []; t.mock.method(console, "warn", line => warnings.push(line));
   const h = harness(t); h.output("応答です");
   h.fish[0].event({ event: "audio", audio: Buffer.alloc(TTS_SAMPLE_RATE * 2 * 2, 1) });
   h.clock.advance(520); h.input("待ってください");
   assert.equal(h.fish[0].closes, 1);
+  assert.equal(warnings.some(line => line.includes("Fish socket lost")), false);
   assert.equal(h.fish.length, 3);
   assert.deepEqual(h.cancellations, [{ outputEpoch: 0, reason: "interrupted", monotonicTime: 520 }]);
   assert.equal(h.state.isAgentSpeaking, false);
@@ -125,15 +136,79 @@ test("odd byte held; PCM emitted at 20 ms with monotonic sample metadata; empty 
   assert.deepEqual(h.audio.map(e => e.meta), [0, 2].map(firstSampleIndex => ({ outputEpoch: 0, firstSampleIndex, sampleRate: TTS_SAMPLE_RATE })));
   h.clock.advance(220); assert.equal(h.state.isAgentSpeaking, false);
 });
-test("queue bounded to 15 seconds, oldest bytes dropped; model-stopped watchdog at 1500", t => {
+test("queue bounded to 15 seconds; output silence never cancels queued or in-flight text", t => {
+  assert.equal(engine.SELF_STOP_WATCHDOG_MS, 0);
   const h = harness(t); h.output("長い回答");
   const second = TTS_SAMPLE_RATE * 2;
   h.fish[0].event({ event: "audio", audio: Buffer.concat([Buffer.alloc(second, 1), Buffer.alloc(second * 15, 2)]) });
-  h.clock.advance(20); assert.equal(h.audio[0].pcm.length, second / 50); assert.equal(h.audio[0].pcm[0], 2);
-  h.clock.advance(1479); assert.equal(h.cancellations.length, 0);
-  h.clock.advance(1); assert.equal(h.cancellations.length, 1);
-  const empty = harness(t); empty.clock.advance(1600); assert.equal(empty.cancellations.length, 0);
-  const flight = harness(t); flight.output("未受信"); flight.clock.advance(1500); assert.equal(flight.cancellations.length, 1);
+  h.clock.advance(20); assert.equal(h.audio[0].pcm.length, second * engine.LEAD_MS / 1000);
+  assert.equal(h.audio[0].pcm[0], 2);
+  h.clock.advance(16000);
+  assert.equal(h.cancellations.length, 0);
+  assert.equal(Buffer.concat(h.audio.map(a => a.pcm)).length, second * 15);
+  const flight = harness(t); flight.output("未受信"); flight.clock.advance(5000);
+  assert.equal(flight.cancellations.length, 0);
+  assert.equal(flight.fish[0].closes, 0);
+});
+test("normal answer keeps its entire tail after five seconds without input or output deltas", t => {
+  const h = harness(t); h.output("回答");
+  h.clock.advance(1000);
+  const pcm = Buffer.alloc(TTS_SAMPLE_RATE * 2 * 3, 7);
+  h.fish[0].event({ event: "audio", audio: pcm });
+  h.clock.advance(5000);
+  assert.deepEqual(Buffer.concat(h.audio.map(a => a.pcm)), pcm);
+  assert.deepEqual(h.cancellations, []);
+  assert.equal(h.fish[0].closes, 0);
+  assert.equal(h.state.isAgentSpeaking, false);
+});
+test("wall-clock pacer catches up a delayed tick with 200 ms lead and whole samples", t => {
+  assert.equal(engine.LEAD_MS, 200);
+  const h = harness(t); h.output("回答");
+  h.fish[0].event({ event: "audio", audio: Buffer.alloc(TTS_SAMPLE_RATE * 4) });
+  h.clock.advance(20);
+  assert.equal(h.audio[0].pcm.length, TTS_SAMPLE_RATE * 2 * engine.LEAD_MS / 1000);
+  h.clock.jump(60);
+  assert.equal(h.audio.length, 2);
+  assert.equal(h.audio[1].pcm.length, TTS_SAMPLE_RATE * 2 * 60 / 1000);
+  h.clock.jump(23.123);
+  const bytes = h.audio.reduce((sum, a) => sum + a.pcm.length, 0);
+  assert.equal(bytes, Math.floor((engine.LEAD_MS + 83.123) * TTS_SAMPLE_RATE / 1000) * 2);
+  let samples = 0;
+  for (const a of h.audio) {
+    assert.equal(a.pcm.length % 2, 0);
+    assert.equal(a.meta.firstSampleIndex, samples); samples += a.pcm.length / 2;
+  }
+});
+test("resuming an empty queue re-anchors pacing without a silence-sized burst", t => {
+  const h = harness(t); h.output("回答");
+  h.fish[0].event({ event: "audio", audio: Buffer.alloc(TTS_SAMPLE_RATE * 2 / 10) });
+  h.clock.advance(20); assert.equal(h.state.isAgentSpeaking, true);
+  h.clock.advance(199); assert.equal(h.state.isAgentSpeaking, true);
+  h.clock.advance(1); assert.equal(h.state.isAgentSpeaking, false);
+  h.clock.advance(5000);
+  h.fish[0].event({ event: "audio", audio: Buffer.alloc(TTS_SAMPLE_RATE * 4) });
+  h.clock.advance(20);
+  assert.equal(h.audio[1].pcm.length, TTS_SAMPLE_RATE * 2 * engine.LEAD_MS / 1000);
+  assert.equal(h.audio[1].meta.firstSampleIndex, TTS_SAMPLE_RATE / 10);
+  assert.equal(h.state.isAgentSpeaking, true);
+});
+test("latency diagnostics measure the first delta and audio event, and log again for a new utterance", t => {
+  const logs = []; t.mock.method(console, "log", line => logs.push(line));
+  const h = harness(t); h.output("非公開の文章");
+  h.clock.advance(100); h.output("続き"); h.clock.advance(250);
+  h.fish[0].event({ event: "audio", audio: Buffer.alloc(TTS_SAMPLE_RATE * 2 / 10) });
+  h.clock.advance(250);
+  h.output("次の文章"); h.clock.advance(50);
+  h.fish[0].event({ event: "audio", audio: Buffer.alloc(TTS_SAMPLE_RATE * 2 / 10) });
+  h.clock.advance(20);
+  assert.deepEqual(logs.filter(line => line.includes("fish first-audio")), [
+    "🎙️  live-engine: fish first-audio 350 ms after delta (epoch 0)",
+    "🎙️  live-engine: fish first-audio 50 ms after delta (epoch 0)",
+  ]);
+  assert.deepEqual(logs.filter(line => line.includes(" played ")), [
+    "🎙️  live-engine: epoch 0 played 100 ms", "🎙️  live-engine: epoch 0 played 200 ms",
+  ]);
+  assert.equal(logs.some(line => /非公開|続き|次の文章/.test(line)), false);
 });
 test("cap at 60 minutes says closing line, drains then closes; recreated handler keeps clock", async t => {
   assert.equal(engine.SESSION_CAP_MS, 3600000);
@@ -173,6 +248,43 @@ test("Fish unexpected close retries after 500 ms, max three per minute", t => {
     active = h.fish.at(-1); active.open();
   }
   active.close(); assert.equal(h.errors.length, 1); assert.equal(h.clock.timers.size, 0);
+});
+test("Fish error finish logs decoded details before retrying, including an idle spare", t => {
+  const warnings = []; t.mock.method(console, "warn", line => warnings.push(line));
+  const h = harness(t);
+  h.fish[1].event({ event: "finish", reason: "error", message: "empty buffer", time: 1 });
+  assert.equal(warnings[0], '⚠️  live-engine: Fish error: {"event":"finish","reason":"error","message":"empty buffer","time":1}');
+  assert.match(warnings[1], /Fish socket lost/);
+  h.clock.advance(500); h.fish.at(-1).open();
+  h.output("回答"); h.clock.advance(600);
+  h.fish[0].event({ event: "finish", reason: "error", message: "flush failed" });
+  assert.match(warnings[2], /Fish error: .*flush failed/);
+  assert.match(warnings[3], /Fish socket lost/);
+  assert.deepEqual(h.errors, []);
+});
+test("idle spare losses consume at most one retry per minute; active losses still consume budget", t => {
+  const h = harness(t);
+  let spare = h.fish[1];
+  for (let i = 0; i < 5; i++) {
+    spare.close(); h.clock.advance(500); spare = h.fish.at(-1); spare.open();
+  }
+  assert.deepEqual(h.errors, []);
+  h.clock.advance(60000);
+  spare.close(); h.clock.advance(500); h.fish.at(-1).open();
+  let active = h.fish[0];
+  for (let i = 0; i < 2; i++) {
+    active.close(); h.clock.advance(500); active = h.fish.at(-1); active.open();
+  }
+  assert.deepEqual(h.errors, []);
+  active.close(); assert.equal(h.errors.length, 1);
+});
+test("intentional shutdown retires both Fish sockets without retry warnings", async t => {
+  const warnings = []; t.mock.method(console, "warn", line => warnings.push(line));
+  const h = harness(t); const done = h.handler.close();
+  h.openai.event({ type: "session.closed" }); await done;
+  assert.deepEqual(h.fish.map(ws => ws.closes), [1, 1]);
+  assert.equal(warnings.some(line => line.includes("Fish socket lost")), false);
+  assert.equal(h.clock.timers.size, 0);
 });
 test("delegation copies gateway options and history, rejects duplicates, sends commentary", async t => {
   const calls = [];

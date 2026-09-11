@@ -17,6 +17,10 @@ const sessionStarts = new Map();
 // Read only when checking/starting a session, never at module load or on a
 // publicly inspectable handler/config. This is the sole direct credential read.
 function liveCredential() { return process.env.OPENAI_LIVE_API_KEY; }
+// Disabled: output silence is normal while Fish is still producing the tail.
+// If enabled, only a lack of Fish audio while text is in flight is a stall.
+const SELF_STOP_WATCHDOG_MS = 0;
+const LEAD_MS = 200;
 function liveEngineAvailable() {
   if (VOICE_ENGINE !== "live") return "VOICE_ENGINE is not live";
   if (!liveCredential()?.trim()) return "OPENAI_LIVE_API_KEY is missing";
@@ -48,7 +52,8 @@ function createLiveEngine(session, turnState, onAudio, options = {}) {
   const state = { pending: false, recentOutputText: "", inputDeltas: 0, inputChars: 0, firstAudioAt: null, now: now() };
   let openai, active, spare, started = false, closing = false, closed = false, failed = false, capped = false;
   let currentEpoch = 0, sampleOffset = 0, sequence = 0, gatewaySequence = 0;
-  let queue = [], queuedBytes = 0, lastOutputAt = null, emptySince = null, overflowEpoch = null;
+  let queue = [], queuedBytes = 0, firstDeltaAt = null, firstAudioLogged = false, emptySince = null, overflowEpoch = null;
+  let playheadMs = 0, epochStartedAt = null, lastIdleSpareRetryAt = null;
   let flushTimer, startupTimer, closeTimer, closeResolve, closePromise;
   let instructions = config.llm.systemPrompt || config.systemPrompt || "";
   if (session.config?.wakeMode === "wake") {
@@ -157,11 +162,13 @@ function createLiveEngine(session, turnState, onAudio, options = {}) {
   }
   function pending() { return queuedBytes > 0 || Boolean(active?.inFlight); }
   function forward(text) {
+    if (firstDeltaAt === null || !pending()) {
+      firstDeltaAt = now(); firstAudioLogged = false;
+    }
     fishSend(active, { event: "text", text });
     active.inFlight = true; active.textSerial += 1;
     state.recentOutputText = Array.from(state.recentOutputText + text).slice(-40).join("");
     state.inputDeltas = 0; state.inputChars = 0;
-    lastOutputAt = now();
     clear(flushTimer);
     flushTimer = timeout(() => fishSend(active, { event: "flush" }), FLUSH_IDLE_MS);
   }
@@ -176,7 +183,8 @@ function createLiveEngine(session, turnState, onAudio, options = {}) {
     else active = openFish(currentEpoch);
     queue = []; queuedBytes = 0; sampleOffset = 0; emptySince = null;
     state.firstAudioAt = null; state.inputDeltas = 0; state.inputChars = 0;
-    state.recentOutputText = ""; lastOutputAt = null;
+    state.recentOutputText = ""; firstDeltaAt = null; firstAudioLogged = false;
+    playheadMs = 0; epochStartedAt = null;
     turnState.isAgentSpeaking = false;
     spare = openFish(null);
     emitter.emit("playback_cancelled", { outputEpoch: cancelled, reason: "interrupted", monotonicTime: now() });
@@ -185,8 +193,12 @@ function createLiveEngine(session, turnState, onAudio, options = {}) {
     if (socket.retired || closed || closing) return;
     socket.retired = true; socket.reconnecting = true; safeClose(socket.ws);
     while (retries.length && now() - retries[0] >= 60000) retries.shift();
-    if (retries.length >= 3) { fail("Fish reconnect budget exhausted"); return; }
-    retries.push(now());
+    const idleSpare = socket === spare && !pending();
+    if (!idleSpare || lastIdleSpareRetryAt === null || now() - lastIdleSpareRetryAt >= 60000) {
+      if (retries.length >= 3) { fail("Fish reconnect budget exhausted"); return; }
+      retries.push(now());
+      if (idleSpare) lastIdleSpareRetryAt = now();
+    }
     console.warn("⚠️  live-engine: Fish socket lost; retrying in 500 ms");
     timeout(() => {
       if (closed || closing) return;
@@ -208,7 +220,7 @@ function createLiveEngine(session, turnState, onAudio, options = {}) {
       });
     } catch { timeout(() => fishLost(socket), 0); return socket; }
     socket.ws.on("open", () => {
-      if (closed || socket.retired) { safeClose(socket.ws); return; }
+      if (closed || socket.retired) { socket.retired = true; safeClose(socket.ws); return; }
       socket.ready = true;
       fishSend(socket, { event: "start", request: { text: "", reference_id: config.tts.referenceId, format: "pcm", sample_rate: TTS_SAMPLE_RATE, latency: "low" } });
       for (const event of socket.pending.splice(0)) fishSend(socket, event);
@@ -222,6 +234,10 @@ function createLiveEngine(session, turnState, onAudio, options = {}) {
         const type = event.event?.toString("utf8");
         if (type === "audio") {
           if (socket !== active || socket.epoch !== currentEpoch || !Buffer.isBuffer(event.audio)) return;
+          if (event.audio.length && firstDeltaAt !== null && !firstAudioLogged) {
+            console.log(`🎙️  live-engine: fish first-audio ${Math.round(now() - firstDeltaAt)} ms after delta (epoch ${currentEpoch})`);
+            firstAudioLogged = true;
+          }
           const bytes = Buffer.concat([socket.odd, event.audio]);
           socket.odd = bytes.subarray(bytes.length - bytes.length % 2);
           const pcm = bytes.subarray(0, bytes.length - bytes.length % 2);
@@ -236,7 +252,12 @@ function createLiveEngine(session, turnState, onAudio, options = {}) {
             if (overflowEpoch !== currentEpoch) { console.warn("⚠️  live-engine: audio queue limit; dropping oldest audio"); overflowEpoch = currentEpoch; }
           }
         } else if (type === "finish") {
-          if (event.reason?.toString("utf8") === "error") fishLost(socket);
+          if (event.reason?.toString("utf8") === "error") {
+            const decoded = JSON.stringify(event, (_key, value) =>
+              value?.type === "Buffer" ? Buffer.from(value.data).toString("utf8") : value);
+            console.warn(`⚠️  live-engine: Fish error: ${decoded}`);
+            fishLost(socket);
+          }
           else { socket.inFlight = false; console.log("🎙️  live-engine: Fish finish"); }
         } else console.log("🎙️  live-engine: unrecognized Fish event");
       } catch { fail("Invalid Fish frame"); }
@@ -250,8 +271,12 @@ function createLiveEngine(session, turnState, onAudio, options = {}) {
     // stays quiet for 200 ms, consider that batch complete; new text keeps it live.
     if (!queuedBytes && active?.lastAudioAt !== null && active?.audioSerial === active?.textSerial
         && time - active.lastAudioAt >= 200) active.inFlight = false;
-    if (!capped && !closing && lastOutputAt !== null && pending() && time - lastOutputAt >= 1500) interrupt();
-    const parts = []; let remaining = TTS_SAMPLE_RATE * 2 / 50;
+    if (SELF_STOP_WATCHDOG_MS > 0 && !capped && !closing && active?.inFlight && firstDeltaAt !== null
+        && time - Math.max(firstDeltaAt, active.lastAudioAt ?? firstDeltaAt) >= SELF_STOP_WATCHDOG_MS) interrupt();
+    // Re-anchor after an empty queue: elapsed silence must not become catch-up audio.
+    if (queuedBytes && epochStartedAt === null) epochStartedAt = time - playheadMs;
+    const dueMs = epochStartedAt === null ? 0 : Math.max(0, time - epochStartedAt - playheadMs + LEAD_MS);
+    const parts = []; let remaining = Math.min(queuedBytes, Math.floor(dueMs * TTS_SAMPLE_RATE / 1000) * 2);
     while (queue.length && remaining > 0) {
       const entry = queue[0];
       if (entry.epoch !== currentEpoch) { queuedBytes -= entry.pcm.length; queue.shift(); continue; }
@@ -265,8 +290,14 @@ function createLiveEngine(session, turnState, onAudio, options = {}) {
       if (state.firstAudioAt === null) state.firstAudioAt = time;
       const buffer = Buffer.concat(parts), firstSampleIndex = sampleOffset;
       sampleOffset += buffer.length / 2;
+      playheadMs = sampleOffset * 1000 / TTS_SAMPLE_RATE;
+      if (!queuedBytes) {
+        epochStartedAt = null;
+        console.log(`🎙️  live-engine: epoch ${currentEpoch} played ${Math.round(playheadMs)} ms`);
+      }
       onAudio(buffer, { outputEpoch: currentEpoch, firstSampleIndex, sampleRate: TTS_SAMPLE_RATE });
-    } else {
+    } else if (!queuedBytes) {
+      epochStartedAt = null;
       if (emptySince === null) emptySince = time;
       if (time - emptySince >= 200) turnState.isAgentSpeaking = false;
     }
@@ -344,4 +375,4 @@ function createLiveEngine(session, turnState, onAudio, options = {}) {
     continueWithoutArbitration: () => {},
   };
 }
-module.exports = { createLiveEngine, liveEngineAvailable, liveEngineActive, detectInterruption, FLUSH_IDLE_MS, MAX_QUEUED_AUDIO_MS, SESSION_CAP_MS };
+module.exports = { createLiveEngine, liveEngineAvailable, liveEngineActive, detectInterruption, FLUSH_IDLE_MS, MAX_QUEUED_AUDIO_MS, SESSION_CAP_MS, SELF_STOP_WATCHDOG_MS, LEAD_MS };
