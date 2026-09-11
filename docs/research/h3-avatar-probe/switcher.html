@@ -128,13 +128,19 @@ audio.addEventListener('pause', () => enter('idle'));
 audio.addEventListener('ended', () => enter('idle'));
 audio.addEventListener('seeking', () => enter('idle'));
 audio.addEventListener('error', () => { enter('idle'); report('音声ファイルを読み込めません。'); });
+// Raw RMS of speech is ~0.03-0.15, far below the frames.js thresholds (0.375 / 0.75), which apply to a
+// normalised level. Normalise against a slowly decaying running peak (auto gain) with a noise floor.
+let peakRms = 0.02;
+const NOISE_FLOOR = 0.008;
 setInterval(() => {
   const now = performance.now();
-  let rms = 0;
+  let rms = 0, norm = 0;
   if (analyser && !audio.paused && !audio.ended) {
     analyser.getFloatTimeDomainData(samples);
     rms = Math.sqrt(samples.reduce((sum, value) => sum + value * value, 0) / samples.length);
-    if (rms >= 0.375) {
+    peakRms = Math.max(rms, peakRms * 0.995, 0.02);
+    norm = rms < NOISE_FLOOR ? 0 : Math.min(1, rms / (peakRms * 0.6));
+    if (norm >= 0.375) {
       quietSince = null;
       if (available.has('talk')) enter('talk', now);
     } else if (state === 'talk') {
@@ -150,8 +156,8 @@ setInterval(() => {
       }
     }
   }
-  const level = rms < 0.375 ? 0 : rms < 0.75 ? 1 : 2;
-  overlay.textContent = `state=${state} RMS=${rms.toFixed(3)} level=${level} elapsed=${audio.currentTime.toFixed(2)}s`;
+  const level = norm < 0.375 ? 0 : norm < 0.75 ? 1 : 2;
+  overlay.textContent = `state=${state} RMS=${rms.toFixed(3)} norm=${norm.toFixed(2)} level=${level} elapsed=${audio.currentTime.toFixed(2)}s`;
 }, 40);
 window.addEventListener('pagehide', () => { if (objectUrl) URL.revokeObjectURL(objectUrl); });
 </script>
