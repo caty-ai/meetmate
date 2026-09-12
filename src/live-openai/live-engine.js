@@ -7,7 +7,7 @@ const { performance } = require("node:perf_hooks");
 const WebSocket = require("ws");
 const { VOICE_ENGINE, TTS_SAMPLE_RATE, getPipelineConfig } = require("../config");
 const { getEffectiveValue } = require("../settings/resolver");
-const { streamChat } = require("../llm");
+const { backendUnavailable, conversationInstructions, runLiveBackend } = require("./live-backend");
 const { encode, decodeOne } = require("./msgpack-lite");
 
 const FLUSH_IDLE_MS = 300;
@@ -17,6 +17,7 @@ const sessionStarts = new Map();
 // Read only when checking/starting a session, never at module load or on a
 // publicly inspectable handler/config. This is the sole direct credential read.
 function liveCredential() { return process.env.OPENAI_LIVE_API_KEY; }
+const { scrubLogMessage } = require("../log-scrub");
 const { EMOTION_TAGS, stripCanonicalEmotionTags } = require("../messages");
 const SEAM_TAG = EMOTION_TAGS.find(({ fallback }) => fallback).tag;
 const FLUSH_PUNCTUATION = "、。！？!?";
@@ -30,7 +31,7 @@ function liveEngineAvailable() {
   if (getEffectiveValue("tts_provider") !== "fish-audio") return "Fish Audio is not the selected TTS provider";
   if (!getEffectiveValue("fish_audio_api_key")?.trim()) return "Fish Audio key is missing";
   if (!getPipelineConfig().tts.referenceId?.trim()) return "Fish reference id is missing";
-  return null;
+  return backendUnavailable(getPipelineConfig());
 }
 function liveEngineActive() { return VOICE_ENGINE === "live" && !liveEngineAvailable(); }
 
@@ -57,14 +58,13 @@ function createLiveEngine(session, turnState, onAudio, options = {}) {
   let currentEpoch = 0, sampleOffset = 0, sequence = 0, gatewaySequence = 0;
   let queue = [], queuedBytes = 0, firstDeltaAt = null, firstAudioLogged = false, emptySince = null, overflowEpoch = null;
   let playheadMs = 0, epochStartedAt = null, lastIdleSpareRetryAt = null;
-  let holdBuffer = "", holdTimer, seam = null, lastTextChar = "", unflushed = false;
+  let holdBuffer = "", seam = null, lastTextChar = "", unflushed = false;
   let flushTimer, startupTimer, closeTimer, closeResolve, closePromise;
-  let instructions = config.llm.systemPrompt || config.systemPrompt || "";
+  let instructions = conversationInstructions(config);
   if (session.config?.wakeMode === "wake") {
     try { instructions += "\n\n" + fs.readFileSync(path.resolve(__dirname, "../../docs/research/gpt-live-1-probe/prompts/silent-unless-addressed.txt"), "utf8"); }
     catch { console.warn("⚠️  live-engine: wake instruction file missing; continuing with profile prompt"); }
   }
-  instructions += `\n\n音声はそのまま読み上げられるので、${EMOTION_TAGS.find(({ fallback }) => fallback).tag} などの感情タグや括弧書きの演出指示は出力しないでください。`;
   const timeout = (fn, ms) => {
     const timer = later(() => { timers.delete(timer); fn(); }, ms); timers.add(timer); return timer;
   };
@@ -109,7 +109,7 @@ function createLiveEngine(session, turnState, onAudio, options = {}) {
     if (closed) return Promise.resolve();
     closing = true;
     closePromise = new Promise(resolve => { closeResolve = resolve; });
-    clear(startupTimer); clear(flushTimer); clear(holdTimer);
+    clear(startupTimer); clear(flushTimer);
     flush();
     for (const row of delegations.values()) row.controller?.abort();
     closeTimer = timeout(() => fail("Timed out waiting for session.closed"), 10000);
@@ -132,29 +132,27 @@ function createLiveEngine(session, turnState, onAudio, options = {}) {
     const controller = new AbortController();
     const row = { id, status: "pending", startedAt: now(), finishedAt: null, controller };
     delegations.set(id, row);
-    const { id: _id, ...details } = delegation;
-    const messages = turns.map(turn => ({ ...turn }));
-    messages.push({ role: "user", content: typeof delegation.text === "string" ? delegation.text : JSON.stringify(details) });
-    let content = "";
+    const startedAt = now();
+    let firstResult = true;
     try {
-      for await (const chunk of (options.streamChat || streamChat)(messages, {
-        openclawUrl: config.llm.gateway?.url,
-        openclawToken: config.llm.gateway?.token,
-        openclawSystemAddendum: config.llm.openclawSystemAddendum,
-        sessionUser: session.sessionUser ?? undefined,
-        model: config.llm.model,
-        temperature: config.llm.temperature,
-        maxTokens: config.llm.maxTokens,
-        signal: controller.signal,
-      })) content += chunk;
+      await runLiveBackend(config, turns, session.sessionUser, controller.signal, content => {
+        if (firstResult) {
+          console.log(`🎙️  live-engine: backend first-result ${Math.round(now() - startedAt)} ms`);
+          firstResult = false;
+        }
+        commentary(id, content);
+      }, options.streamChat);
       row.status = controller.signal.aborted ? "aborted" : "completed";
     } catch {
       row.status = controller.signal.aborted ? "aborted" : "error";
-      content = "確認できませんでした。もう一度聞いてもらえる？";
+      if (!controller.signal.aborted) {
+        console.warn("⚠️  live-engine: backend request failed");
+        commentary(id, "確認できませんでした。もう一度聞いてもらえる？");
+      }
     }
     row.finishedAt = now();
-    if (!controller.signal.aborted) commentary(id, content);
   }
+
   function recordGateway(event, completed) {
     if (closed || closing) return;
     const key = event?.childKey || event?.id || `anonymous-${++gatewaySequence}`;
@@ -169,7 +167,7 @@ function createLiveEngine(session, turnState, onAudio, options = {}) {
   }
   function pending() { return queuedBytes > 0 || Boolean(active?.inFlight); }
   // Only incomplete bracket groups wait; ordinary speech streams immediately.
-  function filterText(force = false) {
+  function filterText() {
     let output = "";
     const append = text => {
       if (seam !== null) {
@@ -190,27 +188,28 @@ function createLiveEngine(session, turnState, onAudio, options = {}) {
       const start = holdBuffer.indexOf("[");
       if (start < 0) { append(holdBuffer); holdBuffer = ""; break; }
       append(holdBuffer.slice(0, start)); holdBuffer = holdBuffer.slice(start);
-      const end = holdBuffer.indexOf("]");
+      // A nested opening bracket cannot belong to one control tag. Preserve
+      // the preceding literal instead of swallowing it with the next tag.
+      const nested = holdBuffer.indexOf("[", 1), end = holdBuffer.indexOf("]");
+      if (nested >= 0 && (end < 0 || nested < end)) {
+        append(holdBuffer.slice(0, nested)); holdBuffer = holdBuffer.slice(nested); continue;
+      }
       if (end >= 0) {
         const group = holdBuffer.slice(0, end + 1);
         if (EMOTION_TAGS.some(({ tag }) => tag === group)
-            || (Array.from(group).length <= 40 && !/[。！？]/.test(group))) {
+            || (Array.from(group).length <= 40 && /^\[[a-zA-Z ,_-]+\]$/.test(group))) {
           // Normalize generous control tags through the canonical seam rules too.
           const whitespace = output.match(/[ \t]*$/)[0];
           output = output.slice(0, output.length - whitespace.length);
           seam = (seam || "") + whitespace + SEAM_TAG;
         } else append(group);
         holdBuffer = holdBuffer.slice(end + 1);
-        clear(holdTimer); holdTimer = null;
-      } else if (force || Array.from(holdBuffer).length > 40) {
+      } else if (Array.from(holdBuffer).length > 40 || !/^\[[a-zA-Z ,_-]*$/.test(holdBuffer)) {
         append(holdBuffer); holdBuffer = "";
-        clear(holdTimer); holdTimer = null;
       } else {
-        if (!holdTimer) holdTimer = timeout(() => { holdTimer = null; flush(); }, 1500);
         break;
       }
     }
-    if (force) { clear(holdTimer); holdTimer = null; seam = null; }
     return output;
   }
   function flushFish() {
@@ -234,7 +233,7 @@ function createLiveEngine(session, turnState, onAudio, options = {}) {
   }
   function flush() {
     clear(flushTimer);
-    emitFiltered(filterText(true));
+    emitFiltered(filterText());
     flushFish();
   }
   function forward(text) {
@@ -248,7 +247,7 @@ function createLiveEngine(session, turnState, onAudio, options = {}) {
     if (closed || closing || capped) return;
     const cancelled = currentEpoch;
     currentEpoch += 1;
-    clear(flushTimer); clear(holdTimer); holdTimer = null;
+    clear(flushTimer);
     holdBuffer = ""; seam = null; lastTextChar = ""; unflushed = false;
     if (active) { active.retired = true; active.reconnecting = false; safeClose(active.ws); }
     active = spare; spare = null;
@@ -298,8 +297,14 @@ function createLiveEngine(session, turnState, onAudio, options = {}) {
       fishSend(socket, { event: "start", request: { text: "", reference_id: config.tts.referenceId, format: "pcm", sample_rate: TTS_SAMPLE_RATE, latency: "low" } });
       for (const event of socket.pending.splice(0)) fishSend(socket, event);
     });
-    socket.ws.on("error", () => fishLost(socket));
-    socket.ws.on("close", () => fishLost(socket));
+    const lost = detail => {
+      if (socket.retired || closed || closing) return;
+      const role = socket === active ? "active" : "spare";
+      console.warn(`⚠️  live-engine: Fish ${role} ${detail}`);
+      fishLost(socket);
+    };
+    socket.ws.on("error", error => lost(`error ${scrubLogMessage(error?.message || "unknown")}`));
+    socket.ws.on("close", (code, reason) => lost(`close code=${code ?? "unknown"} reason=${scrubLogMessage(reason?.toString() || "")}`));
     socket.ws.on("message", raw => {
       if (closed || socket.retired) return;
       try {
@@ -378,6 +383,7 @@ function createLiveEngine(session, turnState, onAudio, options = {}) {
   function cap() {
     if (closed || closing || capped) return;
     capped = true; clear(flushTimer);
+    holdBuffer = ""; seam = null;
     flush();
     forward("時間の上限に達したので、ここで一度切りますね。");
     flush();
@@ -442,8 +448,8 @@ function createLiveEngine(session, turnState, onAudio, options = {}) {
     on: emitter.on.bind(emitter),
     handleGatewaySubagentSpawn: event => recordGateway(event, false),
     handleGatewaySubagentCompletion: event => recordGateway(event, true),
-    handleGatewaySessionReply: text => commentary(`gateway-${++gatewaySequence}`, text),
-    handleGatewayAnnounceInjected: text => commentary(`gateway-${++gatewaySequence}`, text),
+    handleGatewaySessionReply: text => commentary(null, text),
+    handleGatewayAnnounceInjected: text => commentary(null, text),
     getDelegationResults: () => [...delegations.values(), ...gatewayRecords.values()].map(({ id, status, startedAt, finishedAt }) => ({ id, status, startedAt, finishedAt })),
     floorStatus: () => ({ enabled: false, engine: "live" }),
     continueWithoutArbitration: () => {},

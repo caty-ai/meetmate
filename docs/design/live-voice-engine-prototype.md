@@ -1,5 +1,21 @@
 # Live voice engine — Stage 1 prototype ("just make it talk")
 
+## Current internal trial delta (2026-09-12, #253; supersedes conflicting r2 mechanics below)
+
+The owner requests a minimal human listening prototype, not Stage 2 hardening. Keep GPT Live conversation + external Fish voice; connect the configured Caty/Hermes backend. No main merge or automatic Meet join.
+
+- `live-backend.js` reuses `createLlmProvider`: configured OpenAI-compatible model/base/key and opt-in session/trust headers now reach Hermes; OpenClaw still uses its existing adapter. Availability checks include the selected backend credentials.
+- Client delegation uses collected transcripts, not delegation metadata as task text. The backend receives a short voice instruction. Each completed sentence is appended once to Live as it arrives; final residual text is appended at stream end. Model/adapter generation latency still applies. No new protocol, queue service or provider dependency.
+- Live conversation instructions remove shared pipeline tag/chat-only/turn-based rules and explicitly delegate substantive answers to the backend. Greeting/backchannel/rephrasing remain with Live.
+- Idle Fish flush is 300 ms, with punctuation flush as in d12e5cd. Incomplete ASCII control tags are held across idle pauses. Literal Japanese/numeric brackets and nested brackets are preserved; the fixed cap announcement discards a stale control prefix. No idle timeout forces partial tag text into Fish.
+- The self-stop watchdog remains disabled. Existing wall-clock PCM pacer and input-based interruption remain prototype heuristics, not native Live timing preservation. Fish close code/reason and socket role are logged with scrubbing.
+- Non-delegation gateway messages use `delegation_id: null` (per Live client API) instead of invented IDs.
+- The test home uses the existing static avatar for the voice trial. The original config was backed up; animation is not a requirement of this minimal test.
+- `docs/research/live-voice-smoke/probe.cjs` provides bounded real-backend and Live+backend+Fish local smoke tests without starting Meet. Outputs must go to a fresh private local directory; recordings/keys are not committed. See that directory's README for results and run instructions.
+
+The older design below is historical where it mentions 600 ms idle flush, forwarding raw tags, self-stop watchdog, OpenClaw-only delegation, or whole-turn backend buffering.
+
+
 Status: **design r2 (2026-09-11)** after the 3-seat design review (Opus 5 / GLM 5.3 / Grok 4.6, all GO-WITH-CHANGES) and Alpha's Fish `tts/live` probe. Owner decision 2026-09-11 (翔さん): before the full L implementation in `live-voice-engine.md`, build the **smallest straight-line prototype** that makes gpt-live-1 talk in a real Google Meet through meetmate **with Caty's Fish voice**, so the human experience can be judged before any hardening. Internal test only, dedicated branch, **not merged to main**. Generality is kept in the *shape* (same handler contract as the full design), not in features.
 
 Owner answers folded in (2026-09-11):
