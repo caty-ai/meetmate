@@ -18,7 +18,7 @@ function conversationInstructions(config) {
   const profile = (config.llm.systemPrompt || config.systemPrompt || "").split("\n")
     .filter(line => !EMOTION_TAGS.some(({ tag }) => line.includes(tag))
       && !/感情タグ|\[\[\[chat:|相手の話をしっかり聞いてから応答する/.test(line)).join("\n");
-  return profile + "\n\nあなたは設定された本人の音声会話の窓口です。自然で短い日本語で話してください。"
+  return profile + "\n\nあなたは設定された本人の音声会話の窓口です。自然で短い日本語で話してください。短い相槌を含め、各発言の最後に必ず句点または疑問符を付けてください。"
     + "\nBackchannel policy: 短い相槌は適度に。返答の邪魔をしないでください。"
     + "\nInterruption policy: 相手が割り込んだら話すのを止めて聞いてください。"
     + "\nDelegation policy:\nBackend tools: 本人の記憶・判断・会話・作業を担当するバックエンド。"

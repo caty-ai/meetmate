@@ -56,6 +56,8 @@ function harness(t, options = {}) {
   const config = { llm: { systemPrompt: options.systemPrompt || "configured profile prompt", gateway: { url: "http://gateway.test", token: "test-key" }, openclawSystemAddendum: "voice rules", model: "main", temperature: 0.5, maxTokens: 100 }, tts: { referenceId: "test-voice" } };
   const handler = engine.createLiveEngine({ id: options.id || `test-${++ids}`, sessionUser: "test-user", config: { wakeMode: options.wakeMode || "always" } }, state,
     (pcm, meta) => audio.push({ pcm, meta }), {
+      // Existing tests preserve the old transport baseline; sentence-mode tests override this.
+      textMode: "legacy",
       trace: { record: (kind, data) => traceRows.push({ kind, ...data }), close: async () => {} },
       config, now: clock.now, setTimeout: clock.setTimeout, setInterval: clock.setInterval,
       clearTimeout: clock.clearTimeout, clearInterval: clock.clearInterval,
@@ -560,4 +562,39 @@ test("trace close exceptions cannot reject voice shutdown", async t => {
   h.openai.event({ type: "session.closed", usage: { seconds: 0 } });
   await closing; await new Promise(resolve => setImmediate(resolve));
   assert.ok(warnings.some(value => value.includes("text trace close failed")));
+});
+
+test("default sentence mode never sends fragments on comma or idle timeout", t => {
+  const h = harness(t, { engineOptions: { textMode: undefined } });
+  h.output("何"); h.clock.advance(300);
+  h.output("でも、"); h.clock.advance(3000);
+  assert.deepEqual(h.fish[0].sent.map(e => e.event), ["start"]);
+  h.output("話して。");
+  assert.deepEqual(h.fish[0].sent.slice(1), [{ event: "text", text: "何でも、話して。" }, { event: "flush" }]);
+  assert.deepEqual(h.traceRows.filter(r => r.kind === "fish").map(r => r.text), ["何でも、話して。"]);
+});
+
+test("sentence mode preserves multiple sentences, filtered tags and punctuationless tail", t => {
+  const h = harness(t, { engineOptions: { textMode: undefined } });
+  const tag = EMOTION_TAGS[0].tag;
+  h.output("こんにちは" + tag.slice(0, 3)); h.clock.advance(1000);
+  h.output(tag.slice(3) + "。元気？まだ途中");
+  assert.deepEqual(h.fish[0].sent.slice(1), [{ event: "text", text: "こんにちは。" }, { event: "flush" }, { event: "text", text: "元気？" }, { event: "flush" }]);
+  h.clock.advance(10000);
+  assert.equal(h.fish[0].sent.length, 5);
+  void h.handler.close();
+  assert.equal(h.fish[0].sent.length, 5);
+});
+
+test("sentence mode drops buffered text on interruption and never joins old and new speech", t => {
+  const h = harness(t, { engineOptions: { textMode: undefined, detectInterruption: () => true } });
+  h.output("古い未完"); h.input("待って"); h.output("新しい回答。");
+  assert.deepEqual(h.fish[0].sent.map(e => e.event), ["start"]);
+  assert.deepEqual(h.fish[1].sent.slice(1), [{ event: "text", text: "新しい回答。" }, { event: "flush" }]);
+});
+
+test("sentence mode cap discards unfinished text before its complete announcement", t => {
+  const h = harness(t, { engineOptions: { textMode: undefined } });
+  h.output("読まない途中"); h.clock.jump(engine.SESSION_CAP_MS);
+  assert.deepEqual(h.fish[0].sent.slice(1), [{ event: "text", text: "時間の上限に達したので、ここで一度切りますね。" }, { event: "flush" }]);
 });

@@ -49,6 +49,7 @@ function createLiveEngine(session, turnState, onAudio, options = {}) {
   const config = options.config || getPipelineConfig({}, null, options.profile);
   const now = options.now || (() => performance.now());
   const trace = options.trace || createLiveTrace(session.id, { now });
+  const legacyTextStreaming = options.textMode === "legacy";
   const later = options.setTimeout || setTimeout, every = options.setInterval || setInterval;
   const cancelLater = options.clearTimeout || clearTimeout, cancelEvery = options.clearInterval || clearInterval;
   const openaiFactory = options.openaiSocketFactory || ((...args) => new WebSocket(...args));
@@ -61,6 +62,7 @@ function createLiveEngine(session, turnState, onAudio, options = {}) {
   let queue = [], queuedBytes = 0, firstDeltaAt = null, firstAudioLogged = false, emptySince = null, overflowEpoch = null;
   let playheadMs = 0, epochStartedAt = null, lastIdleSpareRetryAt = null;
   let holdBuffer = "", seam = null, lastTextChar = "", unflushed = false;
+  let sentenceBuffer = "";
   let flushTimer, startupTimer, closeTimer, closeResolve, closePromise;
   let instructions = conversationInstructions(config);
   if (session.config?.wakeMode === "wake") {
@@ -86,7 +88,7 @@ function createLiveEngine(session, turnState, onAudio, options = {}) {
   function cleanup() {
     if (closed) return;
     closed = true;
-    holdBuffer = ""; seam = null;
+    holdBuffer = ""; seam = null; sentenceBuffer = "";
     for (const timer of timers) cancelLater(timer);
     for (const timer of intervals) cancelEvery(timer);
     timers.clear(); intervals.clear();
@@ -222,20 +224,33 @@ function createLiveEngine(session, turnState, onAudio, options = {}) {
     if (!unflushed) return;
     fishSend(active, { event: "flush" }); unflushed = false;
   }
-  function emitFiltered(text) {
-    if (!text) return;
+  function sendText(part) {
     if (firstDeltaAt === null || !pending()) {
       firstDeltaAt = now(); firstAudioLogged = false;
     }
-    // Split only at punctuation so every occurrence flushes its preceding text.
-    const parts = text.match(/[^、。！？!?]*[、。！？!?]|[^、。！？!?]+$/gu) || [];
-    for (const part of parts) {
-      trace.record("fish", { text: part, epoch: currentEpoch });
-      fishSend(active, { event: "text", text: part });
-      active.inFlight = true; active.textSerial += 1; unflushed = true;
-      state.recentOutputText = Array.from(state.recentOutputText + part).slice(-40).join("");
-      lastTextChar = part.at(-1);
-      if (FLUSH_PUNCTUATION.includes(lastTextChar)) flushFish();
+    trace.record("fish", { text: part, epoch: currentEpoch });
+    fishSend(active, { event: "text", text: part });
+    active.inFlight = true; active.textSerial += 1; unflushed = true;
+    state.recentOutputText = Array.from(state.recentOutputText + part).slice(-40).join("");
+  }
+  function emitFiltered(text) {
+    if (!text) return;
+    // Retain lexical context for the tag filter even while text is buffered.
+    lastTextChar = text.at(-1);
+    if (legacyTextStreaming) {
+      // Explicit comparison seam only; normal sessions use sentence buffering.
+      const parts = text.match(/[^、。！？!?]*[、。！？!?]|[^、。！？!?]+$/gu) || [];
+      for (const part of parts) {
+        sendText(part);
+        if (FLUSH_PUNCTUATION.includes(part.at(-1))) flushFish();
+      }
+      return;
+    }
+    sentenceBuffer += text;
+    let match;
+    while ((match = sentenceBuffer.match(/^[\s\S]*?[。！？!?\n]/))) {
+      const sentence = match[0]; sentenceBuffer = sentenceBuffer.slice(sentence.length);
+      if (sentence.trim()) { sendText(sentence); flushFish(); }
     }
   }
   function flush() {
@@ -248,7 +263,7 @@ function createLiveEngine(session, turnState, onAudio, options = {}) {
     holdBuffer += text;
     emitFiltered(filterText());
     clear(flushTimer);
-    if (unflushed || holdBuffer || seam !== null) flushTimer = timeout(flush, FLUSH_IDLE_MS);
+    if (legacyTextStreaming && (unflushed || holdBuffer || seam !== null)) flushTimer = timeout(flush, FLUSH_IDLE_MS);
   }
   function interrupt() {
     if (closed || closing || capped) return;
@@ -256,7 +271,7 @@ function createLiveEngine(session, turnState, onAudio, options = {}) {
     trace.record("interruption", { epoch: cancelled, droppedBytes: queuedBytes });
     currentEpoch += 1;
     clear(flushTimer);
-    holdBuffer = ""; seam = null; lastTextChar = ""; unflushed = false;
+    holdBuffer = ""; seam = null; sentenceBuffer = ""; lastTextChar = ""; unflushed = false;
     if (active) { active.retired = true; active.reconnecting = false; safeClose(active.ws); }
     active = spare; spare = null;
     if (active) active.epoch = currentEpoch;
@@ -392,7 +407,7 @@ function createLiveEngine(session, turnState, onAudio, options = {}) {
   function cap() {
     if (closed || closing || capped) return;
     capped = true; clear(flushTimer);
-    holdBuffer = ""; seam = null;
+    holdBuffer = ""; seam = null; sentenceBuffer = "";
     flush();
     forward("時間の上限に達したので、ここで一度切りますね。");
     flush();
