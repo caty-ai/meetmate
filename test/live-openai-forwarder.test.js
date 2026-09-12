@@ -51,10 +51,12 @@ class Socket extends EventEmitter {
 let ids = 0;
 function harness(t, options = {}) {
   const clock = options.clock || new Clock(), fish = [], audio = [], errors = [], cancellations = [], state = { isAgentSpeaking: false };
+  const traceRows = [];
   let openai;
   const config = { llm: { systemPrompt: options.systemPrompt || "configured profile prompt", gateway: { url: "http://gateway.test", token: "test-key" }, openclawSystemAddendum: "voice rules", model: "main", temperature: 0.5, maxTokens: 100 }, tts: { referenceId: "test-voice" } };
   const handler = engine.createLiveEngine({ id: options.id || `test-${++ids}`, sessionUser: "test-user", config: { wakeMode: options.wakeMode || "always" } }, state,
     (pcm, meta) => audio.push({ pcm, meta }), {
+      trace: { record: (kind, data) => traceRows.push({ kind, ...data }), close: async () => {} },
       config, now: clock.now, setTimeout: clock.setTimeout, setInterval: clock.setInterval,
       clearTimeout: clock.clearTimeout, clearInterval: clock.clearInterval,
       openaiSocketFactory: (url, opts) => (openai = new Socket("openai", url, opts)),
@@ -65,7 +67,7 @@ function harness(t, options = {}) {
   t.after(() => { void handler.close(); openai.event({ type: "session.closed", usage: { seconds: 0 } }); });
   openai.open();
   if (options.start !== false) { openai.event({ type: "session.started" }); fish.forEach(ws => ws.open()); }
-  return { clock, fish, audio, errors, cancellations, state, handler, openai, config,
+  return { traceRows, clock, fish, audio, errors, cancellations, state, handler, openai, config,
     output: delta => openai.event({ type: "session.output_transcript.delta", delta }),
     input: delta => openai.event({ type: "session.input_transcript.delta", delta }),
   };
@@ -100,6 +102,7 @@ test("interruption promotes warm spare, cancels old epoch and rejects late old a
   assert.equal(warnings.some(line => line.includes("Fish socket lost")), false);
   assert.equal(h.fish.length, 3);
   assert.deepEqual(h.cancellations, [{ outputEpoch: 0, reason: "interrupted", monotonicTime: 520 }]);
+  assert.equal(h.traceRows.find(r => r.kind === "interruption").epoch, 0);
   assert.equal(h.state.isAgentSpeaking, false);
   assert.equal(h.fish[0].sent.some(e => e.event === "stop"), false);
   const count = h.audio.length;
@@ -142,6 +145,7 @@ test("queue bounded to 15 seconds; output silence never cancels queued or in-fli
   const h = harness(t); h.output("長い回答");
   const second = TTS_SAMPLE_RATE * 2;
   h.fish[0].event({ event: "audio", audio: Buffer.concat([Buffer.alloc(second, 1), Buffer.alloc(second * 15, 2)]) });
+  assert.deepEqual(h.traceRows.find(r => r.kind === "audio_drop"), { kind: "audio_drop", epoch: 0, bytes: second, sampleRate: TTS_SAMPLE_RATE });
   h.clock.advance(20); assert.equal(h.audio[0].pcm.length, second * engine.LEAD_MS / 1000);
   assert.equal(h.audio[0].pcm[0], 2);
   h.clock.advance(16000);
@@ -300,6 +304,7 @@ test("delegation copies gateway options and history, rejects duplicates, sends c
   assert.deepEqual(calls[0].messages.slice(1), [{ role: "user", content: "質問です" }, { role: "assistant", content: "確認します" }]);
   assert.deepEqual({ ...calls[0].options, signal: undefined }, { openclawUrl: "http://gateway.test", openclawToken: "test-key", openclawSystemAddendum: "音声会話中です。短い日本語で回答し、感情タグは付けないでください。", sessionUser: "test-user", model: "main", temperature: 0.5, maxTokens: 100, timeoutMs: 60000, signal: undefined });
   assert.deepEqual(h.openai.sent.at(-1), { type: "session.commentary.append", event_id: "event_1", delegation_id: "d1", content: "調べました" });
+  assert.deepEqual(h.traceRows.filter(r => r.kind === "backend"), [{ kind: "backend", text: "調べました", delegationId: "d1", epoch: 0 }]);
   assert.deepEqual(h.handler.getDelegationResults(), [{ id: "d1", status: "completed", startedAt: 0, finishedAt: 0 }]);
   h.handler.handleGatewaySessionReply("返信"); h.handler.handleGatewayAnnounceInjected("通知");
   assert.deepEqual(h.openai.sent.slice(-2).map(e => e.delegation_id), [null, null]);
@@ -528,4 +533,31 @@ test("closed Japanese/numeric brackets preserve speech in one or many deltas", t
     const h = harness(t); for (const part of parts) h.output(part);
     assert.equal(fishText(h), "価格は[100円です]ですよ");
   }
+});
+
+test("text trace separates recognized input, generated output and filtered Fish text", t => {
+  const h = harness(t);
+  h.input("ルカ、聞こえる？");
+  h.output({});
+  h.output({ text: "はい、聞こえます。" });
+  assert.deepEqual(h.traceRows.filter(r => r.kind === "input").map(r => r.text), ["ルカ、聞こえる？"]);
+  assert.deepEqual(h.traceRows.filter(r => r.kind === "live").map(r => r.text), ["はい、聞こえます。"]);
+  assert.equal(h.traceRows.filter(r => r.kind === "fish").map(r => r.text).join(""), "はい、聞こえます。");
+});
+
+test("voice shutdown does not wait for stalled trace storage", async t => {
+  const h = harness(t, { engineOptions: { trace: { record() {}, close: () => new Promise(() => {}) } } });
+  const closing = h.handler.close();
+  h.openai.event({ type: "session.closed", usage: { seconds: 0 } });
+  await closing;
+  assert.equal(h.state.isAgentSpeaking, false);
+});
+
+test("trace close exceptions cannot reject voice shutdown", async t => {
+  const warnings = []; t.mock.method(console, "warn", value => warnings.push(value));
+  const h = harness(t, { engineOptions: { trace: { record() {}, close() { throw new Error("disk failure"); } } } });
+  const closing = h.handler.close();
+  h.openai.event({ type: "session.closed", usage: { seconds: 0 } });
+  await closing; await new Promise(resolve => setImmediate(resolve));
+  assert.ok(warnings.some(value => value.includes("text trace close failed")));
 });

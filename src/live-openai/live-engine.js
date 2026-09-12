@@ -18,6 +18,7 @@ const sessionStarts = new Map();
 // publicly inspectable handler/config. This is the sole direct credential read.
 function liveCredential() { return process.env.OPENAI_LIVE_API_KEY; }
 const { scrubLogMessage } = require("../log-scrub");
+const { createLiveTrace } = require("./live-trace");
 const { EMOTION_TAGS, stripCanonicalEmotionTags } = require("../messages");
 const SEAM_TAG = EMOTION_TAGS.find(({ fallback }) => fallback).tag;
 const FLUSH_PUNCTUATION = "、。！？!?";
@@ -47,6 +48,7 @@ function detectInterruption(state, inputDelta) {
 function createLiveEngine(session, turnState, onAudio, options = {}) {
   const config = options.config || getPipelineConfig({}, null, options.profile);
   const now = options.now || (() => performance.now());
+  const trace = options.trace || createLiveTrace(session.id, { now });
   const later = options.setTimeout || setTimeout, every = options.setInterval || setInterval;
   const cancelLater = options.clearTimeout || clearTimeout, cancelEvery = options.clearInterval || clearInterval;
   const openaiFactory = options.openaiSocketFactory || ((...args) => new WebSocket(...args));
@@ -95,11 +97,14 @@ function createLiveEngine(session, turnState, onAudio, options = {}) {
     if (spare) spare.retired = true;
     safeClose(active?.ws); safeClose(spare?.ws); safeClose(openai);
     queue = []; queuedBytes = 0; turnState.isAgentSpeaking = false;
+    // Storage must not hold voice shutdown open, even on a stalled disk.
+    void Promise.resolve().then(() => trace.close()).catch(() => console.warn("⚠️  live-engine: text trace close failed"));
     closeResolve?.();
   }
   function fail(reason) {
     if (failed || closed) return;
     failed = true;
+    trace.record("error", { reason: scrubLogMessage(reason) });
     console.error(`❌  live-engine: ${reason}`);
     cleanup();
     emitter.emit("engine_error", { message: reason });
@@ -140,6 +145,7 @@ function createLiveEngine(session, turnState, onAudio, options = {}) {
           console.log(`🎙️  live-engine: backend first-result ${Math.round(now() - startedAt)} ms`);
           firstResult = false;
         }
+        trace.record("backend", { text: content, delegationId: id, epoch: currentEpoch });
         commentary(id, content);
       }, options.streamChat);
       row.status = controller.signal.aborted ? "aborted" : "completed";
@@ -224,6 +230,7 @@ function createLiveEngine(session, turnState, onAudio, options = {}) {
     // Split only at punctuation so every occurrence flushes its preceding text.
     const parts = text.match(/[^、。！？!?]*[、。！？!?]|[^、。！？!?]+$/gu) || [];
     for (const part of parts) {
+      trace.record("fish", { text: part, epoch: currentEpoch });
       fishSend(active, { event: "text", text: part });
       active.inFlight = true; active.textSerial += 1; unflushed = true;
       state.recentOutputText = Array.from(state.recentOutputText + part).slice(-40).join("");
@@ -246,6 +253,7 @@ function createLiveEngine(session, turnState, onAudio, options = {}) {
   function interrupt() {
     if (closed || closing || capped) return;
     const cancelled = currentEpoch;
+    trace.record("interruption", { epoch: cancelled, droppedBytes: queuedBytes });
     currentEpoch += 1;
     clear(flushTimer);
     holdBuffer = ""; seam = null; lastTextChar = ""; unflushed = false;
@@ -322,6 +330,7 @@ function createLiveEngine(session, turnState, onAudio, options = {}) {
           socket.lastAudioAt = now(); socket.audioSerial = socket.textSerial;
           if (pcm.length) { queue.push({ epoch: socket.epoch, pcm }); queuedBytes += pcm.length; }
           const limit = TTS_SAMPLE_RATE * 2 * MAX_QUEUED_AUDIO_MS / 1000;
+          if (queuedBytes > limit) trace.record("audio_drop", { epoch: currentEpoch, bytes: queuedBytes - limit, sampleRate: TTS_SAMPLE_RATE });
           while (queuedBytes > limit) {
             const first = queue[0], excess = queuedBytes - limit;
             const drop = Math.min(first.pcm.length, excess);
@@ -429,9 +438,13 @@ function createLiveEngine(session, turnState, onAudio, options = {}) {
           intervals.add(every(tick, 20));
           timeout(cap, Math.max(0, SESSION_CAP_MS - (now() - sessionStarts.get(session.id))));
         } else if (started && !capped && event.type === "session.output_transcript.delta") {
-          recordTurn("assistant", event.delta); forward(event.delta);
+          const text = typeof event.delta === "string" ? event.delta : event.delta?.text || "";
+          if (!text) return;
+          trace.record("live", { text, epoch: currentEpoch });
+          recordTurn("assistant", text); forward(text);
         } else if (started && !capped && event.type === "session.input_transcript.delta") {
           const text = typeof event.delta === "string" ? event.delta : event.delta?.text || "";
+          trace.record("input", { text, epoch: currentEpoch });
           recordTurn("user", text);
           if (turnState.isAgentSpeaking) console.log(`🪞  live-engine echo-check: ${JSON.stringify(text)}`);
           state.pending = pending(); state.now = now();

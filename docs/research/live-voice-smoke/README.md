@@ -44,3 +44,32 @@ AI_MEET_HOME=/absolute/test-home node docs/research/live-voice-smoke/probe.cjs a
 ## Deferred limits
 
 Native Live timing is deliberately not preserved through Fish re-synthesis. Input-based interruption, small incomplete ASCII-tag holds, 300 ms idle flush, and existing Fish reconnect budget remain prototype choices. The backend connection works but backend speed is not yet satisfactory. Do not call this an optimized or fully hardened system.
+
+## Persistent text trace (2026-09-13)
+
+Each new Live engine writes `logs/live-text-<unique-id>.jsonl` and the matching
+`.txt` under `AI_MEET_HOME`, with private file permissions (0600). No restart
+of the bot is needed to read these files during a session. The text file is
+readable directly and keeps the full trace, independently of the 12-turn
+backend context limit. Earlier sessions cannot be reconstructed by this change.
+
+Records distinguish recognized input (not verified speaker identity), Live
+output text, backend replies with delegation IDs, and filtered text passed to
+Fish. Ordered sequence numbers and elapsed milliseconds are in JSONL; playback
+epochs, interruption markers and dropped-audio byte counts identify discontinuities.
+These are text records, **not a transcript of audio actually heard in Meet**.
+Fish may pronounce differently, and queued audio may be cancelled or dropped.
+There is no new audio recording or public transcript endpoint.
+
+Writes are asynchronous. A storage failure or >1 MiB pending diagnostic writes
+stops tracing, discards pending buffered trace data, and emits
+`text trace unavailable or incomplete`; voice continues. Trace shutdown does not
+block voice shutdown. A process killed before asynchronous writes drain can lose
+the tail as well.
+A normal trace ends with an `end` record; absent `end` means the trace may be incomplete.
+Files contain conversation text and remain locally until explicitly removed.
+Do not publish them or include them in review bundles. The recording starts only
+for newly created Live sessions; the stopped 2026-09-13 trial has no full text trace.
+
+Live output deltas are normalized from string or `{text}` to the same text used
+for both tracing and Fish forwarding; empty output deltas are ignored.
