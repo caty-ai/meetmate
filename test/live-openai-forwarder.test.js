@@ -3,7 +3,6 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
 const { spawnSync } = require("node:child_process");
-const fs = require("node:fs");
 const { encode, decodeOne } = require("../src/live-openai/msgpack-lite");
 const engine = require("../src/live-openai/live-engine");
 const { conversationInstructions } = require("../src/live-openai/live-backend");
@@ -53,7 +52,7 @@ let ids = 0;
 function harness(t, options = {}) {
   const clock = options.clock || new Clock(), fish = [], audio = [], errors = [], cancellations = [], state = { isAgentSpeaking: false };
   let openai;
-  const config = { llm: { systemPrompt: "configured profile prompt", gateway: { url: "http://gateway.test", token: "test-key" }, openclawSystemAddendum: "voice rules", model: "main", temperature: 0.5, maxTokens: 100 }, tts: { referenceId: "test-voice" } };
+  const config = { llm: { systemPrompt: options.systemPrompt || "configured profile prompt", gateway: { url: "http://gateway.test", token: "test-key" }, openclawSystemAddendum: "voice rules", model: "main", temperature: 0.5, maxTokens: 100 }, tts: { referenceId: "test-voice" } };
   const handler = engine.createLiveEngine({ id: options.id || `test-${++ids}`, sessionUser: "test-user", config: { wakeMode: options.wakeMode || "always" } }, state,
     (pcm, meta) => audio.push({ pcm, meta }), {
       config, now: clock.now, setTimeout: clock.setTimeout, setInterval: clock.setInterval,
@@ -318,9 +317,15 @@ test("delegation errors use fixed response; close aborts pending delegation", as
   void pending.handler.close(); assert.equal(signal.aborted, true);
   await new Promise(resolve => setImmediate(resolve)); assert.equal(pending.handler.getDelegationResults()[0].status, "aborted");
 });
-test("wake mode appends checked-in silent-unless-addressed prompt", t => {
-  const h = harness(t, { wakeMode: "wake" });
-  assert.equal(h.openai.sent[0].session.instructions, conversationInstructions(h.config) + "\n\n" + fs.readFileSync(require("node:path").join(__dirname, "../docs/research/gpt-live-1-probe/prompts/silent-unless-addressed.txt"), "utf8"));
+test("wake mode retains the configured identity without injecting Caty", t => {
+  const h = harness(t, { wakeMode: "wake", systemPrompt: "あなたはルカ（Luca）。" });
+  const instructions = h.openai.sent[0].session.instructions;
+  assert.ok(instructions.startsWith(conversationInstructions(h.config)));
+  assert.match(instructions, /設定されたあなた自身の名前で呼びかけられた発言にだけ返答/);
+  assert.match(instructions, /呼ばれていない間は完全に沈黙/);
+  assert.match(instructions, /あなたはルカ（Luca）/);
+  assert.match(instructions, /沈黙の指示は相槌の指示より優先/);
+  assert.doesNotMatch(instructions, /caty|キャティ|ケイティ/i);
 });
 test("availability reports each missing piece and active shares the decision", () => {
   const configPath = require.resolve("../src/config"), resolverPath = require.resolve("../src/settings/resolver"), enginePath = require.resolve("../src/live-openai/live-engine");

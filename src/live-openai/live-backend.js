@@ -18,10 +18,10 @@ function conversationInstructions(config) {
   const profile = (config.llm.systemPrompt || config.systemPrompt || "").split("\n")
     .filter(line => !EMOTION_TAGS.some(({ tag }) => line.includes(tag))
       && !/感情タグ|\[\[\[chat:|相手の話をしっかり聞いてから応答する/.test(line)).join("\n");
-  return profile + "\n\nあなたはCatyの音声会話の窓口です。自然で短い日本語で話してください。"
+  return profile + "\n\nあなたは設定された本人の音声会話の窓口です。自然で短い日本語で話してください。"
     + "\nBackchannel policy: 短い相槌は適度に。返答の邪魔をしないでください。"
     + "\nInterruption policy: 相手が割り込んだら話すのを止めて聞いてください。"
-    + "\nDelegation policy:\nBackend tools: Caty本人の記憶・判断・会話・作業を担当するバックエンド。"
+    + "\nDelegation policy:\nBackend tools: 本人の記憶・判断・会話・作業を担当するバックエンド。"
     + "\nDelegate to the backend when: 挨拶や相槌以外の質問・相談・依頼への回答が必要なとき。"
     + "\nDo not delegate to the backend when: 挨拶、相槌、聞き返し、届いた回答の言い直しだけのとき。"
     + "\nバックエンドから結果が来る前に答えを推測しないでください。感情タグや演出指示は出力しないでください。";

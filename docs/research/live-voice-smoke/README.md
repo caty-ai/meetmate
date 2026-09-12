@@ -35,7 +35,7 @@ AI_MEET_HOME=/absolute/test-home node docs/research/live-voice-smoke/probe.cjs a
 
 ## Before the next Meet listen
 
-1. Confirm the intended Caty/Hermes identity with the owner. The previous test-home route is Luca's Hermes.
+1. Owner confirmed on 2026-09-12 that VPS Luca is the intended target for this trial. Keep the current voice/backend; test-home display name, wake words, and Live identity prompt now say Luca (ルカ). Caty is pronounced ケイティ when referring to that separate persona. The earlier measurements below belong to VPS Luca.
 2. Verify the backend tunnel and chosen public audio origin. The test home still has a historical Tailscale `PUBLIC_WSS_URL`; pass the working ngrok WebSocket URL for the test join. Static avatar avoids that old animated-page origin.
 3. Start the prototype server with the existing test home. Wait for the owner's explicit Meet-join signal and meeting URL.
 4. Test one substantive question, one follow-up and one interruption. Judge backend response content and voice separately. Report waiting time, not merely Live's quick acknowledgment.

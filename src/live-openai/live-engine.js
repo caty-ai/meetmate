@@ -1,8 +1,8 @@
 "use strict";
 
 const { EventEmitter } = require("node:events");
-const fs = require("node:fs");
-const path = require("node:path");
+// Identity and wake instructions use the configured profile.
+// Keep credential-source inventory line positions stable.
 const { performance } = require("node:perf_hooks");
 const WebSocket = require("ws");
 const { VOICE_ENGINE, TTS_SAMPLE_RATE, getPipelineConfig } = require("../config");
@@ -62,8 +62,8 @@ function createLiveEngine(session, turnState, onAudio, options = {}) {
   let flushTimer, startupTimer, closeTimer, closeResolve, closePromise;
   let instructions = conversationInstructions(config);
   if (session.config?.wakeMode === "wake") {
-    try { instructions += "\n\n" + fs.readFileSync(path.resolve(__dirname, "../../docs/research/gpt-live-1-probe/prompts/silent-unless-addressed.txt"), "utf8"); }
-    catch { console.warn("⚠️  live-engine: wake instruction file missing; continuing with profile prompt"); }
+    instructions += "\n\nこの会話には複数の人がいます。設定されたあなた自身の名前で呼びかけられた発言にだけ返答してください。"
+      + "呼ばれていない間は完全に沈黙し、相槌も打たないでください。この沈黙の指示は相槌の指示より優先します。";
   }
   const timeout = (fn, ms) => {
     const timer = later(() => { timers.delete(timer); fn(); }, ms); timers.add(timer); return timer;
