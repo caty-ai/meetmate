@@ -574,7 +574,7 @@ test("default sentence mode never sends fragments on comma or idle timeout", t =
   assert.deepEqual(h.traceRows.filter(r => r.kind === "fish").map(r => r.text), ["何でも、話して。"]);
 });
 
-test("sentence mode preserves multiple sentences, filtered tags and punctuationless tail", t => {
+test("sentence mode preserves multiple sentences, filtered tags and punctuationless tail", async t => {
   const h = harness(t, { engineOptions: { textMode: undefined } });
   const tag = EMOTION_TAGS[0].tag;
   h.output("こんにちは" + tag.slice(0, 3)); h.clock.advance(1000);
@@ -582,8 +582,10 @@ test("sentence mode preserves multiple sentences, filtered tags and punctuationl
   assert.deepEqual(h.fish[0].sent.slice(1), [{ event: "text", text: "こんにちは。" }, { event: "flush" }, { event: "text", text: "元気？" }, { event: "flush" }]);
   h.clock.advance(10000);
   assert.equal(h.fish[0].sent.length, 5);
-  void h.handler.close();
-  assert.equal(h.fish[0].sent.length, 5);
+  const closing = h.handler.close();
+  h.openai.event({ type: "session.closed", usage: { seconds: 0 } });
+  await closing;
+  assert.equal(h.fish[0].sent.filter(e => e.event === "text").length, 2);
 });
 
 test("sentence mode drops buffered text on interruption and never joins old and new speech", t => {
@@ -597,4 +599,19 @@ test("sentence mode cap discards unfinished text before its complete announcemen
   const h = harness(t, { engineOptions: { textMode: undefined } });
   h.output("読まない途中"); h.clock.jump(engine.SESSION_CAP_MS);
   assert.deepEqual(h.fish[0].sent.slice(1), [{ event: "text", text: "時間の上限に達したので、ここで一度切りますね。" }, { event: "flush" }]);
+});
+
+test("new recognized input discards unsent sentence even without playback interruption", t => {
+  const h = harness(t, { engineOptions: { textMode: undefined, detectInterruption: () => false } });
+  h.output("まだ途中"); h.input("次の質問"); h.output("次の回答。");
+  assert.deepEqual(h.fish[0].sent.slice(1), [{ event: "text", text: "次の回答。" }, { event: "flush" }]);
+  assert.deepEqual(h.traceRows.filter(r => r.kind === "text_discard"), [{ kind: "text_discard", text: "まだ途中", epoch: 0, reason: "new_input" }]);
+});
+
+test("sentence mode submits every supported terminator as one complete segment", t => {
+  for (const mark of ["。", "！", "？", "!", "?", "\n"]) {
+    const h = harness(t, { engineOptions: { textMode: undefined } });
+    h.output("回答"); h.output(mark);
+    assert.deepEqual(h.fish[0].sent.slice(1), [{ event: "text", text: "回答" + mark }, { event: "flush" }]);
+  }
 });

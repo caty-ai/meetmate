@@ -78,17 +78,19 @@ for both tracing and Fish forwarding; empty output deltas are ignored.
 
 Normal Live sessions now buffer filtered text until `。！？!?` or newline and
 send each completed sentence to Fish with one flush. No immediate fragment
-sending, comma flush, or300ms idle flush is active in the default path. The
+sending, comma flush, or 300ms idle flush is active in the default path. The
 constructor's internal `textMode: "legacy"` seam exists only for comparison
 tests; the Meet route does not set it. Existing transport regression tests run
 that baseline, with separate tests exercising the actual new default.
 
 The prompt asks for sentence-final punctuation even on acknowledgments. An
-unfinished sentence waits without a timer and is discarded on interruption,
+unfinished sentence waits without a timer and is discarded on new recognized input, interruption,
 shutdown or session cap. This can delay/suppress punctuationless replies; the
 Live trace will still show them even when Fish has received no text. This is
 an intentional bounded experiment, not a claim of full old-pipeline parity:
 Fish still uses its Live WebSocket API, not the old HTTP synthesis endpoint.
-The first-audio diagnostic is measured from the first submitted Fish sentence;
+New recognized input also clears an unsent tail without a playback interruption,
+with a `text_discard` trace record. The first-audio diagnostic is measured from
+the first Fish sentence submitted when no audio is outstanding;
 use the full text trace to see the additional buffering delay. Meet remains
 stopped until the owner's next signal.

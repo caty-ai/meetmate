@@ -459,6 +459,11 @@ function createLiveEngine(session, turnState, onAudio, options = {}) {
           recordTurn("assistant", text); forward(text);
         } else if (started && !capped && event.type === "session.input_transcript.delta") {
           const text = typeof event.delta === "string" ? event.delta : event.delta?.text || "";
+          if (!legacyTextStreaming && text && turns.at(-1)?.role === "assistant"
+              && (sentenceBuffer || holdBuffer || seam !== null)) {
+            trace.record("text_discard", { text: sentenceBuffer, epoch: currentEpoch, reason: "new_input" });
+            sentenceBuffer = ""; holdBuffer = ""; seam = null; lastTextChar = "";
+          }
           trace.record("input", { text, epoch: currentEpoch });
           recordTurn("user", text);
           if (turnState.isAgentSpeaking) console.log(`🪞  live-engine echo-check: ${JSON.stringify(text)}`);
