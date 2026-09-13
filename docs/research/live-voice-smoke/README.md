@@ -94,3 +94,40 @@ with a `text_discard` trace record. The first-audio diagnostic is measured from
 the first Fish sentence submitted when no audio is outstanding;
 use the full text trace to see the additional buffering delay. Meet remains
 stopped until the owner's next signal.
+
+
+## Offline diagnostics follow-up (2026-09-13)
+
+Fish unexpected socket loss already logs the active/spare role, close code and
+scrubbed reason, or the socket error message, before the retry line. Intentional
+retirement is silent. An error retires the socket immediately, so a subsequent
+close is suppressed: use the preceding error line for that case. This records
+evidence for the next listen; it does not establish the cause of past dropouts.
+
+With the owner present, check the selected Funnel hostname and port:
+
+```sh
+bash scripts/check-funnel-public.sh --run YOUR-HOST.YOUR-TAILNET.ts.net 8443
+```
+
+Without `--run` the script performs no network requests. It never starts the
+server, a bot, or Funnel and never calls Fish/OpenAI. It queries `dig @8.8.8.8`
+for A records, rejects private/tailnet IPv4 answers, then uses `curl --resolve`
+for each usable address with proxies and curlrc disabled. TLS/SNI/Host still
+use the hostname, certificates are verified, redirects are not followed, and
+only `/health` is requested (no response body or credentials are logged).
+
+For `--run`, exit 0 means all checked IPv4 addresses returned HTTP 200.
+`--help` or no arguments only prints usage and exits 0 without a probe. Exit 1 means DNS
+was inconclusive, HTTPS failed, or health returned a different status; the
+output distinguishes those cases. Exit 2 means usage/dependency error.
+HTTP 403/502 proves a TLS/HTTP response, not a healthy application; with
+exit 1, read the diagnostic line to distinguish this from a connect failure.
+The expected `/health` route is in `src/server.js`. Capture both output
+streams (`2>&1`) when saving a diagnostic run, including curl errors. No usable
+A record is inconclusive, not proof Funnel is down. This checks the public
+ingress route **from the machine running the script**, not an independent
+internet vantage point; IPv6 and WebSocket upgrades are not tested. An
+off-tailnet client check remains necessary for end-to-end external proof.
+This script has only been exercised with fake DNS/curl commands in local tests;
+run it against the real hostname only during the next owner-supervised check.

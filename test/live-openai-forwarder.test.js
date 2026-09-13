@@ -256,6 +256,27 @@ test("Fish unexpected close retries after 500 ms, max three per minute", t => {
   }
   active.close(); assert.equal(h.errors.length, 1); assert.equal(h.clock.timers.size, 0);
 });
+test("Fish close diagnostics include role, code and reason before retry", t => {
+  const warnings = []; t.mock.method(console, "warn", line => warnings.push(line));
+  const h = harness(t);
+  h.fish[0].emit("close", 1008, Buffer.from("idle timeout"));
+  assert.match(warnings[0], /Fish active close code=1008 reason=idle timeout/);
+  assert.match(warnings[1], /Fish socket lost/);
+  assert.equal(warnings.length, 2); // Retiring the socket must not log twice.
+  h.clock.advance(500);
+  assert.equal(h.fish.length, 3);
+  h.fish[1].emit("close", 1001, Buffer.from("server restart"));
+  assert.match(warnings[2], /Fish spare close code=1001 reason=server restart/);
+});
+test("Fish socket errors and close reasons scrub bearer credentials", t => {
+  const warnings = []; t.mock.method(console, "warn", line => warnings.push(line));
+  const h = harness(t);
+  h.fish[0].emit("error", new Error("connection failed Authorization: Bearer test-secret-123"));
+  assert.match(warnings[0], /Fish active error connection failed/);
+  h.fish[1].emit("close", 1008, Buffer.from("Authorization: Bearer test-secret-456"));
+  assert.match(warnings[2], /Fish spare close code=1008 reason=/);
+  assert.doesNotMatch(warnings.join("\n"), /test-secret/);
+});
 test("Fish error finish logs decoded details before retrying, including an idle spare", t => {
   const warnings = []; t.mock.method(console, "warn", line => warnings.push(line));
   const h = harness(t);
