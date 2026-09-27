@@ -76,7 +76,7 @@ test("descriptor capability, Origin, per-session mode, launch URL, and host CSP"
   for (const name of ["face-host.html", "face-host.js", "face-descriptor"]) {
     assert.equal((await route(`/local-avatar/${name}?v=${rig.session.visualId}`, auth(rig))).status, 404);
   }
-  assert.equal((await route(`/local-avatar/pkg/${rig.visualId}/index.html`)).status, 404);
+  assert.equal((await route(`/local-avatar/pkg/${rig.session.visualId}/index.html`)).status, 404);
   const host = await route(`/local-avatar/face-host.html?v=${issued.session.visualId}`);
   assert.equal(host.status, 200);
   assert.match(host.headers["Content-Security-Policy"], /frame-src 'self'/);

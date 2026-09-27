@@ -159,6 +159,8 @@ Application log scrubbers redact mount URLs and visual identifiers.
 Every asset request checks session liveness without refreshing the TTL. Expiry or
 close revokes the mount. An immutable file index is built once at session creation:
 regular files only, no symlinks or dotfiles/directories, realpath under the root.
+Request paths are matched literally without percent-decoding, so use plain ASCII file
+names without spaces or `%` (such a file is indexed but can never be fetched).
 Limits: 2000 files, depth 8, relative path length 200, 64 MiB per file, 256 MiB total.
 Exceeding a limit invalidates the package, including non-served files. Requests use
 exact index lookup, never a user-provided filesystem path. Before streaming, the
