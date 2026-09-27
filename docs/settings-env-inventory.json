@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "extractionCommand": "grep -rhoE 'process\\.env\\.[A-Z0-9_]+' src/ bin/ | sort -u",
-  "baselineUniqueDirectCount": 99,
+  "baselineUniqueDirectCount": 100,
   "classificationEnums": {
     "ux": [
       "basic",
@@ -871,6 +871,16 @@
       "credentialClass": "none",
       "handling": "ordinary-setting",
       "remainingDirectReads": 0
+    },
+    {
+      "name": "TYPESAFE_API_KEY",
+      "references": [
+        "src/emotion/jev.js:7"
+      ],
+      "ux": "hidden",
+      "credentialClass": "class-1-external-vendor",
+      "handling": "lazy-emotion-judge-env-only",
+      "remainingDirectReads": 1
     },
     {
       "name": "WAKE_CALIBRATE_ENABLED",

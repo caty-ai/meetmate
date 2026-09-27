@@ -92,6 +92,47 @@ function serveLocalAvatar(req, res, url = new URL(req.url || "/", "http://localh
     return true;
   }
 
+  // No face module import here: a validated package is attached only by an
+  // explicitly requested face-package join. Empty mounts do not touch the disk.
+  if (url.pathname.startsWith("/local-avatar/pkg/") || url.pathname.startsWith("/local-avatar/face-")) {
+    const { getLocalAvatarSession, getFaceMount } = require("./transport-meet/local-avatar-session");
+    const notFound = () => writeLocalAvatarPlain(res, 404, "Not Found");
+    const raw = String(req.url || "");
+    if (!raw.startsWith("/local-avatar/") || raw.includes("#") || raw.split("?")[0] !== url.pathname || /[%\\\0]/.test(raw.split("?")[0])) { notFound(); return true; }
+    if (url.pathname.startsWith("/local-avatar/pkg/")) {
+      const mountId = url.pathname.split("/")[3];
+      const session = getFaceMount(mountId);
+      if (!session) notFound();
+      else session.facePackage.serve(req, res, url, session, notFound);
+      return true;
+    }
+    const session = getLocalAvatarSession(url.searchParams.get("v"));
+    if (!hasExactQueryKeys(url, ["v"]) || session?.mode !== "face-package" || !session.isLive()) {
+      notFound(); return true;
+    }
+    if (url.pathname === "/local-avatar/face-descriptor") {
+      if (req.method !== "POST" || req.headers?.origin !== session.publicOrigin
+        || !session.verifyCapability(readBearerCapability(req.headers?.authorization))) notFound();
+      else writeLocalAvatarJson(res, 200, { mountId: session.mountId, ...session.facePackage.descriptor,
+        background: { ...session._background }, listenReactions: session.listenReactions });
+      return true;
+    }
+    if (req.method !== "GET" || !["/local-avatar/face-host.html", "/local-avatar/face-host.js"].includes(url.pathname)) {
+      notFound(); return true;
+    }
+    fs.readFile(path.join(PUBLIC_DIR, url.pathname.slice(1)), (err, data) => {
+      if (err || !session.isLive()) return notFound();
+      if (url.pathname.endsWith(".html")) data = Buffer.from(data.toString("utf8").replace("__VISUAL_ID__", encodeURIComponent(session.visualId)));
+      res.writeHead(200, localAvatarHeaders({
+        "Content-Type": url.pathname.endsWith(".html") ? "text/html; charset=utf-8" : "application/javascript; charset=utf-8",
+        "Content-Length": data.length,
+        "Content-Security-Policy": LOCAL_AVATAR_CSP + "; frame-src 'self'",
+      }));
+      res.end(data);
+    });
+    return true;
+  }
+
   const asset = LOCAL_AVATAR_ASSETS.get(url.pathname);
   if (asset) {
     if (req.method !== "GET") {

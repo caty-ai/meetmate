@@ -574,6 +574,11 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   const { FloorClient, STATES: FLOOR_STATES } = require("./floor-client");
   const { sessionUserFor } = require("./session-user");
   const emitter = new EventEmitter();
+  const faceMode = session.localAvatarSession?.mode === "face-package";
+  let faceSequence = 0;
+  let faceListenTimer = null;
+  let faceCueAt = -Infinity;
+  let faceCueGeneration = 0;
   const transport = resolvePipelineTransport(options.transport);
   const capabilities = resolvePipelineCapabilities(options.capabilities);
   const echoesOwnOutput = capabilities ? capabilities.echoesOwnOutput === true : true;
@@ -655,6 +660,15 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       firstSampleIndex,
       sampleRate: config.tts.sampleRate,
     };
+    if (faceMode && deliveryOptions.face) {
+      const face = deliveryOptions.face;
+      face.outputEpoch = outputEpoch;
+      metadata.utteranceId = face.id;
+      metadata.emotion = face.emotion;
+      metadata.intensity = face.intensity;
+      metadata.emotionRevision = face.revision;
+      metadata.sampleCount = Math.floor(outputBuffer.length / 2);
+    }
     if (envelopeAccumulator) {
       try {
         const segments = envelopeAccumulator.push(outputBuffer);
@@ -1901,6 +1915,26 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     closeSpeakerSlot(current);
   }
 
+  function faceListenPulse() {
+    if (!faceMode || session.localAvatarSession.listenReactions !== true || !getEffectiveValue("face_listen_reactions") || turnState.isAgentSpeaking) return;
+    emitObserverEvent("face_listen", { active: true });
+    clearTimeout(faceListenTimer);
+    faceListenTimer = setTimeout(() => emitObserverEvent("face_listen", { active: false }), 1200);
+    faceListenTimer.unref?.();
+  }
+  function faceListenCue(text) {
+    if (!faceMode || session.localAvatarSession.listenReactions !== true || !getEffectiveValue("face_listen_reactions") || !text) return;
+    clearTimeout(faceListenTimer);
+    emitObserverEvent("face_listen", { active: false });
+    const generation = ++faceCueGeneration;
+    if (getEffectiveValue("emotion_judge") !== "jev" || Date.now() - faceCueAt < 4000) return;
+    faceCueAt = Date.now();
+    import("./emotion/index.js").then(({ judgeEmotion }) => judgeEmotion(text, { mode: "jev", listening: true }))
+      .then((cue) => {
+        if (cue && !stopped && generation === faceCueGeneration && getEffectiveValue("face_listen_reactions")) emitObserverEvent("face_listen", { cue });
+      }).catch(() => {});
+  }
+
   function onSttTranscript(text, isFinal, confidence, speaker = null) {
     if (isFinal) {
       console.log(`🎤  [interim→final]${speakerTag(speaker)} ${text}`);
@@ -1912,6 +1946,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     if (interim && !isNoiseInterim(interim)) {
       lastUserSpeechAt = now;
       liveUserSpeechUntil = now + LIVE_USER_SPEECH_HOLD_MS;
+      if (faceMode) faceListenPulse();
     }
 
     if (gateState === "CLOSED") {
@@ -1946,6 +1981,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   let utteranceChain = Promise.resolve();
   function onSttUtteranceEnd(userText, speaker = null, slot = null) {
     const cleanedText = String(userText || "").trim();
+    if (faceMode) faceListenCue(cleanedText);
     const floorTurn = { cancelled: false, fallbackGeneration: null, verdictPromise: null };
     const muted = suppressForFloorMute("wake");
     const waitingAssignment = muted ? null : floorClient?.claimAssignment() || null;
@@ -2843,7 +2879,8 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
             sentenceBuffer = "";
             console.log(`🗣️  ${requestAgentId || "agent"} speaking (first chunk): "${firstChunk}"`);
             await speakSentence(firstChunk, abort.signal, {
-              onPlaybackStart: () => recordTtsPlaybackStartOnce(firstChunk, "first_chunk"),
+              faceReply: true,
+          onPlaybackStart: () => recordTtsPlaybackStartOnce(firstChunk, "first_chunk"),
             });
             if (abort.signal.aborted) break;
             spokenSentenceCount += 1;
@@ -2877,6 +2914,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
               }
 
               await speakSentence(sentence, abort.signal, {
+                faceReply: true,
                 onPlaybackStart: () => recordTtsPlaybackStartOnce(sentence, splitLabel),
               });
               if (abort.signal.aborted) break;
@@ -2938,6 +2976,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         }
         console.log(`🗣️  ${requestAgentId || "agent"} speaking (flush): "${sentenceBuffer.trim()}"`);
         await speakSentence(sentenceBuffer.trim(), abort.signal, {
+          faceReply: true,
           onPlaybackStart: () => recordTtsPlaybackStartOnce(sentenceBuffer.trim(), "flush"),
         });
       }
@@ -3027,9 +3066,32 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     // `manual` is the operator/gateway-injected speech escape hatch required
     // to remain audible while automatic floor-controlled speech is muted.
     if (suppressForFloorMute(opts.role || "speech", opts)) return;
+    const face = faceMode ? { id: ++faceSequence, emotion: null, intensity: 0, revision: 0, ended: false } : null;
+    if (face && getEffectiveValue("emotion_judge") !== "off") {
+      const mode = getEffectiveValue("emotion_judge");
+      const emotionModule = session.localAvatarSession.emotionModule;
+      const initial = emotionModule?.fromTags(text);
+      if (initial) { face.emotion = initial.emotion; face.intensity = initial.intensity; face.revision = 1; }
+      const judgeOptions = { mode, role: opts.faceReply ? "reply" : opts.role, signal };
+      const judgement = emotionModule ? emotionModule.judgeEmotion(text, judgeOptions)
+        : import("./emotion/index.js").then((loaded) => {
+          session.localAvatarSession.emotionModule = loaded;
+          return loaded.judgeEmotion(text, judgeOptions);
+        });
+      judgement.then((value) => {
+          if (face.ended || signal?.aborted || stopped) return;
+          if (face.emotion === (value?.emotion || null) && face.intensity === (value?.intensity || 0)) return;
+          face.emotion = value?.emotion || null;
+          face.intensity = value?.intensity || 0;
+          face.revision += 1;
+          emitObserverEvent("face_emotion", { utteranceId: face.id, outputEpoch: face.outputEpoch,
+            emotion: face.emotion, intensity: face.intensity });
+        }).catch(() => {});
+    }
     const deliveryOptions = opts.manual === true
       ? { floorExempt: true, manual: true }
       : {};
+    if (face) deliveryOptions.face = face;
     if (!floorEnabled) {
       return withTtsLock(async (speakChain) => {
         if (signal?.aborted) return;
@@ -3044,7 +3106,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
         }
         ttsHasSpoken = true;
         await _speakSentenceRaw(text, signal, opts, speakChain, deliveryOptions);
-      });
+      }).finally(() => finishFaceUtterance(face));
     }
     const ownedController = signal ? null : new AbortController();
     const controller = ownedController || currentAbort;
@@ -3070,7 +3132,14 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       }, floorFence, controller);
     } finally {
       if (controller) floorSpeechControllers.delete(controller);
+      finishFaceUtterance(face);
     }
+  }
+
+  function finishFaceUtterance(face) {
+    if (!face) return;
+    face.ended = true;
+    emitObserverEvent("face_end", { utteranceId: face.id, outputEpoch: face.outputEpoch });
   }
 
   async function _speakSentenceRaw(text, signal, opts = {}, speakChain = null, deliveryOptions = {}) {
@@ -3249,6 +3318,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     },
     close() {
       stopped = true;
+      if (faceMode) { clearTimeout(faceListenTimer); faceCueGeneration += 1; }
       floorClient?.close("pipeline_close");
       if (currentAbort) {
         abortPlayback(currentAbort, "pipeline_close");

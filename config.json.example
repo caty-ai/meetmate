@@ -257,5 +257,11 @@
   "features": {
     "taskExtractionEnabled": true,
     "streamingEquivalentEnabled": true
+  },
+  "avatar": {
+    "experiment": "",
+    "facePackageDir": "",
+    "emotionJudge": "off",
+    "faceListenReactions": false
   }
 }

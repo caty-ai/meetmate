@@ -1421,8 +1421,10 @@ async function withPipeline(overrides, fn) {
 
   let pipeline;
   try {
+    if (overrides.settings) settingsResolver.initializeRuntime(overrides.settings);
     const { createPipeline } = require(path.join(src, "pipeline.js"));
-    const session = { id: "local-avatar-m0", conversationLog: [], config: { wakeMode: "wake" } };
+    const session = { id: "local-avatar-m0", conversationLog: [], config: { wakeMode: "wake" },
+      ...(overrides.localAvatarSession ? { localAvatarSession: overrides.localAvatarSession } : {}) };
     const turnState = { isAgentSpeaking: false, inputCooldownUntil: 0, droppedEchoFrames: 0 };
     const baseConfig = {
       dgKey: "test",
@@ -1497,3 +1499,109 @@ function setEnv(values) {
     }
   };
 }
+
+require("./local-avatar-face-package-cases");
+
+test("face pipeline metadata, asynchronous judgement before the lock, and late-result fencing", { concurrency: false }, async () => {
+  const previousFetch = global.fetch;
+  const previousKey = process.env.TYPESAFE_API_KEY;
+  const judgeCredential = ["synthetic", "judge", "credential"].join("-");
+  process.env.TYPESAFE_API_KEY = judgeCredential;
+  const calls = [];
+  const resolvers = [];
+  global.fetch = (_url, options) => {
+    calls.push(JSON.parse(options.body));
+    return new Promise((resolve) => resolvers.push(resolve));
+  };
+  const response = { ok: true, json: async () => ({ answers: { emotion: { choice: "joy" }, strong: { noul: 0.8 } } }) };
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  const audio = [];
+  try {
+    await withPipeline({
+      localAvatarSession: { mode: "face-package" },
+      settings: { state: { valid: true, exists: true, parsed: { avatar: { emotionJudge: "jev" } } } },
+      synthesize: async (text, { onAudio }) => { onAudio(Buffer.alloc(4800)); if (text === "first") await held; },
+      onAudio: (_buffer, metadata) => audio.push({ ...metadata }),
+    }, async ({ pipeline }) => {
+      const updates = [], ends = [];
+      pipeline.on("face_emotion", (v) => updates.push(v)); pipeline.on("face_end", (v) => ends.push(v));
+      const first = pipeline._test.speakSentence("first", null, { faceReply: true });
+      await waitUntil(() => audio.length === 1 && calls.length === 1);
+      const second = pipeline._test.speakSentence("second", null, { faceReply: true });
+      await waitUntil(() => calls.length === 2);
+      assert.equal(audio.length, 1, "second judge starts while audio is held by the first TTS lock");
+      resolvers[0](response);
+      await waitUntil(() => updates.length === 1);
+      assert.equal(updates[0].utteranceId, audio[0].utteranceId);
+      release(); await Promise.all([first, second]);
+      assert.deepEqual(audio.map((v) => v.utteranceId), [1, 2]);
+      assert.deepEqual(audio.map((v) => v.outputEpoch), [0, 0]);
+      assert.deepEqual(ends.map((v) => v.utteranceId), [1, 2]);
+      resolvers[1](response);
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(updates.length, 1, "judgement after synthesis end is discarded");
+      for (const role of ["ack", "progress", "greeting", "timeout"]) await pipeline._test.speakSentence("fixed phrase", null, { role });
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(calls.length, 2);
+    });
+  } finally {
+    release(); global.fetch = previousFetch;
+    if (previousKey === undefined) delete process.env.TYPESAFE_API_KEY;
+    else process.env.TYPESAFE_API_KEY = previousKey;
+  }
+});
+
+test("face listening hooks stay opt-in and rate-limit one judgement per four seconds", { concurrency: false }, async () => {
+  const previousFetch = global.fetch;
+  const previousKey = process.env.TYPESAFE_API_KEY;
+  const listenValue = ["synthetic", "listening", "credential"].join("-");
+  process.env.TYPESAFE_API_KEY = listenValue;
+  let calls = 0;
+  global.fetch = async () => { calls += 1; return { ok: true, json: async () => ({ answers: { emotion: { choice: "trust" }, strong: { noul: 0.2 } } }) }; };
+  try {
+    for (const enabled of [false, true]) {
+      await withFakeNow(10_000, async (clock) => {
+        await withPipeline({
+          localAvatarSession: { mode: "face-package", listenReactions: enabled },
+          settings: { state: { exists: true, valid: true, parsed: { avatar: { emotionJudge: "jev", faceListenReactions: enabled } } } },
+        }, async ({ pipeline, stt }) => {
+          const events = [];
+          pipeline.on("face_listen", (v) => events.push(v));
+          stt.emit("transcript", "hello there", false, 0.9);
+          stt.emit("utterance_end", "hello there");
+          if (enabled) await waitUntil(() => events.some((v) => v.cue));
+          else await new Promise((resolve) => setImmediate(resolve));
+          assert.equal(calls, enabled ? 1 : 0);
+          assert.equal(events.some((v) => v.active === true), enabled);
+          if (!enabled) return;
+          stt.emit("utterance_end", "another remark");
+          await new Promise((resolve) => setImmediate(resolve));
+          assert.equal(calls, 1);
+          clock.set(14_000);
+          stt.emit("utterance_end", "one more remark");
+          await waitUntil(() => calls === 2);
+        });
+      });
+    }
+  } finally {
+    global.fetch = previousFetch;
+    if (previousKey === undefined) delete process.env.TYPESAFE_API_KEY;
+    else process.env.TYPESAFE_API_KEY = previousKey;
+  }
+});
+
+test("a prepared tags session puts the canonical emotion on immediate PCM without waiting", { concurrency: false }, async () => {
+  const audio = [];
+  await withPipeline({
+    localAvatarSession: { mode: "face-package", emotionModule: require("../src/emotion") },
+    settings: { state: { exists: true, valid: true, parsed: { avatar: { emotionJudge: "tags" } } } },
+    onAudio: (_buffer, metadata) => audio.push(metadata),
+  }, async ({ pipeline }) => {
+    await pipeline._test.speakSentence("[warm] Hello", null, { faceReply: true });
+    assert.equal(audio[0].emotion, "trust");
+    assert.equal(audio[0].intensity, 0.3);
+    assert.equal(audio[0].utteranceId, 1);
+    assert.equal(audio[0].emotionRevision, 1);
+  });
+});

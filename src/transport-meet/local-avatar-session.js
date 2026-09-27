@@ -5,7 +5,8 @@ const FRAMES_HTML_ROUTE = "/local-avatar/frames.html";
 const SCRIPT_ROUTE = "/local-avatar/local-avatar.js";
 const FRAMES_SCRIPT_ROUTE = "/local-avatar/frames.js";
 const STATE_ROUTE = "/local-avatar/state";
-const HTML_ROUTES = new Set([HTML_ROUTE, FRAMES_HTML_ROUTE]);
+const FACE_HOST_HTML_ROUTE = "/local-avatar/face-host.html";
+const HTML_ROUTES = new Set([HTML_ROUTE, FRAMES_HTML_ROUTE, FACE_HOST_HTML_ROUTE]);
 const DEFAULT_TTL_MS = 5 * 60 * 1000;
 const MAX_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_QUEUE_LIMIT = 8;
@@ -28,7 +29,14 @@ function createLocalAvatarSession(options = {}) {
   const publicOrigin = normalizePublicOrigin(options.publicOrigin);
   const htmlRoute = options.htmlRoute || HTML_ROUTE;
   if (!HTML_ROUTES.has(htmlRoute)) throw new Error("invalid local avatar HTML route");
+  if ((options.mode === "face-package" && (!options.facePackage || htmlRoute !== FACE_HOST_HTML_ROUTE))
+    || (htmlRoute === FACE_HOST_HTML_ROUTE && options.mode !== "face-package")) {
+    throw new Error("face package mode requires a validated package and host route");
+  }
   const session = new LocalAvatarSession({
+    mode: options.mode || (htmlRoute === FRAMES_HTML_ROUTE ? "hybrid-local-frames" : "hybrid-local-l0"),
+    facePackage: options.facePackage,
+    mountId: options.mode === "face-package" ? toBase64Url(randomBytes(32)) : null,
     visualId,
     capability,
     publicOrigin,
@@ -51,7 +59,15 @@ function createLocalAvatarSession(options = {}) {
 }
 
 class LocalAvatarSession {
-  constructor({ visualId, capability, publicOrigin, now, ttlMs, queueLimit, retryLimit, logger, background }) {
+  constructor({ visualId, capability, publicOrigin, now, ttlMs, queueLimit, retryLimit, logger, background, mode, facePackage, mountId }) {
+    this.mode = mode;
+    if (mode === "face-package") {
+      this.facePackage = facePackage;
+      this.mountId = mountId;
+      this._utterances = [];
+      this._faceRate = null;
+      this._listen = { id: 0, active: false };
+    }
     this.visualId = visualId;
     this.publicOrigin = publicOrigin;
     this._now = typeof now === "function" ? now : Date.now;
@@ -77,6 +93,11 @@ class LocalAvatarSession {
     this._background = normalizeBackground(background);
   }
 
+  isLive() {
+    if (!this._closed && this._now() >= this._expiresAt) this.close("expired");
+    return !this._closed;
+  }
+
   verifyCapability(candidate) {
     const candidateHash = hashCapability(typeof candidate === "string" ? candidate : "");
     const equal = crypto.timingSafeEqual(this._capabilityHash, candidateHash);
@@ -97,6 +118,7 @@ class LocalAvatarSession {
     this._lastDelivery = null;
     this._lastSampleIndex = -1;
     this._envelopeLog.length = 0;
+    if (this.mode === "face-package") this._resetFaceHistory();
     return {
       ...this._state("idle", {
         outputEpoch: this._outputEpoch,
@@ -123,12 +145,89 @@ class LocalAvatarSession {
       this._queue.length = 0;
       this._lastDelivery = null;
       this._envelopeLog.length = 0;
+      if (this.mode === "face-package") this._resetFaceHistory();
     }
     if (sampleIndex <= this._lastSampleIndex) return false;
 
     this._lastSampleIndex = sampleIndex;
     this._appendEnvelopeSegments(metadata?.envelopeSegments, sampleRate);
+    if (this.mode === "face-package") {
+      this._faceRate = sampleRate;
+      const id = metadata?.utteranceId;
+      if (Number.isSafeInteger(id) && id > 0) {
+        let utterance = this._utterances.find((item) => item.utteranceId === id);
+        if (!utterance) {
+          utterance = { utteranceId: id, utteranceStartSample: sampleIndex, endSample: null,
+            emotion: null, intensity: 0, emotionRevision: 0 };
+          this._utterances.push(utterance);
+        }
+        if (utterance.endSample === null) {
+          utterance.lastSample = sampleIndex + (Number.isSafeInteger(metadata.sampleCount) ? metadata.sampleCount : 0);
+          if (metadata.emotionRevision > utterance.emotionRevision) this._setEmotion(utterance, metadata);
+        }
+      }
+      const cutoff = sampleIndex - sampleRate * ENVELOPE_HISTORY_MS / 1000;
+      this._utterances = this._utterances.filter((item) => item.endSample === null || item.endSample >= cutoff).slice(-256);
+    }
     return this._enqueue(this._state("marker", { outputEpoch, sampleIndex, sampleRate }));
+  }
+
+  _resetFaceHistory() {
+    this._utterances.length = 0;
+    this._faceRate = null;
+    this._listen.active = false;
+    delete this._listen.cue;
+  }
+
+  _faceWritable(sourceGeneration) {
+    return this.mode === "face-package" && this.isLive() && this._generation > 0
+      && sourceGeneration === this._sourceGeneration;
+  }
+
+  _setEmotion(utterance, value) {
+    const known = ["joy", "trust", "fear", "surprise", "sadness", "disgust", "anger", "anticipation"];
+    if (value.emotion !== null && !known.includes(value.emotion)) return false;
+    if (!Number.isFinite(value.intensity) || value.intensity < 0 || value.intensity > 1) return false;
+    utterance.emotion = value.emotion;
+    utterance.intensity = value.intensity;
+    utterance.emotionRevision += 1;
+    return true;
+  }
+
+  _faceSnapshot() {
+    return this._enqueue(this._state("marker", { outputEpoch: this._outputEpoch,
+      sampleIndex: this._lastSampleIndex, sampleRate: this._faceRate }));
+  }
+
+  publishEmotion(event, sourceGeneration = this._sourceGeneration) {
+    if (!this._faceWritable(sourceGeneration) || event?.outputEpoch !== this._outputEpoch) return false;
+    const utterance = this._utterances.find((item) => item.utteranceId === event.utteranceId && item.endSample === null);
+    if (!utterance || !this._setEmotion(utterance, event)) return false;
+    return this._faceSnapshot();
+  }
+
+  endUtterance(event, sourceGeneration = this._sourceGeneration) {
+    if (!this._faceWritable(sourceGeneration) || event?.outputEpoch !== this._outputEpoch) return false;
+    const utterance = this._utterances.find((item) => item.utteranceId === event.utteranceId && item.endSample === null);
+    if (!utterance) return false;
+    utterance.endSample = utterance.lastSample;
+    return this._faceSnapshot();
+  }
+
+  publishListen(event, sourceGeneration = this._sourceGeneration) {
+    if (!this._faceWritable(sourceGeneration)) return false;
+    if (typeof event?.active === "boolean") {
+      if (event.active && !this._listen.active) this._listen.id += 1;
+      this._listen.active = event.active;
+    }
+    if (event?.cue) {
+      const normalized = { emotionRevision: 0 };
+      if (this._setEmotion(normalized, event.cue)) {
+        this._listen.cue = { id: (this._listen.cue?.id || 0) + 1,
+          emotion: normalized.emotion, intensity: normalized.intensity, expiresAt: this._now() + 4000 };
+      }
+    }
+    return this._faceSnapshot();
   }
 
   cancelPlayback(event, sourceGeneration = this._sourceGeneration) {
@@ -146,6 +245,7 @@ class LocalAvatarSession {
     this._queue.length = 0;
     this._lastDelivery = null;
     this._envelopeLog.length = 0;
+    if (this.mode === "face-package") this._resetFaceHistory();
     return this._enqueue(this._state("cancel", {
       outputEpoch,
       sampleIndex: null,
@@ -163,6 +263,7 @@ class LocalAvatarSession {
     this._queue.length = 0;
     this._lastDelivery = null;
     this._envelopeLog.length = 0;
+    if (this.mode === "face-package") this._resetFaceHistory();
     if (this._generation > 0) {
       this._enqueue(this._state("idle", {
         outputEpoch: this._outputEpoch,
@@ -207,6 +308,11 @@ class LocalAvatarSession {
     this._queue.length = 0;
     this._lastDelivery = null;
     this._capabilityHash.fill(0);
+    if (this.mode === "face-package") {
+      this.facePackage = null;
+      this.mountId = null;
+      this._utterances.length = 0;
+    }
     sessions.delete(this.visualId);
     this._safeLog("local avatar session closed", { visualId: this.visualId, reason });
     return true;
@@ -242,6 +348,15 @@ class LocalAvatarSession {
       sampleIndex: values.sampleIndex,
       sampleRate: values.sampleRate,
     };
+    if (this.mode === "face-package") {
+      state.utterances = this._utterances.map((item) => ({ ...item }));
+      const latest = this._utterances.at(-1);
+      if (latest) {
+        for (const key of ["utteranceId", "utteranceStartSample", "emotion", "intensity", "emotionRevision"]) state[key] = latest[key];
+      }
+      state.listening = { id: this._listen.id, active: this._listen.active };
+      if (this._listen.cue?.expiresAt > this._now()) state.cue = { ...this._listen.cue };
+    }
     if (kind === "marker") {
       state.envelopes = this._envelopeLog.map((segment) => ({
         s: segment.s,
@@ -252,6 +367,11 @@ class LocalAvatarSession {
   }
 
   _enqueue(state) {
+    if (this.mode === "face-package") {
+      this._queue.length = 0;
+      this._queue.push(state);
+      return true;
+    }
     if (state.kind === "marker") {
       const markerIndex = this._queue.findIndex((queued) => (
         queued.kind === "marker" && queued.outputEpoch === state.outputEpoch
@@ -356,6 +476,14 @@ function getLocalAvatarSession(visualId) {
   return sessions.get(String(visualId || "")) || null;
 }
 
+function getFaceMount(mountId) {
+  if (!/^[A-Za-z0-9_-]{43}$/.test(String(mountId || ""))) return null;
+  for (const session of sessions.values()) {
+    if (session.mode === "face-package" && session.mountId === mountId && session.isLive()) return session;
+  }
+  return null;
+}
+
 function hasLocalAvatarSessions() {
   return sessions.size > 0;
 }
@@ -363,6 +491,8 @@ function hasLocalAvatarSessions() {
 function redactLogValue(value) {
   if (typeof value === "string") {
     return value
+      .replace(/(\/local-avatar\/pkg\/)[^/\s?]+/gi, "$1[REDACTED]")
+      .replace(/([?&]v=)[^&#\s]+/gi, "$1[REDACTED]")
       .replace(/(#cap=)[^\s&#]+/gi, "$1[REDACTED]")
       .replace(/(authorization\s*[:=]\s*bearer\s+)[^\s,}]+/gi, "$1[REDACTED]")
       .replace(/(["'](?:[a-z_-]*(?:token|secret|password|authorization|credential|private_key)|capability|api(?:\s+|[_-]?)key|private-?key)["']\s*:\s*["'])(?!\[REDACTED\])[^"']*/gi, "$1[REDACTED]")
@@ -372,7 +502,7 @@ function redactLogValue(value) {
   if (value && typeof value === "object") {
     const redacted = {};
     for (const [key, item] of Object.entries(value)) {
-      redacted[key] = /capability|authorization|token/i.test(key) ? "[REDACTED]" : redactLogValue(item);
+      redacted[key] = /capability|authorization|token|mountId|visualId/i.test(key) ? "[REDACTED]" : redactLogValue(item);
     }
     return redacted;
   }
@@ -437,6 +567,7 @@ module.exports = {
   STATE_ROUTE,
   createLocalAvatarSession,
   getLocalAvatarSession,
+  getFaceMount,
   hasLocalAvatarSessions,
   redactLogValue,
   _test: {

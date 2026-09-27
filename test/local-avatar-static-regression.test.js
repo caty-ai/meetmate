@@ -829,7 +829,7 @@ async function withMeetRoutes(fn, options = {}) {
   });
 
   Module._load = function guardedLoad(request, parent, isMain) {
-    if (/local-avatar/i.test(String(request))) isolation.moduleLoads.push(String(request));
+    if (/local-avatar|face-package|(?:^|\/)emotion(?:\/|$)/i.test(String(request))) isolation.moduleLoads.push(String(request));
     if (request === "ws") return { WebSocket: GuardedWebSocket };
     if (request === "@deepgram/sdk") {
       return {
@@ -1143,3 +1143,52 @@ function setEnv(values) {
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+test("face settings and directory alone do not enable a join or load feature modules", { concurrency: false }, async () => {
+  for (const experiment of ["", "face-package"]) {
+    await withMeetRoutes(async (harness) => {
+      const response = await harness.join();
+      assert.equal(response.statusCode, 200);
+      const payload = harness.httpsRequests.find((request) => request.options.path === "/api/v1/bots").body;
+      assert.equal(payload, fixture.staticAttendee.serialized);
+      assertStaticIsolation(harness.isolation);
+    }, { settingsParsed: staticSettings({ avatar: { experiment, facePackageDir: "/nonexistent/face-package", emotionJudge: "jev" } }) });
+  }
+});
+
+test("explicit face join mounts its package, closes it on leave, and next rig join has no mount", { concurrency: false }, async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "face-join-"));
+  try {
+    fs.writeFileSync(path.join(directory, "face.json"), JSON.stringify({ spec: "face-package/1", entry: "index.html", supports: ["speak", "level"] }));
+    fs.writeFileSync(path.join(directory, "index.html"), "<!doctype html>");
+    await withMeetRoutes(async (harness) => {
+      assert.equal((await harness.join({ avatarExperiment: "face-package" })).statusCode, 200);
+      const first = JSON.parse(harness.httpsRequests.find((request) => request.options.path === "/api/v1/bots").body);
+      const launch = new URL(first.voice_agent_settings.url);
+      assert.equal(launch.pathname, "/local-avatar/face-host.html");
+      const { getLocalAvatarSession, getFaceMount } = require("../src/transport-meet/local-avatar-session");
+      const face = getLocalAvatarSession(launch.searchParams.get("v"));
+      assert.equal(face.mode, "face-package");
+      const mount = face.mountId;
+      assert.equal(getFaceMount(mount), face);
+      await harness.leave();
+      assert.equal(getFaceMount(mount), null);
+      assert.equal((await harness.join({ avatarExperiment: "hybrid-local-l0" })).statusCode, 200);
+      const second = JSON.parse(harness.httpsRequests.filter((request) => request.options.path === "/api/v1/bots").at(-1).body);
+      const rigUrl = new URL(second.voice_agent_settings.url);
+      assert.equal(rigUrl.pathname, "/local-avatar/index.html");
+      const rig = getLocalAvatarSession(rigUrl.searchParams.get("v"));
+      assert.equal(rig.mode, "hybrid-local-l0");
+      assert.equal(rig.mountId, undefined);
+    }, { settingsParsed: staticSettings({ avatar: { experiment: "face-package", facePackageDir: directory } }) });
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
+test("invalid explicit face package falls back to the exact static payload with diagnostic", { concurrency: false }, async () => {
+  await withMeetRoutes(async (harness) => {
+    assert.equal((await harness.join({ avatarExperiment: "face-package" })).statusCode, 200);
+    const payload = harness.httpsRequests.find((request) => request.options.path === "/api/v1/bots").body;
+    assert.equal(payload, fixture.staticAttendee.serialized);
+    assert.ok(harness.consoleOutput.some((line) => line.includes("MM-MMT-003")));
+  }, { settingsParsed: staticSettings({ avatar: { facePackageDir: "relative-invalid" } }) });
+});

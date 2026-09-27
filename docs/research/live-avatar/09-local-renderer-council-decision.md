@@ -225,3 +225,10 @@ same issue.
 4. Keep the current realtime audio path and static default unchanged.
 5. Stop with evidence instead of widening to L2, Full-page A, vendor rendering,
    or additional files.
+
+### Face packages (#254)
+
+Face-package pages remain audio-free renderers. The host iframe uses `allow=""`
+and `sandbox="allow-scripts"`; package media is blocked by CSP. Packages must not
+include a microphone or AudioContext playback path. PCM remains owned exclusively
+by the existing meeting pipeline. See [Face packages](../../face-packages.md).
