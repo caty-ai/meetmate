@@ -147,10 +147,10 @@
     }
   });
   const later = (fn, ms) => { if (!stopped) { clearTimeout(timer); timer = setTimeout(fn, ms); } };
-  function backoff() {
-    timeline.reset();
+  function backoff(retry = connect) {
+    timeline?.reset();
     reconnects = Math.min(reconnects + 1, 5);
-    later(connect, Math.min(4000, 250 * 2 ** (reconnects - 1)));
+    later(retry, Math.min(4000, 250 * 2 ** (reconnects - 1)));
   }
   async function connect() {
     try {
@@ -185,10 +185,13 @@
   async function load() {
     try {
       const response = await request("/local-avatar/face-descriptor");
+      if (response.status === 404 || response.status === 401) { stopped = true; return; }
       if (!response.ok) throw new Error("descriptor");
       const candidate = await response.json();
       candidate.supports = normalizeSupports(candidate.supports);
       if (!candidate.supports.includes("speak") || !candidate.supports.includes("level")) throw new Error("supports");
+      if (stopped) return;
+      reconnects = 0;
       descriptor = candidate;
       timeline = createTimeline({ send: post, supports: descriptor.supports, listen: descriptor.listenReactions === true });
       if (descriptor.background) {
@@ -197,7 +200,7 @@
       }
       frame.src = `/local-avatar/pkg/${descriptor.mountId}/${descriptor.entry}${descriptor.query ? `?${descriptor.query}` : ""}`;
       document.body.append(frame);
-    } catch { stopped = true; }
+    } catch { backoff(load); }
   }
   const ticker = setInterval(() => { if (ready && !stopped) timeline.tick(); }, 33);
   addEventListener("pagehide", () => { stopped = true; clearTimeout(timer); clearInterval(ticker); timeline?.reset(); });

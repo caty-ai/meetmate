@@ -360,3 +360,30 @@ test("#197 connection result prefixes only string IDs and leaves current payload
   for (const diagnosticId of [undefined, null, 123, {}]) assert.equal(render({ ...body, diagnosticId }, "Soniox", "認証情報を確認してください"), expected);
   assert.equal(render({ ...body, diagnosticId: "MM-STT-100" }, "Soniox", "認証情報を確認してください"), "Soniox: AUTH_FAILED — [MM-STT-100] 認証情報を確認してください (12 ms)");
 });
+
+test("follow-settings label reflects the per-join face gate", async () => {
+  const source = require("node:fs").readFileSync(require.resolve("../public/app.js"), "utf8");
+  const load = source.match(/async function loadAvatarExperimentDefault\(\) \{[\s\S]*?\n  }/)[0];
+  const { avatarExperimentLabel } = require("../public/app.js");
+  for (const [configured, label] of [["face-package", "標準（静止画）"], ["", "標準（静止画）"],
+    ["hybrid-local-l0", "2.5Dリグ"], ["hybrid-local-frames", "フレームセット"]]) {
+    const option = {};
+    await require("node:vm").runInNewContext(`${load}; loadAvatarExperimentDefault()`, {
+      avatarExperimentLabel, avatarExperimentEl: { options: [option] },
+      fetch: async () => ({ ok: true, json: async () => ({ effective: { avatar_experiment: configured } }) }),
+    });
+    assert.equal(option.textContent, `設定に従う（${label}）`);
+  }
+});
+
+test("apply badges distinguish next join from restart and preserve their style", () => {
+  const source = require("node:fs").readFileSync(require.resolve("../public/settings.js"), "utf8");
+  const badge = source.match(/apply.className = [\s\S]*?wrapper.append\(apply\);/)[0];
+  for (const [mode, label, style] of [["live", "すぐに反映", "apply-badge live"],
+    ["next-join", "次の会議参加から反映", "apply-badge"], ["restart-required", "次回起動時に反映", "apply-badge"]]) {
+    const apply = {};
+    require("node:vm").runInNewContext(badge, { apply, entry: { apply: mode }, wrapper: { append() {} } });
+    assert.equal(apply.textContent, label);
+    assert.equal(apply.className, style);
+  }
+});

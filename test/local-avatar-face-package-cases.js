@@ -548,6 +548,61 @@ test("host retries indefinitely at capped delay, stops on state 401/404 and page
   }
 });
 
+test("descriptor retries at capped delay, recovers, and stops only on 401/404 or pagehide", async () => {
+  for (const death of [401, 404, "pagehide", "pagehide-inflight", "recover"]) for (const failure of ["error", 503, "json", "supports"]) {
+    const listeners = new Map(), pending = new Map();
+    let serial = 0, mode = failure, generation = 0, calls = 0, appended = 0;
+    const frame = { style: {}, setAttribute() {}, contentWindow: { postMessage() {} } };
+    const sandbox = {
+      URLSearchParams, location: { pathname: "/local-avatar/face-host.html", search: "?v=v", hash: "" }, history: { replaceState() {} },
+      document: { documentElement: { style: {} }, body: { style: {}, append() { appended++; } }, createElement: () => frame },
+      addEventListener: (name, fn) => listeners.set(name, fn), setInterval: () => 1, clearInterval() {},
+      setTimeout: (fn, ms) => { pending.set(++serial, { fn, ms }); return serial; }, clearTimeout: id => pending.delete(id),
+      fetch: async url => {
+        calls++;
+        if (mode === "error") throw Error("network");
+        if (typeof mode === "number") return { ok: false, status: mode };
+        if (url.includes("descriptor")) return { ok: true, json: async () => {
+          if (mode === "json") throw Error("json");
+          if (mode === "pagehide-inflight") listeners.get("pagehide")();
+          return { ...defaultManifest, mountId: "mount", ...(mode === "supports" ? { supports: [] } : {}) };
+        } };
+        return { ok: true, json: async () => ({ kind: "idle", generation: ++generation, sequence: 0, cancelEpoch: 0, outputEpoch: 0 }) };
+      },
+    };
+    require("node:vm").runInNewContext(fs.readFileSync(path.join(__dirname, "../public/local-avatar/face-host.js"), "utf8"), sandbox);
+    const flush = () => new Promise(resolve => setImmediate(resolve));
+    const step = async () => { assert.equal(pending.size, 1); const [id, job] = pending.entries().next().value; pending.delete(id); await job.fn(); await flush(); return job.ms; };
+    await flush();
+    for (let i = 0; i < 12; i++) assert.equal(await step(), Math.min(4000, 250 * 2 ** i));
+    assert.equal(appended, 0);
+    if (death === "recover") {
+      mode = "ok"; await step();
+      assert.equal(appended, 1);
+      assert.equal(frame.src, "/local-avatar/pkg/mount/index.html");
+      assert.equal(pending.size, 0);
+      listeners.get("message")({ source: frame.contentWindow, data: { type: "face-ready" } }); await flush();
+      assert.equal(pending.values().next().value.ms, 100);
+      mode = "error"; await step();
+      assert.equal(pending.values().next().value.ms, 250);
+      listeners.get("pagehide")();
+    } else if (death === "pagehide-inflight") {
+      mode = death; await step();
+      assert.equal(frame.src, undefined);
+    } else if (death === "pagehide") {
+      listeners.get("pagehide")();
+      const previousCalls = calls;
+      await flush();
+      assert.equal(calls, previousCalls);
+    } else {
+      mode = death; await step();
+    }
+    assert.equal(appended, death === "recover" ? 1 : 0);
+    assert.equal(pending.size, 0);
+    assert.ok(calls > 12);
+  }
+});
+
 test("face join option, valid example and next-join settings metadata stay consistent", () => {
   const read = file => fs.readFileSync(path.join(__dirname, "..", file), "utf8");
   const app = require("../public/app");
@@ -566,6 +621,7 @@ test("face join option, valid example and next-join settings metadata stay consi
   assert.match(read("public/settings.js"), /フェイスパッケージ（参加時の指定が必要）/);
   assert.match(read("src/pipeline.js"), /\n {14}onPlaybackStart: \(\) => recordTtsPlaybackStartOnce\(firstChunk/);
   assert.equal(read("docs/face-packages.md").includes("psd\nwoff2`"), false);
+  assert.match(read("docs/face-packages.md"), /deduplication\.\n\n`quality` is optional:/);
 });
 
 test("next-join listening changes publish for future sessions without changing the existing session", (t) => {

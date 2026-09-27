@@ -86,7 +86,9 @@ manifest query must contain at least one pair. Percent escapes and `+` are rejec
 are required. Hosts ignore unknown well-formed values for forward compatibility,
 dropping them from the normalized descriptor and `host-init`; they never enable
 new message types. Non-string or malformed entries and oversized arrays invalidate
-the manifest. The 32-entry limit applies before filtering or deduplication. `quality` is optional: `auto`, `low`, `medium`, or `high`, forwarded in
+the manifest. The 32-entry limit applies before filtering or deduplication.
+
+`quality` is optional: `auto`, `low`, `medium`, or `high`, forwarded in
 `host-init`. Other descriptive manifest fields are ignored and never returned by
 the descriptor. The configured viewport does not resize the meeting video output.
 

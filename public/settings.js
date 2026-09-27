@@ -537,7 +537,8 @@ if (typeof document !== "undefined") {
       if (provenance) wrapper.append(provenance);
       const apply = document.createElement("span");
       apply.className = `apply-badge${entry.apply === "live" ? " live" : ""}`;
-      apply.textContent = entry.apply === "live" ? "すぐに反映" : "次回起動時に反映";
+      apply.textContent = entry.apply === "live" ? "すぐに反映"
+        : entry.apply === "next-join" ? "次の会議参加から反映" : "次回起動時に反映";
       wrapper.append(apply);
       return wrapper;
     }
