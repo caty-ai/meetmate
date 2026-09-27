@@ -188,9 +188,10 @@ class LocalAvatarSession {
     const known = ["joy", "trust", "fear", "surprise", "sadness", "disgust", "anger", "anticipation"];
     if (value.emotion !== null && !known.includes(value.emotion)) return false;
     if (!Number.isFinite(value.intensity) || value.intensity < 0 || value.intensity > 1) return false;
+    if (!Number.isSafeInteger(value.emotionRevision) || value.emotionRevision <= utterance.emotionRevision) return false;
     utterance.emotion = value.emotion;
     utterance.intensity = value.intensity;
-    utterance.emotionRevision += 1;
+    utterance.emotionRevision = value.emotionRevision;
     return true;
   }
 
@@ -201,7 +202,8 @@ class LocalAvatarSession {
 
   publishEmotion(event, sourceGeneration = this._sourceGeneration) {
     if (!this._faceWritable(sourceGeneration) || event?.outputEpoch !== this._outputEpoch) return false;
-    const utterance = this._utterances.find((item) => item.utteranceId === event.utteranceId && item.endSample === null);
+    const utterance = this._utterances.at(-1);
+    if (utterance?.utteranceId !== event.utteranceId) return false;
     if (!utterance || !this._setEmotion(utterance, event)) return false;
     return this._faceSnapshot();
   }
@@ -222,7 +224,7 @@ class LocalAvatarSession {
     }
     if (event?.cue) {
       const normalized = { emotionRevision: 0 };
-      if (this._setEmotion(normalized, event.cue)) {
+      if (this._setEmotion(normalized, { ...event.cue, emotionRevision: 1 })) {
         this._listen.cue = { id: (this._listen.cue?.id || 0) + 1,
           emotion: normalized.emotion, intensity: normalized.intensity, expiresAt: this._now() + 4000 };
       }

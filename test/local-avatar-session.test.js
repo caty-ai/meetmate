@@ -1348,9 +1348,9 @@ function expandSampleTrace(observed) {
 }
 
 async function waitUntil(predicate, timeoutMs = 1000) {
-  const deadline = Date.now() + timeoutMs;
+  const deadline = performance.now() + timeoutMs;
   while (!predicate()) {
-    if (Date.now() >= deadline) throw new Error("timed out waiting for pipeline state");
+    if (performance.now() >= deadline) throw new Error("timed out waiting for pipeline state");
     await new Promise((resolve) => setImmediate(resolve));
   }
 }
@@ -1505,8 +1505,8 @@ require("./local-avatar-face-package-cases");
 test("face pipeline metadata, asynchronous judgement before the lock, and late-result fencing", { concurrency: false }, async () => {
   const previousFetch = global.fetch;
   const previousKey = process.env.TYPESAFE_API_KEY;
-  const judgeCredential = ["synthetic", "judge", "credential"].join("-");
-  process.env.TYPESAFE_API_KEY = judgeCredential;
+  const cred = ["synthetic", "judge", "credential"].join("-");
+  process.env.TYPESAFE_API_KEY = cred;
   const calls = [];
   const resolvers = [];
   global.fetch = (_url, options) => {
@@ -1540,7 +1540,8 @@ test("face pipeline metadata, asynchronous judgement before the lock, and late-r
       assert.deepEqual(ends.map((v) => v.utteranceId), [1, 2]);
       resolvers[1](response);
       await new Promise((resolve) => setImmediate(resolve));
-      assert.equal(updates.length, 1, "judgement after synthesis end is discarded");
+      assert.equal(updates.length, 2, "judgement after synthesis end remains eligible during playback");
+      assert.equal(updates[1].emotionRevision, 1);
       for (const role of ["ack", "progress", "greeting", "timeout"]) await pipeline._test.speakSentence("fixed phrase", null, { role });
       await new Promise((resolve) => setImmediate(resolve));
       assert.equal(calls.length, 2);
@@ -1555,8 +1556,8 @@ test("face pipeline metadata, asynchronous judgement before the lock, and late-r
 test("face listening hooks stay opt-in and rate-limit one judgement per four seconds", { concurrency: false }, async () => {
   const previousFetch = global.fetch;
   const previousKey = process.env.TYPESAFE_API_KEY;
-  const listenValue = ["synthetic", "listening", "credential"].join("-");
-  process.env.TYPESAFE_API_KEY = listenValue;
+  const cred = ["synthetic", "listening", "credential"].join("-");
+  process.env.TYPESAFE_API_KEY = cred;
   let calls = 0;
   global.fetch = async () => { calls += 1; return { ok: true, json: async () => ({ answers: { emotion: { choice: "trust" }, strong: { noul: 0.2 } } }) }; };
   try {
@@ -1564,7 +1565,7 @@ test("face listening hooks stay opt-in and rate-limit one judgement per four sec
       await withFakeNow(10_000, async (clock) => {
         await withPipeline({
           localAvatarSession: { mode: "face-package", listenReactions: enabled },
-          settings: { state: { exists: true, valid: true, parsed: { avatar: { emotionJudge: "jev", faceListenReactions: enabled } } } },
+          settings: { state: { exists: true, valid: true, parsed: { avatar: { emotionJudge: "jev", faceListenReactions: !enabled } } } },
         }, async ({ pipeline, stt }) => {
           const events = [];
           pipeline.on("face_listen", (v) => events.push(v));
@@ -1604,4 +1605,29 @@ test("a prepared tags session puts the canonical emotion on immediate PCM withou
     assert.equal(audio[0].utteranceId, 1);
     assert.equal(audio[0].emotionRevision, 1);
   });
+});
+
+test("pipeline late judgement is fenced by newer audio, cancellation, or abort", { concurrency: false }, async () => {
+  for (const action of ["newer", "cancel", "abort"]) {
+    const resolvers = [], updates = [];
+    const controller = new AbortController();
+    await withPipeline({
+      localAvatarSession: { mode: "face-package", emotionModule: { fromTags: () => null, judgeEmotion: () => new Promise(resolve => resolvers.push(resolve)) } },
+      settings: { state: { exists: true, valid: true, parsed: { avatar: { emotionJudge: "jev" } } } },
+      llm: { streamChat: waitForAbortStream },
+      synthesize: async (_text, { onAudio }) => onAudio(Buffer.alloc(240000)),
+    }, async ({ pipeline }) => {
+      pipeline.on("face_emotion", value => updates.push(value));
+      const pending = action === "cancel" ? pipeline._test.processUserInput("cancel test") : null;
+      if (pending) await waitUntil(() => pipeline._test.getCurrentAbortController());
+      await pipeline._test.speakSentence("first", controller.signal, { faceReply: true });
+      if (action === "newer") await pipeline._test.speakSentence("second", null, { faceReply: true });
+      if (action === "cancel") { assert.equal(pipeline._test.abortCurrent(), true); await pending; }
+      if (action === "abort") controller.abort();
+      resolvers[0]({ emotion: "joy", intensity: 0.8 });
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal(updates.length, 0, action);
+      for (const resolve of resolvers.slice(1)) resolve(null);
+    });
+  }
 });

@@ -318,6 +318,7 @@ function avatarExperimentLabel(value) {
     "": "標準（静止画）",
     "hybrid-local-l0": "2.5Dリグ",
     "hybrid-local-frames": "フレームセット",
+    "face-package": "フェイスパッケージ",
   })[value] || "標準（静止画）";
 }
 

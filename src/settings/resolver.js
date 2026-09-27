@@ -253,10 +253,10 @@ function buildIssues(runtime, options) {
   const values = {};
   const sources = {};
   for (const entry of SETTINGS_REGISTRY) {
-    values[entry.id] = entry.apply === "live"
+    values[entry.id] = entry.apply !== "restart-required"
       ? runtime.published.resolved.values[entry.id]
       : runtime.boot.values[entry.id];
-    sources[entry.id] = entry.apply === "live"
+    sources[entry.id] = entry.apply !== "restart-required"
       ? runtime.published.resolved.sources[entry.id]
       : runtime.boot.sources[entry.id];
   }
@@ -364,7 +364,7 @@ function getEffectiveValue(id) {
   if (id === "immediate_ack_enabled") return getDiagnosticValue(id, runtime);
   const entry = REGISTRY_BY_ID[id];
   if (!entry) return undefined;
-  if (entry.apply === "live") return runtime.published.resolved.values[id];
+  if (entry.apply !== "restart-required") return runtime.published.resolved.values[id];
   return runtime.boot.values[id];
 }
 
@@ -375,7 +375,7 @@ function getEffectiveSource(id) {
   }
   const entry = REGISTRY_BY_ID[id];
   if (!entry) return undefined;
-  return entry.apply === "live" ? runtime.published.resolved.sources[id] : runtime.boot.sources[id];
+  return entry.apply !== "restart-required" ? runtime.published.resolved.sources[id] : runtime.boot.sources[id];
 }
 
 function resolveDynamicSlackToken(runtime = ensureRuntime()) {
@@ -455,8 +455,8 @@ function buildEnvelope() {
     }
     if (entry.writeSurface !== "settings") continue;
     const nextBootEffective = runtime.published.resolved.values[entry.id];
-    const runningValue = entry.apply === "live" ? nextBootEffective : runtime.boot.values[entry.id];
-    const runningSource = entry.apply === "live" ? runtime.published.resolved.sources[entry.id] : runtime.boot.sources[entry.id];
+    const runningValue = entry.apply !== "restart-required" ? nextBootEffective : runtime.boot.values[entry.id];
+    const runningSource = entry.apply !== "restart-required" ? runtime.published.resolved.sources[entry.id] : runtime.boot.sources[entry.id];
     if (entry.apply === "restart-required" && !typedEqual(nextBootEffective, runningValue)) {
       restartRequired.push(entry.id);
     }

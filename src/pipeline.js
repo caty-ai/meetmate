@@ -575,7 +575,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   const { sessionUserFor } = require("./session-user");
   const emitter = new EventEmitter();
   const faceMode = session.localAvatarSession?.mode === "face-package";
-  let faceSequence = 0;
+  let faceSequence = 0, activeFace = 0;
   let faceListenTimer = null;
   let faceCueAt = -Infinity;
   let faceCueGeneration = 0;
@@ -663,6 +663,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     if (faceMode && deliveryOptions.face) {
       const face = deliveryOptions.face;
       face.outputEpoch = outputEpoch;
+      activeFace = face.id;
       metadata.utteranceId = face.id;
       metadata.emotion = face.emotion;
       metadata.intensity = face.intensity;
@@ -1916,14 +1917,14 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   }
 
   function faceListenPulse() {
-    if (!faceMode || session.localAvatarSession.listenReactions !== true || !getEffectiveValue("face_listen_reactions") || turnState.isAgentSpeaking) return;
+    if (!faceMode || session.localAvatarSession.listenReactions !== true || turnState.isAgentSpeaking) return;
     emitObserverEvent("face_listen", { active: true });
     clearTimeout(faceListenTimer);
     faceListenTimer = setTimeout(() => emitObserverEvent("face_listen", { active: false }), 1200);
     faceListenTimer.unref?.();
   }
   function faceListenCue(text) {
-    if (!faceMode || session.localAvatarSession.listenReactions !== true || !getEffectiveValue("face_listen_reactions") || !text) return;
+    if (!faceMode || session.localAvatarSession.listenReactions !== true || !text) return;
     clearTimeout(faceListenTimer);
     emitObserverEvent("face_listen", { active: false });
     const generation = ++faceCueGeneration;
@@ -1931,7 +1932,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     faceCueAt = Date.now();
     import("./emotion/index.js").then(({ judgeEmotion }) => judgeEmotion(text, { mode: "jev", listening: true }))
       .then((cue) => {
-        if (cue && !stopped && generation === faceCueGeneration && getEffectiveValue("face_listen_reactions")) emitObserverEvent("face_listen", { cue });
+        if (cue && !stopped && generation === faceCueGeneration && session.localAvatarSession.listenReactions === true) emitObserverEvent("face_listen", { cue });
       }).catch(() => {});
   }
 
@@ -2880,7 +2881,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
             console.log(`🗣️  ${requestAgentId || "agent"} speaking (first chunk): "${firstChunk}"`);
             await speakSentence(firstChunk, abort.signal, {
               faceReply: true,
-          onPlaybackStart: () => recordTtsPlaybackStartOnce(firstChunk, "first_chunk"),
+              onPlaybackStart: () => recordTtsPlaybackStartOnce(firstChunk, "first_chunk"),
             });
             if (abort.signal.aborted) break;
             spokenSentenceCount += 1;
@@ -3066,7 +3067,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     // `manual` is the operator/gateway-injected speech escape hatch required
     // to remain audible while automatic floor-controlled speech is muted.
     if (suppressForFloorMute(opts.role || "speech", opts)) return;
-    const face = faceMode ? { id: ++faceSequence, emotion: null, intensity: 0, revision: 0, ended: false } : null;
+    const face = faceMode ? { id: ++faceSequence, emotion: null, intensity: 0, revision: 0 } : null;
     if (face && getEffectiveValue("emotion_judge") !== "off") {
       const mode = getEffectiveValue("emotion_judge");
       const emotionModule = session.localAvatarSession.emotionModule;
@@ -3079,13 +3080,13 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
           return loaded.judgeEmotion(text, judgeOptions);
         });
       judgement.then((value) => {
-          if (face.ended || signal?.aborted || stopped) return;
+          if (activeFace > face.id || (face.outputEpoch !== undefined && face.outputEpoch !== outputEpoch) || signal?.aborted || stopped) return;
           if (face.emotion === (value?.emotion || null) && face.intensity === (value?.intensity || 0)) return;
           face.emotion = value?.emotion || null;
           face.intensity = value?.intensity || 0;
           face.revision += 1;
           emitObserverEvent("face_emotion", { utteranceId: face.id, outputEpoch: face.outputEpoch,
-            emotion: face.emotion, intensity: face.intensity });
+            emotion: face.emotion, intensity: face.intensity, emotionRevision: face.revision });
         }).catch(() => {});
     }
     const deliveryOptions = opts.manual === true
@@ -3138,7 +3139,6 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
 
   function finishFaceUtterance(face) {
     if (!face) return;
-    face.ended = true;
     emitObserverEvent("face_end", { utteranceId: face.id, outputEpoch: face.outputEpoch });
   }
 

@@ -141,7 +141,7 @@ const SETTINGS_REGISTRY = Object.freeze([
   d("avatar_experiment", "avatar.experiment", z.enum(["", "hybrid-local-l0", "hybrid-local-frames", "face-package"]), { ux: "basic", apply: "live", defaultValue: "" }),
   d("face_package_dir", "avatar.facePackageDir", absolutePath, { ux: "deployment-readonly", writeSurface: "none", transferable: false }),
   d("emotion_judge", "avatar.emotionJudge", z.enum(["off", "tags", "jev"]), { apply: "live", defaultValue: "off", visibleWhen: { id: "avatar_experiment", value: "face-package" } }),
-  d("face_listen_reactions", "avatar.faceListenReactions", bool, { apply: "live", defaultValue: false, visibleWhen: { id: "avatar_experiment", value: "face-package" } }),
+  d("face_listen_reactions", "avatar.faceListenReactions", bool, { apply: "next-join", defaultValue: false, visibleWhen: { id: "avatar_experiment", value: "face-package" } }),
   d("avatar_rig_background_mode", "avatar.rigBackgroundMode", z.enum(["solid", "image", "chroma"]), { ux: "basic", apply: "live", defaultValue: "solid" }),
   d("avatar_rig_background_color", "avatar.rigBackgroundColor", z.string().regex(/^#[0-9a-f]{6}$/i), { ux: "basic", apply: "live", defaultValue: "#08111f" }),
   d("llm_provider", "llm.provider", z.enum(["openclaw", "openai-compatible"]), { ux: "basic", envAlias: "LLM_PROVIDER", defaultValue: "openclaw" }),

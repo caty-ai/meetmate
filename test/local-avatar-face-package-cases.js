@@ -97,7 +97,7 @@ test("frozen index path matrix, extension allowlist and fixed headers", async (t
   fs.symlinkSync(path.join(root, "app.js"), path.join(root, "inside.js"));
   const issued = issue(t, root);
   const prefix = pkg(issued, "");
-  for (const rel of ["../app.js", "%2e%2e/app.js", "%2fapp.js", "a%2fb.js", "a\\b.js", "%5capp.js", "/app.js", "%00app.js", ".hidden.js", ".private/app.js", "outside.js", "inside.js", "file.svg", "file.wasm", "file.html", "bare", "", "missing.js", "a/./app.js", "./app.js", "app.js#fragment", "app.js\u0000"]) {
+  for (const rel of ["face.json", "../app.js", "%2e%2e/app.js", "%2fapp.js", "a%2fb.js", "a\\b.js", "%5capp.js", "/app.js", "%00app.js", ".hidden.js", ".private/app.js", "outside.js", "inside.js", "file.svg", "file.wasm", "file.html", "bare", "", "missing.js", "a/./app.js", "./app.js", "app.js#fragment", "app.js\u0000"]) {
     assert.equal((await route(prefix + rel)).status, 404, rel);
   }
   for (const rel of ["index.html", "app.js", "pixel.png", "file.mjs", "file.css", "file.json", "file.jpg", "file.jpeg", "file.webp", "file.psd", "file.woff2"]) {
@@ -108,7 +108,7 @@ test("frozen index path matrix, extension allowlist and fixed headers", async (t
     assert.equal(r.headers["Referrer-Policy"], "no-referrer");
     assert.equal(r.headers["Access-Control-Allow-Origin"], "*");
     assert.match(r.headers["Content-Security-Policy"], /^sandbox allow-scripts;/);
-    assert.match(r.headers["Content-Security-Policy"], /script-src 'self'/);
+    assert.ok(r.headers["Content-Security-Policy"].split("; ").includes(`script-src ${origin}${prefix}`));
     assert.equal(r.headers["Content-Security-Policy"].includes("allow-same-origin"), false);
     assert.match(r.headers["Content-Security-Policy"], /media-src 'none'/);
   }
@@ -234,7 +234,7 @@ test("latest snapshot retains multiple starts and ends, revisions and sample bou
   assert.equal(state.intensity, 0);
   assert.equal(state.emotionRevision, 0);
   assert.equal(state.utterances[0].endSample, 100);
-  assert.equal(issued.session.publishEmotion({ utteranceId: 12, outputEpoch: 0, emotion: "joy", intensity: 1 }), false);
+  assert.equal(issued.session.publishEmotion({ utteranceId: 11, emotionRevision: 1, outputEpoch: 0, emotion: "joy", intensity: 1 }), false);
   let now = 0; const messages = [];
   const timeline = createTimeline({ send: (v) => messages.push(v), now: () => now, offset: 0, supports: ["emotion"] });
   timeline.connect(initial.generation); timeline.accept(state); now = 1300; timeline.tick();
@@ -256,7 +256,7 @@ test("timeline cancels stale levels, survives silent gaps, applies active late e
   assert.equal(messages.some((v) => v.type === "speak-end"), false);
   issued.session.publishMarker(marker(1, 100)); timeline.accept(read()); timeline.tick();
   assert.equal(messages.at(-1).v, 0.6);
-  issued.session.publishEmotion({ utteranceId: 1, outputEpoch: 0, emotion: "joy", intensity: 0.7 });
+  issued.session.publishEmotion({ utteranceId: 1, emotionRevision: 1, outputEpoch: 0, emotion: "joy", intensity: 0.7 });
   timeline.accept(read()); timeline.tick();
   assert.equal(messages.filter((v) => v.type === "speak-emotion").length, 1);
   issued.session.cancelPlayback({ outputEpoch: 0 });
@@ -264,7 +264,7 @@ test("timeline cancels stale levels, survives silent gaps, applies active late e
   const fresh = read(); timeline.accept(fresh); timeline.tick();
   assert.ok(messages.some((v) => v.type === "speak-end" && v.id === 1 && v.reason === "interrupt"));
   assert.equal(timeline.accept({ ...fresh, sequence: fresh.sequence - 1 }), false);
-  assert.equal(issued.session.publishEmotion({ utteranceId: 1, outputEpoch: 0, emotion: "anger", intensity: 1 }), false);
+  assert.equal(issued.session.publishEmotion({ utteranceId: 1, emotionRevision: 1, outputEpoch: 0, emotion: "anger", intensity: 1 }), false);
   timeline.connect(initial.generation + 1);
   const count = messages.length; timeline.tick(); assert.equal(messages.length, count);
   assert.equal(timeline.accept(fresh), false);
@@ -294,7 +294,7 @@ test("Jev request shape, role filtering, timeout fallback, neutral and scrubbed 
   const { judgeEmotion } = require("../src/emotion");
   const { scrubLogMessage } = require("../src/log-scrub");
   const previous = process.env.TYPESAFE_API_KEY;
-  const secret = "synthetic-judge-credential";
+  const secret = ["synthetic", "judge", "credential"].join("-");
   process.env.TYPESAFE_API_KEY = secret;
   try {
     const calls = [];
@@ -426,4 +426,162 @@ test("the opened descriptor is rechecked after a concurrent regular-file replace
   };
   try { assert.equal((await route(pkg(issued, "app.js"))).status, 404); }
   finally { fs.openSync = original; }
+});
+
+test("manifest byte cap rejects before reading and accepts exactly 64 KiB", (t) => {
+  const root = fixture(t);
+  const file = path.join(root, "face.json");
+  const body = JSON.stringify(defaultManifest);
+  fs.writeFileSync(file, body.padEnd(64 * 1024, " "));
+  assert.ok(loadPackage(root));
+  fs.appendFileSync(file, " ");
+  const read = fs.readFileSync;
+  let reads = 0;
+  fs.readFileSync = function (file, ...args) { reads++; return read.call(this, file, ...args); };
+  try {
+    assert.equal(loadPackage(root, { warn() {} }), null);
+    assert.equal(reads, 0, "oversized manifest must not reach read/parse");
+  } finally { fs.readFileSync = read; }
+});
+
+test("serve checks liveness before lookup and again after open, closing rejected fd", (t) => {
+  const root = fixture(t), loaded = loadPackage(root);
+  for (const expireDuringOpen of [false, true]) {
+    let live = expireDuringOpen, opened, status, denied = 0;
+    const open = fs.openSync;
+    fs.openSync = function (...args) { opened = open.apply(this, args); live = false; return opened; };
+    const session = { mountId: "mount", publicOrigin: origin, isLive: () => live };
+    const res = new Writable({ write(_chunk, _enc, done) { done(); } });
+    res.writeHead = (s) => { status = s; };
+    try {
+      loaded.serve({ method: "GET" }, res, new URL("/local-avatar/pkg/mount/app.js", origin), session, () => { denied++; });
+      assert.equal(denied, 1);
+      assert.equal(status, undefined);
+      if (expireDuringOpen) assert.throws(() => fs.fstatSync(opened), { code: "EBADF" });
+      else assert.equal(opened, undefined, "dead requests must not open files");
+    } finally { fs.openSync = open; }
+  }
+});
+
+test("two seconds silence then one five second chunk reanchors to the previous end", (t) => {
+  const issued = issue(t, fixture(t)), s = issued.session;
+  const credentials = { capability: issued.capability, origin };
+  const initial = s.connect(credentials);
+  const read = () => s.readState({ ...credentials, generation: initial.generation, afterSequence: -1 });
+  let now = 0; const messages = [];
+  const timeline = createTimeline({ send: v => messages.push(v), now: () => now, offset: 0 });
+  timeline.connect(initial.generation);
+  s.publishMarker(marker(1, 0, { sampleCount: 1000 })); timeline.accept(read()); timeline.tick();
+  now = 3000; // first second of audio, then exactly two seconds without output
+  s.publishMarker(marker(1, 1000, { sampleCount: 5000 }));
+  s.endUtterance({ utteranceId: 1, outputEpoch: 0 }); timeline.accept(read());
+  now = 6003; timeline.tick();
+  assert.equal(messages.some(v => v.type === "speak-end"), false);
+  now = 7999; timeline.tick();
+  assert.equal(messages.some(v => v.type === "speak-end"), false);
+  now = 8000; timeline.tick();
+  assert.equal(messages.filter(v => v.type === "speak-end").length, 1);
+});
+
+test("late emotion retains pipeline revision, deduplicates, and fences supersession/cancel/reset", (t) => {
+  const issued = issue(t, fixture(t)), s = issued.session;
+  const credentials = { capability: issued.capability, origin };
+  const initial = s.connect(credentials);
+  const read = () => s.readState({ ...credentials, generation: initial.generation, afterSequence: -1 });
+  let now = 0; const messages = [];
+  const timeline = createTimeline({ send: v => messages.push(v), now: () => now, offset: 0, supports: ["emotion"] });
+  timeline.connect(initial.generation);
+  s.publishMarker(marker(1, 0, { sampleCount: 5000 }));
+  s.endUtterance({ utteranceId: 1, outputEpoch: 0 }); timeline.accept(read()); timeline.tick();
+  const update = { utteranceId: 1, outputEpoch: 0, emotion: "joy", intensity: 0.8, emotionRevision: 7 };
+  assert.equal(s.publishEmotion(update), true);
+  timeline.accept(read()); timeline.tick();
+  assert.equal(read().utterances[0].emotionRevision, 7);
+  assert.equal(s.publishEmotion(update), false);
+  timeline.accept(read()); timeline.tick();
+  assert.equal(messages.filter(v => v.type === "speak-emotion").length, 1);
+  now = 5000; timeline.tick();
+  assert.equal(s.publishEmotion({ ...update, emotionRevision: 8 }), true);
+  timeline.accept(read()); timeline.tick();
+  assert.equal(messages.filter(v => v.type === "speak-emotion").length, 1, "host ignores after its own end");
+  s.publishMarker(marker(2, 5000));
+  assert.equal(s.publishEmotion({ ...update, emotionRevision: 9 }), false);
+  const next = { ...update, utteranceId: 2 };
+  s.cancelPlayback({ outputEpoch: 0 }); assert.equal(s.publishEmotion(next), false);
+  s.publishMarker(marker(3, 0, { outputEpoch: 1 }));
+  s.connect(credentials);
+  assert.equal(s.publishEmotion({ ...update, utteranceId: 3, outputEpoch: 1 }), false);
+});
+
+test("host retries indefinitely at capped delay, stops on state 401/404 and pagehide", async () => {
+  for (const death of [401, 404, "pagehide"]) for (const phase of ["connect", "poll"]) {
+    const listeners = new Map(), pending = new Map();
+    let serial = 0, mode = "ok", generation = 0, calls = 0;
+    const frame = { style: {}, setAttribute() {}, contentWindow: { postMessage() {} } };
+    const sandbox = {
+      URLSearchParams, location: { pathname: "/local-avatar/face-host.html", search: "?v=v", hash: "" }, history: { replaceState() {} },
+      document: { documentElement: { style: {} }, body: { style: {}, append() {} }, createElement: () => frame },
+      addEventListener: (name, fn) => listeners.set(name, fn), setInterval: () => 1, clearInterval() {},
+      setTimeout: (fn, ms) => { pending.set(++serial, { fn, ms }); return serial; }, clearTimeout: id => pending.delete(id),
+      fetch: async url => {
+        if (url.includes("descriptor")) return { ok: true, json: async () => ({ ...defaultManifest, mountId: "mount" }) };
+        calls++;
+        if (mode === "error") throw Error("network");
+        if (typeof mode === "number") return { ok: false, status: mode };
+        return { ok: true, json: async () => ({ kind: "idle", generation: ++generation, sequence: 0, cancelEpoch: 0, outputEpoch: 0 }) };
+      },
+    };
+    require("node:vm").runInNewContext(fs.readFileSync(path.join(__dirname, "../public/local-avatar/face-host.js"), "utf8"), sandbox);
+    const flush = () => new Promise(resolve => setImmediate(resolve));
+    const step = async () => { assert.equal(pending.size, 1); const [id, job] = pending.entries().next().value; pending.delete(id); await job.fn(); await flush(); return job.ms; };
+    await flush(); listeners.get("message")({ source: frame.contentWindow, data: { type: "face-ready" } }); await flush();
+    mode = "error"; await step();
+    for (let i = 0; i < 12; i++) assert.equal(await step(), Math.min(4000, 250 * 2 ** i));
+    mode = "ok"; await step(); assert.equal(pending.values().next().value.ms, 100);
+    if (death === "pagehide") listeners.get("pagehide")();
+    else {
+      if (phase === "connect") { mode = "error"; await step(); }
+      mode = death; await step();
+    }
+    assert.equal(pending.size, 0);
+    assert.ok(calls > 12);
+  }
+});
+
+test("face join option, valid example and next-join settings metadata stay consistent", () => {
+  const read = file => fs.readFileSync(path.join(__dirname, "..", file), "utf8");
+  const app = require("../public/app");
+  assert.match(read("public/index.html"), /<option value="face-package">フェイスパッケージ<\/option>/);
+  assert.equal(app.avatarExperimentLabel("face-package"), "フェイスパッケージ");
+  const form = new URLSearchParams(); app.appendAvatarExperiment(form, "face-package");
+  assert.equal(form.get("avatarExperiment"), "face-package");
+  const { REGISTRY_BY_ID } = require("../src/settings/registry");
+  const example = JSON.parse(read("config.json.example"));
+  for (const item of Object.values(REGISTRY_BY_ID)) {
+    const value = item.path?.split(".").reduce((obj, key) => obj?.[key], example);
+    if (item.path?.startsWith("avatar.") && value !== undefined) assert.equal(item.schema.safeParse(value).success, true, item.id);
+  }
+  assert.equal(REGISTRY_BY_ID.face_listen_reactions.apply, "next-join");
+  assert.equal(read("public/settings.js").includes("face_package_dir"), false);
+  assert.match(read("public/settings.js"), /フェイスパッケージ（参加時の指定が必要）/);
+  assert.match(read("src/pipeline.js"), /\n {14}onPlaybackStart: \(\) => recordTtsPlaybackStartOnce\(firstChunk/);
+  assert.equal(read("docs/face-packages.md").includes("psd\nwoff2`"), false);
+});
+
+test("next-join listening changes publish for future sessions without changing the existing session", (t) => {
+  const { initializeRuntime, publishState, resetRuntimeForTest, getEffectiveValue, getEffectiveSource, buildEnvelope } = require("../src/settings/resolver");
+  const state = enabled => ({ exists: true, valid: true, parsed: { avatar: { faceListenReactions: enabled } } });
+  try {
+    initializeRuntime({ startup: { resolvedHome: "/tmp/face-settings", preDotenvEnv: {}, dotenvSeeds: {}, connection: {} }, state: state(false) });
+    const first = issue(t, fixture(t));
+    first.session.listenReactions = getEffectiveValue("face_listen_reactions");
+    publishState(state(true));
+    assert.equal(getEffectiveValue("face_listen_reactions"), true);
+    assert.equal(getEffectiveSource("face_listen_reactions"), "config");
+    const second = issue(t, fixture(t));
+    second.session.listenReactions = getEffectiveValue("face_listen_reactions");
+    assert.equal(first.session.listenReactions, false);
+    assert.equal(second.session.listenReactions, true);
+    assert.equal(buildEnvelope().effective.face_listen_reactions, true);
+  } finally { resetRuntimeForTest(); }
 });

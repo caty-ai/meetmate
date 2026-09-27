@@ -68,7 +68,6 @@ const AVATAR_FIELDS = new Set([
   "avatar_experiment",
   "emotion_judge",
   "face_listen_reactions",
-  "face_package_dir",
   "avatar_rig_background_mode",
   "avatar_rig_background_color",
 ]);
@@ -166,7 +165,6 @@ if (typeof document !== "undefined") {
       agent_cancel_ack: "キャンセル確認", agent_timeout_fallback: "タイムアウト",
       agent_avatar_url: "アイコン URL", avatar_experiment: "アバター表示",
       emotion_judge: "表情の感情判定", face_listen_reactions: "聞き手リアクション（実験）",
-      face_package_dir: "Face package directory",
       avatar_rig_background_mode: "アバター背景", avatar_rig_background_color: "アバター背景色",
       llm_provider: "LLM プロバイダー", llm_model: "LLM モデル",
       llm_temperature: "Temperature", llm_max_tokens: "最大トークン数",
@@ -254,7 +252,7 @@ if (typeof document !== "undefined") {
       "": "標準（静止画）",
       "hybrid-local-l0": "2.5Dリグ",
       "hybrid-local-frames": "フレームセット",
-      "face-package": "Face package",
+      "face-package": "フェイスパッケージ（参加時の指定が必要）",
     };
     const RIG_BACKGROUND_OPTION_LABELS = {
       solid: "単色",

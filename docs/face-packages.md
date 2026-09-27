@@ -25,7 +25,9 @@ transferable. Invalid or missing directories/manifests fall back to the static b
 image with `MM-MMT-003` (invalid setting); diagnostic logs do not contain paths.
 
 Each join must explicitly send `avatarExperiment: "face-package"`. A global setting
-alone never enables this renderer for a join. Existing static, rig, and frames joins
+alone uses the static image unless the join requests the face renderer. Select
+フェイスパッケージ in the join form to send this per-join request. The global
+value only exposes face settings; it does not opt subsequent joins in. Existing static, rig, and frames joins
 keep their payload, PCM delivery and state schema. With no face-package session,
 face modules are not imported, package directories are not read, and all face routes
 return 404. Changing settings does not turn a rig session into a face session.
@@ -37,8 +39,9 @@ when a judgement is needed, never as a settings-registry startup value. Jev send
 only cleaned agent reply segments, not acknowledgements, progress pings, greeting
 or timeout fallbacks. It runs concurrently with speech, before the TTS lock wait,
 with an 800 ms timeout. Failures fall back to canonical Fish tags, then neutral.
-It never delays audio. A very short sentence may end before Jev answers; that result
-is discarded. The first canonical tag in textual order wins; unknown tags are ignored:
+It never delays audio. Late results remain eligible after synthesis finishes until a newer utterance
+starts, cancellation, or generation reset. The host applies an update only to its
+active id and ignores it after playback reaches its own speak-end. The first canonical tag in textual order wins; unknown tags are ignored:
 
 | Fish tag | Emotion | Intensity |
 |---|---|---|
@@ -67,7 +70,8 @@ receive the corresponding messages. Start a new meeting after changing this flag
 }
 ```
 
-`face.json` and the entry file are required. `entry` must be a safe relative path to
+`face.json` and the entry file are required. The manifest is limited to 64 KiB
+before reading/parsing and is never served through the package mount. `entry` must be a safe relative path to
 an indexed `.html` file, with no query, fragment, dot-prefixed component, backslash,
 percent escape, or colon. `query` is optional: one to four plain `key=value` pairs,
 joined by `&`. Keys contain 1–40 and values 0–40 characters from `[A-Za-z0-9_.-]`.
@@ -88,7 +92,7 @@ the descriptor. The configured viewport does not resize the meeting video output
 
 Keep all resources in the folder. No network dependencies, inline scripts, SVG,
 Wasm, service workers, storage, microphone, media playback or AudioContext playback
-path are permitted. Move scripts into `.js` or `.mjs` files. Relative worker scripts
+path are permitted. Package scripts must be files inside the package (`.js` or `.mjs`). Relative worker scripts
 may require an in-memory blob worker in an opaque-origin sandbox. Inline CSS,
 blob workers, data/blob images and package-local fetches are supported. Do not embed
 audio controls in the package; the meeting pipeline exclusively owns sound (ADR 09).
@@ -161,14 +165,14 @@ mtime/ctime, then opens without following symlinks and rechecks the descriptor.
 Install a replacement package between meetings; changing files in a live mount
 makes those files unavailable until the next session.
 
-Only GET is supported. Fixed MIME types allow `js mjs css json png jpg jpeg webp psd
-woff2`, and `html` only for the declared entry. There is no directory listing.
+Only GET is supported. Fixed MIME types allow `js`, `mjs`, `css`, `json`, `png`,
+`jpg`, `jpeg`, `webp`, `psd`, `woff2`, and `html` only for the declared entry. There is no directory listing.
 Responses carry `nosniff`, `no-store`, `no-referrer`, and CORS `*` only on package
 files, which allows their opaque-origin renderer to load them. The entry response
 CSP begins with `sandbox allow-scripts`; the iframe independently sets
 `sandbox="allow-scripts" allow=""`. Neither grants same-origin privileges, forms,
 popups or top navigation. Resource fetches are restricted to this mount; scripts
-are same-origin and cannot be inline. Host CSP adds only `frame-src 'self'` to the
+must come from this package mount and cannot be inline. Host CSP adds only `frame-src 'self'` to the
 existing strict local-avatar policy. Media is denied. Package rules also prohibit
 Web Audio: sandboxing alone cannot guarantee that arbitrary code never creates an
 audio graph, so use renderer-only packages.

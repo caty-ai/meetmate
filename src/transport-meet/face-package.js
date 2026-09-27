@@ -12,7 +12,7 @@ const TYPES = Object.freeze({
   ".jpeg": "image/jpeg", ".webp": "image/webp", ".psd": "application/octet-stream", ".woff2": "font/woff2",
 });
 const SUPPORTS = new Set(["speak", "level", "emotion", "background", "listen", "cue"]);
-const LIMITS = Object.freeze({ files: 2000, depth: 8, path: 200, file: 64 * 1024 ** 2, total: 256 * 1024 ** 2 });
+const LIMITS = Object.freeze({ manifest: 64 * 1024, files: 2000, depth: 8, path: 200, file: 64 * 1024 ** 2, total: 256 * 1024 ** 2 });
 
 function safePath(value) {
   return typeof value === "string" && value.length > 0 && value.length <= LIMITS.path
@@ -76,6 +76,7 @@ function loadPackage(directory, { warn = console.warn } = {}) {
         return null;
       }
     }
+    if (index.get("face.json")?.stat.size > BigInt(LIMITS.manifest)) throw new Error("manifest size");
     const manifestFile = openIndexed("face.json");
     if (!manifestFile) throw new Error("manifest");
     let manifest;
@@ -100,7 +101,7 @@ function loadPackage(directory, { warn = console.warn } = {}) {
       if (req.method !== "GET" || !session.isLive() || (url.search && !PLAIN_QUERY.test(url.search.slice(1)))) return notFound();
       const prefix = `/local-avatar/pkg/${session.mountId}/`;
       const rel = url.pathname.slice(prefix.length);
-      if (!url.pathname.startsWith(prefix) || !safePath(rel)) return notFound();
+      if (!url.pathname.startsWith(prefix) || !safePath(rel) || rel === "face.json") return notFound();
       const ext = path.extname(rel);
       if (!Object.hasOwn(TYPES, ext) || (ext === ".html" && rel !== descriptor.entry)) return notFound();
       const opened = openIndexed(rel);
@@ -108,7 +109,7 @@ function loadPackage(directory, { warn = console.warn } = {}) {
       if (!session.isLive()) { fs.closeSync(opened.fd); return notFound(); }
       // Restrict resource fetches to this mount, not privileged same-origin APIs.
       const source = `${session.publicOrigin}${prefix}`;
-      const csp = ["sandbox allow-scripts", "default-src 'none'", "script-src 'self'",
+      const csp = ["sandbox allow-scripts", "default-src 'none'", `script-src ${source}`,
         `connect-src ${source} blob: data:`, `img-src ${source} blob: data:`,
         `style-src ${source} 'unsafe-inline'`, `font-src ${source}`,
         `worker-src ${source} blob:`, "media-src 'none'", "object-src 'none'",

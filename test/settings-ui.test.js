@@ -142,7 +142,7 @@ test("client field sets deep-match registry UI metadata", () => {
       .map((entry) => entry.id).sort());
   }
   assert.deepEqual(ids(CLIENT_FIELD_SETS.AVATAR_FIELDS), SETTINGS_REGISTRY
-    .filter((entry) => entry.path?.startsWith("avatar."))
+    .filter((entry) => entry.path?.startsWith("avatar.") && entry.writeSurface === "settings")
     .map((entry) => entry.id).sort());
 
   const source = require("node:fs").readFileSync(require.resolve("../public/settings.js"), "utf8");

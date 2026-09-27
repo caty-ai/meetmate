@@ -23,7 +23,7 @@ type SettingDefinition = {
   schema: ZodType;                  // strict field validator
   ux: "basic" | "detail" | "deployment-readonly" | "hidden";
   credential: "class-1" | "none"; // class 2/3 entries are forbidden
-  apply: "restart-required" | "live";
+  apply: "restart-required" | "live" | "next-join";
   envAlias: string | null;
   defaultValue?: unknown;
   requiredWhen?:
@@ -35,7 +35,7 @@ type SettingDefinition = {
 };
 ```
 
-`apply` is `restart-required` unless the table explicitly says `live`. `writeSurface` defaults to `settings` for `basic|detail`; every `deployment-readonly` entry is `none`, and `audio_clips` is `audio-only`. `transferable` defaults to `true`; `false` means the setting is never exported or imported. `hidden` is reserved for registry fields that are conditionally irrelevant in the UI; it does not permit class 2 or class 3. Deployment-readonly values may be returned for diagnosis but PUT/import must reject changes to them. Credential values use `z.string().trim().min(1).max(4096)` and the masked round trip in §8.
+`apply` is `restart-required` unless the table explicitly says `live` or `next-join`. `next-join` is saved immediately and captured when a new meeting starts. `writeSurface` defaults to `settings` for `basic|detail`; every `deployment-readonly` entry is `none`, and `audio_clips` is `audio-only`. `transferable` defaults to `true`; `false` means the setting is never exported or imported. `hidden` is reserved for registry fields that are conditionally irrelevant in the UI; it does not permit class 2 or class 3. Deployment-readonly values may be returned for diagnosis but PUT/import must reject changes to them. Credential values use `z.string().trim().min(1).max(4096)` and the masked round trip in §8.
 
 `requiredWhen` is the closed meeting-start predicate vocabulary. `{always:true}` is unconditional. `{transport:[...]}` uses a non-empty list of canonical server-derived session transports; an absent or unknown join transport evaluates every transport predicate as required. `{setting,equals}` compares the resolved registry value, and `explicit:true` additionally requires that setting's source to be neither `default` nor `unset`. A join re-evaluates these predicates for its server-derived transport. The context-free `/health.meetingReady` retains the Attendee-plane requirements and includes the Discord transport requirement only when Discord is configured by a meaningful `discord.botToken` or a non-empty `discord.guildAllowlist`. Resolver-owned dynamic Slack-token and OpenAI-compatible TTS hostname exceptions remain outside this vocabulary.
 
@@ -63,7 +63,7 @@ The allowlist below is complete. The compact type notation is directly translata
 | `avatar_experiment` | `avatar.experiment` | `enum(,hybrid-local-l0,hybrid-local-frames,face-package)` / empty | basic | none | live | none | default |
 | `face_package_dir` | `avatar.facePackageDir` | absolute path | deployment-readonly | none | restart-required | none | false |
 | `emotion_judge` | `avatar.emotionJudge` | enum(off,tags,jev) / `off` | detail | none | live | none | default |
-| `face_listen_reactions` | `avatar.faceListenReactions` | bool / `false` | detail | none | live | none | default |
+| `face_listen_reactions` | `avatar.faceListenReactions` | bool / `false` | detail | none | next-join | none | default |
 | `avatar_rig_background_mode` | `avatar.rigBackgroundMode` | `enum(solid,image,chroma)` / `solid` | basic | none | live | none | default |
 | `avatar_rig_background_color` | `avatar.rigBackgroundColor` | `hex-color` / `#08111f` | basic | none | live | none | default |
 | `llm_provider` | `llm.provider` | `enum(openclaw,openai-compatible)` / `openclaw` | basic | none | restart-required | `LLM_PROVIDER` | default |
@@ -263,14 +263,14 @@ The registry is the UX source of truth: generated UI grouping, inventory UX, DTO
 
 ### Runtime state and snapshot-publish model
 
-At bootstrap, the resolver computes a typed `bootOperationalSnapshot` from the four tiers above. That snapshot is the current process's running value for every `restart-required` editable field and is immutable for the lifetime of the process. `SettingsEnvelope.effective` means **the values this process is using now**, not a preview of values after restart: restart-required entries come from `bootOperationalSnapshot`, while `live` entries are read from the latest atomically published snapshot. A successful publish therefore makes a live edit observable to all subsequent reads and operations without rereading `config.json` and without restarting.
+At bootstrap, the resolver computes a typed `bootOperationalSnapshot` from the four tiers above. That snapshot is the current process's running value for every `restart-required` editable field and is immutable for the lifetime of the process. `SettingsEnvelope.effective` means **the values this process is using now**, not a preview of values after restart: restart-required entries come from `bootOperationalSnapshot`, while `live` and `next-join` entries are read from the latest atomically published snapshot. A `next-join` consumer captures that value at meeting creation; active meetings retain their captured value. A successful publish therefore makes a live edit observable to all subsequent reads and operations without rereading `config.json` and without restarting.
 
 The store owns one immutable `publishedSnapshot`. After rename, fsync, re-read, and validation succeed, it swaps that snapshot in memory before returning success. The same publish invalidates every module-level cache derived from editable settings, explicitly including `resolveAgentProfile._cached` and equivalent profile/provider/message caches, so the next access derives live values from the new snapshot. Consumers must neither reread the file nor retain a reference to a superseded mutable object. On transaction failure, neither `publishedSnapshot` nor any cache generation changes.
 
 For each editable registry entry `r`, let `running(r)` be its current process value as defined above and let `nextBootEffective(r)` be the value the resolver would produce for `r` at the next boot: the full four-tier resolution of §3 (pre-dotenv OS/shell snapshot of the current process, then the newly committed store, then the `.env` seed, then the code default). `nextBootEffective` is a prediction of the post-restart running value, so a missing/nonmeaningful stored value falls through to the lower tiers exactly as the resolver would at boot — it is never compared as a bare `UNSET`. Equality uses §3's typed normalization and compares unmasked credential values internally. The response is calculated at publish time as:
 
 ```text
-effective[r] = r.apply == "live" ? publishedSnapshot.resolved[r]
+effective[r] = r.apply != "restart-required" ? publishedSnapshot.resolved[r]
                                   : bootOperationalSnapshot[r]
 restartRequired = sort(unique({ r.id |
   r.writeSurface == "settings" &&
@@ -279,7 +279,7 @@ restartRequired = sort(unique({ r.id |
 }))
 ```
 
-Live entries are excluded from `restartRequired` at publish time even if their stored bytes changed, because their running value changes with the published snapshot. Restart-required entries remain at the boot value until a new process boots; publishing their saved values changes `fields` and `restartRequired`, but not `effective` or its boot-time `sources` entry. After restart, the resolver establishes a new `bootOperationalSnapshot` and recomputes the list against the same nextBootEffective-versus-running formula, which by construction empties the list when no tier input changed across the restart: a config that omits a path (falling through to its default or seed) and an OS launch override that masks a differing stored value both yield `nextBootEffective(r) == running(r)`, so neither produces a permanent restart prompt. The override badge — not `restartRequired` — is what explains that a stored edit is masked by an OS override. Test T12-04 must include the case "publish a restart-required edit, restart, and assert `restartRequired` is empty", plus the negative cases above (omitted path; OS override) asserting the field never enters the list.
+Live and next-join entries are excluded from `restartRequired` at publish time even if their stored bytes changed, because their running value changes with the published snapshot. Restart-required entries remain at the boot value until a new process boots; publishing their saved values changes `fields` and `restartRequired`, but not `effective` or its boot-time `sources` entry. After restart, the resolver establishes a new `bootOperationalSnapshot` and recomputes the list against the same nextBootEffective-versus-running formula, which by construction empties the list when no tier input changed across the restart: a config that omits a path (falling through to its default or seed) and an OS launch override that masks a differing stored value both yield `nextBootEffective(r) == running(r)`, so neither produces a permanent restart prompt. The override badge — not `restartRequired` — is what explains that a stored edit is masked by an OS override. Test T12-04 must include the case "publish a restart-required edit, restart, and assert `restartRequired` is empty", plus the negative cases above (omitted path; OS override) asserting the field never enters the list.
 
 ## 4. 8.x class-2 and class-1 migration behavior
 

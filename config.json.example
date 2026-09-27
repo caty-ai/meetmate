@@ -260,7 +260,6 @@
   },
   "avatar": {
     "experiment": "",
-    "facePackageDir": "",
     "emotionJudge": "off",
     "faceListenReactions": false
   }

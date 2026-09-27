@@ -72,7 +72,7 @@
       const endSample = Math.max(...nextUtterances.map((u) => u.lastSample));
       const time = now();
       if (anchor === null) anchor = time + offset - nextUtterances[0].utteranceStartSample / rate * 1000;
-      else if (newest !== null && endSample > newest && (time - anchor) * rate / 1000 - endSample >= rate * 0.5) {
+      else if (newest !== null && endSample > newest && (time - anchor) * rate / 1000 - newest >= rate * 0.5) {
         // The output sample clock pauses during synthesis gaps, even in one epoch.
         anchor = time + offset - newest / rate * 1000;
       }
@@ -149,12 +149,13 @@
   const later = (fn, ms) => { if (!stopped) { clearTimeout(timer); timer = setTimeout(fn, ms); } };
   function backoff() {
     timeline.reset();
-    if (++reconnects >= 6) { stopped = true; frame.style.visibility = "hidden"; return; }
+    reconnects = Math.min(reconnects + 1, 5);
     later(connect, Math.min(4000, 250 * 2 ** (reconnects - 1)));
   }
   async function connect() {
     try {
       const response = await request("/local-avatar/state", { connect: "1" });
+      if (response.status === 404 || response.status === 401) { stopped = true; timeline.reset(); return; }
       if (!response.ok) throw new Error("rejected");
       const state = await response.json();
       if (!timeline.connect(state.generation)) throw new Error("generation");
@@ -171,6 +172,7 @@
     try {
       const response = await request("/local-avatar/state", { generation: String(generation), after: String(sequence) });
       if (response.status !== 204) {
+        if (response.status === 404 || response.status === 401) { stopped = true; timeline.reset(); return; }
         if (!response.ok) throw new Error("rejected");
         const state = await response.json();
         if (!timeline.accept(state)) throw new Error("state");
