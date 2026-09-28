@@ -129,6 +129,7 @@ and speak-emotion is not sent. Optional messages require declared capabilities.
 
 The host keeps the background visible and the iframe hidden until `face-ready`;
 `face-hello` alone starts initialization but does not reveal an unready frame.
+The hidden frame stays laid out and rendered (`opacity:0`, not `visibility:hidden`) so the package can reach its first animation frame.
 The package may send ready directly. Handshake messages are idempotent. Start is
 sent before levels or emotion updates for an id. Every temporal message includes
 an id; discard stale levels, emotion updates and ends for other ids. Normal end

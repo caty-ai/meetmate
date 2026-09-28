@@ -360,6 +360,9 @@ test("host handshake validates source, preserves background, forwards query and 
     assert.equal(frame.src, "/local-avatar/pkg/mount/index.html?quality=low");
     assert.equal(sandbox.document.documentElement.style.background, "#123456");
     const message = listeners.get("message");
+    // Regression guard: a visibility/display-hidden frame starves the package's rAF and never reaches face-ready.
+    assert.match(frame.style.cssText, /opacity:0/);
+    assert.doesNotMatch(frame.style.cssText, /visibility:hidden|display:none|width:0|height:0/);
     message({ source: {}, data: { type: "face-ready" } });
     assert.equal(requests.length, 1);
     message({ source: frame.contentWindow, data: { type: "unknown" } });
@@ -371,7 +374,7 @@ test("host handshake validates source, preserves background, forwards query and 
     assert.equal(requests.length, 1);
     message({ source: frame.contentWindow, data: { type: "face-ready" } });
     await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(frame.style.visibility, "visible");
+    assert.equal(frame.style.opacity, "1");
     assert.equal(requests.length, 2);
     assert.equal(posted.every((item) => item.target === "*" && !JSON.stringify(item.data).includes("synthetic-capability")), true);
     assert.equal(requests[0].options.headers.Authorization, "Bearer synthetic-capability");

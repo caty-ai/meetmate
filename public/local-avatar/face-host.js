@@ -119,7 +119,8 @@
   const frame = document.createElement("iframe");
   frame.setAttribute("sandbox", "allow-scripts");
   frame.setAttribute("allow", "");
-  frame.style.cssText = "border:0;width:100vw;height:100vh;display:block;visibility:hidden";
+  // opacity, not visibility: Chrome throttles rAF in hidden cross-origin frames, so a package waiting for its first frame would never send face-ready.
+  frame.style.cssText = "border:0;width:100vw;height:100vh;display:block;opacity:0";
   let descriptor, timeline, ready = false, sequence = -1, generation = 0, background;
   let stopped = false, reconnects = 0, timer;
   // An opaque-origin iframe requires '*'. Only non-secret visual protocol data
@@ -142,7 +143,7 @@
     if (data.type === "face-hello") init();
     if (data.type === "face-ready") {
       if (ready) return;
-      ready = true; frame.style.visibility = "visible"; init();
+      ready = true; frame.style.opacity = "1"; init();
       connect();
     }
   });
