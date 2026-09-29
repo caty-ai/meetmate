@@ -644,3 +644,97 @@ test("next-join listening changes publish for future sessions without changing t
     assert.equal(buildEnvelope().effective.face_listen_reactions, true);
   } finally { resetRuntimeForTest(); }
 });
+
+test("timeline offset setting is a bounded next-join integer rejected with the existing error shape", () => {
+  const { REGISTRY_BY_ID } = require("../src/settings/registry");
+  const { parseStrict, settingsMutationSchema } = require("../src/settings/schemas");
+  const { initializeRuntime, resetRuntimeForTest, getEffectiveValue, getEffectiveSource, buildEnvelope } = require("../src/settings/resolver");
+  const entry = REGISTRY_BY_ID.face_timeline_offset_ms;
+  assert.equal(entry.path, "avatar.faceTimelineOffsetMs");
+  assert.equal(entry.apply, "next-join");
+  assert.equal(entry.defaultValue, 300);
+  assert.equal(entry.envAlias, null);
+  assert.deepEqual(entry.visibleWhen, { id: "avatar_experiment", value: "face-package" });
+  const body = value => ({ schemaVersion: 1, revision: "bootstrap", fields: { face_timeline_offset_ms: value } });
+  for (const value of [-3000, -700, 0, 300, 3000]) assert.equal(parseStrict(settingsMutationSchema, body(value)).fields.face_timeline_offset_ms, value);
+  for (const [value, code] of [[-3001, "too_small"], [3001, "too_big"], [300.5, "invalid_type"], ["300", "invalid_type"],
+    [null, "invalid_type"], [true, "invalid_type"]]) {
+    assert.throws(() => parseStrict(settingsMutationSchema, body(value)), (error) => {
+      assert.equal(error.code, "SETTINGS_VALIDATION_FAILED");
+      assert.deepEqual(error.details, [{ path: "fields.face_timeline_offset_ms", code }]);
+      return true;
+    }, String(value));
+  }
+  const startup = { resolvedHome: "/tmp/face-settings", preDotenvEnv: {}, dotenvSeeds: {}, connection: {} };
+  try {
+    initializeRuntime({ startup, state: { exists: true, valid: true, parsed: { avatar: {} } } });
+    assert.equal(getEffectiveValue("face_timeline_offset_ms"), 300);
+    assert.equal(getEffectiveSource("face_timeline_offset_ms"), "default");
+    initializeRuntime({ startup, state: { exists: true, valid: true, parsed: { avatar: { faceTimelineOffsetMs: 3001 } } } });
+    assert.equal(getEffectiveValue("face_timeline_offset_ms"), 300);
+    assert.ok(buildEnvelope().issues.some((issue) => issue.fieldId === "face_timeline_offset_ms" && issue.code === "VALUE_INVALID"));
+  } finally { resetRuntimeForTest(); }
+});
+
+test("descriptor carries the session timeline offset and the package descriptor cannot override it", async (t) => {
+  const loaded = loadPackage(fixture(t));
+  for (const [sessionValue, packageValue] of [[undefined, undefined], [300, undefined], [-700, undefined], [-700, 3000], [undefined, -3000]]) {
+    const facePackage = packageValue === undefined ? loaded
+      : { ...loaded, descriptor: { ...loaded.descriptor, timelineOffsetMs: packageValue } };
+    const issued = createLocalAvatarSession({ publicOrigin: origin, mode: "face-package", facePackage, htmlRoute: "/local-avatar/face-host.html" });
+    t.after(() => issued.session.close());
+    if (sessionValue !== undefined) issued.session.timelineOffsetMs = sessionValue;
+    const response = await route(`/local-avatar/face-descriptor?v=${issued.session.visualId}`, auth(issued));
+    assert.equal(response.status, 200);
+    const descriptor = JSON.parse(response.body);
+    assert.equal(descriptor.timelineOffsetMs, sessionValue, `${sessionValue}/${packageValue}`);
+    assert.equal(Object.hasOwn(descriptor, "timelineOffsetMs"), sessionValue !== undefined);
+  }
+});
+
+test("host passes a valid descriptor offset to the timeline and falls back to 300 otherwise", async () => {
+  const vm = require("node:vm");
+  const source = fs.readFileSync(path.join(__dirname, "..", "public/local-avatar/face-host.js"), "utf8");
+  const T0 = 1_000_000;
+  async function firstSpeakStart(descriptorOffset, expected) {
+    const listeners = new Map(), posted = [];
+    let clock = T0, ticker;
+    const frame = { style: {}, setAttribute() {}, contentWindow: { postMessage: (data) => posted.push(data) } };
+    const descriptor = { ...defaultManifest, mountId: "mount", ...(descriptorOffset === undefined ? {} : { timelineOffsetMs: descriptorOffset }) };
+    const state = { kind: "marker", generation: 1, sequence: 1, cancelEpoch: 0, outputEpoch: 0, sampleRate: 1000, envelopes: [],
+      utterances: [{ utteranceId: 1, utteranceStartSample: 0, lastSample: 5000, endSample: null, emotionRevision: 0, emotion: null, intensity: 0 }] };
+    const sandbox = {
+      URLSearchParams, Date: { now: () => clock }, location: { pathname: "/local-avatar/face-host.html", search: "?v=v", hash: "" }, history: { replaceState() {} },
+      document: { documentElement: { style: {} }, body: { style: {}, append() {} }, createElement: () => frame },
+      addEventListener: (name, fn) => listeners.set(name, fn), setInterval: (fn) => { ticker = fn; return 1; }, clearInterval() {},
+      setTimeout: () => 1, clearTimeout() {},
+      fetch: async (url) => ({ ok: true, json: async () => url.includes("descriptor") ? descriptor : state }),
+    };
+    vm.runInNewContext(source, sandbox);
+    const flush = () => new Promise((resolve) => setImmediate(resolve));
+    await flush();
+    listeners.get("message")({ source: frame.contentWindow, data: { type: "face-ready" } });
+    await flush();
+    const startsAt = (time) => { clock = time; posted.length = 0; ticker(); return posted.some((v) => v.type === "speak-start"); };
+    assert.equal(startsAt(T0 + expected - 1), false, `${descriptorOffset}: face started early`);
+    assert.equal(startsAt(T0 + expected), true, `${descriptorOffset}: face did not start at ${expected}`);
+    listeners.get("pagehide")();
+  }
+  for (const value of [-3000, -700, 0, 300, 3000]) await firstSpeakStart(value, value);
+  for (const value of [undefined, null, -3001, 3001, 300.5, "-700", true, Number.MAX_SAFE_INTEGER + 2]) await firstSpeakStart(value, 300);
+});
+
+test("createTimeline shifts the anchor by the offset and keeps 300 as its default", () => {
+  const starts = (options) => {
+    let now = 0; const messages = [];
+    const timeline = createTimeline({ send: (v) => messages.push(v), now: () => now, ...options });
+    timeline.connect(1);
+    timeline.accept({ generation: 1, sequence: 1, cancelEpoch: 0, outputEpoch: 0, kind: "marker", sampleRate: 1000, envelopes: [],
+      utterances: [{ utteranceId: 1, utteranceStartSample: 0, lastSample: 5000, endSample: null, emotionRevision: 0, emotion: null, intensity: 0 }] });
+    for (now = -3000; now <= 3000; now++) { timeline.tick(); if (messages.some((v) => v.type === "speak-start")) return now; }
+    return null;
+  };
+  assert.equal(starts({}), 300);
+  assert.equal(starts({ offset: -700 }), -700);
+  assert.equal(starts({ offset: 300 }) - starts({ offset: -700 }), 1000);
+});

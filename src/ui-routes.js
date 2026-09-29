@@ -114,7 +114,8 @@ function serveLocalAvatar(req, res, url = new URL(req.url || "/", "http://localh
       if (req.method !== "POST" || req.headers?.origin !== session.publicOrigin
         || !session.verifyCapability(readBearerCapability(req.headers?.authorization))) notFound();
       else writeLocalAvatarJson(res, 200, { mountId: session.mountId, ...session.facePackage.descriptor,
-        background: { ...session._background }, listenReactions: session.listenReactions });
+        background: { ...session._background }, listenReactions: session.listenReactions,
+        timelineOffsetMs: session.timelineOffsetMs });
       return true;
     }
     if (req.method !== "GET" || !["/local-avatar/face-host.html", "/local-avatar/face-host.js"].includes(url.pathname)) {

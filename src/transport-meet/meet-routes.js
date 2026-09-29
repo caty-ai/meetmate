@@ -1386,6 +1386,7 @@ async function handleHttp(req, res) {
         localAvatarLaunchUrl = issued?.launchUrl || null;
         if (localAvatarSession?.mode === "face-package") {
           localAvatarSession.listenReactions = getEffectiveValue("face_listen_reactions");
+          localAvatarSession.timelineOffsetMs = getEffectiveValue("face_timeline_offset_ms");
           if (getEffectiveValue("emotion_judge") !== "off") localAvatarSession.emotionModule = await import("../emotion/index.js");
         }
         session.localAvatarSession = localAvatarSession;
