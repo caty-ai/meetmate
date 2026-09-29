@@ -56,6 +56,7 @@ const NUMBER_FIELDS = new Set([
   "llm_temperature", "llm_max_tokens", "llm_history_max_turns", "soniox_endpoint_sensitivity",
   "soniox_max_endpoint_delay_ms", "soniox_endpoint_latency_level", "listen_endpointing_ms",
   "listen_utterance_end_ms", "fish_audio_speed", "tts_sample_rate", "gateway_warmup_timeout_ms",
+  "face_timeline_offset_ms",
 ]);
 const NULLABLE_NUMBER_FIELDS = new Set([
   "soniox_endpoint_sensitivity", "soniox_max_endpoint_delay_ms", "soniox_endpoint_latency_level",
@@ -68,6 +69,7 @@ const AVATAR_FIELDS = new Set([
   "avatar_experiment",
   "emotion_judge",
   "face_listen_reactions",
+  "face_timeline_offset_ms",
   "avatar_rig_background_mode",
   "avatar_rig_background_color",
 ]);
@@ -165,6 +167,7 @@ if (typeof document !== "undefined") {
       agent_cancel_ack: "キャンセル確認", agent_timeout_fallback: "タイムアウト",
       agent_avatar_url: "アイコン URL", avatar_experiment: "アバター表示",
       emotion_judge: "表情の感情判定", face_listen_reactions: "聞き手リアクション（実験）",
+      face_timeline_offset_ms: "口パクのタイミング調整（ms）",
       avatar_rig_background_mode: "アバター背景", avatar_rig_background_color: "アバター背景色",
       llm_provider: "LLM プロバイダー", llm_model: "LLM モデル",
       llm_temperature: "Temperature", llm_max_tokens: "最大トークン数",
@@ -215,6 +218,7 @@ if (typeof document !== "undefined") {
       avatar_experiment: "次回の会議参加から反映されます",
       emotion_judge: "off は感情判定なし。jev は返答文を外部の判定サービスへ送ります。",
       face_listen_reactions: "実験機能。次の face-package 参加から有効です。jev と併用すると相手の発言も判定サービスへ送ります。",
+      face_timeline_offset_ms: "-3000〜3000 の整数（既定 300）。口が声より遅れるときは値を下げ（マイナス可）、早いときは上げます。100〜200 ずつ調整してください。次の会議参加から反映されます。",
       avatar_rig_background_mode: "2.5Dリグとフレームセットの両方に適用され、次回の会議参加から反映されます。画像モードで背景画像が未埋め込みの場合: このビルドには背景画像が埋め込まれていません",
       avatar_rig_background_color: "2.5Dリグとフレームセットの両方で、単色または画像の読み込み失敗時に使う #rrggbb 形式の色です。次回の会議参加から反映されます",
       task_extraction_enabled: "会議終了時に TODO を抽出します。",
@@ -705,7 +709,7 @@ if (typeof document !== "undefined") {
           || (FISH_TTS_FIELDS.has(entry.id) && tts !== "fish-audio")
           || (ELEVENLABS_TTS_FIELDS.has(entry.id) && tts !== "elevenlabs")
           || (OPENAI_COMPATIBLE_TTS_FIELDS.has(entry.id) && tts !== "openai-compatible")
-          || (["emotion_judge", "face_listen_reactions"].includes(entry.id) && avatar !== "face-package");
+          || (["emotion_judge", "face_listen_reactions", "face_timeline_offset_ms"].includes(entry.id) && avatar !== "face-package");
         field.classList.toggle("is-hidden", hidden);
       }
     }

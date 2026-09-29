@@ -64,6 +64,7 @@ The allowlist below is complete. The compact type notation is directly translata
 | `face_package_dir` | `avatar.facePackageDir` | absolute path | deployment-readonly | none | restart-required | none | false |
 | `emotion_judge` | `avatar.emotionJudge` | enum(off,tags,jev) / `off` | detail | none | live | none | default |
 | `face_listen_reactions` | `avatar.faceListenReactions` | bool / `false` | detail | none | next-join | none | default |
+| `face_timeline_offset_ms` | `avatar.faceTimelineOffsetMs` | `int(-3000,3000)` / `300` | detail | none | next-join | none | default |
 | `avatar_rig_background_mode` | `avatar.rigBackgroundMode` | `enum(solid,image,chroma)` / `solid` | basic | none | live | none | default |
 | `avatar_rig_background_color` | `avatar.rigBackgroundColor` | `hex-color` / `#08111f` | basic | none | live | none | default |
 | `llm_provider` | `llm.provider` | `enum(openclaw,openai-compatible)` / `openclaw` | basic | none | restart-required | `LLM_PROVIDER` | default |
@@ -686,6 +687,10 @@ Invalid/unset packages use the static image and log `MM-MMT-003` without paths.
 `emotion_judge` (`avatar.emotionJudge`) is live, `off` (default) / `tags` / `jev`.
 `face_listen_reactions` (`avatar.faceListenReactions`) defaults to false and applies
 only to explicitly created face sessions (start a new meeting after changing it).
+`face_timeline_offset_ms` (`avatar.faceTimelineOffsetMs`) is a signed integer in
+[-3000, 3000], default 300, next-join: the face host waits this many milliseconds
+after the server marks audio before animating it. It is read once per face session
+and sent as the descriptor's `timelineOffsetMs`; a running session keeps its value.
 `TYPESAFE_API_KEY` is environment-only and lazy, outside the settings registry.
 See [Face packages and Face Protocol v1](face-packages.md) for the serving boundary,
 manifest and optional user-transcript reaction judgement.

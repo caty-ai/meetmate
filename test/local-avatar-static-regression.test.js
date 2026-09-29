@@ -1184,6 +1184,36 @@ test("explicit face join mounts its package, closes it on leave, and next rig jo
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });
 
+test("face join snapshots the timeline offset; a published change applies only from the next join", { concurrency: false }, async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "face-offset-"));
+  try {
+    fs.writeFileSync(path.join(directory, "face.json"), JSON.stringify({ spec: "face-package/1", entry: "index.html", supports: ["speak", "level"] }));
+    fs.writeFileSync(path.join(directory, "index.html"), "<!doctype html>");
+    for (const [configured, expected] of [[undefined, 300], [-700, -700]]) {
+      await withMeetRoutes(async (harness) => {
+        const { getLocalAvatarSession } = require("../src/transport-meet/local-avatar-session");
+        const { publishState, getEffectiveValue } = require("../src/settings/resolver");
+        const joinFace = async () => {
+          assert.equal((await harness.join({ avatarExperiment: "face-package" })).statusCode, 200);
+          const payload = JSON.parse(harness.httpsRequests.filter((request) => request.options.path === "/api/v1/bots").at(-1).body);
+          return getLocalAvatarSession(new URL(payload.voice_agent_settings.url).searchParams.get("v"));
+        };
+        const first = await joinFace();
+        assert.equal(first.mode, "face-package");
+        assert.equal(first.timelineOffsetMs, expected);
+        publishState({ exists: true, valid: true, parsed: staticSettings({ avatar: { facePackageDir: directory, faceTimelineOffsetMs: 500 } }) });
+        assert.equal(getEffectiveValue("face_timeline_offset_ms"), 500);
+        assert.equal(first.timelineOffsetMs, expected, "running session keeps the value it joined with");
+        await harness.leave();
+        const second = await joinFace();
+        assert.notEqual(second, first);
+        assert.equal(second.timelineOffsetMs, 500);
+        await harness.leave();
+      }, { settingsParsed: staticSettings({ avatar: { facePackageDir: directory, ...(configured === undefined ? {} : { faceTimelineOffsetMs: configured }) } }) });
+    }
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
 test("invalid explicit face package falls back to the exact static payload with diagnostic", { concurrency: false }, async () => {
   await withMeetRoutes(async (harness) => {
     assert.equal((await harness.join({ avatarExperiment: "face-package" })).statusCode, 200);

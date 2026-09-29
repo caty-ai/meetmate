@@ -13,13 +13,14 @@ one example implementation. No renderer code or character artwork is bundled her
     "experiment": "face-package",
     "facePackageDir": "/srv/meetmate-face",
     "emotionJudge": "off",
-    "faceListenReactions": false
+    "faceListenReactions": false,
+    "faceTimelineOffsetMs": 300
   }
 }
 ```
 
-The settings ids are `avatar_experiment`, `face_package_dir`, `emotion_judge`, and
-`face_listen_reactions`. The directory is deployment-only: edit the config on the
+The settings ids are `avatar_experiment`, `face_package_dir`, `emotion_judge`,
+`face_listen_reactions`, and `face_timeline_offset_ms`. The directory is deployment-only: edit the config on the
 server and restart. It must be absolute; it is neither UI-writable, UI-returned nor
 transferable. Invalid or missing directories/manifests fall back to the static bot
 image with `MM-MMT-003` (invalid setting); diagnostic logs do not contain paths.
@@ -56,6 +57,22 @@ Listening reactions are an experiment, disabled by default. Enabling
 `jev`, confirmed user utterances may be sent for one reaction judgement each,
 at most one call per four seconds. Packages must declare `listen` and/or `cue` to
 receive the corresponding messages. Start a new meeting after changing this flag.
+
+### Lip-sync offset
+
+`face_timeline_offset_ms` (`avatar.faceTimelineOffsetMs`) is how long, in
+milliseconds, the face waits after the server marks audio before animating it.
+It is a signed integer from -3000 to 3000; the default 300 is the behaviour before
+the setting existed. It is read once when a face session starts and reaches the
+host page as the descriptor's `timelineOffsetMs`; a package cannot override it.
+Changes apply from the next join; a running meeting keeps its value.
+
+- Mouth moves later than the voice: decrease the value (negative values are allowed).
+- Mouth moves earlier than the voice: increase the value.
+- Change it in steps of 100–200 ms and start a new meeting after each change.
+
+Observed reference values, judged by eye rather than measured: the Attendee cloud
+bot looks right at 300; one self-hosted Attendee deployment needed -700.
 
 ## Folder and manifest
 

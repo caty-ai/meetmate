@@ -152,6 +152,38 @@ test("client field sets deep-match registry UI metadata", () => {
   assert.match(source, /OPENAI_COMPATIBLE_TTS_FIELDS\.has\(entry\.id\) && tts !== "openai-compatible"/);
 });
 
+test("face timeline offset renders as an unbounded number input and a negative value survives the round trip", () => {
+  const vm = require("node:vm");
+  const { CLIENT_FIELD_SETS, pendingChangesForValues } = require("../public/settings.js");
+  const { _test } = require("../src/settings/routes");
+  const { parseStrict, settingsMutationSchema } = require("../src/settings/schemas");
+  const entry = _test.buildSettingsUiManifest().fields.find((field) => field.id === "face_timeline_offset_ms");
+  assert.equal(entry.control, "number");
+  assert.equal(entry.apply, "next-join");
+  assert.equal(entry.defaultValue, 300);
+  for (const key of ["min", "max", "step"]) assert.equal(Object.hasOwn(entry, key), false, key);
+  assert.equal(CLIENT_FIELD_SETS.AVATAR_FIELDS.has(entry.id), true);
+  assert.equal(CLIENT_FIELD_SETS.NULLABLE_NUMBER_FIELDS.has(entry.id), false);
+
+  const source = require("node:fs").readFileSync(require.resolve("../public/settings.js"), "utf8");
+  const pick = (name) => source.match(new RegExp(`function ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n    }\\n`))[0];
+  assert.match(source, /if \(control === "number"\) input\.step = entry\.step === undefined \? "any" : String\(entry\.step\);/);
+  assert.match(source, /\["emotion_judge", "face_listen_reactions", "face_timeline_offset_ms"\]\.includes\(entry\.id\) && avatar !== "face-package"/);
+  const input = { dataset: {}, value: "-700" };
+  const context = { document: { querySelector: () => input }, NULLABLE_NUMBER_FIELDS: CLIENT_FIELD_SETS.NULLABLE_NUMBER_FIELDS };
+  vm.runInNewContext(`${pick("controlFor")}${pick("applyMetadata")}${pick("readControlValue")}
+    applyMetadata(input, entry); result = readControlValue(entry);`, Object.assign(context, { input, entry }));
+  assert.equal(input.min, undefined);
+  assert.equal(input.max, undefined);
+  assert.equal(context.result, -700);
+  const fields = pendingChangesForValues({ face_timeline_offset_ms: 300 }, { face_timeline_offset_ms: context.result });
+  assert.deepEqual(fields, { face_timeline_offset_ms: -700 });
+  assert.equal(parseStrict(settingsMutationSchema, { schemaVersion: 1, revision: "bootstrap", fields }).fields.face_timeline_offset_ms, -700);
+  input.value = "";
+  vm.runInNewContext("result = readControlValue(entry);", context);
+  assert.equal(context.result, "");
+});
+
 test("Hermes session header setting is default-off and visible only for OpenAI-compatible providers", () => {
   const fs = require("node:fs");
   const path = require("node:path");

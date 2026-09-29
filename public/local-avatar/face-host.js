@@ -194,7 +194,9 @@
       if (stopped) return;
       reconnects = 0;
       descriptor = candidate;
-      timeline = createTimeline({ send: post, supports: descriptor.supports, listen: descriptor.listenReactions === true });
+      const offset = Number.isSafeInteger(descriptor.timelineOffsetMs) && Math.abs(descriptor.timelineOffsetMs) <= 3000
+        ? descriptor.timelineOffsetMs : 300;
+      timeline = createTimeline({ send: post, offset, supports: descriptor.supports, listen: descriptor.listenReactions === true });
       if (descriptor.background) {
         background = descriptor.background;
         document.documentElement.style.background = background.color;

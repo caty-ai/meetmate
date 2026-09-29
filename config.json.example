@@ -261,6 +261,7 @@
   "avatar": {
     "experiment": "",
     "emotionJudge": "off",
-    "faceListenReactions": false
+    "faceListenReactions": false,
+    "faceTimelineOffsetMs": 300
   }
 }
