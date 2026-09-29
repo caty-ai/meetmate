@@ -318,6 +318,7 @@ function avatarExperimentLabel(value) {
     "": "標準（静止画）",
     "hybrid-local-l0": "2.5Dリグ",
     "hybrid-local-frames": "フレームセット",
+    "face-package": "フェイスパッケージ",
   })[value] || "標準（静止画）";
 }
 
@@ -1252,7 +1253,7 @@ if (typeof document !== "undefined") (function () {
       const settings = await response.json();
       const configured = typeof settings?.effective?.avatar_experiment === "string"
         ? settings.effective.avatar_experiment : "";
-      avatarExperimentEl.options[0].textContent = `設定に従う（${avatarExperimentLabel(configured)}）`;
+      avatarExperimentEl.options[0].textContent = `設定に従う（${avatarExperimentLabel(configured === "face-package" ? "" : configured)}）`;
     } catch {
       // The explicit choices remain usable if the local settings envelope is unavailable.
     }

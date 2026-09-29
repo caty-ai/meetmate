@@ -57,7 +57,7 @@ const { checkJoinAuthorization } = require("../join-auth");
 const WS_SHARED_TOKEN = process.env.WS_SHARED_TOKEN || "";
 const LOCAL_AVATAR_EXPERIMENT = "hybrid-local-l0";
 const LOCAL_AVATAR_FRAMES_EXPERIMENT = "hybrid-local-frames";
-const LOCAL_AVATAR_EXPERIMENTS = new Set([LOCAL_AVATAR_EXPERIMENT, LOCAL_AVATAR_FRAMES_EXPERIMENT]);
+const LOCAL_AVATAR_EXPERIMENTS = new Set([LOCAL_AVATAR_EXPERIMENT, LOCAL_AVATAR_FRAMES_EXPERIMENT, "face-package"]);
 
 const MEETING_URL_RE = /^https:\/\/(meet\.google\.com\/[a-z0-9-]+|[\w.-]*zoom\.us\/(j|my)\/[a-zA-Z0-9?=&._%-]+)(?:\?.*)?$/i;
 const CONVERSATION_MODES = new Set(["one_to_one", "group"]);
@@ -1201,7 +1201,7 @@ async function handleHttp(req, res) {
       }
       const avatarExperiment = hasAvatarExperiment
         ? toSafeString(formData.avatarExperiment)
-        : getEffectiveValue("avatar_experiment");
+        : (getEffectiveValue("avatar_experiment") === "face-package" ? "" : getEffectiveValue("avatar_experiment"));
       const isLocalAvatarExperiment = LOCAL_AVATAR_EXPERIMENTS.has(avatarExperiment);
       const profile = currentAgentProfile();
 
@@ -1368,16 +1368,26 @@ async function handleHttp(req, res) {
 
       if (isLocalAvatarExperiment) {
         const { createLocalAvatarSession, FRAMES_HTML_ROUTE } = require("./local-avatar-session");
-        const issued = createLocalAvatarSession({
+        const facePackage = avatarExperiment === "face-package"
+          ? (await import("./face-package.js")).loadPackage(getEffectiveValue("face_package_dir"))
+          : null;
+        const issued = avatarExperiment === "face-package" && !facePackage ? null : createLocalAvatarSession({
+          mode: avatarExperiment,
+          facePackage,
           publicOrigin: localAvatarPublicOrigin,
-          htmlRoute: avatarExperiment === LOCAL_AVATAR_FRAMES_EXPERIMENT ? FRAMES_HTML_ROUTE : undefined,
+          htmlRoute: avatarExperiment === "face-package" ? "/local-avatar/face-host.html"
+            : avatarExperiment === LOCAL_AVATAR_FRAMES_EXPERIMENT ? FRAMES_HTML_ROUTE : undefined,
           background: {
             mode: getEffectiveValue("avatar_rig_background_mode"),
             color: getEffectiveValue("avatar_rig_background_color"),
           },
         });
-        localAvatarSession = issued.session;
-        localAvatarLaunchUrl = issued.launchUrl;
+        localAvatarSession = issued?.session || null;
+        localAvatarLaunchUrl = issued?.launchUrl || null;
+        if (localAvatarSession?.mode === "face-package") {
+          localAvatarSession.listenReactions = getEffectiveValue("face_listen_reactions");
+          if (getEffectiveValue("emotion_judge") !== "off") localAvatarSession.emotionModule = await import("../emotion/index.js");
+        }
         session.localAvatarSession = localAvatarSession;
         if (avatarExperiment === LOCAL_AVATAR_FRAMES_EXPERIMENT) {
           warnOversizedAvatarFrames({
@@ -1811,6 +1821,14 @@ function handleWsConnection(client, req) {
         // Visual cancellation cannot affect the authoritative audio cancellation.
       }
     });
+  }
+
+  if (session.localAvatarSession?.mode === "face-package" && handler.on) {
+    for (const [event, method] of [["face_end", "endUtterance"], ["face_emotion", "publishEmotion"], ["face_listen", "publishListen"]]) {
+      handler.on(event, (value) => {
+        try { session.localAvatarSession[method](value, localAvatarSourceGeneration); } catch { /* visual only */ }
+      });
+    }
   }
 
   activeConnections.set(sid, { client, handler });

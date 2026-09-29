@@ -25,6 +25,11 @@ function scrubLogMessage(message, secret) {
   text = scrubDigestParameters(text);
 
   return text
+    .replace(/(\/local-avatar\/pkg\/)[^/\s?]+/gi, `$1${REDACTED}`)
+    .replace(/([?&]v=)[^&#\s]+/gi, `$1${REDACTED}`)
+    .replace(/(["']?(?:mountId|visualId)["']?\s*[:=]\s*["']?)[A-Za-z0-9_-]+/gi, `$1${REDACTED}`)
+    .replace(/(#cap=)[^\s&#]+/gi, `$1${REDACTED}`)
+    .replace(/(["']?TYPESAFE_API_KEY["']?\s*[:=]\s*["']?)[^\s,"'}]+/gi, `$1${REDACTED}`)
     .replace(/(\b(?:https:\/\/)?(?:discord(?:app)?\.com|(?:ptb|canary)\.discord\.com)\/api\/webhooks\/\d+\/)[A-Za-z0-9._-]+/gi, `$1${REDACTED}`)
     .replace(/(\b(?:set-cookie|cookie)\s*:\s*)(?!\[REDACTED\])[^\r\n]*/gi, `$1${REDACTED}`)
     // JSON and single-quoted credential pairs, including scheme-prefixed authorization values.

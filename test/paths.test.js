@@ -204,7 +204,7 @@ function settingsRequest(method, url, headers = {}, body = "") {
 }
 
 test("T12-01 registry/schema/type lock keeps the write allowlist strict", () => {
-  assert.equal(SETTINGS_REGISTRY.length, 87);
+  assert.equal(SETTINGS_REGISTRY.length, 90);
   assert.equal(ENV_DIAGNOSTICS.length, 59);
   assert.equal(new Set(SETTINGS_REGISTRY.map((entry) => entry.id)).size, SETTINGS_REGISTRY.length);
   assert.equal(SETTINGS_REGISTRY.filter((entry) => entry.credential === "class-1").length, 10);
@@ -314,9 +314,9 @@ test("T12-02 environment inventory lock recognizes every retained direct read an
   assert.equal(bytes.endsWith("\n"), true);
   assert.equal(bytes.endsWith("\n\n"), false);
   const inventory = JSON.parse(bytes);
-  assert.equal(inventory.baselineUniqueDirectCount, 99);
-  assert.equal(inventory.directReferences.length, 99);
-  assert.equal(new Set(inventory.directReferences.map((entry) => entry.name)).size, 99);
+  assert.equal(inventory.baselineUniqueDirectCount, 100);
+  assert.equal(inventory.directReferences.length, 100);
+  assert.equal(new Set(inventory.directReferences.map((entry) => entry.name)).size, 100);
   const known = new Set(inventory.directReferences.map((entry) => entry.name));
   const productionFiles = [];
   function collect(directory) {
@@ -346,10 +346,10 @@ test("T12-02/T12-13/T12-14 contract and template pins stay synchronized", () => 
   const providerEnum = "soniox|deepgram|fish-audio|elevenlabs|openai-compatible|attendee|llm|tunnel|slack|discord";
   assert.equal(contract.includes("14 exact, case-sensitive checked-in sentinels"), true, "contract §3 sentinel-count sentence moved");
   assert.equal(contract.includes("the 14 exact case-sensitive placeholder sentinels"), true, "contract T12-13 sentinel-count sentence moved");
-  assert.equal(contract.includes("has 99 unique direct names"), true, "contract §5 unique-direct-name sentence moved");
-  assert.equal(contract.includes("the 99 direct names"), true, "contract T12-02 direct-name sentence moved");
-  assert.equal(contract.includes("covers 99 static names"), true, "contract Appendix A E29-07 static-name sentence moved");
-  assert.equal(contract.includes("locks 99 names"), true, "contract Appendix A D30-04 name-lock sentence moved");
+  assert.equal(contract.includes("has 100 unique direct names"), true, "contract §5 unique-direct-name sentence moved");
+  assert.equal(contract.includes("the 100 direct names"), true, "contract T12-02 direct-name sentence moved");
+  assert.equal(contract.includes("covers 100 static names"), true, "contract Appendix A E29-07 static-name sentence moved");
+  assert.equal(contract.includes("locks 100 names"), true, "contract Appendix A D30-04 name-lock sentence moved");
   assert.equal(contract.split(providerEnum).length - 1, 1, "contract ten-provider route enum occurrence count drifted");
   assert.equal(JSON.parse(template).discord.botToken, "your_discord_bot_token", "config example Discord bot-token sentinel drifted");
 });

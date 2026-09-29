@@ -66,6 +66,8 @@ const TEXTAREA_FIELDS = new Set([
 ]);
 const AVATAR_FIELDS = new Set([
   "avatar_experiment",
+  "emotion_judge",
+  "face_listen_reactions",
   "avatar_rig_background_mode",
   "avatar_rig_background_color",
 ]);
@@ -162,6 +164,7 @@ if (typeof document !== "undefined") {
       agent_progress_pings: "進捗 Ping", agent_exit_farewell: "退出あいさつ",
       agent_cancel_ack: "キャンセル確認", agent_timeout_fallback: "タイムアウト",
       agent_avatar_url: "アイコン URL", avatar_experiment: "アバター表示",
+      emotion_judge: "表情の感情判定", face_listen_reactions: "聞き手リアクション（実験）",
       avatar_rig_background_mode: "アバター背景", avatar_rig_background_color: "アバター背景色",
       llm_provider: "LLM プロバイダー", llm_model: "LLM モデル",
       llm_temperature: "Temperature", llm_max_tokens: "最大トークン数",
@@ -210,6 +213,8 @@ if (typeof document !== "undefined") {
       openai_compatible_tts_source_sample_rate: "サーバーが返す PCM の実際のサンプルレート（Hz）。Irodori-TTS は 48000。24000 以外は Meetmate 側で 24000 Hz にリサンプルします。",
       tts_sample_rate: "Fish Audio は設定値を使用します。ElevenLabs は対応する PCM 形式を選択し、OpenAI-compatible は出力 24000 Hz 固定です（サーバーのレートは「サーバー側サンプルレート」で指定）。",
       avatar_experiment: "次回の会議参加から反映されます",
+      emotion_judge: "off は感情判定なし。jev は返答文を外部の判定サービスへ送ります。",
+      face_listen_reactions: "実験機能。次の face-package 参加から有効です。jev と併用すると相手の発言も判定サービスへ送ります。",
       avatar_rig_background_mode: "2.5Dリグとフレームセットの両方に適用され、次回の会議参加から反映されます。画像モードで背景画像が未埋め込みの場合: このビルドには背景画像が埋め込まれていません",
       avatar_rig_background_color: "2.5Dリグとフレームセットの両方で、単色または画像の読み込み失敗時に使う #rrggbb 形式の色です。次回の会議参加から反映されます",
       task_extraction_enabled: "会議終了時に TODO を抽出します。",
@@ -247,6 +252,7 @@ if (typeof document !== "undefined") {
       "": "標準（静止画）",
       "hybrid-local-l0": "2.5Dリグ",
       "hybrid-local-frames": "フレームセット",
+      "face-package": "フェイスパッケージ（参加時の指定が必要）",
     };
     const RIG_BACKGROUND_OPTION_LABELS = {
       solid: "単色",
@@ -531,7 +537,8 @@ if (typeof document !== "undefined") {
       if (provenance) wrapper.append(provenance);
       const apply = document.createElement("span");
       apply.className = `apply-badge${entry.apply === "live" ? " live" : ""}`;
-      apply.textContent = entry.apply === "live" ? "すぐに反映" : "次回起動時に反映";
+      apply.textContent = entry.apply === "live" ? "すぐに反映"
+        : entry.apply === "next-join" ? "次の会議参加から反映" : "次回起動時に反映";
       wrapper.append(apply);
       return wrapper;
     }
@@ -688,6 +695,7 @@ if (typeof document !== "undefined") {
       const llm = currentProvider("llm_provider", loadedValues.llm_provider);
       const stt = currentProvider("stt_provider", loadedValues.stt_provider);
       const tts = currentProvider("tts_provider", loadedValues.tts_provider);
+      const avatar = currentProvider("avatar_experiment", loadedValues.avatar_experiment);
       for (const entry of manifest) {
         const field = document.querySelector(`[data-field-id="${entry.id}"]`);
         if (!field) continue;
@@ -696,7 +704,8 @@ if (typeof document !== "undefined") {
           || (DEEPGRAM_FIELDS.has(entry.id) && stt !== "deepgram")
           || (FISH_TTS_FIELDS.has(entry.id) && tts !== "fish-audio")
           || (ELEVENLABS_TTS_FIELDS.has(entry.id) && tts !== "elevenlabs")
-          || (OPENAI_COMPATIBLE_TTS_FIELDS.has(entry.id) && tts !== "openai-compatible");
+          || (OPENAI_COMPATIBLE_TTS_FIELDS.has(entry.id) && tts !== "openai-compatible")
+          || (["emotion_judge", "face_listen_reactions"].includes(entry.id) && avatar !== "face-package");
         field.classList.toggle("is-hidden", hidden);
       }
     }
