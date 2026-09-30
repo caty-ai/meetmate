@@ -1917,14 +1917,14 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   }
 
   function faceListenPulse() {
-    if (!faceMode || session.localAvatarSession.listenReactions !== true || turnState.isAgentSpeaking) return;
+    if (!faceMode || session.localAvatarSession?.listenReactions !== true || turnState.isAgentSpeaking) return;
     emitObserverEvent("face_listen", { active: true });
     clearTimeout(faceListenTimer);
     faceListenTimer = setTimeout(() => emitObserverEvent("face_listen", { active: false }), 1200);
     faceListenTimer.unref?.();
   }
   function faceListenCue(text) {
-    if (!faceMode || session.localAvatarSession.listenReactions !== true || !text) return;
+    if (!faceMode || session.localAvatarSession?.listenReactions !== true || !text) return;
     clearTimeout(faceListenTimer);
     emitObserverEvent("face_listen", { active: false });
     const generation = ++faceCueGeneration;
@@ -1932,7 +1932,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     faceCueAt = Date.now();
     import("./emotion/index.js").then(({ judgeEmotion }) => judgeEmotion(text, { mode: "jev", listening: true }))
       .then((cue) => {
-        if (cue && !stopped && generation === faceCueGeneration && session.localAvatarSession.listenReactions === true) emitObserverEvent("face_listen", { cue });
+        if (cue && !stopped && generation === faceCueGeneration && session.localAvatarSession?.listenReactions === true) emitObserverEvent("face_listen", { cue });
       }).catch(() => {});
   }
 
@@ -3067,16 +3067,16 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     // `manual` is the operator/gateway-injected speech escape hatch required
     // to remain audible while automatic floor-controlled speech is muted.
     if (suppressForFloorMute(opts.role || "speech", opts)) return;
-    const face = faceMode ? { id: ++faceSequence, emotion: null, intensity: 0, revision: 0 } : null;
+    const face = faceMode && session.localAvatarSession ? { id: ++faceSequence, emotion: null, intensity: 0, revision: 0 } : null;
     if (face && getEffectiveValue("emotion_judge") !== "off") {
       const mode = getEffectiveValue("emotion_judge");
-      const emotionModule = session.localAvatarSession.emotionModule;
+      const emotionModule = session.localAvatarSession?.emotionModule;
       const initial = emotionModule?.fromTags(text);
       if (initial) { face.emotion = initial.emotion; face.intensity = initial.intensity; face.revision = 1; }
       const judgeOptions = { mode, role: opts.faceReply ? "reply" : opts.role, signal };
       const judgement = emotionModule ? emotionModule.judgeEmotion(text, judgeOptions)
         : import("./emotion/index.js").then((loaded) => {
-          session.localAvatarSession.emotionModule = loaded;
+          if (session.localAvatarSession) session.localAvatarSession.emotionModule = loaded;
           return loaded.judgeEmotion(text, judgeOptions);
         });
       judgement.then((value) => {
