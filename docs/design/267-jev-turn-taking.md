@@ -1,6 +1,6 @@
 # #267 — reply without a wake word when jev judges "addressed to Caty" and "turn finished" (opt-in trial)
 
-Status: **v2**, after the L1-9 round 1 review (3 seats, GO-WITH-CONDITIONS ×3). The r1 adjudication is in §7. Owner decisions of 2026-09-29 / 2026-10-01 are marked **[owner]**.
+Status: **v2.1** (delta pins in §2.8), after the L1-9 round 1 review (3 seats, GO-WITH-CONDITIONS ×3). The r1 adjudication is in §7. Owner decisions of 2026-09-29 / 2026-10-01 are marked **[owner]**.
 
 ## §0 Measured facts (2026-09-30, Mac in Japan, before any code)
 
@@ -138,6 +138,35 @@ Probe: 12 hand-written Japanese meeting lines × 3 calls each, one jev request p
 - Tests:
   - an utterance end after the face session is closed does not throw and still processes the utterance,
   - a reply TTS (`speakSentence`) after close does not throw.
+
+### §2.8 v2.1 pins (from the delta round; these override §2.3–§2.4 where they differ)
+
+- **P1 — no line that sat behind an agent turn is judged** (Kimi N1 MAJOR, Grok N1 MAJOR; converged).
+  - `agentTurnGeneration` is incremented whenever an agent turn starts: `processUserInput`, the greeting, farewell, and any manual/injected speech that sets `isProcessing` or `isAgentSpeaking`.
+  - `onSttUtteranceEnd` snapshots it on the utterance (`turnGenAtArrival`), next to `busyAtArrival`.
+  - The judge is started, and a speak is committed, only if `agentTurnGeneration === turnGenAtArrival`. This closes the window where a line arrives during a predecessor's 500 ms sleep and is judged after that predecessor's reply.
+- **P2 — hold cancellation happens synchronously in `onSttUtteranceEnd`, before the chain append** (Grok N2 MAJOR, Devin N2).
+  - An `utterance_end` from another, unknown or null speaker bumps the hold generation and clears the hold at once. A deadline job already queued in the chain then finds a stale generation.
+  - The pre-chain wake+cancel path (l.2005) also clears the hold synchronously.
+  - A same-speaker `utterance_end` marks the hold as "continuation arrived". The merge and re-judge happen in the chain.
+  - A continuation that arrives while busy, or after `agentTurnGeneration` has moved, cancels the hold (no merge, no speak).
+- **P3 — per-speaker live-speech marker** (Devin N1, Grok N3; converged).
+  - `lastLiveSpeechSpeakerId` is written alongside `liveUserSpeechUntil` in `onSttTranscript`, from the interim's speaker (`null` or `unknown` when not attributed). It is also refreshed in `onSttUtteranceEnd`, which covers final-only, cap-split and flush paths.
+  - At the deadline, "a continuation is in flight" means `Date.now() < liveUserSpeechUntil && lastLiveSpeechSpeakerId === hold.speakerId` (a real attributed id). Any other active speech, including unknown speech, means **ignore** and the hold is dropped.
+- **P4 — deadline job outcomes are total** (Kimi N3). The job commits in one step inside the chain: re-check generation, `replyTrigger`, not busy, `agentTurnGeneration`, idle → **clear the hold** → `processUserInput`.
+  - Any failed check drops the hold. None leaves an orphaned hold.
+  - The greeting, `stopped` and leave also cancel the hold.
+- **P5 — the peek covers exit too, and jev never takes the interrupt branch** (all seats: Kimi N2, Devin N3, Grok N4).
+  - The jev-only t=0 peek is `detectWakeAgent(cleanedText, agentProfile)` plus `isExitCommand(cleanedText, agentProfile, config.exit)`. Both are pure.
+  - If the post-sleep path takes the wake or exit route, the in-flight judge is aborted and its result discarded.
+  - A jev speak commits only when `!isProcessing && !turnState.isAgentSpeaking`. It never reaches the `isProcessing && currentAbort` abort at l.2314–2320, so it cannot overlap a farewell.
+- **P6 — a decision generation, not the hold generation** (Devin N6). Every judgement (first / merged / deadline) takes its own `decisionGeneration`. A speak commits only if its `decisionGeneration` is still the latest, so a merged speak does not invalidate itself.
+- **P7 — bookkeeping on speak** (Devin N5).
+  - The spoken text (the merged text for a merged speak) becomes a normal addressed entry: `addressed` / `injectToLlm` true, a `[user]` conversation entry, and `lastUserTranscript`.
+  - The earlier `[会議音声・保留]` entry stays as history but is excluded from the prompt context, so the same text is never sent twice.
+- **P8 — inert off-jev** (Devin N4). `busyAtArrival`, `turnGenAtArrival`, `lastLiveSpeechSpeakerId` and `agentTurnGeneration` are plain field writes. Only jev mode reads them. Tests pin that the default and hub paths produce identical logs, metrics and decisions.
+
+Delta round result (2026-10-01): Kimi, Grok and Devin all returned cumulative **GO-WITH-CONDITIONS**. Every condition is a specification pin, and all of them are adopted above as P1–P8. No reframing was requested (Q0 ×3). Kimi stated that no further design round is needed once they are adopted. The implementation review re-checks P1–P8 against the code.
 
 ## §3 Failure forms (worst first)
 
