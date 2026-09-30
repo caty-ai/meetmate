@@ -2,7 +2,8 @@
 
 A face package is an operator-installed folder containing a silent visual renderer.
 Meetmate hosts it during an explicitly requested `face-package` meeting. The renderer
-receives generic visual messages, never meeting credentials or audio. Caty Stage is
+receives generic visual messages, never meeting credentials or audio (not even when the
+host page plays the reply in the opt-in page-audio mode). Caty Stage is
 one example implementation. No renderer code or character artwork is bundled here.
 
 ## Configuration
@@ -114,7 +115,9 @@ Wasm, service workers, storage, microphone, media playback or AudioContext playb
 path are permitted. Package scripts must be files inside the package (`.js` or `.mjs`). Relative worker scripts
 may require an in-memory blob worker in an opaque-origin sandbox. Inline CSS,
 blob workers, data/blob images and package-local fetches are supported. Do not embed
-audio controls in the package; the meeting pipeline exclusively owns sound (ADR 09).
+audio controls in the package; the meeting pipeline owns sound (ADR 09). In the opt-in
+page-audio mode the meetmate host page, never the package, plays the reply (see
+[Page audio](#page-audio-faceaudiopage-experimental)). Packages stay audio-free in every mode.
 
 ## Face Protocol v1
 
@@ -198,6 +201,55 @@ must come from this package mount and cannot be inline. Host CSP adds only `fram
 existing strict local-avatar policy. Media is denied. Package rules also prohibit
 Web Audio: sandboxing alone cannot guarantee that arbitrary code never creates an
 audio graph, so use renderer-only packages.
+
+## Page audio (`faceAudio=page`, experimental)
+
+By default the reply audio goes to Attendee over the WebSocket (`realtime_audio.bot_output`)
+and the face follows it on a wall-clock marker timeline. With a self-hosted Attendee webpage
+streamer, the host page's own audio travels with the page video on one WebRTC connection. So
+the host page can play the reply itself, and voice and mouth come from one clock (#266).
+
+- **Opt-in per join.** Select フェイスパッケージ explicitly in the join form and tick the page-audio
+  checkbox; the form sends `faceAudio=page`. The join returns 400 unless the resolved avatar
+  experiment is explicitly `face-package`, so "follow settings" plus `faceAudio=page` is always
+  400. It also returns 400 while meet-floor-hub arbitration is enabled for the session. MCP
+  `join_meeting` never sends the field, and there is no settings key.
+- **One path per reply epoch.** Each output epoch is routed once, at its first chunk. It goes to
+  the page if the page is audio-ready: its audio stream is open for the current generation, its
+  last heartbeat is at most 1 s old and reports a running `AudioContext`, and its backlog is at
+  most 2 s. Otherwise the epoch goes to the WebSocket exactly as today. An epoch never uses
+  both paths and never switches mid-epoch. If the page stream dies mid-epoch, the rest of that
+  epoch is not played; the next epoch falls back.
+- **Transport.** The host posts a small heartbeat on its existing 100 ms `/local-avatar/state`
+  poll. It opens `POST /local-avatar/audio?generation=<g>&v=<visualId>`, which applies exactly the
+  `/local-avatar/state` checks: Bearer capability, visual id, `Origin`, live session, and
+  generation. The response is a stream of length-prefixed frames, `pcm` and `cancel`:
+  - one stream per session, and a new stream or generation supersedes the old one;
+  - no replay;
+  - the server queue is bounded to about 2 s;
+  - `Cache-Control: no-store` and `X-Accel-Buffering: no`.
+  A barge-in or reply cancel pushes a `cancel` frame, and the page stops that epoch's scheduled
+  audio at once while keeping the stream open. For every chunk queued to the page, the server
+  mirrors silence (same-length all-zero PCM) on the bot-output channel so Attendee keeps the
+  bot's mic open.
+- **The capability now also gates reply PCM.** The holder set is the same (the launched host page)
+  and so is the TTL. Only a `faceAudio=page` session serves the audio route; every other session
+  gets 404.
+- **Packages stay audio-free.** The iframe sandbox (`allow-scripts`, `allow=""`), the package CSP
+  (`media-src 'none'`) and the host CSP are unchanged. The host never forwards PCM, sample
+  buffers or audio timing to the package. It sends the same Face Protocol v1 messages; only
+  their clock changes: `speak-start` / `level` / `speak-end` follow the chunks the host
+  actually scheduled.
+- **Echo gate.** While page audio is projected or reported as backlog, meetmate drops meeting
+  input. The gate also covers a fixed path pad of 300 ms plus the echo cooldown. A cancel
+  re-opens the gate within that pad plus cooldown.
+- **Self-hosted Attendee only.** Attendee cloud captures page audio at 16 kHz unless it is
+  patched. Measurement procedures live in `tools/av-sync-probe/`, which is not shipped.
+
+**ADR 09 amendment (2026-09-30, #266).** ADR 09 said the meeting pipeline exclusively owns sound.
+Amended: the pipeline still decides what is said and when it is cancelled. In the opt-in
+`faceAudio=page` mode, the meetmate-owned host page may *play* the reply for page-routed epochs.
+Face packages remain renderer-only and audio-free in every mode. The default path is unchanged.
 
 ## Backend conversation continuity
 

@@ -130,7 +130,7 @@ function discordTargetStatus(guildId, channelId) {
   };
 }
 
-function buildMeetJoinFormData({ meetingUrl, availableAgents, wsUrl, avatarExperiment }) {
+function buildMeetJoinFormData({ meetingUrl, availableAgents, wsUrl, avatarExperiment, faceAudioPage = false }) {
   const selectedAgentIds = availableAgents.map((agent) => agent.id);
   const botName = availableAgents.length
     ? `${availableAgents[0].id} (${availableAgents[0].displayName})`
@@ -143,6 +143,7 @@ function buildMeetJoinFormData({ meetingUrl, availableAgents, wsUrl, avatarExper
     agentIds: selectedAgentIds.join(","),
   });
   appendAvatarExperiment(formData, avatarExperiment);
+  appendFaceAudio(formData, avatarExperiment, faceAudioPage);
   return formData;
 }
 
@@ -327,8 +328,20 @@ function appendAvatarExperiment(parameters, selection) {
   return parameters;
 }
 
+// #266 page audio: only an explicit face-package selection may carry faceAudio=page.
+function faceAudioAvailable(selection) {
+  return selection === "face-package";
+}
+
+function appendFaceAudio(parameters, selection, checked) {
+  if (checked === true && faceAudioAvailable(selection)) parameters.append("faceAudio", "page");
+  return parameters;
+}
+
 if (typeof module !== "undefined" && module.exports) module.exports = {
   appendAvatarExperiment,
+  appendFaceAudio,
+  faceAudioAvailable,
   avatarExperimentLabel,
   buildDiscordJoinBody,
   buildMeetJoinFormData,
@@ -409,6 +422,16 @@ if (typeof document !== "undefined") (function () {
   const avatarExperimentEl = document.getElementById("avatarExperiment");
   const meetingStatusWrapEl = meetingUrlStatusEl.parentElement;
   const avatarExperimentWrapEl = avatarExperimentEl.closest(".join-option");
+  const faceAudioOptionEl = document.getElementById("faceAudioOption");
+  const faceAudioPageEl = document.getElementById("faceAudioPage");
+  function renderFaceAudioOption() {
+    if (!faceAudioOptionEl || !faceAudioPageEl) return;
+    const available = faceAudioAvailable(avatarExperimentEl.value);
+    faceAudioOptionEl.hidden = !available;
+    if (!available) faceAudioPageEl.checked = false;
+  }
+  avatarExperimentEl.addEventListener("change", renderFaceAudioOption);
+  renderFaceAudioOption();
 
   const INSTALL_DISMISSED_KEY = "aiMeetParticipantInstallDismissed";
 
@@ -1334,6 +1357,7 @@ if (typeof document !== "undefined") (function () {
             availableAgents,
             wsUrl: getAutoWsUrl(),
             avatarExperiment: avatarExperimentEl.value,
+            faceAudioPage: faceAudioPageEl?.checked === true,
           }),
         });
         const text = await response.text();

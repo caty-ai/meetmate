@@ -19,6 +19,13 @@ const ENVELOPE_WINDOW_MS = 100;
 const ENVELOPE_HISTORY_MS = 20_000;
 const DEFAULT_BACKGROUND = Object.freeze({ mode: "solid", color: "#08111f" });
 const BACKGROUND_MODES = new Set(["solid", "image", "chroma"]);
+// #266 page audio (faceAudio=page only): freshness and queue bounds.
+const AUDIO_ROUTE = "/local-avatar/audio";
+const AUDIO_HEARTBEAT_FRESH_MS = 1000;
+const AUDIO_BACKLOG_LIMIT_MS = 2000;
+const AUDIO_QUEUE_LIMIT_MS = 2000;
+const AUDIO_EPOCH_MEMORY = 16;
+const AUDIO_CONTEXT_STATES = new Set(["running", "suspended", "closed", "interrupted"]);
 
 const sessions = new Map();
 
@@ -33,6 +40,7 @@ function createLocalAvatarSession(options = {}) {
     || (htmlRoute === FACE_HOST_HTML_ROUTE && options.mode !== "face-package")) {
     throw new Error("face package mode requires a validated package and host route");
   }
+  if (options.pageAudio === true && options.mode !== "face-package") throw new Error("page audio requires face package mode");
   const session = new LocalAvatarSession({
     mode: options.mode || (htmlRoute === FRAMES_HTML_ROUTE ? "hybrid-local-frames" : "hybrid-local-l0"),
     facePackage: options.facePackage,
@@ -46,6 +54,7 @@ function createLocalAvatarSession(options = {}) {
     retryLimit: options.retryLimit,
     logger: options.logger,
     background: options.background,
+    pageAudio: options.pageAudio === true,
   });
 
   if (sessions.has(visualId)) throw new Error("local avatar visual id collision");
@@ -59,7 +68,7 @@ function createLocalAvatarSession(options = {}) {
 }
 
 class LocalAvatarSession {
-  constructor({ visualId, capability, publicOrigin, now, ttlMs, queueLimit, retryLimit, logger, background, mode, facePackage, mountId }) {
+  constructor({ visualId, capability, publicOrigin, now, ttlMs, queueLimit, retryLimit, logger, background, mode, facePackage, mountId, pageAudio }) {
     this.mode = mode;
     if (mode === "face-package") {
       this.facePackage = facePackage;
@@ -67,6 +76,11 @@ class LocalAvatarSession {
       this._utterances = [];
       this._faceRate = null;
       this._listen = { id: 0, active: false };
+    }
+    if (mode === "face-package" && pageAudio === true) {
+      // The meetmate host page owns reply sound; packages stay audio-free (#266).
+      this.pageAudio = true;
+      this._audio = { stream: null, heartbeat: null, routed: new Set(), lost: new Set(), closeListener: null };
     }
     this.visualId = visualId;
     this.publicOrigin = publicOrigin;
@@ -119,6 +133,11 @@ class LocalAvatarSession {
     this._lastSampleIndex = -1;
     this._envelopeLog.length = 0;
     if (this.mode === "face-package") this._resetFaceHistory();
+    if (this.pageAudio) {
+      // A new page generation supersedes the previous stream and its heartbeat.
+      this._closeAudioStream(true);
+      this._audio.heartbeat = null;
+    }
     return {
       ...this._state("idle", {
         outputEpoch: this._outputEpoch,
@@ -248,6 +267,7 @@ class LocalAvatarSession {
     this._lastDelivery = null;
     this._envelopeLog.length = 0;
     if (this.mode === "face-package") this._resetFaceHistory();
+    if (this.pageAudio) this._cancelAudio(outputEpoch);
     return this._enqueue(this._state("cancel", {
       outputEpoch,
       sampleIndex: null,
@@ -266,6 +286,12 @@ class LocalAvatarSession {
     this._lastDelivery = null;
     this._envelopeLog.length = 0;
     if (this.mode === "face-package") this._resetFaceHistory();
+    if (this.pageAudio) {
+      // A new source restarts output epochs at 0: purge, push cancel, forget old epochs.
+      this._cancelAudio(Number.MAX_SAFE_INTEGER, -1);
+      this._audio.routed.clear();
+      this._audio.lost.clear();
+    }
     if (this._generation > 0) {
       this._enqueue(this._state("idle", {
         outputEpoch: this._outputEpoch,
@@ -274,6 +300,149 @@ class LocalAvatarSession {
       }));
     }
     return this._sourceGeneration;
+  }
+
+  // ---- #266 page audio (faceAudio=page only) -------------------------------
+
+  // Stores the heartbeat carried by an authenticated state poll (200 or 204).
+  recordHeartbeat(body) {
+    if (!this.pageAudio || this._closed) return false;
+    const audio = body?.audio;
+    if (!audio || typeof audio !== "object" || !AUDIO_CONTEXT_STATES.has(audio.state)) return false;
+    const playedEpoch = toInteger(audio.playedEpoch);
+    const playedSample = toNonNegativeInteger(audio.playedSample);
+    const receivedSample = toNonNegativeInteger(audio.receivedSample);
+    if (playedEpoch === null || playedEpoch < -1 || playedSample === null || receivedSample === null
+      || playedSample > receivedSample) return false;
+    this._audio.heartbeat = { state: audio.state, playedEpoch, playedSample, receivedSample, at: this._now() };
+    return true;
+  }
+
+  audioHeartbeat() {
+    return this.pageAudio && this._audio.heartbeat ? { ...this._audio.heartbeat } : null;
+  }
+
+  // Audio-ready (§2.2): stream open for this generation, fresh running heartbeat, bounded backlog.
+  audioReady() {
+    if (!this.pageAudio || !this.isLive()) return false;
+    const stream = this._audio.stream;
+    const heartbeat = this._audio.heartbeat;
+    if (!stream || stream.closed || stream.generation !== this._generation || !heartbeat) return false;
+    if (this._now() - heartbeat.at > AUDIO_HEARTBEAT_FRESH_MS || heartbeat.state !== "running") return false;
+    const pageBacklogMs = stream.rate > 0 ? (heartbeat.receivedSample - heartbeat.playedSample) / stream.rate * 1000 : 0;
+    return stream.queuedMs + pageBacklogMs <= AUDIO_BACKLOG_LIMIT_MS;
+  }
+
+  isPageLost(outputEpoch) {
+    return Boolean(this.pageAudio && this._audio.lost.has(outputEpoch));
+  }
+
+  // One listener per session: a bot WebSocket reconnect replaces the previous connection's listener.
+  onPageAudioClose(listener) {
+    if (this.pageAudio && !this._closed && typeof listener === "function") this._audio.closeListener = listener;
+  }
+
+  // Server-side stream close (forces the page's stream stop). true when a stream was open.
+  closeAudioStream() {
+    if (!this.pageAudio || !this._audio.stream) return false;
+    this._closeAudioStream(true);
+    return true;
+  }
+
+  // Exactly the /local-avatar/state checks, plus the mode. One stream per session; no replay.
+  openAudioStream({ capability, origin, generation, res, headers }) {
+    if (!this.pageAudio || origin !== this.publicOrigin || !this.verifyCapability(capability)) return false;
+    if (toPositiveInteger(generation) !== this._generation) return false;
+    this._closeAudioStream(true);
+    // A heartbeat from before this stream describes the old stream's playback; wait for a fresh one.
+    this._audio.heartbeat = null;
+    const stream = { res, generation: this._generation, queue: [], queuedMs: 0, epochs: new Set(), rate: 0, closed: false };
+    this._audio.stream = stream;
+    res.writeHead(200, headers);
+    res.flushHeaders?.();
+    const gone = () => this._audioStreamGone(stream);
+    res.on?.("close", gone);
+    res.on?.("error", gone);
+    res.on?.("drain", () => this._pumpAudio(stream));
+    return true;
+  }
+
+  // Enqueues one page-routed chunk. false = not delivered (cancelled, page-lost, no stream, overflow).
+  pushAudio(buffer, metadata, sourceGeneration = this._sourceGeneration) {
+    if (!this.pageAudio || !this.isLive() || this._generation === 0 || sourceGeneration !== this._sourceGeneration) return false;
+    const outputEpoch = toNonNegativeInteger(metadata?.outputEpoch);
+    const firstSampleIndex = toNonNegativeInteger(metadata?.firstSampleIndex);
+    const sampleRate = toPositiveInteger(metadata?.sampleRate);
+    if (!Buffer.isBuffer(buffer) || outputEpoch === null || firstSampleIndex === null || sampleRate === null) return false;
+    if (outputEpoch <= this._lastCancelledOutputEpoch) return false;
+    remember(this._audio.routed, outputEpoch);
+    if (this._audio.lost.has(outputEpoch)) return false;
+    const stream = this._audio.stream;
+    if (!stream || stream.closed || stream.generation !== this._generation) {
+      remember(this._audio.lost, outputEpoch);
+      return false;
+    }
+    const pcm = buffer.subarray(0, buffer.length - (buffer.length % 2));
+    const utteranceId = Number.isSafeInteger(metadata.utteranceId) && metadata.utteranceId > 0 ? metadata.utteranceId : null;
+    const frame = encodeAudioFrame({ t: "pcm", generation: this._generation, outputEpoch, cancelEpoch: this._cancelEpoch,
+      firstSampleIndex, sampleRate, utteranceId }, pcm);
+    const ms = pcm.length / 2 / sampleRate * 1000;
+    stream.queue.push({ outputEpoch, cancelEpoch: this._cancelEpoch, frame, ms });
+    stream.queuedMs += ms;
+    stream.epochs.add(outputEpoch);
+    stream.rate = sampleRate;
+    this._pumpAudio(stream);
+    if (stream.queuedMs > AUDIO_QUEUE_LIMIT_MS) {
+      // Overflow: the current epoch loses its tail and the next epoch falls back (§2.3).
+      this._closeAudioStream(true);
+      return false;
+    }
+    return true;
+  }
+
+  _pumpAudio(stream) {
+    while (!stream.closed && stream.queue.length > 0 && !stream.res.writableNeedDrain) {
+      const item = stream.queue.shift();
+      stream.queuedMs -= item.ms;
+      try { stream.res.write(item.frame); } catch { this._audioStreamGone(stream); return; }
+    }
+    if (stream.queue.length === 0) stream.queuedMs = 0;
+  }
+
+  // Purges queued frames of epochs <= upTo and every queued frame encoded under an older cancelEpoch,
+  // then pushes a cancel frame ahead of any later frame.
+  _cancelAudio(upTo, frameOutputEpoch = upTo) {
+    const stream = this._audio.stream;
+    if (!stream || stream.closed) return;
+    stream.queue = stream.queue.filter((item) => item.outputEpoch > upTo && item.cancelEpoch >= this._cancelEpoch);
+    stream.queuedMs = stream.queue.reduce((total, item) => total + item.ms, 0);
+    for (const epoch of [...stream.epochs]) if (epoch <= upTo) stream.epochs.delete(epoch);
+    try {
+      stream.res.write(encodeAudioFrame({ t: "cancel", generation: this._generation, cancelEpoch: this._cancelEpoch,
+        outputEpoch: frameOutputEpoch }));
+    } catch { this._audioStreamGone(stream); }
+  }
+
+  _closeAudioStream(end) {
+    const stream = this._audio.stream;
+    if (!stream) return;
+    this._audioStreamGone(stream);
+    if (end) {
+      try { stream.res.end(); } catch { /* the socket is already gone */ }
+    }
+  }
+
+  // Every in-flight page-routed epoch of a dead stream is page-lost, even if a new stream opens.
+  _audioStreamGone(stream) {
+    if (stream.closed) return;
+    stream.closed = true;
+    stream.queue.length = 0;
+    stream.queuedMs = 0;
+    for (const epoch of stream.epochs) {
+      if (epoch > this._lastCancelledOutputEpoch) remember(this._audio.lost, epoch);
+    }
+    stream.epochs.clear();
+    if (this._audio.stream === stream) this._audio.stream = null;
   }
 
   readState({ capability, origin, generation, afterSequence }) {
@@ -310,6 +479,16 @@ class LocalAvatarSession {
     this._queue.length = 0;
     this._lastDelivery = null;
     this._capabilityHash.fill(0);
+    if (this.pageAudio) {
+      // Close and leave: purge, push a cancel frame, then end the response.
+      this._cancelEpoch += 1;
+      this._cancelAudio(Number.MAX_SAFE_INTEGER, this._outputEpoch);
+      this._closeAudioStream(true);
+      this._audio.heartbeat = null;
+      const listener = this._audio.closeListener;
+      this._audio.closeListener = null;
+      try { listener?.(); } catch { /* meeting cleanup must continue */ }
+    }
     if (this.mode === "face-package") {
       this.facePackage = null;
       this.mountId = null;
@@ -358,6 +537,8 @@ class LocalAvatarSession {
       }
       state.listening = { id: this._listen.id, active: this._listen.active };
       if (this._listen.cue?.expiresAt > this._now()) state.cue = { ...this._listen.cue };
+      // Page-owned epoch: the host's wall-clock timeline stays idle for it (#266 §2.5).
+      if (this.pageAudio && this._audio.routed.has(values.outputEpoch)) state.audio = "page";
     }
     if (kind === "marker") {
       state.envelopes = this._envelopeLog.map((segment) => ({
@@ -511,6 +692,23 @@ function redactLogValue(value) {
   return value;
 }
 
+// Page audio wire frame: u32be length of the rest, u16be header length, JSON header, PCM (s16le mono).
+function encodeAudioFrame(header, payload = Buffer.alloc(0)) {
+  const json = Buffer.from(JSON.stringify(header), "utf8");
+  const frame = Buffer.alloc(6 + json.length + payload.length);
+  frame.writeUInt32BE(2 + json.length + payload.length, 0);
+  frame.writeUInt16BE(json.length, 4);
+  json.copy(frame, 6);
+  payload.copy(frame, 6 + json.length);
+  return frame;
+}
+
+function remember(set, value) {
+  set.add(value);
+  if (set.size <= AUDIO_EPOCH_MEMORY) return;
+  for (const old of [...set].sort((a, b) => a - b).slice(0, set.size - AUDIO_EPOCH_MEMORY)) set.delete(old);
+}
+
 function hashCapability(capability) {
   return crypto.createHash("sha256").update(String(capability), "utf8").digest();
 }
@@ -567,6 +765,7 @@ module.exports = {
   SCRIPT_ROUTE,
   FRAMES_SCRIPT_ROUTE,
   STATE_ROUTE,
+  AUDIO_ROUTE,
   createLocalAvatarSession,
   getLocalAvatarSession,
   getFaceMount,
@@ -579,6 +778,10 @@ module.exports = {
     MAX_ENVELOPE_PUSH_VALUES,
     MAX_ENVELOPE_VALUES,
     ENVELOPE_HISTORY_MS,
+    AUDIO_HEARTBEAT_FRESH_MS,
+    AUDIO_BACKLOG_LIMIT_MS,
+    AUDIO_QUEUE_LIMIT_MS,
+    encodeAudioFrame,
     sessions,
   },
 };

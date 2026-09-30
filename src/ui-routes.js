@@ -10,6 +10,7 @@ function scrubErrorMessage(err, secret) {
 const PUBLIC_DIR = bundledPublicDir();
 const METRICS_TAIL_BYTES = 5 * 1024 * 1024;
 const MAX_WINDOW_HOURS = 168;
+const HEARTBEAT_BODY_LIMIT = 1024;
 const LOCAL_AVATAR_CSP = [
   "default-src 'none'",
   "script-src 'self'",
@@ -115,7 +116,7 @@ function serveLocalAvatar(req, res, url = new URL(req.url || "/", "http://localh
         || !session.verifyCapability(readBearerCapability(req.headers?.authorization))) notFound();
       else writeLocalAvatarJson(res, 200, { mountId: session.mountId, ...session.facePackage.descriptor,
         background: { ...session._background }, listenReactions: session.listenReactions,
-        timelineOffsetMs: session.timelineOffsetMs });
+        timelineOffsetMs: session.timelineOffsetMs, ...(session.pageAudio === true ? { pageAudio: true } : {}) });
       return true;
     }
     if (req.method !== "GET" || !["/local-avatar/face-host.html", "/local-avatar/face-host.js"].includes(url.pathname)) {
@@ -190,6 +191,30 @@ function serveLocalAvatar(req, res, url = new URL(req.url || "/", "http://localh
     return true;
   }
 
+  if (url.pathname === "/local-avatar/audio") {
+    // #266 page audio: exactly the /local-avatar/state checks, only for a faceAudio=page session.
+    const { getLocalAvatarSession } = require("./transport-meet/local-avatar-session");
+    const session = getLocalAvatarSession(url.searchParams.get("v") || "");
+    const capability = readBearerCapability(req.headers?.authorization);
+    const opened = req.method === "POST" && session?.pageAudio === true && Boolean(capability)
+      && hasExactQueryKeys(url, ["generation", "v"])
+      && session.openAudioStream({
+        capability,
+        origin: String(req.headers?.origin || ""),
+        generation: url.searchParams.get("generation"),
+        res,
+        headers: localAvatarHeaders({ "Content-Type": "application/octet-stream", "X-Accel-Buffering": "no" }),
+      });
+    if (!opened) {
+      writeLocalAvatarPlain(res, 404, "Not Found");
+      return true;
+    }
+    req.setTimeout?.(0);
+    res.setTimeout?.(0);
+    req.resume?.();
+    return true;
+  }
+
   if (url.pathname !== "/local-avatar/state" || req.method !== "POST") {
     writeLocalAvatarPlain(res, 404, "Not Found");
     return true;
@@ -219,21 +244,57 @@ function serveLocalAvatar(req, res, url = new URL(req.url || "/", "http://localh
     writeLocalAvatarPlain(res, 404, "Not Found");
     return true;
   }
-  const state = session.readState({
-    capability,
-    origin,
-    generation: url.searchParams.get("generation"),
-    afterSequence: url.searchParams.get("after"),
-  });
-  if (state === null) {
-    writeLocalAvatarPlain(res, 404, "Not Found");
-  } else if (state === undefined) {
-    res.writeHead(204, localAvatarHeaders());
-    res.end();
-  } else {
-    writeLocalAvatarJson(res, 200, state);
+  const respond = (heartbeat) => {
+    const state = session.readState({
+      capability,
+      origin,
+      generation: url.searchParams.get("generation"),
+      afterSequence: url.searchParams.get("after"),
+    });
+    // #266: the heartbeat rides every authenticated poll, including polls answered 204.
+    if (state !== null && heartbeat !== undefined) session.recordHeartbeat(heartbeat);
+    if (state === null) {
+      writeLocalAvatarPlain(res, 404, "Not Found");
+    } else if (state === undefined) {
+      res.writeHead(204, localAvatarHeaders());
+      res.end();
+    } else {
+      writeLocalAvatarJson(res, 200, state);
+    }
+  };
+  if (session.pageAudio !== true) {
+    respond(undefined);
+    return true;
   }
+  readHeartbeatBody(req, (heartbeat) => {
+    if (heartbeat === null) writeLocalAvatarPlain(res, 404, "Not Found");
+    else respond(heartbeat);
+  });
   return true;
+}
+
+// Small JSON heartbeat body of a page-audio state poll. undefined = empty body, null = rejected.
+function readHeartbeatBody(req, done) {
+  const chunks = [];
+  let size = 0;
+  let finished = false;
+  const finish = (value) => {
+    if (finished) return;
+    finished = true;
+    try { done(value); } catch { /* the response path is best-effort visual state */ }
+  };
+  req.on("data", (chunk) => {
+    size += chunk.length;
+    if (size > HEARTBEAT_BODY_LIMIT) finish(null);
+    else chunks.push(Buffer.from(chunk));
+  });
+  req.on("error", () => finish(null));
+  req.on("end", () => {
+    if (size > HEARTBEAT_BODY_LIMIT) return finish(null);
+    const text = Buffer.concat(chunks).toString("utf8");
+    if (!text) return finish(undefined);
+    try { finish(JSON.parse(text)); } catch { finish(null); }
+  });
 }
 
 function hasExactQueryKeys(url, expected) {
