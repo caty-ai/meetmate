@@ -470,15 +470,80 @@ test("host in the mode: a suspended context is reported and resumed; a poll 404 
   assert.equal(JSON.parse(harness.stateRequests().at(-1).options.body).audio.state, "suspended");
   assert.equal(harness.context.resumed, 1);
   const [stream] = harness.streams;
-  stream.push(pcmFrame(0, 0, 2400));
-  await harness.flush();
-  assert.equal(harness.context.sources.length, 1);
-  harness.context.currentTime = 0.05;
+  harness.context.state = "running";
+  await speaking(harness, stream);
+  harness.context.currentTime = 0.25;
   harness.polls.push({ status: 404 }); // session closed or leave
   await harness.poll();
   assert.equal(stream.signal.aborted, true);
-  assert.equal(harness.context.sources[0].stoppedAt, 0.05);
+  assert.equal(harness.context.sources[0].stoppedAt, 0.25);
   assert.equal(harness.streams.length, 1, "a stopped host never reopens");
+  assert.deepEqual(plain(harness.posted.slice(-2)), [{ type: "speak-end", id: 1, reason: "interrupt" }, { type: "level", id: 1, v: 0 }]);
+});
+
+// Brings the host to a page-owned, actively speaking epoch 0 (utterance 1) at currentTime 0.2.
+async function speaking(harness, stream) {
+  stream.push(pcmFrame(0, 0, RATE));
+  harness.polls.push({ kind: "marker", generation: 1, sequence: 2, cancelEpoch: 0, outputEpoch: 0, sampleRate: RATE, audio: "page",
+    envelopes: [{ s: 0, v: [0.5] }],
+    utterances: [{ utteranceId: 1, utteranceStartSample: 0, lastSample: RATE, endSample: null, emotionRevision: 0, emotion: null, intensity: 0 }] });
+  await harness.poll();
+  harness.context.currentTime = 0.2;
+  harness.tick();
+  assert.equal(harness.posted.at(-2).type, "speak-start");
+  assert.equal(harness.posted.at(-1).type, "level");
+}
+
+test("M1: a cancel seen only on the state poll stops the page nodes and idles the mouth with level 0", async (t) => {
+  const harness = hostHarness(t);
+  await harness.start();
+  const [stream] = harness.streams;
+  await speaking(harness, stream);
+  harness.context.currentTime = 0.3;
+  harness.polls.push({ kind: "cancel", generation: 1, sequence: 3, cancelEpoch: 1, outputEpoch: 0 });
+  await harness.poll();
+  assert.equal(harness.context.sources[0].stoppedAt, 0.3);
+  assert.equal(stream.signal.aborted, false, "an epoch stop keeps the stream");
+  assert.deepEqual(plain(harness.posted.slice(-2)), [{ type: "speak-end", id: 1, reason: "interrupt" }, { type: "level", id: 1, v: 0 }]);
+  const count = harness.posted.length;
+  harness.context.currentTime = 0.5; harness.tick();
+  assert.equal(harness.posted.length, count, "the mouth stays idle");
+});
+
+test("M1: backoff after a failed poll idles a page-owned mouth with level 0 and stops the stream", async (t) => {
+  const harness = hostHarness(t);
+  await harness.start();
+  const [stream] = harness.streams;
+  await speaking(harness, stream);
+  harness.polls.push({ status: 503 });
+  await harness.poll();
+  assert.equal(stream.signal.aborted, true);
+  assert.deepEqual(plain(harness.posted.slice(-2)), [{ type: "speak-end", id: 1, reason: "interrupt" }, { type: "level", id: 1, v: 0 }]);
+});
+
+test("M4 + K2: a cancel purges queued frames carrying the old cancelEpoch; a new stream waits for a fresh heartbeat", (t) => {
+  const issued = issue(t);
+  const credentials = { capability: issued.capability, origin };
+  const connected = issued.session.connect(credentials);
+  const { res } = openAudio(`/local-avatar/audio?generation=${connected.generation}&v=${issued.session.visualId}`, { headers: auth(issued) });
+  res.writableNeedDrain = true; // everything stays in the server queue
+  const push = (outputEpoch) => issued.session.pushAudio(pcm(2400), { outputEpoch, firstSampleIndex: 0, sampleRate: RATE });
+  assert.equal(push(1), true);
+  assert.equal(push(2), true);
+  assert.equal(issued.session.cancelPlayback({ outputEpoch: 0 }), true); // epochs 1-2 were queued under the old cancelEpoch
+  res.writableNeedDrain = false;
+  res.emit("drain");
+  const decoded = res.frames.map((frame) => JSON.parse(frame.subarray(6, 6 + frame.readUInt16BE(4)).toString("utf8")));
+  assert.deepEqual(decoded.map((header) => header.t), ["cancel"], "no stale-cancelEpoch pcm survives the cancel");
+  assert.equal(push(3), true);
+  const after = JSON.parse(res.frames.at(-1).subarray(6, 6 + res.frames.at(-1).readUInt16BE(4)).toString("utf8"));
+  assert.deepEqual([after.t, after.outputEpoch, after.cancelEpoch], ["pcm", 3, decoded[0].cancelEpoch]);
+
+  issued.session.recordHeartbeat({ audio: { state: "running", playedEpoch: 3, playedSample: 0, receivedSample: 0 } });
+  assert.equal(issued.session.audioReady(), true);
+  openAudio(`/local-avatar/audio?generation=${connected.generation}&v=${issued.session.visualId}`, { headers: auth(issued) });
+  assert.equal(issued.session.audioHeartbeat(), null);
+  assert.equal(issued.session.audioReady(), false, "a heartbeat from before the reopen does not count");
 });
 
 test("join form sends faceAudio=page only with an explicit face-package selection; MCP join is unchanged", () => {

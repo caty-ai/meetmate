@@ -1976,12 +1976,22 @@ function createPageAudioRoute(session, turnState, sourceGeneration) {
   let page = false;
   let rate = 0;
   let holdArmedAt = null;
+  let lostHandled = null;
   const reset = () => {
     turnState.pageAudioUntil = Date.now();
     holdArmedAt = null;
   };
   reset(); // beginSource
+  // Replaces the previous connection's listener, so one close triggers exactly one reset.
   session.localAvatarSession.onPageAudioClose(reset); // session close / leave
+
+  // A page-lost epoch's tail never plays: release the gate like a cancel does (only pad + cooldown remain).
+  function releaseIfLost() {
+    const avatar = session.localAvatarSession;
+    if (!page || epoch === null || lostHandled === epoch || !avatar?.isPageLost(epoch)) return;
+    lostHandled = epoch;
+    reset();
+  }
 
   function route(buffer, metadata) {
     const outputEpoch = metadata?.outputEpoch;
@@ -1990,26 +2000,36 @@ function createPageAudioRoute(session, turnState, sourceGeneration) {
     if (outputEpoch !== epoch) {
       epoch = outputEpoch;
       try { page = avatar?.audioReady() === true; } catch { page = false; }
+      // A WebSocket epoch must never overlap a still-playing page tail: close the stream first,
+      // which forces the page's stream stop (B) before the first bot_output send.
+      if (!page) {
+        try { avatar?.closeAudioStream?.(); } catch { /* the WebSocket path proceeds */ }
+      }
     }
     if (!page) return false;
     // Page-routed epoch: every chunk stays on the page path, delivered or lost (never WebSocket).
     let queued = false;
     try { queued = avatar?.pushAudio(buffer, metadata, sourceGeneration) === true; } catch { queued = false; }
-    if (!queued) return true;
-    const now = Date.now();
-    rate = metadata.sampleRate;
-    const chunkMs = Math.floor(buffer.length / 2) / metadata.sampleRate * 1000;
-    turnState.pageAudioUntil = Math.max(turnState.pageAudioUntil, now + PAGE_AUDIO_LEAD_MS) + chunkMs;
-    if (holdArmedAt === null) holdArmedAt = now;
+    if (queued) {
+      const now = Date.now();
+      rate = metadata.sampleRate;
+      const chunkMs = Math.floor(buffer.length / 2) / metadata.sampleRate * 1000;
+      turnState.pageAudioUntil = Math.max(turnState.pageAudioUntil, now + PAGE_AUDIO_LEAD_MS) + chunkMs;
+      if (holdArmedAt === null) holdArmedAt = now;
+    } else {
+      releaseIfLost();
+    }
+    // Markers flow for every epoch (§2.1); publishMarker itself rejects cancelled or stale epochs.
     try {
-      avatar.publishMarker(metadata, sourceGeneration);
+      avatar?.publishMarker(metadata, sourceGeneration);
     } catch {
       // Visual state is diagnostic-only and cannot affect realtime audio.
     }
     return true;
   }
 
-  // Backlog hold: only for the live page epoch, only from heartbeats newer than the last arming send.
+  // Backlog hold: only for the live page epoch, only from heartbeats newer than the last arming send,
+  // and only while the page reports a running context with samples still to play.
   function hold(now) {
     const avatar = session.localAvatarSession;
     if (holdArmedAt === null || !page || epoch === null || !avatar || rate <= 0) return;
@@ -2017,7 +2037,8 @@ function createPageAudioRoute(session, turnState, sourceGeneration) {
     const heartbeat = avatar.audioHeartbeat();
     if (!heartbeat || heartbeat.at < holdArmedAt || now - heartbeat.at > PAGE_AUDIO_HEARTBEAT_FRESH_MS
       || heartbeat.playedEpoch !== epoch) return;
-    const backlogMs = Math.max(0, heartbeat.receivedSample - heartbeat.playedSample) / rate * 1000;
+    if (heartbeat.state !== "running" || heartbeat.receivedSample <= heartbeat.playedSample) return;
+    const backlogMs = (heartbeat.receivedSample - heartbeat.playedSample) / rate * 1000;
     turnState.pageAudioUntil = Math.max(turnState.pageAudioUntil, now + backlogMs);
   }
 
@@ -2025,7 +2046,7 @@ function createPageAudioRoute(session, turnState, sourceGeneration) {
     route,
     reset,
     blocks(now) {
-      try { hold(now); } catch { /* the gate falls back to the send projection */ }
+      try { releaseIfLost(); hold(now); } catch { /* the gate falls back to the send projection */ }
       return now < turnState.pageAudioUntil + PAGE_AUDIO_PATH_PAD_MS + ECHO_LOOP_COOLDOWN_MS;
     },
   };

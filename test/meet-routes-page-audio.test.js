@@ -399,6 +399,7 @@ test("routing: a stale heartbeat or a suspended context sends the next epoch to 
     page.chunk(0, 0);
     assert.equal(page.wsChunks(), 1);
     assert.equal(page.res.frames.length, 0);
+    page.open();
     page.heartbeat();
     page.chunk(1, 0);
     assert.equal(page.wsChunks(), 1, "fresh heartbeat routes the next epoch to the page");
@@ -407,6 +408,31 @@ test("routing: a stale heartbeat or a suspended context sends the next epoch to 
     page.chunk(2, 0);
     assert.equal(page.wsChunks(), 2);
     assert.equal(page.res.frames.length, 1);
+  });
+});
+
+test("M3: a WebSocket-routed epoch closes an open page stream before its first bot_output send", async (t) => {
+  await withRoutes(t, async (harness) => {
+    for (const notReady of ["stale", "backlog"]) {
+      const page = notReady === "stale" ? await pageSession(harness) : harness.page;
+      harness.page = page;
+      page.open();
+      page.heartbeat();
+      const epoch = notReady === "stale" ? 0 : 2;
+      page.chunk(epoch, 0); // page-routed reply, its tail still playing on the page
+      const order = [];
+      const res = page.res;
+      const send = page.client.send.bind(page.client);
+      page.client.send = (payload) => { order.push("bot_output"); send(payload); };
+      const end = res.end.bind(res);
+      res.end = () => { order.push("stream-end"); end(); };
+      if (notReady === "stale") harness.clock.now += 1001;
+      else page.heartbeat({ playedEpoch: epoch, playedSample: 0, receivedSample: 3 * RATE }); // backlog > 2 s
+      page.chunk(epoch + 1, 0);
+      assert.deepEqual(order, ["stream-end", "bot_output"], notReady);
+      assert.equal(res.frames.length, 1, "nothing of the WebSocket epoch reaches the page");
+      page.client.send = send;
+    }
   });
 });
 
@@ -535,6 +561,63 @@ test("echo gate: drops while projected or backlogged, releases after, re-opens w
     page.heartbeat({ playedEpoch: 0, playedSample: 0, receivedSample: 3 * RATE });
     harness.clock.now = t3 + lead + 10 + pad + cooldown;
     assert.equal(page.mic(), true, "a heartbeat for another epoch is ignored");
+  });
+});
+
+test("C1: a finished page reply with a zero-backlog heartbeat never pins the gate; a suspended backlog does not extend it", async (t) => {
+  await withRoutes(t, async (harness) => {
+    const { PAGE_AUDIO_PATH_PAD_MS: pad, PAGE_AUDIO_LEAD_MS: lead, ECHO_LOOP_COOLDOWN_MS: cooldown } = harness.routes._test;
+    const page = await pageSession(harness);
+    const t0 = harness.clock.now;
+    page.chunk(0, 0, 1000);
+    const open = t0 + lead + 1000 + pad + cooldown;
+    for (let now = t0 + 1200; now < open + 3000; now += 100) {
+      harness.clock.now = now;
+      page.heartbeat({ playedEpoch: 0, playedSample: RATE, receivedSample: RATE }); // playback complete
+      assert.equal(page.mic(), now >= open, `input at +${now - t0} ms`);
+    }
+    const t1 = harness.clock.now;
+    page.heartbeat({ state: "suspended", playedEpoch: 0, playedSample: 0, receivedSample: 3 * RATE });
+    assert.equal(page.mic(), true, "a suspended context's backlog does not hold the gate");
+    assert.ok(page.pipeline.turnState.pageAudioUntil < t1);
+  });
+});
+
+test("M2 + K1: a mid-epoch stream death releases the gate within pad + cooldown and markers still flow", async (t) => {
+  await withRoutes(t, async (harness) => {
+    const { PAGE_AUDIO_PATH_PAD_MS: pad, ECHO_LOOP_COOLDOWN_MS: cooldown } = harness.routes._test;
+    const page = await pageSession(harness);
+    page.chunk(0, 0, 1000);
+    harness.clock.now += 100;
+    page.res.emit("close"); // the rest of epoch 0 is page-lost and never plays
+    const lostAt = harness.clock.now;
+    assert.equal(page.mic(), false);
+    assert.equal(page.pipeline.turnState.pageAudioUntil, lostAt);
+    harness.clock.now = lostAt + pad + cooldown - 1;
+    assert.equal(page.mic(), false);
+    harness.clock.now = lostAt + pad + cooldown;
+    assert.equal(page.mic(), true, "no hold for a tail that never plays");
+    const before = page.visual.snapshot().sequence;
+    page.chunk(0, RATE);
+    assert.equal(page.wsChunks(), 0);
+    assert.ok(page.visual.snapshot().sequence > before, "a marker is published although the push failed");
+    assert.equal(page.markers().sampleIndex, RATE);
+    assert.equal(page.mic(), true, "a later lost chunk does not re-close the gate");
+  });
+});
+
+test("G1: after a bot WebSocket reconnect one session close triggers exactly one reset", async (t) => {
+  await withRoutes(t, async (harness) => {
+    const page = await pageSession(harness);
+    const first = page.pipeline.turnState;
+    harness.connect();
+    const second = harness.pipelines.at(-1).turnState;
+    assert.notEqual(first, second);
+    const firstValue = first.pageAudioUntil;
+    harness.clock.now += 5000;
+    assert.equal((await harness.leave()).statusCode, 200);
+    assert.equal(second.pageAudioUntil, harness.clock.now);
+    assert.equal(first.pageAudioUntil, firstValue, "the replaced connection's listener is gone");
   });
 });
 

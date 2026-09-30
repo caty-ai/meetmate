@@ -80,7 +80,7 @@ class LocalAvatarSession {
     if (mode === "face-package" && pageAudio === true) {
       // The meetmate host page owns reply sound; packages stay audio-free (#266).
       this.pageAudio = true;
-      this._audio = { stream: null, heartbeat: null, routed: new Set(), lost: new Set(), closeListeners: [] };
+      this._audio = { stream: null, heartbeat: null, routed: new Set(), lost: new Set(), closeListener: null };
     }
     this.visualId = visualId;
     this.publicOrigin = publicOrigin;
@@ -337,8 +337,16 @@ class LocalAvatarSession {
     return Boolean(this.pageAudio && this._audio.lost.has(outputEpoch));
   }
 
+  // One listener per session: a bot WebSocket reconnect replaces the previous connection's listener.
   onPageAudioClose(listener) {
-    if (this.pageAudio && !this._closed && typeof listener === "function") this._audio.closeListeners.push(listener);
+    if (this.pageAudio && !this._closed && typeof listener === "function") this._audio.closeListener = listener;
+  }
+
+  // Server-side stream close (forces the page's stream stop). true when a stream was open.
+  closeAudioStream() {
+    if (!this.pageAudio || !this._audio.stream) return false;
+    this._closeAudioStream(true);
+    return true;
   }
 
   // Exactly the /local-avatar/state checks, plus the mode. One stream per session; no replay.
@@ -346,6 +354,8 @@ class LocalAvatarSession {
     if (!this.pageAudio || origin !== this.publicOrigin || !this.verifyCapability(capability)) return false;
     if (toPositiveInteger(generation) !== this._generation) return false;
     this._closeAudioStream(true);
+    // A heartbeat from before this stream describes the old stream's playback; wait for a fresh one.
+    this._audio.heartbeat = null;
     const stream = { res, generation: this._generation, queue: [], queuedMs: 0, epochs: new Set(), rate: 0, closed: false };
     this._audio.stream = stream;
     res.writeHead(200, headers);
@@ -377,7 +387,7 @@ class LocalAvatarSession {
     const frame = encodeAudioFrame({ t: "pcm", generation: this._generation, outputEpoch, cancelEpoch: this._cancelEpoch,
       firstSampleIndex, sampleRate, utteranceId }, pcm);
     const ms = pcm.length / 2 / sampleRate * 1000;
-    stream.queue.push({ outputEpoch, frame, ms });
+    stream.queue.push({ outputEpoch, cancelEpoch: this._cancelEpoch, frame, ms });
     stream.queuedMs += ms;
     stream.epochs.add(outputEpoch);
     stream.rate = sampleRate;
@@ -399,11 +409,12 @@ class LocalAvatarSession {
     if (stream.queue.length === 0) stream.queuedMs = 0;
   }
 
-  // Purges queued frames of epochs <= upTo and pushes a cancel frame ahead of any later frame.
+  // Purges queued frames of epochs <= upTo and every queued frame encoded under an older cancelEpoch,
+  // then pushes a cancel frame ahead of any later frame.
   _cancelAudio(upTo, frameOutputEpoch = upTo) {
     const stream = this._audio.stream;
     if (!stream || stream.closed) return;
-    stream.queue = stream.queue.filter((item) => item.outputEpoch > upTo);
+    stream.queue = stream.queue.filter((item) => item.outputEpoch > upTo && item.cancelEpoch >= this._cancelEpoch);
     stream.queuedMs = stream.queue.reduce((total, item) => total + item.ms, 0);
     for (const epoch of [...stream.epochs]) if (epoch <= upTo) stream.epochs.delete(epoch);
     try {
@@ -474,9 +485,9 @@ class LocalAvatarSession {
       this._cancelAudio(Number.MAX_SAFE_INTEGER, this._outputEpoch);
       this._closeAudioStream(true);
       this._audio.heartbeat = null;
-      for (const listener of this._audio.closeListeners.splice(0)) {
-        try { listener(); } catch { /* meeting cleanup must continue */ }
-      }
+      const listener = this._audio.closeListener;
+      this._audio.closeListener = null;
+      try { listener?.(); } catch { /* meeting cleanup must continue */ }
     }
     if (this.mode === "face-package") {
       this.facePackage = null;

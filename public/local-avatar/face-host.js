@@ -27,7 +27,10 @@
       active = null; revision = -1;
     }
     function reset() {
+      // Every stop path idles a page-owned mouth fully: speak-end (interrupt) and level 0.
+      const pageActive = pageOwned ? active : null;
       end("interrupt");
+      if (pageActive !== null) send({ type: "level", id: pageActive, v: 0 });
       if (listening !== null) send({ type: "listen-end", id: listening });
       listening = null; cueId = null;
       rate = 0; anchor = null; newest = null; windows = []; utterances = []; completed = new Set();

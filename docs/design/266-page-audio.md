@@ -11,7 +11,9 @@ Implementation notes (where the code had to choose):
 - Marker states of page-routed epochs carry `audio: "page"`, so the host's wall-clock timeline stays idle for them even before the first PCM chunk arrives (§2.5).
 - After a stream stop (B) the host reopens the stream after the next healthy state poll, at most once per 500 ms (§2.4).
 - A page stop idles the mouth only for page-owned epochs; a WebSocket-routed epoch keeps its wall-clock mouth (§2.4, §2.5).
-- `pageAudioUntil` is (re)set at WebSocket connect (beginSource), on `playback_cancelled`, and on session close through a session close hook (§2.6).
+- `pageAudioUntil` is (re)set at WebSocket connect (beginSource), on `playback_cancelled`, on session close through a session close hook, and when the in-flight page epoch becomes page-lost (§2.6).
+- The backlog hold only extends the gate for a running context with `receivedSample > playedSample`; with no backlog the send projection alone governs (§2.6).
+- An epoch routed to the WebSocket while a page stream is open closes that stream first, so the page stops every node before the first `bot_output` send (§2.1, F-double).
 
 ## §0 Measured facts (VPS spike, 2026-09-30 — #266 comments 5895245160 / 5895395602)
 - Attendee `c59b71b8` webpage streamer captures page audio (Chrome → PulseAudio null sink → `alsasrc` monitor) and sends it **with the page video on one WebRTC connection** (`webpage_streamer.py:171-185, 355-392`); the bot routes that audio into the **same `gainNode`** as the WebSocket `realtime_audio.bot_output` path (`shared_chromedriver_payload.js:407-445, 553-561, 704`) ⇒ both at once = double audio. Chrome runs with `--autoplay-policy=no-user-gesture-required` (`webpage_streamer.py:236`).
@@ -56,7 +58,7 @@ Implementation notes (where the code had to choose):
 
 **(A) Epoch stop — keep the stream.** Call `source.stop()` on every scheduled node of the cancelled epoch or epochs, and drop their remaining frames. The fetch **stays open**. Triggers:
 - a `cancel` frame;
-- a stale `cancelEpoch`/`outputEpoch` from the state poll.
+- a stale `cancelEpoch` from the state poll. (An `outputEpoch`-only advance is a normal epoch boundary, not a stop.)
 
 Cancellation is routine: every barge-in produces it. It must not tear down the stream, otherwise every later epoch would fall back to WebSocket for the rest of the session.
 
