@@ -52,6 +52,12 @@ The allowlist below is complete. The compact type notation is directly translata
 | `agent_greeting` | `agent.greeting` | `text(4096)` | basic | none | live | none | default |
 | `agent_emotion_tags` | `agent.emotionTags` | `bool` / `true` | basic | none | live | none | default |
 | `agent_wake_words` | `agent.wakeWords` | `str[]` | basic | none | restart-required | `WAKE_WORDS` | default |
+| `agent_reply_trigger` | `agent.replyTrigger` | `enum(wake,jev)` / `wake` | basic | none | live | none | default |
+| `agent_reply_judge_addressed_min` | `agent.replyJudge.addressedMin` | `num(0,1)` / `0.75` | hidden | none | live | none | default |
+| `agent_reply_judge_finished_min` | `agent.replyJudge.finishedMin` | `num(0,1)` / `0.75` | hidden | none | live | none | default |
+| `agent_reply_judge_continuation_wait_ms` | `agent.replyJudge.continuationWaitMs` | `int(0,10000)` / `3000` | hidden | none | live | none | default |
+| `agent_reply_judge_timeout_ms` | `agent.replyJudge.timeoutMs` | `int(50,5000)` / `800` | hidden | none | live | none | default |
+| `agent_reply_judge_context_lines` | `agent.replyJudge.contextLines` | `int(0,20)` / `6` | hidden | none | live | none | default |
 | `agent_keyterms` | `agent.keyterms` | `str[]` | detail | none | restart-required | `SONIOX_CONTEXT_TERMS` | default |
 | `agent_stt_wake_variants` | `agent.sttWakeVariants` | `str[]` | detail | none | restart-required | none | default |
 | `agent_ack_variants` | `agent.ackVariants` | `str[]` | detail | none | live | none | default |
@@ -694,3 +700,15 @@ and sent as the descriptor's `timelineOffsetMs`; a running session keeps its val
 `TYPESAFE_API_KEY` is environment-only and lazy, outside the settings registry.
 See [Face packages and Face Protocol v1](face-packages.md) for the serving boundary,
 manifest and optional user-transcript reaction judgement.
+
+### Reply trigger (#267, trial)
+
+`agent_reply_trigger` (`agent.replyTrigger`) is basic and live, `wake` (default) /
+`jev`, read per utterance. `wake` keeps today's wake-word gate unchanged. `jev`
+also answers a line without a wake word when jev judges it addressed to the agent
+and finished; it sends recent meeting lines (speakers as pseudonyms) to the
+external judge and needs the same lazy `TYPESAFE_API_KEY`; without it the mode is
+silent. With `hub.enabled` it behaves as `wake` and logs one warning per session.
+The hidden, live `agent.replyJudge.*` rows keep the owner-fixed defaults:
+`addressedMin` 0.75, `finishedMin` 0.75, `continuationWaitMs` 3000, `timeoutMs`
+800, `contextLines` 6. See [the design note](design/267-jev-turn-taking.md).

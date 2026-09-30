@@ -248,3 +248,37 @@ Seats: Kimi K3, Grok 4.6, Devin SWE-2 High (writer Opus 5.5). All three returned
 | C10 | Eval hygiene: held-out split, per-source breakdown, context labels, unlabelled variants, stability (Kimi F7, Devin F9, Grok F6/Q5) | adopted | §2.6 |
 | C11 | #269 must also cover `speakSentence` l.3073/3079 (Devin F11, Grok F8, Kimi F8) | adopted | §2.7 |
 | C12 | Reopen-time judgement latency (Devin F10) | moot: no reopen-time judging in v2 | — |
+
+## Implementation notes (2026-10-01, writer Opus 5.5)
+
+These are ambiguities in v2.1 that were resolved while implementing. None of them loosens a pin; each is either neutral or stricter.
+
+- **Speaker labels sent to jev are pseudonyms.** "Its speaker label when one exists" is implemented as a per-request pseudonym (`参加者A`, `参加者B`, … in order of first appearance). Unattributed lines are `unknown`, and Caty's lines use the agent's display name. Display names never leave the process. The eval shapes rows through the same `buildJudgeState()`.
+- **`assistant_name` and the question text use the agent's name.** `assistant_name` is `displayName (first other wake word)`, for example `Caty (ケイティ)`. The questions name the agent instead of hard-coding "Caty".
+- **The question wording was refined on the eval tune half** (v1 → v3, see `docs/turn-judge-eval.md`). The thresholds are unchanged.
+- **Every non-empty `utterance_end` bumps `decisionGeneration` synchronously** (P6, stricter). A first or merged speak therefore also yields when any newer utterance has arrived while its judge was running. A deadline job takes its own generation when it runs.
+- **Interim cancel (Grok Q4.5) only fires for a different *attributed* speaker, as written.** Unknown interim speech does not cancel at once. At the deadline it counts as "other speech", so the hold is ignored (P3).
+- **A same-speaker interim at the deadline extends the hold once, to the hard cap** (`deadline + continuationWaitMs`). After an extension, only that speaker's `utterance_end` (the merge) can still lead to speech. The cap itself resolves to ignore (§2.4 "at the cap → ignore").
+- **`agentTurnGeneration` is bumped in three kinds of place:**
+  - `processUserInput`, the greeting and the farewell,
+  - every `speakSentence` that is not muted. This covers the cancel ack, report lines and manual/gateway speech (P1 "any … speech").
+- **`lastLiveSpeechSpeakerId` is also written next to `liveUserSpeechUntil` in `handleUtteranceEnd`.** This keeps the pair consistent.
+- **The P5 abort on the wake/exit route is defensive.** The t=0 peek uses the same pure functions and the same gate as the real path, so a judge cannot be in flight on those routes.
+- **Implementation review r1 (Kimi K3 / Grok 4.6 / Devin SWE-2, GO-WITH-CONDITIONS ×3) was addressed as follows:**
+  - **A2, new-speech guard (stricter).**
+    - A monotonic `liveInterimSeq` is bumped next to `liveUserSpeechUntil` for every non-noise interim, from any speaker. `onSttUtteranceEnd` snapshots it as `interimSeqAtArrival`.
+    - A first or merged *speak* is blocked with `reason=new_speech` if any interim arrived after the line's own `utterance_end`.
+    - A `wait` is not blocked this way, so a continuation can still merge. The deadline keeps its P3 logic.
+    - The line's own interims precede its `utterance_end`, and `handleUtteranceEnd` does not touch the counter, so the guard never self-blocks.
+  - **A3.** A held entry that a speak supersedes is marked `turnJudgeSuperseded`, and `turnJudgeContext` skips it, so the held text is not repeated in later judge requests.
+  - **A5.** The hold-arrival exit check and the t=0 peek use `config.exitDetection !== false && isExitCommand(...)`, the same gate as the real path. With exit detection off, an exit-like line is judged normally and can merge.
+  - **A6.** `startTurnJudge` returns early when `stopped`.
+  - **A1.** The eval set got a second anonymisation pass. Both halves were re-run on the frozen v3 wording (see `docs/turn-judge-eval.md`).
+- **A held line is excluded from the prompt by marking it `sentToLlm`** when the spoken entry commits (P7). `selectMeetingContextEntries` is unchanged.
+- **Logging.** The judge line appends `stage=first|merged|deadline` to the §2.5 format. Hold drops log `🧭 [turn-judge] hold cleared reason=…`; these are not judgements, so they have no metric.
+- **One extra existing test changed:** `test/paths.test.js`, where the registry count lock went from 91 to 97 (owner/Alpha-approved). `docs/settings-env-inventory.json` records the second `TYPESAFE_API_KEY` read (`src/turn-judge.js`).
+- **Known residuals accepted at the implementation delta** (Kimi N2, Devin N1/N2; all fail-silent, none can make Caty speak over people):
+  - The `new_speech` veto has no decay. One non-noise interim after arrival turns a would-be speak into ignore, even if that speech stops at once. The deadline path forgives after `LIVE_USER_SPEECH_HOLD_MS`.
+  - A trailing or echo interim that the STT emits after `utterance_end` can cause the same false silence.
+  - Noise-classified interims (≤ 4 Latin chars or digits, `isNoiseInterim`) never trip the veto. The deadline path has the same exposure. A newer `utterance_end` still supersedes via P6.
+  - Revisit these only if the owner live check shows too many missed replies.

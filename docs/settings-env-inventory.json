@@ -875,12 +875,13 @@
     {
       "name": "TYPESAFE_API_KEY",
       "references": [
-        "src/emotion/jev.js:7"
+        "src/emotion/jev.js:7",
+        "src/turn-judge.js:98"
       ],
       "ux": "hidden",
       "credentialClass": "class-1-external-vendor",
       "handling": "lazy-emotion-judge-env-only",
-      "remainingDirectReads": 1
+      "remainingDirectReads": 2
     },
     {
       "name": "WAKE_CALIBRATE_ENABLED",
