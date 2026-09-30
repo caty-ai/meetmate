@@ -1213,6 +1213,17 @@ async function handleHttp(req, res) {
         writePlainResponse(res, 400, `${avatarExperiment} はパイプライン TTS プロバイダー構成でのみ利用できます。`);
         return;
       }
+      // #266 page audio: opt-in per join, validated against the *resolved* experiment above.
+      const hasFaceAudio = Object.hasOwn(formData, "faceAudio");
+      if (hasFaceAudio && (typeof formData.faceAudio !== "string" || !["", "page"].includes(formData.faceAudio))) {
+        writePlainResponse(res, 400, "faceAudio が不正です。");
+        return;
+      }
+      const pageAudio = hasFaceAudio && formData.faceAudio === "page";
+      if (pageAudio && avatarExperiment !== "face-package") {
+        writePlainResponse(res, 400, "faceAudio=page は avatarExperiment=face-package を明示した参加でのみ利用できます。");
+        return;
+      }
 
       // Prevent duplicate joins — block if there's already an active session
       if (meetingSessions.size > 0) {
@@ -1298,6 +1309,11 @@ async function handleHttp(req, res) {
       }
 
       const sessionHubConfig = await resolveSessionHubConfig(meetingUrl);
+      if (pageAudio && sessionHubConfig?.enabled === true) {
+        // Floor release is send-time + tailMs; page-path delay could overlap the next grant (#266 §2.0).
+        writePlainResponse(res, 400, "faceAudio=page はフロア調停（hub）が有効なセッションでは利用できません。");
+        return;
+      }
       sessionId = crypto.randomUUID();
       const startedAt = new Date().toISOString();
       const session = {
@@ -1381,6 +1397,7 @@ async function handleHttp(req, res) {
             mode: getEffectiveValue("avatar_rig_background_mode"),
             color: getEffectiveValue("avatar_rig_background_color"),
           },
+          ...(pageAudio ? { pageAudio: true } : {}),
         });
         localAvatarSession = issued?.session || null;
         localAvatarLaunchUrl = issued?.launchUrl || null;
@@ -1789,9 +1806,14 @@ function handleWsConnection(client, req) {
   } catch {
     localAvatarSourceGeneration = null;
   }
+  // #266: null unless this session joined with faceAudio=page; then the default block below never changes.
+  const pageAudioRoute = session.localAvatarSession?.pageAudio === true
+    ? createPageAudioRoute(session, turnState, localAvatarSourceGeneration)
+    : null;
 
   const handler = createHandler(session, turnState, (buffer, metadata) => {
     if (client.readyState !== WebSocket.OPEN) return;
+    if (pageAudioRoute?.route(buffer, metadata)) return;
 
     const payload = {
       trigger: "realtime_audio.bot_output",
@@ -1816,6 +1838,7 @@ function handleWsConnection(client, req) {
 
   if (session.localAvatarSession && handler.on) {
     handler.on("playback_cancelled", (event) => {
+      pageAudioRoute?.reset();
       try {
         session.localAvatarSession?.cancelPlayback(event, localAvatarSourceGeneration);
       } catch {
@@ -1880,7 +1903,7 @@ function handleWsConnection(client, req) {
       const parsed = JSON.parse(msg.toString());
       if (parsed.trigger === "realtime_audio.mixed" && parsed?.data?.chunk) {
         const now = Date.now();
-        if (turnState.isAgentSpeaking || now < turnState.inputCooldownUntil) {
+        if (turnState.isAgentSpeaking || now < turnState.inputCooldownUntil || pageAudioRoute?.blocks(now)) {
           // Optional legacy cancel-word bypass; default keeps TTS echo out of STT.
           if (ECHO_GATE_CLOSED_BYPASS && turnState.isAgentSpeaking && turnState.gateState === "CLOSED") {
             const audio = Buffer.from(parsed.data.chunk, "base64");
@@ -1938,6 +1961,74 @@ function handleWsConnection(client, req) {
 
     scheduleFinalizeSession(sid);
   });
+}
+
+// #266 page audio. pathPadMs covers the page → streamer → bot → Meet path; initial value,
+// to be re-measured on the VPS (§2.8(b)). leadMs mirrors the page player's first-chunk lead.
+const PAGE_AUDIO_PATH_PAD_MS = 300;
+const PAGE_AUDIO_LEAD_MS = 150;
+const PAGE_AUDIO_HEARTBEAT_FRESH_MS = 1000;
+
+// Routes each outputEpoch exactly once (decided at its first chunk, never switched) and owns
+// turnState.pageAudioUntil. Only meet-routes writes pageAudioUntil (§2.1, §2.6).
+function createPageAudioRoute(session, turnState, sourceGeneration) {
+  let epoch = null;
+  let page = false;
+  let rate = 0;
+  let holdArmedAt = null;
+  const reset = () => {
+    turnState.pageAudioUntil = Date.now();
+    holdArmedAt = null;
+  };
+  reset(); // beginSource
+  session.localAvatarSession.onPageAudioClose(reset); // session close / leave
+
+  function route(buffer, metadata) {
+    const outputEpoch = metadata?.outputEpoch;
+    if (!Number.isSafeInteger(outputEpoch)) return false;
+    const avatar = session.localAvatarSession;
+    if (outputEpoch !== epoch) {
+      epoch = outputEpoch;
+      try { page = avatar?.audioReady() === true; } catch { page = false; }
+    }
+    if (!page) return false;
+    // Page-routed epoch: every chunk stays on the page path, delivered or lost (never WebSocket).
+    let queued = false;
+    try { queued = avatar?.pushAudio(buffer, metadata, sourceGeneration) === true; } catch { queued = false; }
+    if (!queued) return true;
+    const now = Date.now();
+    rate = metadata.sampleRate;
+    const chunkMs = Math.floor(buffer.length / 2) / metadata.sampleRate * 1000;
+    turnState.pageAudioUntil = Math.max(turnState.pageAudioUntil, now + PAGE_AUDIO_LEAD_MS) + chunkMs;
+    if (holdArmedAt === null) holdArmedAt = now;
+    try {
+      avatar.publishMarker(metadata, sourceGeneration);
+    } catch {
+      // Visual state is diagnostic-only and cannot affect realtime audio.
+    }
+    return true;
+  }
+
+  // Backlog hold: only for the live page epoch, only from heartbeats newer than the last arming send.
+  function hold(now) {
+    const avatar = session.localAvatarSession;
+    if (holdArmedAt === null || !page || epoch === null || !avatar || rate <= 0) return;
+    if (avatar.isPageLost(epoch)) return;
+    const heartbeat = avatar.audioHeartbeat();
+    if (!heartbeat || heartbeat.at < holdArmedAt || now - heartbeat.at > PAGE_AUDIO_HEARTBEAT_FRESH_MS
+      || heartbeat.playedEpoch !== epoch) return;
+    const backlogMs = Math.max(0, heartbeat.receivedSample - heartbeat.playedSample) / rate * 1000;
+    turnState.pageAudioUntil = Math.max(turnState.pageAudioUntil, now + backlogMs);
+  }
+
+  return {
+    route,
+    reset,
+    blocks(now) {
+      try { hold(now); } catch { /* the gate falls back to the send projection */ }
+      return now < turnState.pageAudioUntil + PAGE_AUDIO_PATH_PAD_MS + ECHO_LOOP_COOLDOWN_MS;
+    },
+  };
 }
 
 function configureReadinessForTest(probeOptions = {}) {
@@ -2007,5 +2098,8 @@ module.exports = {
     taskExtractionEnabledAtBoot,
     meetingSessions,
     activeConnections,
+    PAGE_AUDIO_PATH_PAD_MS,
+    PAGE_AUDIO_LEAD_MS,
+    ECHO_LOOP_COOLDOWN_MS,
   },
 };

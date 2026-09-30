@@ -1,0 +1,582 @@
+"use strict";
+
+// #266 page audio: routing, markers, echo gate and join validation in meet-routes.
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const http = require("node:http");
+const https = require("node:https");
+const crypto = require("node:crypto");
+const Module = require("node:module");
+const { EventEmitter } = require("node:events");
+const { stringify } = require("node:querystring");
+
+const resolver = require("../src/settings/resolver");
+const readiness = require("../src/settings/readiness");
+
+const FIXED_SESSION_ID = "00000000-0000-4000-8000-000000000266";
+const ORIGIN = "https://meetmate.example";
+const RATE = 24_000;
+
+function installMock(filename, exports) {
+  require.cache[filename] = { id: filename, filename, loaded: true, exports };
+}
+
+function setEnv(values) {
+  const previous = {};
+  for (const [key, value] of Object.entries(values)) {
+    previous[key] = process.env[key];
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  return () => {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  };
+}
+
+function staticSettings(avatar) {
+  return {
+    agent: { id: "caty", name: "Caty", displayName: "Caty", wakeWords: ["ケイティ"] },
+    llm: { provider: "openclaw", model: "test-model" },
+    stt: { provider: "soniox", sonioxApiKey: "soniox-secret" },
+    tts: { provider: "fish-audio", apiKey: "fish-secret", voiceId: "voice-id" },
+    attendee: { apiKey: "attendee-secret", baseUrl: "app.attendee.dev" },
+    server: { ngrokDomain: "meetmate.example" },
+    slack: { notifications: { enabled: false } },
+    avatar,
+  };
+}
+
+function unavailableNgrokHttpGet() {
+  const request = new EventEmitter();
+  request.setTimeout = () => request;
+  request.destroy = () => {};
+  queueMicrotask(() => request.emit("error", Object.assign(new Error("ngrok unavailable in test"), { code: "ECONNREFUSED" })));
+  return request;
+}
+
+class FakeClient extends EventEmitter {
+  constructor() {
+    super();
+    this.readyState = 1;
+    this.sent = [];
+  }
+  send(payload) { this.sent.push(payload); }
+  close() {}
+  terminate() {}
+  ping() {}
+}
+
+// A streamed /local-avatar/audio response as the session sees it.
+class FakeAudioResponse extends EventEmitter {
+  constructor() {
+    super();
+    this.frames = [];
+    this.ended = false;
+    this.writableNeedDrain = false;
+  }
+  writeHead(status, headers) { this.status = status; this.headers = headers; }
+  flushHeaders() {}
+  write(chunk) { this.frames.push(Buffer.from(chunk)); return true; }
+  end() { this.ended = true; }
+  decoded() {
+    return this.frames.map((frame) => {
+      assert.equal(frame.readUInt32BE(0), frame.length - 4);
+      const headerLength = frame.readUInt16BE(4);
+      return { header: JSON.parse(frame.subarray(6, 6 + headerLength).toString("utf8")), pcm: frame.subarray(6 + headerLength) };
+    });
+  }
+}
+
+async function requestHttp(routes, method, url, formData = null) {
+  const req = new EventEmitter();
+  req.method = method;
+  req.url = url;
+  req.headers = {};
+  req.socket = { remoteAddress: "127.0.0.1", localAddress: "127.0.0.1", localPort: 5005 };
+  req.destroy = () => {};
+  const result = { statusCode: null, text: "" };
+  const res = {
+    writeHead(statusCode) { result.statusCode = statusCode; },
+    end(body = "") { result.text += String(body); },
+  };
+  const pending = routes.handleHttp(req, res);
+  await Promise.resolve();
+  if (formData) req.emit("data", Buffer.from(stringify(formData)));
+  req.emit("end");
+  await pending;
+  return result;
+}
+
+function facePackageDir(t) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "page-audio-face-"));
+  fs.writeFileSync(path.join(directory, "face.json"), JSON.stringify({ spec: "face-package/1", entry: "index.html", supports: ["speak", "level"] }));
+  fs.writeFileSync(path.join(directory, "index.html"), "<!doctype html>");
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  return directory;
+}
+
+async function withRoutes(t, fn, { avatar = {}, hub } = {}) {
+  const routesPath = require.resolve("../src/transport-meet/meet-routes");
+  const src = path.join(__dirname, "..", "src");
+  const mockPaths = ["config.js", "pipeline.js", "gateway-warmup.js", "session-events.js", "slack-notifier.js", "summarizer.js",
+    "agent-profile.js", "attendee-chat.js", "gateway-events.js", "metrics.js", "delegation-results.js",
+    "gateway-session-tracker.js", "ui-routes.js", "paths.js"].map((name) => path.join(src, name));
+  const cachePaths = [routesPath, path.join(src, "transport-meet", "local-avatar-session.js"), ...mockPaths];
+  const previousCache = new Map(cachePaths.map((file) => [require.resolve(file), require.cache[require.resolve(file)]]));
+  for (const file of cachePaths) delete require.cache[require.resolve(file)];
+
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-page-audio-"));
+  const restoreEnv = setEnv({
+    ATTENDEE_API_KEY: "attendee-secret",
+    FISH_AUDIO_API_KEY: "fish-secret",
+    SESSION_GRACE_CLOSE_MS: "10",
+    ECHO_LOOP_COOLDOWN_MS: undefined,
+    ECHO_GATE_CLOSED_BYPASS: "false",
+    OPENCLAW_WORKSPACE: undefined,
+  });
+  const settings = staticSettings({ facePackageDir: facePackageDir(t), ...avatar });
+  resolver.resetRuntimeForTest();
+  readiness.reset();
+  resolver.initializeRuntime({
+    state: { exists: true, valid: true, parsed: settings, revision: "b".repeat(64), fingerprint: "page-audio" },
+    startup: Object.freeze({
+      preDotenvEnv: Object.freeze({}), dotenvSeeds: Object.freeze({}), resolvedHome: homeDir,
+      configPath: path.join(homeDir, "config.json"),
+      connection: Object.freeze({ openclawUrl: "https://gateway.example", openclawToken: "gateway-secret", openaiApiKey: "" }),
+    }),
+    serverPort: 5005,
+  });
+  for (const system of readiness.gateSystems()) readiness.setProbeObservation(system, { ok: true, code: "CONNECTED" });
+
+  const pipelines = [];
+  const clients = [];
+  const httpsRequests = [];
+  const originals = { request: https.request, get: http.get, uuid: crypto.randomUUID, load: Module._load, now: Date.now };
+  const clock = { now: originals.now() };
+  Date.now = () => clock.now;
+
+  installMock(path.join(src, "config.js"), {
+    SAMPLE_RATE: 16_000,
+    TTS_SAMPLE_RATE: RATE,
+    TTS_PROVIDER: "fish-audio",
+    ...(hub ? { HUB_CONFIG: hub } : {}),
+    loadConfig: () => settings,
+    resolveMessages: () => ({ delegation: {}, prompts: { summary: "summary" } }),
+    getPipelineConfig: (overrides = {}) => ({
+      stt: { provider: "soniox", sampleRate: 16_000 },
+      llm: { provider: "test", model: "test-model", gateway: { url: "http://gateway.invalid", token: "test" } },
+      tts: { sampleRate: RATE, referenceId: "voice-id" },
+      gatewayEvents: { enabled: false },
+      hub: { debug: false },
+      greeting: overrides.greeting || "",
+      echoCooldownMs: 0,
+    }),
+    validateSttProviderApiKey: () => true,
+  });
+  installMock(path.join(src, "pipeline.js"), {
+    createPipeline: (session, turnState, onAudio) => {
+      const pipeline = new EventEmitter();
+      Object.assign(pipeline, { session, turnState, onAudio, receivedAudio: [], sendAudio(buffer) { this.receivedAudio.push(buffer); },
+        close() {}, getDelegationResults() { return []; } });
+      pipelines.push(pipeline);
+      return pipeline;
+    },
+  });
+  installMock(path.join(src, "gateway-warmup.js"), { warmUpGatewaySession: () => {} });
+  installMock(path.join(src, "session-events.js"), {
+    SessionLifecycle: class {
+      constructor(sessionId) { this.sessionId = sessionId; this.state = "idle"; this.isTerminal = false; }
+      transition(state) { this.state = state; this.isTerminal = ["completed", "failed"].includes(state); return true; }
+      on() {}
+      setConversationLog() {}
+      toJSON() { return { sessionId: this.sessionId, state: this.state }; }
+    },
+  });
+  installMock(path.join(src, "slack-notifier.js"), {
+    SlackNotifier: class {
+      postStatus() { return Promise.resolve(); }
+      startElapsedUpdates() {}
+      stopElapsedUpdates() {}
+      postSummary() { return Promise.resolve(); }
+      postTranscript() { return Promise.resolve(); }
+    },
+  });
+  installMock(path.join(src, "summarizer.js"), { summarizeConversation: async () => "" });
+  installMock(path.join(src, "agent-profile.js"), {
+    resolveAgentProfile: () => ({ agentId: "caty", name: "Caty", displayName: "Caty", attendeeApiKey: "attendee-secret", wakeWords: ["ケイティ"] }),
+    AgentNotFoundError: class AgentNotFoundError extends Error {},
+  });
+  installMock(path.join(src, "attendee-chat.js"), { sendAttendeeChatMessage: async () => true });
+  installMock(path.join(src, "gateway-events.js"), {});
+  installMock(path.join(src, "metrics.js"), { recordEvent: () => {} });
+  installMock(path.join(src, "delegation-results.js"), { buildDelegationResultsSection: () => "" });
+  installMock(path.join(src, "gateway-session-tracker.js"), {
+    createGatewaySessionTracker: () => ({ trackGatewaySession() {}, untrackGatewaySession() { return false; }, findGatewayRoute() { return null; } }),
+  });
+  installMock(path.join(src, "ui-routes.js"), { serveLocalAvatar: () => false, servePublicAsset: () => false, sendMetricsSummary: async () => false });
+  installMock(path.join(src, "paths.js"), {
+    logsDir: () => path.join(homeDir, "logs"),
+    avatarCachePath: () => path.join(homeDir, "avatar.png"),
+    bundledAssetPath: (name) => path.join(homeDir, name),
+    bundledPublicDir: () => homeDir,
+  });
+  Module._load = function patchedLoad(request, parent, isMain) {
+    if (request === "@deepgram/sdk") return { createClient: () => ({ agent: () => new EventEmitter() }), AgentEvents: {} };
+    return originals.load.call(this, request, parent, isMain);
+  };
+  https.request = (requestOptions, callback) => {
+    const request = new EventEmitter();
+    const record = { options: requestOptions, body: "" };
+    httpsRequests.push(record);
+    request.setTimeout = () => request;
+    request.destroy = () => {};
+    request.write = (chunk) => { record.body += String(chunk); };
+    request.end = () => {
+      const response = new EventEmitter();
+      response.statusCode = requestOptions.path === "/api/v1/bots" ? 201 : 200;
+      callback(response);
+      queueMicrotask(() => {
+        response.emit("data", requestOptions.path === "/api/v1/bots" ? '{"id":"bot-page-audio"}' : "{}");
+        response.emit("end");
+      });
+    };
+    return request;
+  };
+  http.get = unavailableNgrokHttpGet;
+  crypto.randomUUID = () => FIXED_SESSION_ID;
+
+  const offline = async () => { throw Object.assign(new Error("network unavailable in test"), { code: "ENETUNREACH" }); };
+  try {
+    const routes = require(routesPath);
+    await routes.init({ detectNgrok: false, loadAvatar: false,
+      readinessProbeOptions: { fetchFn: offline, requestFn: offline, httpGet: unavailableNgrokHttpGet } });
+    routes._test.configureReadinessForTest({ fetchFn: offline, requestFn: offline, httpGet: unavailableNgrokHttpGet });
+    const harness = {
+      routes,
+      clock,
+      pipelines,
+      join(fields) {
+        return requestHttp(routes, "POST", "/join-meeting", {
+          meetingUrl: "https://meet.google.com/abc-defg-hij", wsUrl: "wss://meetmate.example/realtime",
+          conversationMode: "one_to_one", ...fields,
+        });
+      },
+      leave() { return requestHttp(routes, "POST", "/leave-meeting", { sessionId: FIXED_SESSION_ID }); },
+      launch() {
+        const create = httpsRequests.find((request) => request.options.path === "/api/v1/bots");
+        const url = new URL(JSON.parse(create.body).voice_agent_settings.url);
+        return { capability: new URLSearchParams(url.hash.slice(1)).get("cap"), origin: url.origin };
+      },
+      connect() {
+        const client = new FakeClient();
+        clients.push(client);
+        routes.handleWsConnection(client, { url: `/realtime?sid=${FIXED_SESSION_ID}`, socket: { remoteAddress: "127.0.0.1" } });
+        return client;
+      },
+    };
+    await fn(harness);
+  } finally {
+    for (const client of clients) { client.emit("close"); client.removeAllListeners(); }
+    Date.now = originals.now;
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    https.request = originals.request;
+    http.get = originals.get;
+    crypto.randomUUID = originals.uuid;
+    Module._load = originals.load;
+    restoreEnv();
+    readiness.reset();
+    resolver.resetRuntimeForTest();
+    fs.rmSync(homeDir, { recursive: true, force: true });
+    for (const file of cachePaths) {
+      const resolved = require.resolve(file);
+      delete require.cache[resolved];
+      const previous = previousCache.get(resolved);
+      if (previous) require.cache[resolved] = previous;
+    }
+  }
+}
+
+// Joins with faceAudio=page, connects the bot socket, and emulates the host page.
+async function pageSession(harness, fields = { avatarExperiment: "face-package", faceAudio: "page" }) {
+  const join = await harness.join(fields);
+  assert.equal(join.statusCode, 200, join.text);
+  const credentials = harness.launch();
+  const client = harness.connect();
+  const pipeline = harness.pipelines.at(-1);
+  const visual = pipeline.session.localAvatarSession;
+  const connected = visual.connect(credentials);
+  const page = {
+    client, pipeline, visual, credentials, connected,
+    open() {
+      const res = new FakeAudioResponse();
+      assert.equal(visual.openAudioStream({ ...credentials, generation: page.connected.generation, res, headers: {} }), true);
+      page.res = res;
+      return res;
+    },
+    heartbeat(fields = {}) {
+      assert.equal(visual.recordHeartbeat({ audio: { state: "running", playedEpoch: -1, playedSample: 0, receivedSample: 0, ...fields } }), true);
+    },
+    chunk(outputEpoch, firstSampleIndex, ms = 100) {
+      const samples = Math.round(RATE * ms / 1000);
+      const buffer = Buffer.alloc(samples * 2, 1);
+      pipeline.onAudio(buffer, { outputEpoch, firstSampleIndex, sampleRate: RATE });
+      return samples;
+    },
+    mic() {
+      const before = pipeline.receivedAudio.length;
+      client.emit("message", Buffer.from(JSON.stringify({ trigger: "realtime_audio.mixed", data: { chunk: "AAAA" } })));
+      return pipeline.receivedAudio.length > before; // true = passed the echo gate
+    },
+    markers() {
+      const state = visual.readState({ ...credentials, generation: connected.generation, afterSequence: -1 });
+      return state;
+    },
+    wsChunks() { return client.sent.map((item) => JSON.parse(item)).filter((item) => item.trigger === "realtime_audio.bot_output").length; },
+  };
+  page.open();
+  page.heartbeat();
+  return page;
+}
+
+test("validation: follow-settings, empty or non-face experiments, bad values and an enabled hub are 400", async (t) => {
+  for (const [fields, avatar] of [
+    [{ faceAudio: "page" }, { experiment: "face-package" }],
+    [{ avatarExperiment: "", faceAudio: "page" }, { experiment: "face-package" }],
+    [{ avatarExperiment: "hybrid-local-l0", faceAudio: "page" }, {}],
+    [{ avatarExperiment: "face-package", faceAudio: "yes" }, {}],
+  ]) {
+    await withRoutes(t, async (harness) => {
+      const response = await harness.join(fields);
+      assert.equal(response.statusCode, 400, JSON.stringify(fields));
+      assert.match(response.text, /faceAudio/);
+    }, { avatar });
+  }
+  await withRoutes(t, async (harness) => {
+    const response = await harness.join({ avatarExperiment: "face-package", faceAudio: "page" });
+    assert.equal(response.statusCode, 400);
+    assert.match(response.text, /hub/);
+  }, { hub: { mode: "local", enabled: true, url: "ws://hub.invalid", tailMs: 300 } });
+  await withRoutes(t, async (harness) => {
+    const page = await pageSession(harness);
+    assert.equal(page.visual.pageAudio, true);
+    assert.equal(page.pipeline.session.hubConfig.enabled, false);
+  }, { hub: { mode: "local", enabled: false, url: "ws://hub.invalid", tailMs: 300 } });
+});
+
+test("routing: ready -> page with a page marker; not ready -> WebSocket with a marker after the send", async (t) => {
+  await withRoutes(t, async (harness) => {
+    const page = await pageSession(harness);
+    page.chunk(0, 0);
+    assert.equal(page.wsChunks(), 0);
+    const frames = page.res.decoded();
+    assert.deepEqual(frames.map((item) => item.header.t), ["pcm"]);
+    assert.equal(frames[0].header.outputEpoch, 0);
+    assert.equal(frames[0].pcm.length, RATE / 10 * 2);
+    const pageMarker = page.markers();
+    assert.equal(pageMarker.kind, "marker");
+    assert.equal(pageMarker.outputEpoch, 0);
+    assert.equal(pageMarker.audio, "page");
+
+    page.res.emit("close"); // stream gone: not ready for the next epoch
+    page.chunk(1, 0);
+    assert.equal(page.wsChunks(), 1);
+    const wsMarker = page.markers();
+    assert.equal(wsMarker.outputEpoch, 1);
+    assert.equal(wsMarker.audio, undefined);
+  });
+});
+
+test("routing: a stale heartbeat or a suspended context sends the next epoch to the WebSocket", async (t) => {
+  await withRoutes(t, async (harness) => {
+    const page = await pageSession(harness);
+    harness.clock.now += 1001;
+    page.chunk(0, 0);
+    assert.equal(page.wsChunks(), 1);
+    assert.equal(page.res.frames.length, 0);
+    page.heartbeat();
+    page.chunk(1, 0);
+    assert.equal(page.wsChunks(), 1, "fresh heartbeat routes the next epoch to the page");
+    assert.equal(page.res.frames.length, 1);
+    page.heartbeat({ state: "suspended" });
+    page.chunk(2, 0);
+    assert.equal(page.wsChunks(), 2);
+    assert.equal(page.res.frames.length, 1);
+  });
+});
+
+test("never both paths in one epoch: a mid-epoch stream death loses the tail; a page-lost epoch stays lost after reconnect", async (t) => {
+  await withRoutes(t, async (harness) => {
+    const page = await pageSession(harness);
+    page.chunk(0, 0);
+    const first = page.res;
+    first.emit("close");
+    assert.equal(page.visual.isPageLost(0), true);
+    page.chunk(0, 2400);
+    assert.equal(page.wsChunks(), 0, "no switch to the WebSocket mid-epoch");
+    assert.equal(first.frames.length, 1, "no duplicate");
+    const second = page.open(); // reconnect in the same generation
+    page.heartbeat();
+    page.chunk(0, 4800);
+    assert.equal(second.frames.length, 0, "no replay and the page-lost epoch stays lost");
+    assert.equal(page.wsChunks(), 0);
+    page.chunk(1, 0);
+    const frames = second.decoded();
+    assert.equal(frames.length, 1);
+    assert.equal(frames[0].header.outputEpoch, 1);
+
+    // A new page generation mid-epoch: the old stream ends, the in-flight epoch is page-lost and stays lost.
+    page.chunk(1, 2400);
+    assert.equal(second.frames.length, 2);
+    page.connected = page.visual.connect(page.credentials);
+    assert.equal(second.ended, true);
+    assert.equal(page.visual.isPageLost(1), true);
+    const third = page.open();
+    page.heartbeat();
+    page.chunk(1, 4800);
+    assert.equal(third.frames.length, 0);
+    page.chunk(3, 0);
+    assert.deepEqual(third.decoded().map((item) => [item.header.outputEpoch, item.header.generation]), [[3, page.connected.generation]]);
+    assert.equal(page.wsChunks(), 0);
+    third.emit("close");
+
+    // The other direction: an epoch that started on the WebSocket stays there even if the page becomes ready.
+    second.emit("close");
+    page.chunk(2, 0);
+    page.open();
+    page.heartbeat();
+    page.chunk(2, 2400);
+    assert.equal(page.wsChunks(), 2);
+    assert.equal(page.res.frames.length, 0);
+  });
+});
+
+test("queue overflow closes the stream: the epoch loses its tail and the next epoch falls back", async (t) => {
+  await withRoutes(t, async (harness) => {
+    const page = await pageSession(harness);
+    page.res.writableNeedDrain = true;
+    for (let i = 0; i < 20; i++) page.chunk(0, i * 2400);
+    assert.equal(page.res.ended, false);
+    page.chunk(0, 20 * 2400);
+    assert.equal(page.res.ended, true);
+    assert.equal(page.visual.isPageLost(0), true);
+    assert.equal(page.wsChunks(), 0);
+    page.heartbeat();
+    page.chunk(1, 0);
+    assert.equal(page.wsChunks(), 1);
+  });
+});
+
+test("cancel pushes an in-stream cancel frame, keeps the stream open, and a later epoch is still page-routed", async (t) => {
+  await withRoutes(t, async (harness) => {
+    const page = await pageSession(harness);
+    page.res.writableNeedDrain = true;
+    page.chunk(0, 0);
+    page.chunk(0, 2400);
+    page.res.writableNeedDrain = false;
+    page.pipeline.emit("playback_cancelled", { outputEpoch: 0, reason: "barge_in", monotonicTime: 1 });
+    const frames = page.res.decoded();
+    assert.deepEqual(frames.map((item) => item.header.t), ["cancel"], "queued frames of the cancelled epoch are purged");
+    assert.equal(frames[0].header.outputEpoch, 0);
+    assert.equal(page.res.ended, false);
+    page.heartbeat();
+    page.chunk(1, 0);
+    const after = page.res.decoded();
+    assert.deepEqual(after.map((item) => item.header.t), ["cancel", "pcm"]);
+    assert.equal(after[1].header.outputEpoch, 1);
+    assert.ok(after[1].header.cancelEpoch > 0);
+    assert.equal(page.wsChunks(), 0);
+  });
+});
+
+test("echo gate: drops while projected or backlogged, releases after, re-opens within pathPad+cooldown of a cancel", async (t) => {
+  await withRoutes(t, async (harness) => {
+    const { PAGE_AUDIO_PATH_PAD_MS: pad, PAGE_AUDIO_LEAD_MS: lead, ECHO_LOOP_COOLDOWN_MS: cooldown } = harness.routes._test;
+    assert.equal(pad, 300);
+    const page = await pageSession(harness);
+    harness.clock.now += pad + cooldown; // the beginSource reset window has passed
+    assert.equal(page.mic(), true);
+    const t0 = harness.clock.now;
+    page.chunk(0, 0, 1000);
+    const until = t0 + lead + 1000;
+    assert.equal(page.pipeline.turnState.pageAudioUntil, until);
+    harness.clock.now = until + pad + cooldown - 1;
+    assert.equal(page.mic(), false, "projected page audio plus the path pad is dropped");
+    harness.clock.now = until + pad + cooldown;
+    assert.equal(page.mic(), true, "released after the projection");
+
+    // Backlog hold extends the gate from a fresh heartbeat of the live page epoch.
+    const t1 = harness.clock.now;
+    page.heartbeat({ playedEpoch: 0, playedSample: 0, receivedSample: 3 * RATE });
+    assert.equal(page.mic(), false);
+    assert.equal(page.pipeline.turnState.pageAudioUntil, t1 + 3000);
+    harness.clock.now = t1 + 100;
+    assert.equal(page.mic(), false);
+
+    // Barge-in: the gate re-opens within pathPad + cooldown even though the stale heartbeat is still fresh.
+    page.pipeline.emit("playback_cancelled", { outputEpoch: 0, reason: "barge_in", monotonicTime: 1 });
+    const t2 = harness.clock.now;
+    assert.equal(page.pipeline.turnState.pageAudioUntil, t2);
+    harness.clock.now = t2 + pad + cooldown - 1;
+    assert.equal(page.mic(), false);
+    harness.clock.now = t2 + pad + cooldown;
+    page.heartbeat({ playedEpoch: 0, playedSample: 0, receivedSample: 3 * RATE }); // stale pre-cancel backlog
+    assert.equal(page.mic(), true, "a stale pre-cancel heartbeat does not re-close the gate");
+
+    // After the next page-routed send, only heartbeats of that epoch extend the hold.
+    page.heartbeat();
+    page.chunk(1, 0, 10);
+    const t3 = harness.clock.now;
+    page.heartbeat({ playedEpoch: 0, playedSample: 0, receivedSample: 3 * RATE });
+    harness.clock.now = t3 + lead + 10 + pad + cooldown;
+    assert.equal(page.mic(), true, "a heartbeat for another epoch is ignored");
+  });
+});
+
+test("session close and leave reset pageAudioUntil and end the stream after a cancel frame", async (t) => {
+  await withRoutes(t, async (harness) => {
+    const page = await pageSession(harness);
+    page.chunk(0, 0, 1000);
+    harness.clock.now += 200;
+    const turnState = page.pipeline.turnState;
+    assert.ok(turnState.pageAudioUntil > harness.clock.now);
+    assert.equal((await harness.leave()).statusCode, 200);
+    assert.equal(turnState.pageAudioUntil, harness.clock.now);
+    assert.equal(page.res.ended, true);
+    assert.equal(page.res.decoded().at(-1).header.t, "cancel");
+  });
+});
+
+test("DW1: with the mode off the bot_output send, marker-after-send and echo gate are unchanged", async (t) => {
+  await withRoutes(t, async (harness) => {
+    assert.equal((await harness.join({ avatarExperiment: "face-package" })).statusCode, 200);
+    const credentials = harness.launch();
+    const client = harness.connect();
+    const pipeline = harness.pipelines.at(-1);
+    const visual = pipeline.session.localAvatarSession;
+    assert.equal(visual.pageAudio, undefined);
+    assert.equal(Object.hasOwn(pipeline.turnState, "pageAudioUntil"), false);
+    const connected = visual.connect(credentials);
+    assert.equal(visual.openAudioStream({ ...credentials, generation: connected.generation, res: new FakeAudioResponse(), headers: {} }), false);
+    assert.equal(visual.recordHeartbeat({ audio: { state: "running", playedEpoch: -1, playedSample: 0, receivedSample: 0 } }), false);
+
+    pipeline.onAudio(Buffer.from([1, 0]), { outputEpoch: 0, firstSampleIndex: 0, sampleRate: RATE });
+    assert.deepEqual(client.sent.map((item) => JSON.parse(item)), [{ trigger: "realtime_audio.bot_output", data: { chunk: "AQA=", sample_rate: RATE } }]);
+    const marker = visual.readState({ ...credentials, generation: connected.generation, afterSequence: connected.sequence });
+    assert.equal(marker.kind, "marker");
+    assert.equal(marker.audio, undefined);
+    const sequence = visual.snapshot().sequence;
+    client.send = () => { throw new Error("audio send failure"); };
+    pipeline.onAudio(Buffer.from([2, 0]), { outputEpoch: 0, firstSampleIndex: 1, sampleRate: RATE });
+    assert.equal(visual.snapshot().sequence, sequence, "no marker without a successful send");
+
+    const before = pipeline.receivedAudio.length;
+    client.emit("message", Buffer.from(JSON.stringify({ trigger: "realtime_audio.mixed", data: { chunk: "AAAA" } })));
+    assert.equal(pipeline.receivedAudio.length, before + 1, "the gate is open right after connect");
+  });
+});
