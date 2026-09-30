@@ -105,6 +105,14 @@ Rules that apply to both kinds of stop:
 
 **2.10 Self-hosted Attendee.** Local ops patch (not in this repo): capture rate from env `WEBPAGE_STREAMER_AUDIO_SAMPLE_RATE` (default 16000; ours 48000), with rollback in the VPS ops notes. Attendee cloud unaffected unless opted in; docs state the 16 kHz limit there.
 
+**2.12 Mic keep-alive [owner live check 2026-09-30, #266 comment 5914552482].** (Numbered as specified in delta 2; there is no 2.11.)
+- **Root cause.** In Attendee `c59b71b8`, `bots/web_bot_adapter/shared_chromedriver_payload.js:704-759`, the bot's Meet mic is turned on only by `playPCMAudio()`. That is the `realtime_audio.bot_output` path. The mic is turned off again 2 s after that queue drains, and the join itself clicks the mic off. Page-owned audio reaches the bot's `gainNode`, but the mic stays muted. With the mode on, the owner heard nothing.
+- **Fix.** For every page-routed chunk that was **successfully queued** to the page stream, meet-routes sends a same-length, all-zero PCM chunk as `realtime_audio.bot_output` at `TTS_SAMPLE_RATE`. It sends only while the Attendee socket is `OPEN`, and a send failure never throws. The zero buffer is freshly allocated from the queued byte length, so it never carries page PCM.
+- **Not sent** for chunks whose push failed: page-lost epochs, cancelled epochs, a missing stream, or overflow.
+- **Invariant, amended from §2.1:** each epoch's *audible* audio goes through exactly one path. A page-routed epoch puts only all-zero PCM on the WebSocket, and its total sample count equals the page-queued sample count.
+- **Timing.** Attendee plays the silence in real time, so its queue drains at about the page playback's pace, and the mic stays open for the whole page reply. A synthesis stall longer than 2 s lets the mic close until the next chunk; the WebSocket path already behaves that way today.
+- The mode-off path is unchanged: no silence and the same bytes, pinned by DW1.
+
 ## §3 Failure forms (worst first)
 F-double, F-silent, F-stale, F-regress, F-leak — as v1; §2.1–2.6 are the mechanisms against each. Accepted residuals: (i) a page-routed epoch whose stream dies mid-epoch loses its tail; (ii) after a cancel, audio already inside GStreamer/WebRTC/bot buffers (~100–300 ms) still plays — measured, not promised zero.
 

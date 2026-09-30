@@ -337,8 +337,25 @@ async function pageSession(harness, fields = { avatarExperiment: "face-package",
       const state = visual.readState({ ...credentials, generation: connected.generation, afterSequence: -1 });
       return state;
     },
-    wsChunks() { return client.sent.map((item) => JSON.parse(item)).filter((item) => item.trigger === "realtime_audio.bot_output").length; },
+    // bot_output frames decoded; every one carries TTS_SAMPLE_RATE.
+    botOutputs() {
+      return client.sent.map((item) => JSON.parse(item)).filter((item) => item.trigger === "realtime_audio.bot_output").map((item) => {
+        assert.equal(item.data.sample_rate, RATE);
+        return Buffer.from(item.data.chunk, "base64");
+      });
+    },
+    // Audible WebSocket chunks (test PCM is never all-zero). §2.12 silence is counted separately.
+    wsChunks() { return page.botOutputs().filter((pcm) => pcm.some((byte) => byte !== 0)).length; },
+    // §2.12 keep-alive frames: all-zero PCM; returns their sample counts.
+    silence() { return page.botOutputs().filter((pcm) => pcm.every((byte) => byte === 0)).map((pcm) => pcm.length / 2); },
+    silenceSamples() { return page.silence().reduce((sum, samples) => sum + samples, 0); },
   };
+  // Samples of pcm frames queued to the page on every stream this page opened.
+  page.streams = [];
+  const open = page.open;
+  page.open = () => { const res = open(); page.streams.push(res); return res; };
+  page.pageSamples = () => page.streams.flatMap((res) => res.decoded()).filter((item) => item.header.t === "pcm")
+    .reduce((sum, item) => sum + item.pcm.length / 2, 0);
   page.open();
   page.heartbeat();
   return page;
@@ -374,6 +391,7 @@ test("routing: ready -> page with a page marker; not ready -> WebSocket with a m
     const page = await pageSession(harness);
     page.chunk(0, 0);
     assert.equal(page.wsChunks(), 0);
+    assert.deepEqual(page.silence(), [RATE / 10], "only all-zero PCM of matching length reaches the WebSocket");
     const frames = page.res.decoded();
     assert.deepEqual(frames.map((item) => item.header.t), ["pcm"]);
     assert.equal(frames[0].header.outputEpoch, 0);
@@ -386,6 +404,7 @@ test("routing: ready -> page with a page marker; not ready -> WebSocket with a m
     page.res.emit("close"); // stream gone: not ready for the next epoch
     page.chunk(1, 0);
     assert.equal(page.wsChunks(), 1);
+    assert.equal(page.silence().length, 1, "a WebSocket-routed epoch gets no silence mirror");
     const wsMarker = page.markers();
     assert.equal(wsMarker.outputEpoch, 1);
     assert.equal(wsMarker.audio, undefined);
@@ -469,6 +488,10 @@ test("never both paths in one epoch: a mid-epoch stream death loses the tail; a 
     page.chunk(3, 0);
     assert.deepEqual(third.decoded().map((item) => [item.header.outputEpoch, item.header.generation]), [[3, page.connected.generation]]);
     assert.equal(page.wsChunks(), 0);
+    // Only all-zero PCM reached the WebSocket during page epochs, one frame per queued chunk,
+    // and the lost chunks (epoch 0 after the death, epoch 1 after the new generation) got none.
+    assert.deepEqual(page.silence(), [2400, 2400, 2400, 2400]);
+    assert.equal(page.silenceSamples(), page.pageSamples());
     third.emit("close");
 
     // The other direction: an epoch that started on the WebSocket stays there even if the page becomes ready.
@@ -479,6 +502,50 @@ test("never both paths in one epoch: a mid-epoch stream death loses the tail; a 
     page.chunk(2, 2400);
     assert.equal(page.wsChunks(), 2);
     assert.equal(page.res.frames.length, 0);
+    assert.equal(page.silence().length, 4, "a WebSocket-routed epoch adds no silence");
+  });
+});
+
+test("§2.12 mic keep-alive: a page epoch mirrors all-zero PCM whose total equals the queued samples", async (t) => {
+  await withRoutes(t, async (harness) => {
+    const page = await pageSession(harness);
+    let first = 0;
+    for (const ms of [100, 40, 250, 20]) first += page.chunk(0, first, ms);
+    // An odd byte length is queued without its trailing byte; the mirror matches the queued length.
+    page.pipeline.onAudio(Buffer.alloc(2 * 480 + 1, 1), { outputEpoch: 0, firstSampleIndex: first, sampleRate: RATE });
+    assert.equal(page.wsChunks(), 0, "no audible PCM on the WebSocket");
+    assert.deepEqual(page.silence(), [2400, 960, 6000, 480, 480]);
+    assert.equal(page.silenceSamples(), page.pageSamples());
+    assert.equal(page.silenceSamples(), first + 480);
+    // The keep-alive never throws into the pipeline, and needs an open Attendee socket.
+    page.client.send = () => { throw new Error("socket write failed"); };
+    assert.doesNotThrow(() => page.chunk(0, first + 480));
+    page.client.send = FakeClient.prototype.send.bind(page.client);
+    page.client.readyState = 3;
+    const sent = page.client.sent.length;
+    page.chunk(0, first + 2880);
+    assert.equal(page.client.sent.length, sent);
+  });
+});
+
+test("§2.12: no silence for a failed push, a page-lost epoch or a cancelled epoch", async (t) => {
+  await withRoutes(t, async (harness) => {
+    const page = await pageSession(harness);
+    page.chunk(0, 0);
+    assert.equal(page.silence().length, 1);
+    page.res.emit("close"); // epoch 0 page-lost
+    page.chunk(0, 2400);
+    page.chunk(0, 4800);
+    assert.equal(page.silence().length, 1, "no silence for page-lost chunks");
+    page.open();
+    page.heartbeat();
+    page.chunk(1, 0);
+    assert.equal(page.silence().length, 2);
+    page.pipeline.emit("playback_cancelled", { outputEpoch: 1, reason: "barge_in", monotonicTime: 1 });
+    page.chunk(1, 2400); // a late chunk of the cancelled epoch: the push fails
+    assert.equal(page.silence().length, 2, "no silence for a failed push");
+    assert.equal(page.wsChunks(), 0);
+    assert.equal(page.silenceSamples(), page.pageSamples());
   });
 });
 
@@ -661,5 +728,6 @@ test("DW1: with the mode off the bot_output send, marker-after-send and echo gat
     const before = pipeline.receivedAudio.length;
     client.emit("message", Buffer.from(JSON.stringify({ trigger: "realtime_audio.mixed", data: { chunk: "AAAA" } })));
     assert.equal(pipeline.receivedAudio.length, before + 1, "the gate is open right after connect");
+    assert.equal(client.sent.length, 1, "mode off never sends a silence mirror");
   });
 });

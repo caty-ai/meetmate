@@ -229,7 +229,9 @@ the host page can play the reply itself, and voice and mouth come from one clock
   - the server queue is bounded to about 2 s;
   - `Cache-Control: no-store` and `X-Accel-Buffering: no`.
   A barge-in or reply cancel pushes a `cancel` frame, and the page stops that epoch's scheduled
-  audio at once while keeping the stream open.
+  audio at once while keeping the stream open. For every chunk queued to the page, the server
+  mirrors silence (same-length all-zero PCM) on the bot-output channel so Attendee keeps the
+  bot's mic open.
 - **The capability now also gates reply PCM.** The holder set is the same (the launched host page)
   and so is the TTL. Only a `faceAudio=page` session serves the audio route; every other session
   gets 404.

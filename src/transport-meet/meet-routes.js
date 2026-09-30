@@ -1808,7 +1808,18 @@ function handleWsConnection(client, req) {
   }
   // #266: null unless this session joined with faceAudio=page; then the default block below never changes.
   const pageAudioRoute = session.localAvatarSession?.pageAudio === true
-    ? createPageAudioRoute(session, turnState, localAvatarSourceGeneration)
+    ? createPageAudioRoute(session, turnState, localAvatarSourceGeneration, (silence) => {
+      // §2.12 mic keep-alive: Attendee opens the bot's Meet mic only while bot_output audio plays.
+      if (client.readyState !== WebSocket.OPEN) return;
+      try {
+        client.send(JSON.stringify({
+          trigger: "realtime_audio.bot_output",
+          data: { chunk: silence.toString("base64"), sample_rate: TTS_SAMPLE_RATE },
+        }));
+      } catch {
+        // Keep-alive only; the audible reply is already on the page stream.
+      }
+    })
     : null;
 
   const handler = createHandler(session, turnState, (buffer, metadata) => {
@@ -1971,7 +1982,7 @@ const PAGE_AUDIO_HEARTBEAT_FRESH_MS = 1000;
 
 // Routes each outputEpoch exactly once (decided at its first chunk, never switched) and owns
 // turnState.pageAudioUntil. Only meet-routes writes pageAudioUntil (§2.1, §2.6).
-function createPageAudioRoute(session, turnState, sourceGeneration) {
+function createPageAudioRoute(session, turnState, sourceGeneration, mirrorSilence) {
   let epoch = null;
   let page = false;
   let rate = 0;
@@ -2016,6 +2027,9 @@ function createPageAudioRoute(session, turnState, sourceGeneration) {
       const chunkMs = Math.floor(buffer.length / 2) / metadata.sampleRate * 1000;
       turnState.pageAudioUntil = Math.max(turnState.pageAudioUntil, now + PAGE_AUDIO_LEAD_MS) + chunkMs;
       if (holdArmedAt === null) holdArmedAt = now;
+      // §2.12: same-length all-zero PCM on bot_output keeps Attendee's mic open. It is a fresh
+      // zero buffer (never the page PCM), and only for chunks the page stream actually queued.
+      try { mirrorSilence?.(Buffer.alloc(buffer.length - (buffer.length % 2))); } catch { /* keep-alive only */ }
     } else {
       releaseIfLost();
     }
