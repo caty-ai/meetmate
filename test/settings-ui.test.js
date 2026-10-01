@@ -379,7 +379,7 @@ test("#197 readiness screens render payload IDs and preserve legacy rows and set
   assert.deepEqual(rows, legacy.map((row, i) => ({ ...row, text: `[${systems[i].diagnosticId}] ${row.text}` })));
   assert.equal(readinessSummary({ systems }), "soniox: [MM-STT-100] AUTH_FAILED / llm: [MM-LLM-301] PENDING / tunnel: [MM-TUN-201] TIMEOUT");
   const stale = { id: "attendee", code: "CONNECTED", ok: true, stale: true, diagnosticId: null };
-  assert.deepEqual(readinessDisplayRows({ systems: [stale] }), [{ kind: "warning", text: "attendee: 前回の接続確認結果が古くなっています" }]);
+  assert.deepEqual(readinessDisplayRows({ systems: [stale] }), [{ kind: "info", text: "attendee: 前回の確認から時間が経っています（参加時に自動で確認し直します）" }]);
 });
 
 test("#197 connection result prefixes only string IDs and leaves current payload output unchanged", () => {

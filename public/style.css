@@ -185,6 +185,8 @@
   }
   .settings-link:hover { border-color: var(--hairline-strong); color: var(--ink); }
   .settings-link:focus-visible { outline: 3px solid var(--accent-ring); outline-offset: 2px; }
+  button.settings-link { appearance: none; cursor: pointer; font-family: inherit; }
+  .settings-hint { flex-basis: 100%; margin: 0; padding: 10px 14px; border: 1px solid var(--hairline); border-radius: 8px; background: var(--bg-soft); color: var(--ink-muted); font-size: 12px; line-height: 1.55; }
   .eyebrow {
     display: block;
     font-size: 11px;
@@ -341,6 +343,7 @@
   .readiness-line.blocker, .readiness-line.blocker a { color: var(--danger); }
   .readiness-line.warning { color: var(--warning); }
   .readiness-line.pending { color: var(--ink-muted); }
+  .readiness-line.info { color: var(--ink-muted); }
   .readiness-line a { font-weight: 650; text-underline-offset: 2px; }
   .readiness-copy { margin-left: 8px; padding: 2px 7px; border: 1px solid currentColor; border-radius: 999px; color: inherit; background: transparent; cursor: pointer; font-size: 10px; }
   .readiness-recheck { margin-top: 10px; padding: 7px 11px; border: 1px solid var(--hairline-strong); border-radius: 8px; color: var(--ink); background: var(--surface); cursor: pointer; font-size: 11px; font-weight: 700; }

@@ -267,6 +267,16 @@ function localSettingsUrlFor(fieldId, readinessState, fallbackPort) {
   return `http://127.0.0.1:${settingsPortFromReadiness(readinessState, fallbackPort)}/settings#${hash}`;
 }
 
+// #279: the settings page answers 404 to a non-loopback view, so the header entry explains where
+// it lives instead of navigating there.
+function localSettingsHint(readinessState, fallbackPort) {
+  const port = settingsPortFromReadiness(readinessState, fallbackPort);
+  return {
+    text: `設定画面は、meetmate を動かしている PC でだけ開けます。その PC で localhost:${port}/settings を開いてください`,
+    url: `http://127.0.0.1:${port}/settings`,
+  };
+}
+
 function readinessDisplayRows(readinessState) {
   if (readinessState?.unavailable) {
     return [{ kind: "warning", text: "接続状態を取得できません" }];
@@ -296,7 +306,7 @@ function readinessDisplayRows(readinessState) {
     } else if (!system.ok && !blockers.some((blocker) => blocker.system === system.id)) {
       rows.push({ kind: "warning", text: `${system.diagnosticId ? `[${system.diagnosticId}] ` : ""}${system.id}: ${system.code}（一時的な問題の可能性があります。Join はブロックしません）` });
     } else if (system.stale) {
-      rows.push({ kind: "warning", text: `${system.id}: 前回の接続確認結果が古くなっています` });
+      rows.push({ kind: "info", text: `${system.id}: 前回の確認から時間が経っています（参加時に自動で確認し直します）` });
     }
   }
   return rows;
@@ -409,6 +419,7 @@ if (typeof module !== "undefined" && module.exports) module.exports = {
   formatDiscordStatusLine,
   firstActiveSession,
   isDiscordSnowflake,
+  localSettingsHint,
   localSettingsUrlFor,
   pollBannerDecision,
   parseDiscordJoinErrorText,
@@ -475,6 +486,8 @@ if (typeof document !== "undefined") (function () {
   const readinessPanel = document.getElementById("readinessPanel");
   const readinessLines = document.getElementById("readinessLines");
   const readinessRecheck = document.getElementById("readinessRecheck");
+  const settingsLink = document.querySelector(".header-actions .settings-link");
+  const settingsHintEl = document.getElementById("settingsHint");
   const avatarExperimentEl = document.getElementById("avatarExperiment");
   const meetingStatusWrapEl = meetingUrlStatusEl.parentElement;
   const avatarExperimentWrapEl = avatarExperimentEl.closest(".join-option");
@@ -722,6 +735,33 @@ if (typeof document !== "undefined") (function () {
 
   function localSettingsUrl(fieldId) {
     return localSettingsUrlFor(fieldId, readinessState, location.port);
+  }
+
+  // #279: on a non-loopback view the 設定 entry is a button that toggles the hint; the loopback
+  // view keeps the plain link to /settings.
+  function initSettingsEntry() {
+    if (!settingsLink || !settingsHintEl || isLoopbackView()) return;
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = settingsLink.className;
+    toggle.textContent = settingsLink.textContent;
+    toggle.setAttribute("aria-expanded", "false");
+    toggle.setAttribute("aria-controls", settingsHintEl.id);
+    toggle.addEventListener("click", () => {
+      const show = settingsHintEl.hidden;
+      if (show) {
+        const hint = localSettingsHint(readinessState, location.port);
+        const copy = document.createElement("button");
+        copy.type = "button";
+        copy.className = "readiness-copy";
+        copy.textContent = "URLをコピー";
+        copy.addEventListener("click", () => navigator.clipboard?.writeText(hint.url));
+        settingsHintEl.replaceChildren(document.createTextNode(hint.text), copy);
+      }
+      settingsHintEl.hidden = !show;
+      toggle.setAttribute("aria-expanded", String(show));
+    });
+    settingsLink.replaceWith(toggle);
   }
 
   function appendReadinessLine(kind, text, fieldId) {
@@ -1470,6 +1510,7 @@ if (typeof document !== "undefined") (function () {
   });
 
   initTheme();
+  initSettingsEntry();
   initInstallPrompt();
   loadInfo();
   loadAgentsFromServer();
