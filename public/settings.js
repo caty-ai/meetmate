@@ -70,6 +70,7 @@ const AVATAR_FIELDS = new Set([
   "emotion_judge",
   "face_listen_reactions",
   "face_timeline_offset_ms",
+  "face_audio_default",
   "avatar_rig_background_mode",
   "avatar_rig_background_color",
 ]);
@@ -169,6 +170,7 @@ if (typeof document !== "undefined") {
       agent_avatar_url: "アイコン URL", avatar_experiment: "アバター表示",
       emotion_judge: "表情の感情判定", face_listen_reactions: "聞き手リアクション（実験）",
       face_timeline_offset_ms: "口パクのタイミング調整（ms）",
+      face_audio_default: "声の出し方の既定（フェイス画面の音声）",
       avatar_rig_background_mode: "アバター背景", avatar_rig_background_color: "アバター背景色",
       llm_provider: "LLM プロバイダー", llm_model: "LLM モデル",
       llm_temperature: "Temperature", llm_max_tokens: "最大トークン数",
@@ -221,6 +223,7 @@ if (typeof document !== "undefined") {
       emotion_judge: "off は感情判定なし。jev は返答文を外部の判定サービスへ送ります。",
       face_listen_reactions: "実験機能。次の face-package 参加から有効です。jev と併用すると相手の発言も判定サービスへ送ります。",
       face_timeline_offset_ms: "-3000〜3000 の整数（既定 300）。口が声より遅れるときは値を下げ（マイナス可）、早いときは上げます。100〜200 ずつ調整してください。次の会議参加から反映されます。",
+      face_audio_default: "参加フォームの「声をフェイス画面から流す」チェックの初期値です。触らずに参加すると、この既定値が使われます（フロア調停が有効なときなどは自動で WebSocket になります）。Attendee のリアルタイム音声は 8000 / 16000 / 24000 Hz だけを受け付けるため、サンプルレート（tts_sample_rate）はこのどれかにしてください。フェイス画面の音声を取り込むレートは Attendee サーバー側の設定（WEBPAGE_STREAMER_AUDIO_SAMPLE_RATE。公開版の Attendee は 16 kHz 固定、このモードでは 48 kHz 推奨）で、meetmate からは変更も読み取りもできません。",
       avatar_rig_background_mode: "2.5Dリグとフレームセットの両方に適用され、次回の会議参加から反映されます。画像モードで背景画像が未埋め込みの場合: このビルドには背景画像が埋め込まれていません",
       avatar_rig_background_color: "2.5Dリグとフレームセットの両方で、単色または画像の読み込み失敗時に使う #rrggbb 形式の色です。次回の会議参加から反映されます",
       task_extraction_enabled: "会議終了時に TODO を抽出します。",
@@ -260,6 +263,11 @@ if (typeof document !== "undefined") {
       "hybrid-local-frames": "フレームセット",
       "face-package": "フェイスパッケージ（参加時の指定が必要）",
     };
+    const FACE_AUDIO_DEFAULT_OPTION_LABELS = {
+      "": "WebSocket（既定）",
+      page: "フェイス画面から声を流す",
+    };
+    const FACE_AUDIO_CLOUD_NOTE = "フェイス画面から声を流す設定は、セルフホストの Attendee で利用できます。";
     const RIG_BACKGROUND_OPTION_LABELS = {
       solid: "単色",
       image: "埋め込み画像",
@@ -354,6 +362,7 @@ if (typeof document !== "undefined") {
     function optionLabel(entry, value, fallback) {
       if (entry.id === "avatar_experiment") return AVATAR_OPTION_LABELS[value];
       if (entry.id === "avatar_rig_background_mode") return RIG_BACKGROUND_OPTION_LABELS[value];
+      if (entry.id === "face_audio_default") return FACE_AUDIO_DEFAULT_OPTION_LABELS[value] || fallback;
       if (entry.id === "tts_provider") return TTS_PROVIDER_OPTION_LABELS[value] || fallback;
       if (entry.id === "agent_reply_trigger") return REPLY_TRIGGER_OPTION_LABELS[value] || fallback;
       return fallback;
@@ -564,6 +573,9 @@ if (typeof document !== "undefined") {
         const target = document.getElementById(fieldContainerId(entry));
         target.append(createField(entry, value));
       }
+      const faceAudioNote = notice("warning", "フェイス画面の音声", FACE_AUDIO_CLOUD_NOTE);
+      faceAudioNote.id = "faceAudioCloudNote";
+      document.getElementById("avatarFields").append(faceAudioNote);
       renderEmotionHelp();
       renderAudioClips();
       updateConditionalVisibility();
@@ -716,9 +728,13 @@ if (typeof document !== "undefined") {
           || (FISH_TTS_FIELDS.has(entry.id) && tts !== "fish-audio")
           || (ELEVENLABS_TTS_FIELDS.has(entry.id) && tts !== "elevenlabs")
           || (OPENAI_COMPATIBLE_TTS_FIELDS.has(entry.id) && tts !== "openai-compatible")
-          || (["emotion_judge", "face_listen_reactions", "face_timeline_offset_ms"].includes(entry.id) && avatar !== "face-package");
+          || (["emotion_judge", "face_listen_reactions", "face_timeline_offset_ms", "face_audio_default"].includes(entry.id) && avatar !== "face-package")
+          || (entry.id === "face_audio_default" && envelope?.attendeeHostKind !== "self-hosted");
         field.classList.toggle("is-hidden", hidden);
       }
+      // #274: on Attendee cloud the page-audio default is hidden and this one-line note is shown instead.
+      document.getElementById("faceAudioCloudNote")?.classList.toggle("is-hidden",
+        avatar !== "face-package" || envelope?.attendeeHostKind === "self-hosted");
     }
 
     function renderState() {

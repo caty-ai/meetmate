@@ -149,6 +149,7 @@ const SETTINGS_REGISTRY = Object.freeze([
   d("emotion_judge", "avatar.emotionJudge", z.enum(["off", "tags", "jev"]), { apply: "live", defaultValue: "off", visibleWhen: { id: "avatar_experiment", value: "face-package" } }),
   d("face_listen_reactions", "avatar.faceListenReactions", bool, { apply: "next-join", defaultValue: false, visibleWhen: { id: "avatar_experiment", value: "face-package" } }),
   d("face_timeline_offset_ms", "avatar.faceTimelineOffsetMs", integer(-3000, 3000), { apply: "next-join", defaultValue: 300, visibleWhen: { id: "avatar_experiment", value: "face-package" } }),
+  d("face_audio_default", "avatar.faceAudioDefault", z.enum(["", "page"]), { apply: "next-join", defaultValue: "", transferable: true, visibleWhen: { id: "avatar_experiment", value: "face-package" } }),
   d("avatar_rig_background_mode", "avatar.rigBackgroundMode", z.enum(["solid", "image", "chroma"]), { ux: "basic", apply: "live", defaultValue: "solid" }),
   d("avatar_rig_background_color", "avatar.rigBackgroundColor", z.string().regex(/^#[0-9a-f]{6}$/i), { ux: "basic", apply: "live", defaultValue: "#08111f" }),
   d("llm_provider", "llm.provider", z.enum(["openclaw", "openai-compatible"]), { ux: "basic", envAlias: "LLM_PROVIDER", defaultValue: "openclaw" }),

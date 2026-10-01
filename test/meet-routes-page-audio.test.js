@@ -731,3 +731,197 @@ test("DW1: with the mode off the bot_output send, marker-after-send and echo gat
     assert.equal(client.sent.length, 1, "mode off never sends a silence mirror");
   });
 });
+
+// #274 page-audio settings default: join precedence through the real join route.
+const SELF_HOSTED_ATTENDEE = "attendee.example.com";
+const HUB_ON = Object.freeze({ mode: "local", enabled: true, url: "ws://hub.invalid", tailMs: 300 });
+const HUB_OFF = Object.freeze({ mode: "local", enabled: false, url: "ws://hub.invalid", tailMs: 300 });
+
+// Restarts the settings runtime inside a harness with a new boot snapshot (attendee_base_url is
+// restart-required, so the effective host kind comes from the boot values).
+function rebootSettings({ attendeeBaseUrl, avatar = {} }) {
+  const runtime = resolver.getRuntime();
+  const parsed = structuredClone(runtime.published.raw);
+  parsed.avatar = { ...parsed.avatar, ...avatar };
+  if (attendeeBaseUrl !== undefined) parsed.attendee = { ...parsed.attendee, baseUrl: attendeeBaseUrl };
+  resolver.initializeRuntime({
+    state: { exists: true, valid: true, parsed, revision: "b".repeat(64), fingerprint: "page-audio" },
+    startup: runtime.startup,
+    serverPort: 5005,
+  });
+}
+
+// Captures the Attendee bot-create bodies posted during fn (the harness mock stays in charge).
+function captureBotCreates() {
+  const bodies = [];
+  const inner = https.request;
+  https.request = (requestOptions, callback) => {
+    const request = inner(requestOptions, callback);
+    if (requestOptions.path === "/api/v1/bots") {
+      const write = request.write;
+      request.write = (chunk) => { bodies.push(String(chunk)); write(chunk); };
+    }
+    return request;
+  };
+  return bodies;
+}
+
+// The visual id and capability in the launch URL are random per session; everything else must be
+// identical. The bot image is compared by digest to keep assertion diffs small.
+function normalizedBotCreate(body) {
+  const parsed = JSON.parse(body);
+  if (parsed.voice_agent_settings?.url) {
+    parsed.voice_agent_settings.url = parsed.voice_agent_settings.url.replace(/\?v=[^#]*/, "?v=<visual>").replace(/#.*$/, "#<capability>");
+  }
+  if (typeof parsed.bot_image?.data === "string") {
+    parsed.bot_image.data = `sha256:${crypto.createHash("sha256").update(parsed.bot_image.data).digest("hex")}`;
+  }
+  return parsed;
+}
+
+async function defaultJoin(t, { field, faceAudioDefault, host, avatar, hub, facePackageDir }) {
+  const logs = [];
+  const log = t.mock.method(console, "log", (...args) => { logs.push(args.join(" ")); });
+  let result;
+  try {
+    await withRoutes(t, async (harness) => {
+      rebootSettings({ attendeeBaseUrl: host === "self-hosted" ? SELF_HOSTED_ATTENDEE : "app.attendee.dev" });
+      const bodies = captureBotCreates();
+      const fields = {};
+      if (avatar === "face-package") fields.avatarExperiment = "face-package";
+      if (avatar === "other") fields.avatarExperiment = "hybrid-local-l0";
+      if (field !== undefined) fields.faceAudio = field;
+      const response = await harness.join(fields);
+      const session = harness.routes._test.meetingSessions.get(FIXED_SESSION_ID);
+      result = {
+        status: response.statusCode,
+        text: response.text,
+        pageAudio: session?.localAvatarSession?.pageAudio === true,
+        localAvatar: Boolean(session?.localAvatarSession),
+        botCreates: bodies.map(normalizedBotCreate),
+        logs: logs.filter((line) => line.includes("page audio")),
+      };
+    }, {
+      avatar: {
+        ...(faceAudioDefault === undefined ? {} : { faceAudioDefault }),
+        ...(avatar === "follow-settings" ? { experiment: "face-package" } : {}),
+        ...(facePackageDir === undefined ? {} : { facePackageDir }),
+      },
+      hub: hub === "on" ? HUB_ON : HUB_OFF,
+    });
+  } finally {
+    log.mock.restore();
+  }
+  return result;
+}
+
+test("#274 T3 precedence matrix: explicit field wins; an absent field takes the default only when it can apply; never a 400", async (t) => {
+  let cells = 0;
+  for (const field of [undefined, "", "page"]) {
+    for (const faceAudioDefault of ["", "page"]) {
+      for (const host of ["cloud", "self-hosted"]) {
+        for (const avatar of ["face-package", "follow-settings", "other"]) {
+          for (const hub of ["off", "on"]) {
+            const label = JSON.stringify({ field: field ?? "<absent>", faceAudioDefault, host, avatar, hub });
+            const result = await defaultJoin(t, { field, faceAudioDefault, host, avatar, hub });
+            cells += 1;
+            if (field === "page") {
+              if (avatar !== "face-package") {
+                assert.equal(result.status, 400, label);
+                assert.equal(result.text, "faceAudio=page は avatarExperiment=face-package を明示した参加でのみ利用できます。", label);
+              } else if (hub === "on") {
+                assert.equal(result.status, 400, label);
+                assert.equal(result.text, "faceAudio=page はフロア調停（hub）が有効なセッションでは利用できません。", label);
+              } else {
+                assert.equal(result.status, 200, label);
+                assert.equal(result.pageAudio, true, label);
+                assert.deepEqual(result.logs, ["🔊  page audio on (source=explicit)"], label);
+              }
+              continue;
+            }
+            assert.equal(result.status, 200, `${label} ${result.text}`);
+            assert.equal(result.localAvatar, avatar !== "follow-settings", label);
+            const expectOn = field === undefined && faceAudioDefault === "page" && host === "self-hosted"
+              && avatar === "face-package" && hub === "off";
+            assert.equal(result.pageAudio, expectOn, label);
+            if (expectOn) {
+              assert.deepEqual(result.logs, ["🔊  page audio on (source=default)"], label);
+            } else if (field === undefined && faceAudioDefault === "page") {
+              const reason = host === "cloud" ? "cloud" : avatar !== "face-package" ? "not-face-package" : "hub";
+              assert.deepEqual(result.logs, [`🔊  page audio default skipped (reason=${reason})`], label);
+            } else {
+              assert.deepEqual(result.logs, [], `${label}: no line for a never-touched default or an explicit off`);
+            }
+          }
+        }
+      }
+    }
+  }
+  assert.equal(cells, 72);
+});
+
+test("#274 T3: absent field x page default x self-hosted x face-package x hub on -> 200 on the WebSocket path", async (t) => {
+  const result = await defaultJoin(t, { field: undefined, faceAudioDefault: "page", host: "self-hosted", avatar: "face-package", hub: "on" });
+  assert.equal(result.status, 200, result.text);
+  assert.equal(result.localAvatar, true);
+  assert.equal(result.pageAudio, false);
+  assert.equal(result.botCreates.length, 1);
+});
+
+test("#274 T3: a page default whose face package fails to load -> 200 on the WebSocket path with a dropped line", async (t) => {
+  const missing = path.join(os.tmpdir(), `meetmate-missing-face-package-${crypto.randomBytes(6).toString("hex")}`);
+  assert.equal(fs.existsSync(missing), false);
+  for (const field of [undefined, "page"]) {
+    const result = await defaultJoin(t, { field, faceAudioDefault: "page", host: "self-hosted", avatar: "face-package", hub: "off", facePackageDir: missing });
+    const source = field === "page" ? "explicit" : "default";
+    assert.equal(result.status, 200, result.text);
+    assert.equal(result.localAvatar, false, "package miss: no face session");
+    assert.equal(result.pageAudio, false);
+    assert.equal(result.botCreates.length, 1);
+    assert.equal(result.botCreates[0].voice_agent_settings, undefined, "no face page is launched");
+    assert.deepEqual(result.logs, [`🔊  page audio dropped (source=${source}, reason=face-package-unavailable)`], source);
+  }
+});
+
+test("#274 T3: an explicit faceAudio= beats a page default on self-hosted Attendee", async (t) => {
+  const result = await defaultJoin(t, { field: "", faceAudioDefault: "page", host: "self-hosted", avatar: "face-package", hub: "off" });
+  assert.equal(result.status, 200, result.text);
+  assert.equal(result.pageAudio, false);
+  assert.deepEqual(result.logs, []);
+});
+
+test("#274 T4 unchanged default path: with no stored default the bot-create request and session flags equal an explicit-off join", async (t) => {
+  for (const host of ["cloud", "self-hosted"]) {
+    for (const avatar of ["face-package", "follow-settings", "other"]) {
+      const label = `${host} ${avatar}`;
+      const absent = await defaultJoin(t, { field: undefined, faceAudioDefault: undefined, host, avatar, hub: "off" });
+      const explicitOff = await defaultJoin(t, { field: "", faceAudioDefault: undefined, host, avatar, hub: "off" });
+      const storedEmpty = await defaultJoin(t, { field: undefined, faceAudioDefault: "", host, avatar, hub: "off" });
+      for (const result of [absent, explicitOff, storedEmpty]) {
+        assert.equal(result.status, 200, `${label} ${result.text}`);
+        assert.equal(result.pageAudio, false, label);
+        assert.deepEqual(result.logs, [], label);
+        assert.equal(result.botCreates.length, 1, label);
+      }
+      assert.deepEqual(absent.botCreates, explicitOff.botCreates, label);
+      assert.deepEqual(storedEmpty.botCreates, explicitOff.botCreates, label);
+    }
+  }
+});
+
+test("#274 T5 host switch: a stored page default is used on self-hosted and unused after a switch to cloud", async (t) => {
+  const logs = [];
+  t.mock.method(console, "log", (...args) => { logs.push(args.join(" ")); });
+  await withRoutes(t, async (harness) => {
+    rebootSettings({ attendeeBaseUrl: SELF_HOSTED_ATTENDEE });
+    const page = await pageSession(harness, { avatarExperiment: "face-package" });
+    assert.equal(page.visual.pageAudio, true);
+    assert.equal((await harness.leave()).statusCode, 200);
+    rebootSettings({ attendeeBaseUrl: "app.attendee.dev" });
+    const join = await harness.join({ avatarExperiment: "face-package" });
+    assert.equal(join.statusCode, 200, join.text);
+    assert.equal(harness.routes._test.meetingSessions.get(FIXED_SESSION_ID).localAvatarSession.pageAudio === true, false);
+  }, { avatar: { faceAudioDefault: "page" }, hub: HUB_OFF });
+  assert.deepEqual(logs.filter((line) => line.includes("page audio")),
+    ["🔊  page audio on (source=default)", "🔊  page audio default skipped (reason=cloud)"]);
+});

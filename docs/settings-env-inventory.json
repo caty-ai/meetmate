@@ -223,7 +223,7 @@
     {
       "name": "ECHO_GATE_CLOSED_BYPASS",
       "references": [
-        "src/transport-meet/meet-routes.js:55"
+        "src/transport-meet/meet-routes.js:56"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -234,7 +234,7 @@
       "name": "ECHO_LOOP_COOLDOWN_MS",
       "references": [
         "src/config.js:52",
-        "src/transport-meet/meet-routes.js:54"
+        "src/transport-meet/meet-routes.js:55"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -560,7 +560,7 @@
     {
       "name": "OPENCLAW_WORKSPACE",
       "references": [
-        "src/transport-meet/meet-routes.js:578"
+        "src/transport-meet/meet-routes.js:579"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -618,8 +618,8 @@
     {
       "name": "PUBLIC_WSS_URL",
       "references": [
-        "src/transport-meet/meet-routes.js:975",
-        "src/transport-meet/meet-routes.js:976"
+        "src/transport-meet/meet-routes.js:976",
+        "src/transport-meet/meet-routes.js:977"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -639,7 +639,7 @@
     {
       "name": "SESSION_GRACE_CLOSE_MS",
       "references": [
-        "src/transport-meet/meet-routes.js:53"
+        "src/transport-meet/meet-routes.js:54"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
@@ -904,7 +904,7 @@
     {
       "name": "WS_SHARED_TOKEN",
       "references": [
-        "src/transport-meet/meet-routes.js:57"
+        "src/transport-meet/meet-routes.js:58"
       ],
       "ux": "hidden",
       "credentialClass": "class-3-internal-control",

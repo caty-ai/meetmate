@@ -75,7 +75,8 @@
     "slack.labels.userLabel": "Slack utterance statistics user label.",
     "slack.labels.defaultAgentLabel": "Slack fallback agent label.",
     "gateway.displayName": "Gateway events client display name.",
-    "soniox.smokeDefaultKeyterms": "Default keyterms for scripts/soniox-smoke.js when WAKE_WORDS is unset."
+    "soniox.smokeDefaultKeyterms": "Default keyterms for scripts/soniox-smoke.js when WAKE_WORDS is unset.",
+    "avatar.faceAudioDefault": "Page-audio default for face-package joins: empty (WebSocket, default) or page. Applies only with self-hosted Attendee, an explicit face-package join and no floor hub; an explicit join field wins."
   },
   "prompts": {
     "voiceSystemAddendum": "",
@@ -264,6 +265,7 @@
     "experiment": "",
     "emotionJudge": "off",
     "faceListenReactions": false,
-    "faceTimelineOffsetMs": 300
+    "faceTimelineOffsetMs": 300,
+    "faceAudioDefault": ""
   }
 }

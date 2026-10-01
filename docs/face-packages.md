@@ -213,7 +213,25 @@ the host page can play the reply itself, and voice and mouth come from one clock
   checkbox; the form sends `faceAudio=page`. The join returns 400 unless the resolved avatar
   experiment is explicitly `face-package`, so "follow settings" plus `faceAudio=page` is always
   400. It also returns 400 while meet-floor-hub arbitration is enabled for the session. MCP
-  `join_meeting` never sends the field, and there is no settings key.
+  `join_meeting` never sends the field.
+- **Settings default (#274).** `face_audio_default` (`avatar.faceAudioDefault`, `""` or `page`,
+  next-join) pre-sets the checkbox. It is shown only for face-package on a self-hosted
+  Attendee; on Attendee cloud the screen shows a one-line note instead. Precedence: an explicit
+  `faceAudio` field (`page` or an empty `faceAudio=`) wins with the validation above; only an
+  absent field consults the default. The default turns page audio on only for a self-hosted
+  Attendee, an explicitly resolved face-package join and no enabled floor hub; otherwise the
+  join silently uses the WebSocket path and never fails because of the default. The join form
+  reads the default and the host kind from `GET /info`. While the box is untouched the form
+  sends no field (the server's default applies); once clicked, checked sends `faceAudio=page`
+  and unchecked sends `faceAudio=` (explicit off).
+- **Sample rates.** Inbound meeting audio stays a fixed 16 kHz: the Deepgram/Soniox STT
+  providers, the mixed-STT window, the Discord 48k→16k decimation and wake calibration all
+  assume it. The outgoing voice stays `tts_sample_rate`; with Attendee keep it at 8000, 16000
+  or 24000, the only rates Attendee realtime audio accepts, because any reply can fall back to
+  the WebSocket path. The rate at which Attendee captures the face page's audio is an
+  Attendee-server setting (`WEBPAGE_STREAMER_AUDIO_SAMPLE_RATE` on a patched self-hosted
+  Attendee; upstream is fixed at 16 kHz; 48 kHz recommended for this mode). meetmate does not
+  change it and cannot read it.
 - **One path per reply epoch.** Each output epoch is routed once, at its first chunk. It goes to
   the page if the page is audio-ready: its audio stream is open for the current generation, its
   last heartbeat is at most 1 s old and reports a running `AudioContext`, and its backlog is at
