@@ -359,6 +359,8 @@ function faceAudioJoinInputs({ selection, pristine, checked }) {
 // to pristine and shows the /info default; a late /info only updates a pristine box. While /info
 // has failed or not resolved, the hint says the server default applies.
 function createFaceAudioControl({ selectEl, optionEl, boxEl, hintEl }) {
+  // Without the option or the box there is no page-audio control: never send faceAudio.
+  if (!selectEl || !optionEl || !boxEl) return { setInfo() {}, joinInputs: () => ({ faceAudioPage: false, faceAudioOff: false }) };
   let pristine = true;
   let info;
   let wasAvailable = false;
@@ -478,11 +480,14 @@ if (typeof document !== "undefined") (function () {
   const avatarExperimentWrapEl = avatarExperimentEl.closest(".join-option");
   const faceAudioOptionEl = document.getElementById("faceAudioOption");
   const faceAudioPageEl = document.getElementById("faceAudioPage");
-  const faceAudioHintEl = document.createElement("span");
-  faceAudioHintEl.className = "field-hint";
-  faceAudioHintEl.hidden = true;
-  faceAudioHintEl.textContent = "チェックを触らずに参加すると、サーバー側の既定値が使われます。";
-  faceAudioOptionEl.after(faceAudioHintEl);
+  let faceAudioHintEl = null;
+  if (faceAudioOptionEl && faceAudioPageEl) {
+    faceAudioHintEl = document.createElement("span");
+    faceAudioHintEl.className = "field-hint";
+    faceAudioHintEl.hidden = true;
+    faceAudioHintEl.textContent = "チェックを触らずに参加すると、サーバー側の既定値が使われます。";
+    faceAudioOptionEl.after(faceAudioHintEl);
+  }
   const faceAudioControl = createFaceAudioControl({
     selectEl: avatarExperimentEl, optionEl: faceAudioOptionEl, boxEl: faceAudioPageEl, hintEl: faceAudioHintEl,
   });

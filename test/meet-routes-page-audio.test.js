@@ -779,7 +779,7 @@ function normalizedBotCreate(body) {
   return parsed;
 }
 
-async function defaultJoin(t, { field, faceAudioDefault, host, avatar, hub }) {
+async function defaultJoin(t, { field, faceAudioDefault, host, avatar, hub, facePackageDir }) {
   const logs = [];
   const log = t.mock.method(console, "log", (...args) => { logs.push(args.join(" ")); });
   let result;
@@ -805,6 +805,7 @@ async function defaultJoin(t, { field, faceAudioDefault, host, avatar, hub }) {
       avatar: {
         ...(faceAudioDefault === undefined ? {} : { faceAudioDefault }),
         ...(avatar === "follow-settings" ? { experiment: "face-package" } : {}),
+        ...(facePackageDir === undefined ? {} : { facePackageDir }),
       },
       hub: hub === "on" ? HUB_ON : HUB_OFF,
     });
@@ -865,6 +866,21 @@ test("#274 T3: absent field x page default x self-hosted x face-package x hub on
   assert.equal(result.localAvatar, true);
   assert.equal(result.pageAudio, false);
   assert.equal(result.botCreates.length, 1);
+});
+
+test("#274 T3: a page default whose face package fails to load -> 200 on the WebSocket path with a dropped line", async (t) => {
+  const missing = path.join(os.tmpdir(), `meetmate-missing-face-package-${crypto.randomBytes(6).toString("hex")}`);
+  assert.equal(fs.existsSync(missing), false);
+  for (const field of [undefined, "page"]) {
+    const result = await defaultJoin(t, { field, faceAudioDefault: "page", host: "self-hosted", avatar: "face-package", hub: "off", facePackageDir: missing });
+    const source = field === "page" ? "explicit" : "default";
+    assert.equal(result.status, 200, result.text);
+    assert.equal(result.localAvatar, false, "package miss: no face session");
+    assert.equal(result.pageAudio, false);
+    assert.equal(result.botCreates.length, 1);
+    assert.equal(result.botCreates[0].voice_agent_settings, undefined, "no face page is launched");
+    assert.deepEqual(result.logs, [`🔊  page audio dropped (source=${source}, reason=face-package-unavailable)`], source);
+  }
 });
 
 test("#274 T3: an explicit faceAudio= beats a page default on self-hosted Attendee", async (t) => {

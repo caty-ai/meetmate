@@ -1327,8 +1327,7 @@ async function handleHttp(req, res) {
             : sessionHubConfig?.enabled === true ? "hub"
               : "";
       const sessionPageAudio = pageAudio || faceAudioDefaultSkip === "";
-      if (sessionPageAudio) console.log(`🔊  page audio on (source=${pageAudio ? "explicit" : "default"})`);
-      else if (faceAudioDefaultSkip) console.log(`🔊  page audio default skipped (reason=${faceAudioDefaultSkip})`);
+      if (faceAudioDefaultSkip) console.log(`🔊  page audio default skipped (reason=${faceAudioDefaultSkip})`);
       sessionId = crypto.randomUUID();
       const startedAt = new Date().toISOString();
       const session = {
@@ -1416,6 +1415,13 @@ async function handleHttp(req, res) {
         });
         localAvatarSession = issued?.session || null;
         localAvatarLaunchUrl = issued?.launchUrl || null;
+        // #274: report page audio only once the session actually carries it.
+        if (sessionPageAudio) {
+          const source = pageAudio ? "explicit" : "default";
+          console.log(localAvatarSession?.pageAudio === true
+            ? `🔊  page audio on (source=${source})`
+            : `🔊  page audio dropped (source=${source}, reason=face-package-unavailable)`);
+        }
         if (localAvatarSession?.mode === "face-package") {
           localAvatarSession.listenReactions = getEffectiveValue("face_listen_reactions");
           localAvatarSession.timelineOffsetMs = getEffectiveValue("face_timeline_offset_ms");

@@ -394,6 +394,19 @@ test("#274 T6 a late /info after a touch: the body follows the click and the dis
   assert.equal(pristine.field(), null);
 });
 
+test("#274 T6 missing #faceAudioOption or #faceAudioPage: no throw, the submit path sends no faceAudio field", () => {
+  const select = fakeElement({ value: "face-package" });
+  for (const elements of [{ optionEl: null, boxEl: fakeElement({ checked: true }) }, { optionEl: fakeElement({}), boxEl: null }, { optionEl: null, boxEl: null }]) {
+    const control = app.createFaceAudioControl({ selectEl: select, hintEl: null, ...elements });
+    assert.doesNotThrow(() => control.setInfo(SELF_PAGE));
+    assert.doesNotThrow(() => control.setInfo(null));
+    assert.deepEqual(control.joinInputs(), { faceAudioPage: false, faceAudioOff: false });
+    assert.equal(app.buildMeetJoinFormData({ ...BASE_FORM, avatarExperiment: "face-package", ...control.joinInputs() }).has("faceAudio"), false);
+  }
+  const page = read("public/app.js");
+  assert.match(page, /let faceAudioHintEl = null;\n  if \(faceAudioOptionEl && faceAudioPageEl\) \{/, "the hint is only built when both elements exist");
+});
+
 test("#274 T6 /info failed: box unchecked with the hint, pristine sends nothing", () => {
   const form = joinForm("face-package");
   form.control.setInfo(null);
