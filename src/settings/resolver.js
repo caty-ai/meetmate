@@ -484,6 +484,8 @@ function buildEnvelope() {
     restartRequired: restartRequired.sort(),
     issues,
     diagnostics,
+    // #274: running-server host kind for the settings UI (not a setting, not a diagnostic).
+    attendeeHostKind: require("../attendee-host-kind").attendeeHostKind({ snapshot: "effective" }),
   };
 }
 

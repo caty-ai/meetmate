@@ -130,7 +130,7 @@ function discordTargetStatus(guildId, channelId) {
   };
 }
 
-function buildMeetJoinFormData({ meetingUrl, availableAgents, wsUrl, avatarExperiment, faceAudioPage = false }) {
+function buildMeetJoinFormData({ meetingUrl, availableAgents, wsUrl, avatarExperiment, faceAudioPage = false, faceAudioOff = false }) {
   const selectedAgentIds = availableAgents.map((agent) => agent.id);
   const botName = availableAgents.length
     ? `${availableAgents[0].id} (${availableAgents[0].displayName})`
@@ -143,7 +143,7 @@ function buildMeetJoinFormData({ meetingUrl, availableAgents, wsUrl, avatarExper
     agentIds: selectedAgentIds.join(","),
   });
   appendAvatarExperiment(formData, avatarExperiment);
-  appendFaceAudio(formData, avatarExperiment, faceAudioPage);
+  appendFaceAudio(formData, avatarExperiment, faceAudioPage, faceAudioOff);
   return formData;
 }
 
@@ -333,15 +333,69 @@ function faceAudioAvailable(selection) {
   return selection === "face-package";
 }
 
-function appendFaceAudio(parameters, selection, checked) {
-  if (checked === true && faceAudioAvailable(selection)) parameters.append("faceAudio", "page");
+// #274 §4.2c: faceAudioOff sends an explicit `faceAudio=` (off); without either input no field is
+// sent and the server's default applies. A non-face-package selection never sends the field.
+function appendFaceAudio(parameters, selection, checked, off = false) {
+  if (!faceAudioAvailable(selection)) return parameters;
+  if (checked === true) parameters.append("faceAudio", "page");
+  else if (off === true) parameters.append("faceAudio", "");
   return parameters;
+}
+
+// #274 §4.2b: the box is pre-set only when /info says self-hosted Attendee and a `page` default.
+function faceAudioDefaultChecked(info) {
+  return info?.attendeeHostKind === "self-hosted" && info?.faceAudioDefault === "page";
+}
+
+// #274 §4.2c: checkbox state -> buildMeetJoinFormData inputs. A pristine box sends nothing, so a
+// pre-set box never becomes an explicit `faceAudio=page`; a touched box sends the user's choice.
+function faceAudioJoinInputs({ selection, pristine, checked }) {
+  if (!faceAudioAvailable(selection) || pristine !== false) return { faceAudioPage: false, faceAudioOff: false };
+  return checked === true ? { faceAudioPage: true, faceAudioOff: false } : { faceAudioPage: false, faceAudioOff: true };
+}
+
+// #274 §4.2 pristine/touched rule for the join form's page-audio box. The box is pristine until
+// the user clicks it after the select last entered face-package. Entering face-package resets it
+// to pristine and shows the /info default; a late /info only updates a pristine box. While /info
+// has failed or not resolved, the hint says the server default applies.
+function createFaceAudioControl({ selectEl, optionEl, boxEl, hintEl }) {
+  let pristine = true;
+  let info;
+  let wasAvailable = false;
+  const showDefault = () => { boxEl.checked = faceAudioDefaultChecked(info); };
+  function render() {
+    const available = faceAudioAvailable(selectEl.value);
+    optionEl.hidden = !available;
+    if (!available) boxEl.checked = false;
+    else if (!wasAvailable) {
+      pristine = true;
+      showDefault();
+    }
+    wasAvailable = available;
+    if (hintEl) hintEl.hidden = !available || Boolean(info);
+  }
+  selectEl.addEventListener("change", render);
+  boxEl.addEventListener("change", () => { pristine = false; });
+  render();
+  return {
+    setInfo(next) {
+      info = next && typeof next === "object" ? next : null;
+      if (pristine && faceAudioAvailable(selectEl.value)) showDefault();
+      render();
+    },
+    joinInputs() {
+      return faceAudioJoinInputs({ selection: selectEl.value, pristine, checked: boxEl.checked });
+    },
+  };
 }
 
 if (typeof module !== "undefined" && module.exports) module.exports = {
   appendAvatarExperiment,
   appendFaceAudio,
+  createFaceAudioControl,
   faceAudioAvailable,
+  faceAudioDefaultChecked,
+  faceAudioJoinInputs,
   avatarExperimentLabel,
   buildDiscordJoinBody,
   buildMeetJoinFormData,
@@ -424,14 +478,14 @@ if (typeof document !== "undefined") (function () {
   const avatarExperimentWrapEl = avatarExperimentEl.closest(".join-option");
   const faceAudioOptionEl = document.getElementById("faceAudioOption");
   const faceAudioPageEl = document.getElementById("faceAudioPage");
-  function renderFaceAudioOption() {
-    if (!faceAudioOptionEl || !faceAudioPageEl) return;
-    const available = faceAudioAvailable(avatarExperimentEl.value);
-    faceAudioOptionEl.hidden = !available;
-    if (!available) faceAudioPageEl.checked = false;
-  }
-  avatarExperimentEl.addEventListener("change", renderFaceAudioOption);
-  renderFaceAudioOption();
+  const faceAudioHintEl = document.createElement("span");
+  faceAudioHintEl.className = "field-hint";
+  faceAudioHintEl.hidden = true;
+  faceAudioHintEl.textContent = "チェックを触らずに参加すると、サーバー側の既定値が使われます。";
+  faceAudioOptionEl.after(faceAudioHintEl);
+  const faceAudioControl = createFaceAudioControl({
+    selectEl: avatarExperimentEl, optionEl: faceAudioOptionEl, boxEl: faceAudioPageEl, hintEl: faceAudioHintEl,
+  });
 
   const INSTALL_DISMISSED_KEY = "aiMeetParticipantInstallDismissed";
 
@@ -1177,8 +1231,10 @@ if (typeof document !== "undefined") (function () {
       if (info.publicWsUrl) {
         serverPublicWsUrl = info.publicWsUrl;
       }
+      faceAudioControl.setInfo(res.ok ? info : null);
     } catch {
       // keep default badge
+      faceAudioControl.setInfo(null);
     }
   }
 
@@ -1357,7 +1413,7 @@ if (typeof document !== "undefined") (function () {
             availableAgents,
             wsUrl: getAutoWsUrl(),
             avatarExperiment: avatarExperimentEl.value,
-            faceAudioPage: faceAudioPageEl?.checked === true,
+            ...faceAudioControl.joinInputs(),
           }),
         });
         const text = await response.text();

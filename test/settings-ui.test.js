@@ -168,7 +168,7 @@ test("face timeline offset renders as an unbounded number input and a negative v
   const source = require("node:fs").readFileSync(require.resolve("../public/settings.js"), "utf8");
   const pick = (name) => source.match(new RegExp(`function ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n    }\\n`))[0];
   assert.match(source, /if \(control === "number"\) input\.step = entry\.step === undefined \? "any" : String\(entry\.step\);/);
-  assert.match(source, /\["emotion_judge", "face_listen_reactions", "face_timeline_offset_ms"\]\.includes\(entry\.id\) && avatar !== "face-package"/);
+  assert.match(source, /\["emotion_judge", "face_listen_reactions", "face_timeline_offset_ms", "face_audio_default"\]\.includes\(entry\.id\) && avatar !== "face-package"\)\n\s*\|\| \(entry\.id === "face_audio_default" && envelope\?\.attendeeHostKind !== "self-hosted"\)/);
   const input = { dataset: {}, value: "-700" };
   const context = { document: { querySelector: () => input }, NULLABLE_NUMBER_FIELDS: CLIENT_FIELD_SETS.NULLABLE_NUMBER_FIELDS };
   vm.runInNewContext(`${pick("controlFor")}${pick("applyMetadata")}${pick("readControlValue")}

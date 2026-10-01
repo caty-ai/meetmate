@@ -71,6 +71,7 @@ The allowlist below is complete. The compact type notation is directly translata
 | `emotion_judge` | `avatar.emotionJudge` | enum(off,tags,jev) / `off` | detail | none | live | none | default |
 | `face_listen_reactions` | `avatar.faceListenReactions` | bool / `false` | detail | none | next-join | none | default |
 | `face_timeline_offset_ms` | `avatar.faceTimelineOffsetMs` | `int(-3000,3000)` / `300` | detail | none | next-join | none | default |
+| `face_audio_default` | `avatar.faceAudioDefault` | `enum(,page)` / empty | detail | none | next-join | none | default |
 | `avatar_rig_background_mode` | `avatar.rigBackgroundMode` | `enum(solid,image,chroma)` / `solid` | basic | none | live | none | default |
 | `avatar_rig_background_color` | `avatar.rigBackgroundColor` | `hex-color` / `#08111f` | basic | none | live | none | default |
 | `llm_provider` | `llm.provider` | `enum(openclaw,openai-compatible)` / `openclaw` | basic | none | restart-required | `LLM_PROVIDER` | default |
@@ -403,6 +404,7 @@ type SettingsEnvelope = {
     value: DiagnosticValue<K>;
     source: DiagnosticSource<K>;
   } }>;
+  attendeeHostKind: "cloud" | "self-hosted";      // #274; running-server value, not a setting or diagnostic
 };
 type SettingsMutation = {
   schemaVersion: 1;
@@ -445,7 +447,7 @@ Example GET/PUT success (ellipses here mean additional registry-derived keys; li
 {"schemaVersion":1,"revision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","setupMode":false,"fields":{"agent_language":"ja","fish_audio_api_key":{"state":"set","value":"••••••••"}},"effective":{"agent_language":"ja","fish_audio_api_key":{"state":"set","value":"••••••••"}},"sources":{"agent_language":"config","fish_audio_api_key":"config"},"restartRequired":[],"issues":[],"diagnostics":{"barge_in_min_chars":{"value":2,"source":"default"}}}
 ```
 
-`fields` may contain only stored `StoreFieldId` values and therefore never contains synthetic `resolved_home` or read-only runtime `server_port`. `effective` and `sources` use only `EffectiveFieldId`; their present key sets must match each other, but need not match `fields`. `effective`, `sources`, and `restartRequired` obey §3's running-state formula. Every non-null-by-construction `issues[].fieldId` is an editable registry ID. `diagnostics` contains only the two noneditable main diagnostics plus the 59 extension IDs, displays current noncredential values only, and is never accepted by a mutation/import. The normal GET includes all available safe projections even though the strict subset types permit setup-mode omission. Stale PUT/import/migrate/audio/delete requests return `409 SETTINGS_REVISION_CONFLICT`. The store rechecks the same revision at precommit (§2), so validation-time freshness is insufficient. In absent/parse-invalid setup mode, only PUT and class-1 migration bearing `"bootstrap"` pass this gate; all other operations that require a committed config revision are rejected.
+`fields` may contain only stored `StoreFieldId` values and therefore never contains synthetic `resolved_home` or read-only runtime `server_port`. `effective` and `sources` use only `EffectiveFieldId`; their present key sets must match each other, but need not match `fields`. `effective`, `sources`, and `restartRequired` obey §3's running-state formula. `attendeeHostKind` (#274) is the Attendee host kind of the running server (see "Page-audio default" below); it is non-secret, is never accepted by a mutation/import, and appears on every envelope response (GET, PUT success, import success). Every non-null-by-construction `issues[].fieldId` is an editable registry ID. `diagnostics` contains only the two noneditable main diagnostics plus the 59 extension IDs, displays current noncredential values only, and is never accepted by a mutation/import. The normal GET includes all available safe projections even though the strict subset types permit setup-mode omission. Stale PUT/import/migrate/audio/delete requests return `409 SETTINGS_REVISION_CONFLICT`. The store rechecks the same revision at precommit (§2), so validation-time freshness is insufficient. In absent/parse-invalid setup mode, only PUT and class-1 migration bearing `"bootstrap"` pass this gate; all other operations that require a committed config revision are rejected.
 
 The remaining strict request/response schemas and examples are:
 
@@ -700,6 +702,37 @@ and sent as the descriptor's `timelineOffsetMs`; a running session keeps its val
 `TYPESAFE_API_KEY` is environment-only and lazy, outside the settings registry.
 See [Face packages and Face Protocol v1](face-packages.md) for the serving boundary,
 manifest and optional user-transcript reaction judgement.
+
+### Page-audio default (#274)
+
+`face_audio_default` (`avatar.faceAudioDefault`) is `""` (WebSocket, default) or
+`page`, next-join, transferable, with no environment alias. Join precedence: an
+explicit `faceAudio` field on `POST /join-meeting` (`page` or `""`; a present empty
+field counts as explicit) wins and keeps the #266 validation and messages. Only an
+absent field consults this default, and it turns page audio on only when the
+default is `page`, the Attendee host kind is `self-hosted`, the join explicitly
+resolved `avatarExperiment=face-package`, and the session's floor hub is not
+enabled. Otherwise the join silently uses the WebSocket path; the default never
+causes a join error. MCP `join_meeting` is unchanged.
+
+Attendee host kind: the effective `attendee_base_url`, trimmed and case-folded;
+`app.attendee.dev`, empty or absent is `cloud`, any other hostname is
+`self-hosted`. `src/attendee-host-kind.js` is the only source (#260 later swaps its
+body for `bot_host`). The settings envelope carries it as `attendeeHostKind`, and
+`GET /info` carries exactly two additive members, `attendeeHostKind` and
+`faceAudioDefault`, for the join form. The settings screen shows the field only for
+face-package on self-hosted Attendee; on cloud it shows a one-line note instead,
+and a stored value is unused.
+
+Sample rates: inbound meeting audio stays a fixed 16 kHz (`SAMPLE_RATE`) because
+the Deepgram/Soniox STT providers, the mixed-STT window, the Discord 48k→16k
+decimation and wake calibration all assume it. Caty's outgoing voice stays
+`tts_sample_rate`; with Attendee keep it at 8000, 16000 or 24000, the only rates
+Attendee realtime audio accepts, because any page-audio reply can fall back to the
+WebSocket path. The rate at which Attendee captures the face page's audio is an
+Attendee-server setting (`WEBPAGE_STREAMER_AUDIO_SAMPLE_RATE` on a patched
+self-hosted Attendee; upstream is fixed at 16 kHz; 48 kHz recommended for this
+mode). meetmate does not change it and cannot read it.
 
 ### Reply trigger (#267, trial)
 

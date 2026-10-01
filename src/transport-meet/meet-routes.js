@@ -32,6 +32,7 @@ const { createGatewaySessionTracker } = require("../gateway-session-tracker");
 const { servePublicAsset, serveLocalAvatar, sendMetricsSummary } = require("../ui-routes");
 const { logsDir, avatarCachePath, bundledAssetPath, bundledPublicDir, resolveHome } = require("../paths");
 const { warnOversizedAvatarFrames } = require("./avatar-frame-size");
+const { attendeeHostKind } = require("../attendee-host-kind");
 const {
   AVATAR_FILE_LIMIT,
   installUrlCacheAvatar,
@@ -997,6 +998,9 @@ async function handleHttp(req, res) {
       ready: getStatus().meetingReady,
       fixedAgentId: FIXED_AGENT_ID || null,
       primaryAgent,
+      // #274 §4.2a: the join form pre-sets the page-audio box from these two non-secret values.
+      attendeeHostKind: attendeeHostKind({ snapshot: "effective" }),
+      faceAudioDefault: getEffectiveValue("face_audio_default"),
     };
     res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
     res.end(JSON.stringify(info));
@@ -1314,6 +1318,17 @@ async function handleHttp(req, res) {
         writePlainResponse(res, 400, "faceAudio=page はフロア調停（hub）が有効なセッションでは利用できません。");
         return;
       }
+      // #274 §3: only an absent faceAudio field consults the settings default, after the hub
+      // check above, so a defaulted value never reaches a 400; when it cannot apply the join
+      // silently uses the WebSocket path.
+      const faceAudioDefaultSkip = hasFaceAudio || getEffectiveValue("face_audio_default") !== "page" ? null
+        : attendeeHostKind({ snapshot: "effective" }) !== "self-hosted" ? "cloud"
+          : avatarExperiment !== "face-package" ? "not-face-package"
+            : sessionHubConfig?.enabled === true ? "hub"
+              : "";
+      const sessionPageAudio = pageAudio || faceAudioDefaultSkip === "";
+      if (sessionPageAudio) console.log(`🔊  page audio on (source=${pageAudio ? "explicit" : "default"})`);
+      else if (faceAudioDefaultSkip) console.log(`🔊  page audio default skipped (reason=${faceAudioDefaultSkip})`);
       sessionId = crypto.randomUUID();
       const startedAt = new Date().toISOString();
       const session = {
@@ -1397,7 +1412,7 @@ async function handleHttp(req, res) {
             mode: getEffectiveValue("avatar_rig_background_mode"),
             color: getEffectiveValue("avatar_rig_background_color"),
           },
-          ...(pageAudio ? { pageAudio: true } : {}),
+          ...(sessionPageAudio ? { pageAudio: true } : {}),
         });
         localAvatarSession = issued?.session || null;
         localAvatarLaunchUrl = issued?.launchUrl || null;
