@@ -161,7 +161,8 @@ if (typeof document !== "undefined") {
     const LABELS = {
       agent_id: "エージェント ID", agent_name: "エージェント名", agent_display_name: "表示名",
       agent_language: "言語", agent_greeting: "あいさつ", agent_emotion_tags: "感情タグ",
-      agent_wake_words: "Wake Words", agent_keyterms: "音声認識キーターム",
+      agent_wake_words: "Wake Words", agent_reply_trigger: "返答のきっかけ（試験）",
+      agent_keyterms: "音声認識キーターム",
       agent_stt_wake_variants: "Wake Word の認識候補", agent_ack_variants: "応答確認",
       agent_progress_pings: "進捗 Ping", agent_exit_farewell: "退出あいさつ",
       agent_cancel_ack: "キャンセル確認", agent_timeout_fallback: "タイムアウト",
@@ -207,6 +208,7 @@ if (typeof document !== "undefined") {
     const HELP = {
       public_origin: "ngrok 以外のトンネル（Tailscale funnel など）で使う公開 HTTPS オリジン。https://host または https://host:port の形式。設定すると ngrok ドメイン・自動検出より優先されます。",
       agent_wake_words: "1行に1件入力します。カンマ区切りも利用できます。",
+      agent_reply_trigger: "試験機能。wake は Wake Word で呼ばれたときだけ返答します（既定）。jev は Wake Word がなくても、自分宛てで言い終わったと判定した発言に返答します。判定のため直近の会議の発言を外部の判定サービスへ送ります。",
       agent_keyterms: "音声認識へ渡す固有名詞などを1行に1件入力します。",
       agent_stt_wake_variants: "認識されやすい表記の候補を1行に1件入力します。",
       agent_ack_variants: "ランダムに使う文言を1行に1件入力します。",
@@ -262,6 +264,10 @@ if (typeof document !== "undefined") {
       solid: "単色",
       image: "埋め込み画像",
       chroma: "クロマキー",
+    };
+    const REPLY_TRIGGER_OPTION_LABELS = {
+      wake: "Wake Word で呼ばれたときだけ（既定）",
+      jev: "話しかけられたと判定したとき（試験）",
     };
     const TTS_PROVIDER_OPTION_LABELS = {
       "fish-audio": "Fish Audio（既定）",
@@ -349,6 +355,7 @@ if (typeof document !== "undefined") {
       if (entry.id === "avatar_experiment") return AVATAR_OPTION_LABELS[value];
       if (entry.id === "avatar_rig_background_mode") return RIG_BACKGROUND_OPTION_LABELS[value];
       if (entry.id === "tts_provider") return TTS_PROVIDER_OPTION_LABELS[value] || fallback;
+      if (entry.id === "agent_reply_trigger") return REPLY_TRIGGER_OPTION_LABELS[value] || fallback;
       return fallback;
     }
 

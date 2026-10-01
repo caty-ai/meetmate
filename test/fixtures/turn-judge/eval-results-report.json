@@ -1,0 +1,1649 @@
+{
+  "generatedAt": "2026-09-30T20:31:17.041Z",
+  "split": "report",
+  "runsPerRow": 3,
+  "thresholds": {
+    "addressedMin": 0.75,
+    "finishedMin": 0.75
+  },
+  "timeoutMs": 800,
+  "contextLines": 6,
+  "questions": {
+    "addressed": {
+      "type": "noul",
+      "instructions": "The latest line is spoken to Caty (the AI assistant in this meeting) and expects Caty to answer or act, including a reply to something Caty just asked or offered, rather than being said to other people in the meeting, being a remark about Caty, or being only a filler or backchannel such as \"um\" or \"uh-huh\"."
+    },
+    "finished": {
+      "type": "noul",
+      "instructions": "The speaker has finished their turn with the latest line (a complete question, request, answer or statement), rather than pausing mid-sentence and about to continue; a line that stops in the middle of a phrase, such as on a particle or an unfinished modifier, is not finished."
+    }
+  },
+  "summary": {
+    "bySource": {
+      "synthetic": {
+        "rows": 40,
+        "calls": 120,
+        "confusion": {
+          "speak": {
+            "speak": 31,
+            "wait": 5,
+            "ignore": 0
+          },
+          "wait": {
+            "speak": 0,
+            "wait": 18,
+            "ignore": 0
+          },
+          "ignore": {
+            "speak": 0,
+            "wait": 0,
+            "ignore": 66
+          }
+        },
+        "falseSpeakRate": 0,
+        "waitOnIgnoreRate": 0,
+        "falseSilenceRate": 0,
+        "waitOnSpeakRate": 13.9
+      },
+      "live": {
+        "rows": 9,
+        "calls": 27,
+        "confusion": {
+          "speak": {
+            "speak": 3,
+            "wait": 3,
+            "ignore": 0
+          },
+          "wait": {
+            "speak": 0,
+            "wait": 3,
+            "ignore": 6
+          },
+          "ignore": {
+            "speak": 0,
+            "wait": 0,
+            "ignore": 12
+          }
+        },
+        "falseSpeakRate": 0,
+        "waitOnIgnoreRate": 0,
+        "falseSilenceRate": 0,
+        "waitOnSpeakRate": 50
+      },
+      "all": {
+        "rows": 49,
+        "calls": 147,
+        "confusion": {
+          "speak": {
+            "speak": 34,
+            "wait": 8,
+            "ignore": 0
+          },
+          "wait": {
+            "speak": 0,
+            "wait": 21,
+            "ignore": 6
+          },
+          "ignore": {
+            "speak": 0,
+            "wait": 0,
+            "ignore": 78
+          }
+        },
+        "falseSpeakRate": 0,
+        "waitOnIgnoreRate": 0,
+        "falseSilenceRate": 0,
+        "waitOnSpeakRate": 19
+      }
+    },
+    "stability": {
+      "flipRows": 1,
+      "flipRate": 2,
+      "nearThresholdRows": 13,
+      "nearThresholdFlipRows": 1,
+      "nearThresholdFlipRate": 7.7,
+      "flippedIds": [
+        "syn-017"
+      ]
+    },
+    "latency": {
+      "speakIgnore": {
+        "calls": 118,
+        "judgeMsP50": 289,
+        "judgeMsP90": 372,
+        "extraWaitMsP50": 0,
+        "extraWaitMsP90": 0
+      },
+      "wait": {
+        "calls": 29,
+        "judgeMsP50": 296,
+        "judgeMsP90": 351,
+        "continuationWaitMs": 3000
+      }
+    },
+    "reasons": {
+      "scores": 147
+    }
+  },
+  "rows": [
+    {
+      "id": "syn-002",
+      "source": "synthetic",
+      "category": "greeting",
+      "split": "report",
+      "label": "ignore",
+      "latest": "お疲れさまです、皆さん揃いましたか",
+      "calls": [
+        {
+          "decision": "ignore",
+          "addressed": 0.22,
+          "finished": 0.91,
+          "latencyMs": 503,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.22,
+          "finished": 0.91,
+          "latencyMs": 306,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.22,
+          "finished": 0.91,
+          "latencyMs": 264,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "syn-004",
+      "source": "synthetic",
+      "category": "greeting",
+      "split": "report",
+      "label": "ignore",
+      "latest": "高橋です、今日はよろしくお願いします",
+      "calls": [
+        {
+          "decision": "ignore",
+          "addressed": 0.29,
+          "finished": 0.94,
+          "latencyMs": 287,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.31,
+          "finished": 0.94,
+          "latencyMs": 372,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.3,
+          "finished": 0.93,
+          "latencyMs": 335,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "syn-006",
+      "source": "synthetic",
+      "category": "greeting",
+      "split": "report",
+      "label": "ignore",
+      "latest": "ありがとうございました、また来週",
+      "calls": [
+        {
+          "decision": "ignore",
+          "addressed": 0.27,
+          "finished": 0.92,
+          "latencyMs": 258,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.28,
+          "finished": 0.92,
+          "latencyMs": 364,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.26,
+          "finished": 0.92,
+          "latencyMs": 268,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "syn-008",
+      "source": "synthetic",
+      "category": "greeting",
+      "split": "report",
+      "label": "ignore",
+      "latest": "大丈夫ですよ、今始めたところです",
+      "calls": [
+        {
+          "decision": "ignore",
+          "addressed": 0.13,
+          "finished": 0.95,
+          "latencyMs": 349,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.15,
+          "finished": 0.95,
+          "latencyMs": 332,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.14,
+          "finished": 0.94,
+          "latencyMs": 360,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "syn-010",
+      "source": "synthetic",
+      "category": "about-caty",
+      "split": "report",
+      "label": "ignore",
+      "latest": "この子、返事が早いね",
+      "calls": [
+        {
+          "decision": "ignore",
+          "addressed": 0.14,
+          "finished": 0.92,
+          "latencyMs": 356,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.14,
+          "finished": 0.92,
+          "latencyMs": 331,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.16,
+          "finished": 0.91,
+          "latencyMs": 268,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "syn-012",
+      "source": "synthetic",
+      "category": "about-caty",
+      "split": "report",
+      "label": "ignore",
+      "latest": "そうだね、じゃあAプランで",
+      "calls": [
+        {
+          "decision": "ignore",
+          "addressed": 0.09,
+          "finished": 0.94,
+          "latencyMs": 273,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.09,
+          "finished": 0.94,
+          "latencyMs": 263,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.09,
+          "finished": 0.94,
+          "latencyMs": 274,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "syn-014",
+      "source": "synthetic",
+      "category": "about-caty",
+      "split": "report",
+      "label": "ignore",
+      "latest": "検索とかスケジュールの登録もできるらしいよ",
+      "calls": [
+        {
+          "decision": "ignore",
+          "addressed": 0.09,
+          "finished": 0.9,
+          "latencyMs": 260,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.09,
+          "finished": 0.9,
+          "latencyMs": 260,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.11,
+          "finished": 0.9,
+          "latencyMs": 265,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "syn-017",
+      "source": "synthetic",
+      "category": "follow-up",
+      "split": "report",
+      "label": "speak",
+      "latest": "うん、競合の最新キャンペーンを調べて",
+      "calls": [
+        {
+          "decision": "wait",
+          "addressed": 0.95,
+          "finished": 0.73,
+          "latencyMs": 301,
+          "reason": "scores"
+        },
+        {
+          "decision": "wait",
+          "addressed": 0.95,
+          "finished": 0.73,
+          "latencyMs": 257,
+          "reason": "scores"
+        },
+        {
+          "decision": "speak",
+          "addressed": 0.95,
+          "finished": 0.76,
+          "latencyMs": 295,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "syn-019",
+      "source": "synthetic",
+      "category": "follow-up",
+      "split": "report",
+      "label": "speak",
+      "latest": "二つ目についてもう少し詳しく教えて",
+      "calls": [
+        {
+          "decision": "speak",
+          "addressed": 0.91,
+          "finished": 0.87,
+          "latencyMs": 291,
+          "reason": "scores"
+        },
+        {
+          "decision": "speak",
+          "addressed": 0.91,
+          "finished": 0.88,
+          "latencyMs": 333,
+          "reason": "scores"
+        },
+        {
+          "decision": "speak",
+          "addressed": 0.9,
+          "finished": 0.88,
+          "latencyMs": 330,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "syn-021",
+      "source": "synthetic",
+      "category": "follow-up",
+      "split": "report",
+      "label": "speak",
+      "latest": "それって前年と比べてどう？",
+      "calls": [
+        {
+          "decision": "speak",
+          "addressed": 0.82,
+          "finished": 0.9,
+          "latencyMs": 319,
+          "reason": "scores"
+        },
+        {
+          "decision": "speak",
+          "addressed": 0.83,
+          "finished": 0.91,
+          "latencyMs": 269,
+          "reason": "scores"
+        },
+        {
+          "decision": "speak",
+          "addressed": 0.81,
+          "finished": 0.9,
+          "latencyMs": 301,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "syn-023",
+      "source": "synthetic",
+      "category": "follow-up",
+      "split": "report",
+      "label": "speak",
+      "latest": "うん、それで大丈夫",
+      "calls": [
+        {
+          "decision": "speak",
+          "addressed": 0.87,
+          "finished": 0.95,
+          "latencyMs": 348,
+          "reason": "scores"
+        },
+        {
+          "decision": "speak",
+          "addressed": 0.88,
+          "finished": 0.95,
+          "latencyMs": 334,
+          "reason": "scores"
+        },
+        {
+          "decision": "speak",
+          "addressed": 0.87,
+          "finished": 0.95,
+          "latencyMs": 390,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "syn-025",
+      "source": "synthetic",
+      "category": "follow-up",
+      "split": "report",
+      "label": "speak",
+      "latest": "来月のイベントの日程も確認できる？",
+      "calls": [
+        {
+          "decision": "speak",
+          "addressed": 0.93,
+          "finished": 0.89,
+          "latencyMs": 326,
+          "reason": "scores"
+        },
+        {
+          "decision": "speak",
+          "addressed": 0.93,
+          "finished": 0.88,
+          "latencyMs": 332,
+          "reason": "scores"
+        },
+        {
+          "decision": "speak",
+          "addressed": 0.93,
+          "finished": 0.87,
+          "latencyMs": 269,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "syn-027",
+      "source": "synthetic",
+      "category": "follow-up",
+      "split": "report",
+      "label": "speak",
+      "latest": "え、どっちの会議？",
+      "calls": [
+        {
+          "decision": "speak",
+          "addressed": 0.88,
+          "finished": 0.9,
+          "latencyMs": 288,
+          "reason": "scores"
+        },
+        {
+          "decision": "speak",
+          "addressed": 0.87,
+          "finished": 0.91,
+          "latencyMs": 301,
+          "reason": "scores"
+        },
+        {
+          "decision": "speak",
+          "addressed": 0.86,
+          "finished": 0.88,
+          "latencyMs": 383,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "syn-029",
+      "source": "synthetic",
+      "category": "pause",
+      "split": "report",
+      "label": "wait",
+      "latest": "先月と、あと、その前の",
+      "calls": [
+        {
+          "decision": "wait",
+          "addressed": 0.93,
+          "finished": 0.56,
+          "latencyMs": 330,
+          "reason": "scores"
+        },
+        {
+          "decision": "wait",
+          "addressed": 0.93,
+          "finished": 0.53,
+          "latencyMs": 296,
+          "reason": "scores"
+        },
+        {
+          "decision": "wait",
+          "addressed": 0.93,
+          "finished": 0.52,
+          "latencyMs": 289,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "syn-031",
+      "source": "synthetic",
+      "category": "pause",
+      "split": "report",
+      "label": "wait",
+      "latest": "昨日送った、あの、",
+      "calls": [
+        {
+          "decision": "wait",
+          "addressed": 0.86,
+          "finished": 0.05,
+          "latencyMs": 276,
+          "reason": "scores"
+        },
+        {
+          "decision": "wait",
+          "addressed": 0.84,
+          "finished": 0.05,
+          "latencyMs": 290,
+          "reason": "scores"
+        },
+        {
+          "decision": "wait",
+          "addressed": 0.84,
+          "finished": 0.04,
+          "latencyMs": 277,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "syn-033",
+      "source": "synthetic",
+      "category": "pause",
+      "split": "report",
+      "label": "wait",
+      "latest": "駅の近くで、予算は",
+      "calls": [
+        {
+          "decision": "wait",
+          "addressed": 0.9,
+          "finished": 0.05,
+          "latencyMs": 337,
+          "reason": "scores"
+        },
+        {
+          "decision": "wait",
+          "addressed": 0.9,
+          "finished": 0.05,
+          "latencyMs": 330,
+          "reason": "scores"
+        },
+        {
+          "decision": "wait",
+          "addressed": 0.9,
+          "finished": 0.06,
+          "latencyMs": 280,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "syn-034",
+      "source": "synthetic",
+      "category": "pause",
+      "split": "report",
+      "label": "ignore",
+      "latest": "まず前提として、今期の",
+      "calls": [
+        {
+          "decision": "ignore",
+          "addressed": 0.3,
+          "finished": 0.06,
+          "latencyMs": 438,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.3,
+          "finished": 0.06,
+          "latencyMs": 334,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.3,
+          "finished": 0.06,
+          "latencyMs": 285,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "syn-036",
+      "source": "synthetic",
+      "category": "pause",
+      "split": "report",
+      "label": "ignore",
+      "latest": "うーん、そうですね、個人的には",
+      "calls": [
+        {
+          "decision": "ignore",
+          "addressed": 0.14,
+          "finished": 0.06,
+          "latencyMs": 315,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.14,
+          "finished": 0.06,
+          "latencyMs": 275,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.15,
+          "finished": 0.05,
+          "latencyMs": 261,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "syn-038",
+      "source": "synthetic",
+      "category": "cap-split",
+      "split": "report",
+      "label": "wait",
+      "latest": "来月のキャンペーンについてなんだけど、ターゲットは二十代の女性で、SNS中心に展開して、予算は三百万くらいを想定していて、クリエイティブは動画と静止画の両方を用意する予定なんだけど、その中で特に",
+      "calls": [
+        {
+          "decision": "wait",
+          "addressed": 0.9,
+          "finished": 0.04,
+          "latencyMs": 293,
+          "reason": "scores"
+        },
+        {
+          "decision": "wait",
+          "addressed": 0.89,
+          "finished": 0.04,
+          "latencyMs": 336,
+          "reason": "scores"
+        },
+        {
+          "decision": "wait",
+          "addressed": 0.89,
+          "finished": 0.04,
+          "latencyMs": 332,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "syn-039",
+      "source": "synthetic",
+      "category": "cap-split",
+      "split": "report",
+      "label": "speak",
+      "latest": "効果が出やすい配信面を三つくらい提案してもらえる？",
+      "calls": [
+        {
+          "decision": "speak",
+          "addressed": 0.93,
+          "finished": 0.93,
+          "latencyMs": 297,
+          "reason": "scores"
+        },
+        {
+          "decision": "speak",
+          "addressed": 0.93,
+          "finished": 0.93,
+          "latencyMs": 285,
+          "reason": "scores"
+        },
+        {
+          "decision": "speak",
+          "addressed": 0.93,
+          "finished": 0.94,
+          "latencyMs": 277,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "syn-044",
+      "source": "synthetic",
+      "category": "between-people",
+      "split": "report",
+      "label": "ignore",
+      "latest": "はい、昨日確認しました",
+      "calls": [
+        {
+          "decision": "ignore",
+          "addressed": 0.15,
+          "finished": 0.95,
+          "latencyMs": 381,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.13,
+          "finished": 0.95,
+          "latencyMs": 346,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.13,
+          "finished": 0.95,
+          "latencyMs": 268,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "syn-046",
+      "source": "synthetic",
+      "category": "between-people",
+      "split": "report",
+      "label": "ignore",
+      "latest": "いいと思います、進めましょう",
+      "calls": [
+        {
+          "decision": "ignore",
+          "addressed": 0.14,
+          "finished": 0.96,
+          "latencyMs": 299,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.13,
+          "finished": 0.96,
+          "latencyMs": 277,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.15,
+          "finished": 0.96,
+          "latencyMs": 295,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "syn-048",
+      "source": "synthetic",
+      "category": "between-people",
+      "split": "report",
+      "label": "ignore",
+      "latest": "水曜なら午後が空いてます",
+      "calls": [
+        {
+          "decision": "ignore",
+          "addressed": 0.24,
+          "finished": 0.94,
+          "latencyMs": 420,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.23,
+          "finished": 0.94,
+          "latencyMs": 312,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.22,
+          "finished": 0.94,
+          "latencyMs": 259,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "syn-050",
+      "source": "synthetic",
+      "category": "between-people",
+      "split": "report",
+      "label": "ignore",
+      "latest": "見えてますか？",
+      "calls": [
+        {
+          "decision": "ignore",
+          "addressed": 0.42,
+          "finished": 0.93,
+          "latencyMs": 256,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.41,
+          "finished": 0.94,
+          "latencyMs": 258,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.41,
+          "finished": 0.93,
+          "latencyMs": 304,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "syn-052",
+      "source": "synthetic",
+      "category": "between-people",
+      "split": "report",
+      "label": "ignore",
+      "latest": "質問いいですか、この数字の出典はどこですか？",
+      "calls": [
+        {
+          "decision": "ignore",
+          "addressed": 0.48,
+          "finished": 0.86,
+          "latencyMs": 276,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.48,
+          "finished": 0.87,
+          "latencyMs": 273,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.49,
+          "finished": 0.84,
+          "latencyMs": 253,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "syn-055",
+      "source": "synthetic",
+      "category": "direct-request",
+      "split": "report",
+      "label": "speak",
+      "latest": "アシスタントさん、先月のCPAを出して",
+      "calls": [
+        {
+          "decision": "speak",
+          "addressed": 0.92,
+          "finished": 0.84,
+          "latencyMs": 275,
+          "reason": "scores"
+        },
+        {
+          "decision": "speak",
+          "addressed": 0.92,
+          "finished": 0.84,
+          "latencyMs": 289,
+          "reason": "scores"
+        },
+        {
+          "decision": "speak",
+          "addressed": 0.92,
+          "finished": 0.82,
+          "latencyMs": 263,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "syn-057",
+      "source": "synthetic",
+      "category": "filler",
+      "split": "report",
+      "label": "ignore",
+      "latest": "うん",
+      "calls": [
+        {
+          "decision": "ignore",
+          "addressed": 0.57,
+          "finished": 0.85,
+          "latencyMs": 263,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.57,
+          "finished": 0.85,
+          "latencyMs": 273,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.53,
+          "finished": 0.85,
+          "latencyMs": 264,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "syn-059",
+      "source": "synthetic",
+      "category": "filler",
+      "split": "report",
+      "label": "ignore",
+      "latest": "なるほどね",
+      "calls": [
+        {
+          "decision": "ignore",
+          "addressed": 0.21,
+          "finished": 0.89,
+          "latencyMs": 379,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.22,
+          "finished": 0.89,
+          "latencyMs": 321,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.21,
+          "finished": 0.88,
+          "latencyMs": 270,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "syn-061",
+      "source": "synthetic",
+      "category": "filler",
+      "split": "report",
+      "label": "ignore",
+      "latest": "ありがとう",
+      "calls": [
+        {
+          "decision": "ignore",
+          "addressed": 0.67,
+          "finished": 0.92,
+          "latencyMs": 271,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.65,
+          "finished": 0.93,
+          "latencyMs": 256,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.65,
+          "finished": 0.92,
+          "latencyMs": 266,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "syn-012-u",
+      "source": "synthetic",
+      "category": "about-caty+unlabelled",
+      "split": "report",
+      "label": "ignore",
+      "latest": "そうだね、じゃあAプランで",
+      "calls": [
+        {
+          "decision": "ignore",
+          "addressed": 0.2,
+          "finished": 0.91,
+          "latencyMs": 302,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.23,
+          "finished": 0.91,
+          "latencyMs": 288,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.21,
+          "finished": 0.92,
+          "latencyMs": 291,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "syn-017-u",
+      "source": "synthetic",
+      "category": "follow-up+unlabelled",
+      "split": "report",
+      "label": "speak",
+      "latest": "うん、競合の最新キャンペーンを調べて",
+      "calls": [
+        {
+          "decision": "wait",
+          "addressed": 0.95,
+          "finished": 0.66,
+          "latencyMs": 351,
+          "reason": "scores"
+        },
+        {
+          "decision": "wait",
+          "addressed": 0.95,
+          "finished": 0.6,
+          "latencyMs": 254,
+          "reason": "scores"
+        },
+        {
+          "decision": "wait",
+          "addressed": 0.95,
+          "finished": 0.67,
+          "latencyMs": 299,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "syn-019-u",
+      "source": "synthetic",
+      "category": "follow-up+unlabelled",
+      "split": "report",
+      "label": "speak",
+      "latest": "二つ目についてもう少し詳しく教えて",
+      "calls": [
+        {
+          "decision": "speak",
+          "addressed": 0.9,
+          "finished": 0.85,
+          "latencyMs": 313,
+          "reason": "scores"
+        },
+        {
+          "decision": "speak",
+          "addressed": 0.91,
+          "finished": 0.87,
+          "latencyMs": 259,
+          "reason": "scores"
+        },
+        {
+          "decision": "speak",
+          "addressed": 0.9,
+          "finished": 0.87,
+          "latencyMs": 290,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "syn-021-u",
+      "source": "synthetic",
+      "category": "follow-up+unlabelled",
+      "split": "report",
+      "label": "speak",
+      "latest": "それって前年と比べてどう？",
+      "calls": [
+        {
+          "decision": "speak",
+          "addressed": 0.88,
+          "finished": 0.89,
+          "latencyMs": 261,
+          "reason": "scores"
+        },
+        {
+          "decision": "speak",
+          "addressed": 0.87,
+          "finished": 0.88,
+          "latencyMs": 423,
+          "reason": "scores"
+        },
+        {
+          "decision": "speak",
+          "addressed": 0.88,
+          "finished": 0.88,
+          "latencyMs": 322,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "syn-029-u",
+      "source": "synthetic",
+      "category": "pause+unlabelled",
+      "split": "report",
+      "label": "wait",
+      "latest": "先月と、あと、その前の",
+      "calls": [
+        {
+          "decision": "wait",
+          "addressed": 0.92,
+          "finished": 0.53,
+          "latencyMs": 335,
+          "reason": "scores"
+        },
+        {
+          "decision": "wait",
+          "addressed": 0.92,
+          "finished": 0.51,
+          "latencyMs": 393,
+          "reason": "scores"
+        },
+        {
+          "decision": "wait",
+          "addressed": 0.92,
+          "finished": 0.5,
+          "latencyMs": 259,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "syn-034-u",
+      "source": "synthetic",
+      "category": "pause+unlabelled",
+      "split": "report",
+      "label": "ignore",
+      "latest": "まず前提として、今期の",
+      "calls": [
+        {
+          "decision": "ignore",
+          "addressed": 0.48,
+          "finished": 0.06,
+          "latencyMs": 312,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.5,
+          "finished": 0.06,
+          "latencyMs": 294,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.48,
+          "finished": 0.06,
+          "latencyMs": 314,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "syn-036-u",
+      "source": "synthetic",
+      "category": "pause+unlabelled",
+      "split": "report",
+      "label": "ignore",
+      "latest": "うーん、そうですね、個人的には",
+      "calls": [
+        {
+          "decision": "ignore",
+          "addressed": 0.27,
+          "finished": 0.05,
+          "latencyMs": 291,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.26,
+          "finished": 0.06,
+          "latencyMs": 287,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.28,
+          "finished": 0.06,
+          "latencyMs": 339,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "syn-038-u",
+      "source": "synthetic",
+      "category": "cap-split+unlabelled",
+      "split": "report",
+      "label": "wait",
+      "latest": "来月のキャンペーンについてなんだけど、ターゲットは二十代の女性で、SNS中心に展開して、予算は三百万くらいを想定していて、クリエイティブは動画と静止画の両方を用意する予定なんだけど、その中で特に",
+      "calls": [
+        {
+          "decision": "wait",
+          "addressed": 0.89,
+          "finished": 0.04,
+          "latencyMs": 266,
+          "reason": "scores"
+        },
+        {
+          "decision": "wait",
+          "addressed": 0.9,
+          "finished": 0.04,
+          "latencyMs": 279,
+          "reason": "scores"
+        },
+        {
+          "decision": "wait",
+          "addressed": 0.89,
+          "finished": 0.05,
+          "latencyMs": 336,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "syn-039-u",
+      "source": "synthetic",
+      "category": "cap-split+unlabelled",
+      "split": "report",
+      "label": "speak",
+      "latest": "効果が出やすい配信面を三つくらい提案してもらえる？",
+      "calls": [
+        {
+          "decision": "speak",
+          "addressed": 0.94,
+          "finished": 0.92,
+          "latencyMs": 260,
+          "reason": "scores"
+        },
+        {
+          "decision": "speak",
+          "addressed": 0.94,
+          "finished": 0.92,
+          "latencyMs": 285,
+          "reason": "scores"
+        },
+        {
+          "decision": "speak",
+          "addressed": 0.94,
+          "finished": 0.91,
+          "latencyMs": 508,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "syn-044-u",
+      "source": "synthetic",
+      "category": "between-people+unlabelled",
+      "split": "report",
+      "label": "ignore",
+      "latest": "はい、昨日確認しました",
+      "calls": [
+        {
+          "decision": "ignore",
+          "addressed": 0.48,
+          "finished": 0.94,
+          "latencyMs": 268,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.44,
+          "finished": 0.94,
+          "latencyMs": 291,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.44,
+          "finished": 0.94,
+          "latencyMs": 289,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "syn-057-u",
+      "source": "synthetic",
+      "category": "filler+unlabelled",
+      "split": "report",
+      "label": "ignore",
+      "latest": "うん",
+      "calls": [
+        {
+          "decision": "ignore",
+          "addressed": 0.59,
+          "finished": 0.79,
+          "latencyMs": 457,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.57,
+          "finished": 0.79,
+          "latencyMs": 289,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.55,
+          "finished": 0.78,
+          "latencyMs": 263,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "live-003",
+      "source": "live",
+      "category": "pause",
+      "split": "report",
+      "label": "wait",
+      "latest": "えっと、佐藤様、なんか。",
+      "calls": [
+        {
+          "decision": "ignore",
+          "addressed": 0.26,
+          "finished": 0.05,
+          "latencyMs": 287,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.28,
+          "finished": 0.05,
+          "latencyMs": 255,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.23,
+          "finished": 0.05,
+          "latencyMs": 441,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "live-005",
+      "source": "live",
+      "category": "pause",
+      "split": "report",
+      "label": "wait",
+      "latest": "海外？",
+      "calls": [
+        {
+          "decision": "ignore",
+          "addressed": 0.61,
+          "finished": 0.8,
+          "latencyMs": 289,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.61,
+          "finished": 0.79,
+          "latencyMs": 283,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.61,
+          "finished": 0.79,
+          "latencyMs": 276,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "live-006",
+      "source": "live",
+      "category": "request",
+      "split": "report",
+      "label": "speak",
+      "latest": "で、近場のところをピックアップってできたりするかな。",
+      "calls": [
+        {
+          "decision": "wait",
+          "addressed": 0.78,
+          "finished": 0.58,
+          "latencyMs": 457,
+          "reason": "scores"
+        },
+        {
+          "decision": "wait",
+          "addressed": 0.78,
+          "finished": 0.59,
+          "latencyMs": 274,
+          "reason": "scores"
+        },
+        {
+          "decision": "wait",
+          "addressed": 0.79,
+          "finished": 0.57,
+          "latencyMs": 286,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "live-008",
+      "source": "live",
+      "category": "filler",
+      "split": "report",
+      "label": "ignore",
+      "latest": "えっと、",
+      "calls": [
+        {
+          "decision": "ignore",
+          "addressed": 0.52,
+          "finished": 0.05,
+          "latencyMs": 282,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.53,
+          "finished": 0.05,
+          "latencyMs": 291,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.5,
+          "finished": 0.05,
+          "latencyMs": 265,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "live-011",
+      "source": "live",
+      "category": "cap-split",
+      "split": "report",
+      "label": "wait",
+      "latest": "えっと、じゃあ、今週末の二泊で、えっと、直行便がある、えっと、海外、B市から見たときの海外のフライトを—",
+      "calls": [
+        {
+          "decision": "wait",
+          "addressed": 0.94,
+          "finished": 0.06,
+          "latencyMs": 264,
+          "reason": "scores"
+        },
+        {
+          "decision": "wait",
+          "addressed": 0.94,
+          "finished": 0.07,
+          "latencyMs": 300,
+          "reason": "scores"
+        },
+        {
+          "decision": "wait",
+          "addressed": 0.95,
+          "finished": 0.06,
+          "latencyMs": 347,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "live-012",
+      "source": "live",
+      "category": "answer-to-caty",
+      "split": "report",
+      "label": "speak",
+      "latest": "空港は、B市の空港。",
+      "calls": [
+        {
+          "decision": "speak",
+          "addressed": 0.94,
+          "finished": 0.91,
+          "latencyMs": 271,
+          "reason": "scores"
+        },
+        {
+          "decision": "speak",
+          "addressed": 0.95,
+          "finished": 0.9,
+          "latencyMs": 321,
+          "reason": "scores"
+        },
+        {
+          "decision": "speak",
+          "addressed": 0.95,
+          "finished": 0.9,
+          "latencyMs": 279,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "live-014",
+      "source": "live",
+      "category": "filler",
+      "split": "report",
+      "label": "ignore",
+      "latest": "えっと。",
+      "calls": [
+        {
+          "decision": "ignore",
+          "addressed": 0.52,
+          "finished": 0.09,
+          "latencyMs": 297,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.47,
+          "finished": 0.09,
+          "latencyMs": 275,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.48,
+          "finished": 0.08,
+          "latencyMs": 281,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "live-017",
+      "source": "live",
+      "category": "remark",
+      "split": "report",
+      "label": "ignore",
+      "latest": "あー、向こうのテーマパークは楽しいかもしれないね。",
+      "calls": [
+        {
+          "decision": "ignore",
+          "addressed": 0.49,
+          "finished": 0.83,
+          "latencyMs": 259,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.48,
+          "finished": 0.84,
+          "latencyMs": 294,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.46,
+          "finished": 0.82,
+          "latencyMs": 344,
+          "reason": "scores"
+        }
+      ]
+    },
+    {
+      "id": "live-020",
+      "source": "live",
+      "category": "remark",
+      "split": "report",
+      "label": "ignore",
+      "latest": "大変なのはちょっとあの、まあ嫌だよね。",
+      "calls": [
+        {
+          "decision": "ignore",
+          "addressed": 0.59,
+          "finished": 0.42,
+          "latencyMs": 321,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.62,
+          "finished": 0.44,
+          "latencyMs": 324,
+          "reason": "scores"
+        },
+        {
+          "decision": "ignore",
+          "addressed": 0.56,
+          "finished": 0.42,
+          "latencyMs": 297,
+          "reason": "scores"
+        }
+      ]
+    }
+  ]
+}

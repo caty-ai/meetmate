@@ -419,3 +419,35 @@ test("apply badges distinguish next join from restart and preserve their style",
     assert.equal(apply.className, style);
   }
 });
+
+test("reply trigger (#267) is a basic live select with a trial hint; the judge knobs stay hidden", () => {
+  const vm = require("node:vm");
+  const { _test } = require("../src/settings/routes");
+  const manifest = _test.buildSettingsUiManifest().fields;
+  const entry = manifest.find((field) => field.id === "agent_reply_trigger");
+  assert.equal(entry.ux, "basic");
+  assert.equal(entry.apply, "live");
+  assert.equal(entry.control, "select");
+  assert.deepEqual(entry.options, ["wake", "jev"]);
+  assert.equal(entry.defaultValue, "wake");
+  const hidden = ["agent_reply_judge_addressed_min", "agent_reply_judge_finished_min",
+    "agent_reply_judge_continuation_wait_ms", "agent_reply_judge_timeout_ms", "agent_reply_judge_context_lines"];
+  for (const id of hidden) {
+    const knob = manifest.find((field) => field.id === id);
+    assert.equal(knob?.ux, "hidden", id);
+    assert.equal(knob.apply, "live", id);
+  }
+
+  const source = require("node:fs").readFileSync(require.resolve("../public/settings.js"), "utf8");
+  const pick = (name) => source.match(new RegExp(`function ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n    }\\n`))[0];
+  const visible = vm.runInNewContext(`${pick("normalizeManifest")} normalizeManifest(fields).map((field) => field.id);`, { fields: manifest });
+  assert.equal(visible.includes("agent_reply_trigger"), true);
+  for (const id of hidden) assert.equal(visible.includes(id), false, id);
+  assert.match(source, /agent_reply_trigger: "返答のきっかけ（試験）"/);
+  assert.match(source, /agent_reply_trigger: "試験機能。[^"]*外部の判定サービスへ送ります。"/);
+  const labels = vm.runInNewContext(`${source.match(/const REPLY_TRIGGER_OPTION_LABELS = \{[\s\S]*?\};/)[0]} REPLY_TRIGGER_OPTION_LABELS;`);
+  assert.deepEqual(Object.keys(labels), ["wake", "jev"]);
+  assert.match(labels.wake, /既定/);
+  assert.match(labels.jev, /試験/);
+  assert.match(source, /if \(entry\.id === "agent_reply_trigger"\) return REPLY_TRIGGER_OPTION_LABELS\[value\] \|\| fallback;/);
+});

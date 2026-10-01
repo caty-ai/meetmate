@@ -783,6 +783,17 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   const pendingHandoffQueue = [];
   let lastUserSpeechAt = 0;
   let liveUserSpeechUntil = 0;
+  // #267 jev reply trigger (P1/P3/P6/P8). These are plain field writes on
+  // every path; only jev mode (agent.replyTrigger === "jev", hub off) reads them.
+  let lastLiveSpeechSpeakerId = null;
+  let liveInterimSeq = 0;
+  let agentTurnGeneration = 0;
+  let decisionGeneration = 0;
+  let holdGeneration = 0;
+  let turnHold = null;
+  let hubReplyTriggerWarned = false;
+  let turnJudgeModule = null;
+  const turnJudgeControllers = new Set();
   let lastHandoffDispatchAt = 0;
   let pendingHandoffSeq = 0;
   let pendingHandoffDrainTimer = null;
@@ -1917,14 +1928,14 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
   }
 
   function faceListenPulse() {
-    if (!faceMode || session.localAvatarSession.listenReactions !== true || turnState.isAgentSpeaking) return;
+    if (!faceMode || session.localAvatarSession?.listenReactions !== true || turnState.isAgentSpeaking) return;
     emitObserverEvent("face_listen", { active: true });
     clearTimeout(faceListenTimer);
     faceListenTimer = setTimeout(() => emitObserverEvent("face_listen", { active: false }), 1200);
     faceListenTimer.unref?.();
   }
   function faceListenCue(text) {
-    if (!faceMode || session.localAvatarSession.listenReactions !== true || !text) return;
+    if (!faceMode || session.localAvatarSession?.listenReactions !== true || !text) return;
     clearTimeout(faceListenTimer);
     emitObserverEvent("face_listen", { active: false });
     const generation = ++faceCueGeneration;
@@ -1932,7 +1943,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     faceCueAt = Date.now();
     import("./emotion/index.js").then(({ judgeEmotion }) => judgeEmotion(text, { mode: "jev", listening: true }))
       .then((cue) => {
-        if (cue && !stopped && generation === faceCueGeneration && session.localAvatarSession.listenReactions === true) emitObserverEvent("face_listen", { cue });
+        if (cue && !stopped && generation === faceCueGeneration && session.localAvatarSession?.listenReactions === true) emitObserverEvent("face_listen", { cue });
       }).catch(() => {});
   }
 
@@ -1947,6 +1958,11 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     if (interim && !isNoiseInterim(interim)) {
       lastUserSpeechAt = now;
       liveUserSpeechUntil = now + LIVE_USER_SPEECH_HOLD_MS;
+      lastLiveSpeechSpeakerId = speakerKeyOf(speaker);
+      liveInterimSeq += 1;
+      if (turnHold && lastLiveSpeechSpeakerId && lastLiveSpeechSpeakerId !== turnHold.speakerId) {
+        clearTurnHold("other_speaker_interim");
+      }
       if (faceMode) faceListenPulse();
     }
 
@@ -1979,10 +1995,344 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     }
   }
 
+  // ── #267 jev reply trigger (opt-in; docs/design/267-jev-turn-taking.md) ──
+  function speakerKeyOf(speaker) {
+    const id = speaker && speaker.id !== undefined && speaker.id !== null ? String(speaker.id) : "";
+    return id && id !== UNKNOWN_SPEAKER_ID ? id : null;
+  }
+
+  function isJevReplyMode() {
+    if (getEffectiveValue("agent_reply_trigger") !== "jev") return false;
+    if (!floorEnabled) return true;
+    if (!hubReplyTriggerWarned) {
+      hubReplyTriggerWarned = true;
+      console.warn("⚠️  agent.replyTrigger=jev is not used while the floor hub is enabled; wake words apply");
+    }
+    return false;
+  }
+
+  function loadTurnJudge() {
+    if (!turnJudgeModule) turnJudgeModule = require("./turn-judge");
+    return turnJudgeModule;
+  }
+
+  function readTurnJudgeSettings() {
+    const read = (id, fallback) => {
+      const value = getEffectiveValue(id);
+      return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+    };
+    return {
+      addressedMin: read("agent_reply_judge_addressed_min", 0.75),
+      finishedMin: read("agent_reply_judge_finished_min", 0.75),
+      continuationWaitMs: read("agent_reply_judge_continuation_wait_ms", 3000),
+      timeoutMs: read("agent_reply_judge_timeout_ms", 800),
+      contextLines: read("agent_reply_judge_context_lines", 6),
+    };
+  }
+
+  function isTurnBusy() {
+    return isProcessing || gateState === "CLOSED" || turnState.isAgentSpeaking;
+  }
+
+  function clearTurnHold(reason) {
+    const hold = turnHold;
+    if (!hold) return false;
+    turnHold = null;
+    holdGeneration += 1;
+    if (hold.timer) pipelineTimers.clearTimeout(hold.timer);
+    hold.timer = null;
+    hold.controller?.abort();
+    if (reason) console.log(`🧭 [turn-judge] hold cleared reason=${reason}`);
+    return true;
+  }
+
+  // P2: resolve the hold synchronously when a new utterance_end arrives.
+  function noteTurnHoldArrival(text, speaker, arrival) {
+    const hold = turnHold;
+    if (!hold) return;
+    if (detectWakeAgent(text, agentProfile).detected) {
+      clearTurnHold("wake");
+      return;
+    }
+    if (config.exitDetection !== false && isExitCommand(text, agentProfile, config.exit)) {
+      clearTurnHold("exit");
+      return;
+    }
+    const key = speakerKeyOf(speaker);
+    if (!key || key !== hold.speakerId) {
+      clearTurnHold("other_speaker");
+      return;
+    }
+    if (arrival.busyAtArrival || agentTurnGeneration !== hold.turnGen) {
+      clearTurnHold("busy");
+      return;
+    }
+    hold.continuationArrived = true;
+    if (hold.timer) pipelineTimers.clearTimeout(hold.timer);
+    hold.timer = null;
+    arrival.mergeHold = hold;
+  }
+
+  function turnJudgeAssistant() {
+    const label = String(agentProfile.displayName || agentProfile.name || agentId || "Caty");
+    const alias = (agentProfile.wakeWords || []).map((word) => String(word || "").trim())
+      .find((word) => word && word.toLowerCase() !== label.toLowerCase());
+    return { label, name: alias ? `${label} (${alias})` : label };
+  }
+
+  function turnJudgeContext(excluded, limit) {
+    const people = limit > 0
+      ? transcriptBuffer.filter((entry) => entry && !entry.turnJudgeSuperseded && !excluded.includes(entry)).slice(-limit)
+      : [];
+    const replies = session.conversationLog
+      .filter((entry) => entry?.role === "assistant" && (!agentId || !entry.agentId || entry.agentId === agentId))
+      .slice(-2);
+    return [
+      ...people.map((entry) => ({ at: String(entry.timestamp || ""), speakerKey: speakerKeyOf(entry.speaker), text: entry.text })),
+      ...replies.map((entry) => ({ at: String(entry.timestamp || ""), assistant: true, text: entry.content })),
+    ].sort((left, right) => (left.at < right.at ? -1 : left.at > right.at ? 1 : 0));
+  }
+
+  // §2.3 / P1 / P5: t=0 pure peek, then start the judge concurrently with the
+  // post-utterance sleep. Returns null when the line must not be judged.
+  function startTurnJudge(text, speaker, arrival, metricsTurnId) {
+    if (stopped) return null;
+    const wake = detectWakeAgent(text, agentProfile).detected;
+    if (wake || (config.exitDetection !== false && isExitCommand(text, agentProfile, config.exit))) {
+      clearTurnHold(wake ? "wake" : "exit");
+      return null;
+    }
+    const hold = turnHold;
+    const merging = Boolean(hold && arrival.mergeHold === hold && hold.continuationArrived);
+    if (merging) arrival.mergeConsumed = true;
+    if (hold && !merging) clearTurnHold("superseded");
+    if (arrival.busyAtArrival || isTurnBusy() || arrival.turnGenAtArrival !== agentTurnGeneration
+      || (merging && hold.turnGen !== agentTurnGeneration)) {
+      if (merging) clearTurnHold("busy");
+      return null;
+    }
+    const settings = readTurnJudgeSettings();
+    const { judgeTurn, buildJudgeState, buildQuestions } = loadTurnJudge();
+    const assistant = turnJudgeAssistant();
+    const latestText = merging ? `${hold.text} ${text}` : text;
+    const state = buildJudgeState({
+      assistantName: assistant.name,
+      assistantLabel: assistant.label,
+      lines: turnJudgeContext(merging ? [hold.entry] : [], settings.contextLines),
+      latest: { speakerKey: speakerKeyOf(speaker), text: latestText },
+    });
+    const controller = new AbortController();
+    if (merging) hold.controller = controller;
+    turnJudgeControllers.add(controller);
+    const promise = Promise.resolve()
+      .then(() => judgeTurn({
+        state,
+        questions: buildQuestions(assistant.label),
+        addressedMin: settings.addressedMin,
+        finishedMin: settings.finishedMin,
+        timeoutMs: settings.timeoutMs,
+        signal: controller.signal,
+      }))
+      .catch(() => ({ decision: "ignore", addressed: null, finished: null, latencyMs: 0, reason: "error" }))
+      .finally(() => turnJudgeControllers.delete(controller));
+    return {
+      stage: merging ? "merged" : "first",
+      text: latestText,
+      hold: merging ? hold : null,
+      decisionGen: ++decisionGeneration,
+      turnGen: arrival.turnGenAtArrival,
+      interimSeq: arrival.interimSeqAtArrival,
+      controller,
+      promise,
+      metricsTurnId,
+      settings,
+    };
+  }
+
+  function logTurnJudgement(stage, decision, result, reason, text, metricsTurnId) {
+    const score = (value) => (typeof value === "number" && Number.isFinite(value) ? value : null);
+    const shown = (value) => (score(value) === null ? "-" : score(value).toFixed(2));
+    const latencyMs = Number.isFinite(result?.latencyMs) ? Math.max(0, Math.round(result.latencyMs)) : 0;
+    console.log(`🧭 [turn-judge] decision=${decision} addressed=${shown(result?.addressed)} finished=${shown(result?.finished)} ms=${latencyMs} reason=${reason} stage=${stage} "${String(text || "").slice(0, 40)}"`);
+    recordMetric("turn_judge", {
+      turn_id: metricsTurnId,
+      decision,
+      addressed: score(result?.addressed),
+      finished: score(result?.finished),
+      latency_ms: latencyMs,
+      reason,
+      stage,
+    });
+  }
+
+  // P5 / P6: a jev speak commits only when it is the newest decision and Caty
+  // is idle; it never takes the interrupt branch of handleUtteranceEnd.
+  function turnJudgeBlockReason(run, decision) {
+    if (stopped) return "stopped";
+    if (!isJevReplyMode()) return "mode_switch";
+    if (run.decisionGen !== decisionGeneration) return "superseded";
+    // Someone (attributed or not) started talking after this line ended: a
+    // speak now would talk over them. The line's own interims precede its
+    // utterance_end, so they never trip this.
+    if (decision === "speak" && liveInterimSeq !== run.interimSeq) return "new_speech";
+    if (isTurnBusy()) return "busy";
+    if (run.turnGen !== agentTurnGeneration) return "agent_turn";
+    if (run.hold && turnHold !== run.hold) return "hold_cleared";
+    return null;
+  }
+
+  async function resolveTurnJudge(run, entry, speaker) {
+    const result = await run.promise;
+    let decision = result.decision;
+    let reason = result.reason;
+    if (run.stage === "merged" && decision === "wait") {
+      decision = "ignore";
+      reason = "second_wait";
+    }
+    if (decision !== "ignore") {
+      const blocked = turnJudgeBlockReason(run, decision);
+      if (blocked) {
+        decision = "ignore";
+        reason = blocked;
+      }
+    }
+    logTurnJudgement(run.stage, decision, result, reason, run.text, run.metricsTurnId);
+    if (run.hold && turnHold === run.hold) clearTurnHold(null);
+    if (decision === "speak") {
+      await commitJevSpeak(entry, run.text, speaker, run.metricsTurnId, run.hold ? [run.hold.entry] : []);
+      return true;
+    }
+    if (decision === "wait") {
+      holdTurn(run, entry, speaker, result);
+      return true;
+    }
+    return false;
+  }
+
+  function holdTurn(run, entry, speaker, result) {
+    clearTurnHold("replaced");
+    const waitMs = run.settings.continuationWaitMs;
+    const now = Date.now();
+    const hold = {
+      generation: ++holdGeneration,
+      text: run.text,
+      speakerId: speakerKeyOf(speaker),
+      speaker,
+      entry,
+      metricsTurnId: run.metricsTurnId,
+      turnGen: run.turnGen,
+      addressed: result.addressed,
+      finished: result.finished,
+      deadline: now + waitMs,
+      cap: now + 2 * waitMs,
+      continuationArrived: false,
+      extended: false,
+      timer: null,
+      controller: null,
+    };
+    turnHold = hold;
+    pushTranscriptEntry(entry);
+    console.log(`🔇  [会議音声・保留]${speakerTag(speaker)} "${run.text.slice(0, 50)}..."`);
+    appendConversationEntry("user", `[会議音声・保留] ${run.text}`, agentId || null, speaker);
+    scheduleTurnHoldTimer(hold, waitMs);
+  }
+
+  function scheduleTurnHoldTimer(hold, delayMs) {
+    hold.timer = pipelineTimers.setTimeout(() => {
+      hold.timer = null;
+      if (turnHold !== hold) return;
+      // The timer never speaks itself: the deadline job runs inside the chain.
+      utteranceChain = utteranceChain
+        .then(() => runTurnHoldDeadline(hold))
+        .catch((err) => console.error("❌  turn-judge deadline error:", scrubErrorMessage(err, gatewayToken)));
+    }, Math.max(0, delayMs));
+    hold.timer?.unref?.();
+  }
+
+  // §2.4 deadline + P3 / P4: every outcome clears the hold in one step.
+  async function runTurnHoldDeadline(hold) {
+    if (turnHold !== hold || hold.continuationArrived) return;
+    const decisionGen = ++decisionGeneration;
+    const now = Date.now();
+    let reason = null;
+    if (stopped) reason = "stopped";
+    else if (!isJevReplyMode()) reason = "mode_switch";
+    else if (isTurnBusy()) reason = "busy";
+    else if (agentTurnGeneration !== hold.turnGen) reason = "agent_turn";
+    else if (hold.extended) reason = "cap";
+    else if (now < liveUserSpeechUntil) {
+      if (hold.speakerId && lastLiveSpeechSpeakerId === hold.speakerId && now < hold.cap) {
+        hold.extended = true;
+        scheduleTurnHoldTimer(hold, hold.cap - now);
+        return;
+      }
+      reason = "other_speech";
+    }
+    clearTurnHold(null);
+    const decision = reason ? "ignore" : "speak";
+    logTurnJudgement("deadline", decision, { addressed: hold.addressed, finished: hold.finished, latencyMs: 0 },
+      reason || "deadline_idle", hold.text, hold.metricsTurnId);
+    if (decision !== "speak" || decisionGen !== decisionGeneration) return;
+    utteranceSeq += 1;
+    const entry = {
+      seq: utteranceSeq,
+      text: hold.text,
+      timestamp: new Date().toISOString(),
+      speaker: hold.speaker,
+      addressed: false,
+      injectToLlm: false,
+      sentToLlm: false,
+      metricsTurnId: hold.metricsTurnId,
+    };
+    await commitJevSpeak(entry, hold.text, hold.speaker, hold.metricsTurnId, [hold.entry]);
+  }
+
+  // P7: the spoken text becomes a normal addressed entry; the earlier
+  // [会議音声・保留] entry stays as history but never re-enters the prompt.
+  async function commitJevSpeak(entry, text, speaker, metricsTurnId, supersededEntries) {
+    for (const held of supersededEntries) {
+      if (!held) continue;
+      held.sentToLlm = true;
+      held.turnJudgeSuperseded = true;
+    }
+    entry.text = text;
+    entry.addressed = true;
+    entry.injectToLlm = true;
+    gateState = "CLOSED";
+    turnState.gateState = gateState;
+    pushTranscriptEntry(entry);
+    console.log("🧭 [turn-judge] reply without wake word — Gate → CLOSED");
+    lastUserTranscript = text;
+    appendConversationEntry("user", text, agentId || null, speaker);
+    const prompt = buildMeetingContextPromptWithEntries(transcriptBuffer, entry, text, meetingContextOptions);
+    console.log(`📋  Injected meeting context (${transcriptBuffer.length} buffered entries)`);
+    const forceImmediateAck = !hasSentInitialWakeAck;
+    if (forceImmediateAck) hasSentInitialWakeAck = true;
+    await processUserInput(prompt.text, {
+      forceImmediateAck,
+      ackSourceText: text,
+      contextEntries: prompt.entries,
+      currentEntry: entry,
+      metricsTurnId,
+    });
+  }
+
   let utteranceChain = Promise.resolve();
   function onSttUtteranceEnd(userText, speaker = null, slot = null) {
     const cleanedText = String(userText || "").trim();
     if (faceMode) faceListenCue(cleanedText);
+    const turnArrival = {
+      busyAtArrival: isTurnBusy(),
+      turnGenAtArrival: agentTurnGeneration,
+      interimSeqAtArrival: liveInterimSeq,
+      mergeHold: null,
+      mergeConsumed: false,
+    };
+    if (cleanedText) {
+      decisionGeneration += 1;
+      lastLiveSpeechSpeakerId = speakerKeyOf(speaker);
+      if (turnHold) noteTurnHoldArrival(cleanedText, speaker, turnArrival);
+    }
     const floorTurn = { cancelled: false, fallbackGeneration: null, verdictPromise: null };
     const muted = suppressForFloorMute("wake");
     const waitingAssignment = muted ? null : floorClient?.claimAssignment() || null;
@@ -2003,6 +2353,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       });
     }
     if (isProcessing && cleanedText && isWakeCancelText(cleanedText, agentProfile, resolvedRegex)) {
+      clearTurnHold("wake_cancel");
       const wakeCancelPromise = handleWakeCancelAbort(cleanedText)
         .catch((err) => console.error("❌  wake+cancel handler error:", scrubErrorMessage(err, gatewayToken)));
       if (slot) {
@@ -2017,12 +2368,18 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     utteranceChain = utteranceChain
       .then(() => {
         if (slot && !currentSlotFor(slot)) return;
-        return handleUtteranceEnd(userText, metricsTurnId, floorTurn, speaker);
+        return handleUtteranceEnd(userText, metricsTurnId, floorTurn, speaker, turnArrival);
       })
       .then(() => {
         if (slot) maybeEvictSpeakerSlot(slot);
       })
       .catch((err) => console.error("❌  utterance_end handler error:", scrubErrorMessage(err, gatewayToken)));
+    if (turnArrival.mergeHold) {
+      // P4: a continuation that never reached its merge leaves no orphaned hold.
+      utteranceChain = utteranceChain.then(() => {
+        if (!turnArrival.mergeConsumed && turnHold === turnArrival.mergeHold) clearTurnHold("continuation_dropped");
+      });
+    }
   }
 
   function attachSttListeners(stream, speakerResolver, slot = null) {
@@ -2075,13 +2432,28 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
 
   attachSttListeners(stt, () => currentMixedSpeaker());
 
-  async function handleUtteranceEnd(userText, metricsTurnId = null, floorTurn = null, speaker = null) {
+  async function handleUtteranceEnd(userText, metricsTurnId = null, floorTurn = null, speaker = null, turnArrival = null) {
     const cleanedText = String(userText || "").trim();
     if (!cleanedText) return;
     if (suppressForFloorMute("wake")) return;
     lastUserSpeechAt = Date.now();
     liveUserSpeechUntil = Date.now() + LIVE_USER_SPEECH_HOLD_MS;
     const attributedSpeaker = cloneSpeakerMeta(speaker);
+    lastLiveSpeechSpeakerId = speakerKeyOf(attributedSpeaker);
+    // #267: jev mode only. With agent.replyTrigger "wake" or the hub on, the
+    // judge is never loaded and the order below is unchanged (§2.2).
+    let turnJudgeRun = null;
+    if (isJevReplyMode()) {
+      turnJudgeRun = startTurnJudge(cleanedText, attributedSpeaker, turnArrival || {
+        busyAtArrival: isTurnBusy(),
+        turnGenAtArrival: agentTurnGeneration,
+        interimSeqAtArrival: liveInterimSeq,
+        mergeHold: null,
+        mergeConsumed: false,
+      }, metricsTurnId);
+    } else if (turnHold) {
+      clearTurnHold("mode_switch");
+    }
 
     // #8 Barge-in companion: small post-utterance buffer to reduce premature turn-taking.
     if (POST_UTTERANCE_BUFFER_MS > 0) {
@@ -2209,6 +2581,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
 
     // Exit command detection
     if (exitRequested) {
+      turnJudgeRun?.controller.abort();
       console.log("🚪  Exit command detected!");
       appendConversationEntry("user", cleanedText, agentId || null, attributedSpeaker);
 
@@ -2217,6 +2590,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       // Strip leading emotion tag (S1 paren or S2 bracket) for clean console log
       const farewellLog = farewellVoice.replace(/^[\[(][^\])]*[\])]\s*/, "");
       turnState.isAgentSpeaking = true;
+      agentTurnGeneration += 1;
       let farewellStarted = false;
       if (!floorEnabled || hubAuthorized) {
         try {
@@ -2275,6 +2649,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       }
 
       if (!wakeResult.detected) {
+        if (turnJudgeRun && await resolveTurnJudge(turnJudgeRun, entry, attributedSpeaker)) return;
         // No wake word: keep for wake re-scan/ops logs, but don't inject into LLM context.
         pushTranscriptEntry(entry);
         console.log(`🔇  [会議音声・未指名]${speakerTag(attributedSpeaker)} "${cleanedText.slice(0, 50)}..."`);
@@ -2283,6 +2658,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       }
 
       // Wake word detected
+      turnJudgeRun?.controller.abort();
       currentWakeEntry = entry;
 
       // Injection Gate logic
@@ -2401,6 +2777,7 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       metricsTurnId = null,
     } = options;
     isProcessing = true;
+    agentTurnGeneration += 1;
     const abort = new AbortController();
     currentAbort = abort;
     const requestAgentId = agentId;
@@ -3067,16 +3444,17 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     // `manual` is the operator/gateway-injected speech escape hatch required
     // to remain audible while automatic floor-controlled speech is muted.
     if (suppressForFloorMute(opts.role || "speech", opts)) return;
-    const face = faceMode ? { id: ++faceSequence, emotion: null, intensity: 0, revision: 0 } : null;
+    agentTurnGeneration += 1;
+    const face = faceMode && session.localAvatarSession ? { id: ++faceSequence, emotion: null, intensity: 0, revision: 0 } : null;
     if (face && getEffectiveValue("emotion_judge") !== "off") {
       const mode = getEffectiveValue("emotion_judge");
-      const emotionModule = session.localAvatarSession.emotionModule;
+      const emotionModule = session.localAvatarSession?.emotionModule;
       const initial = emotionModule?.fromTags(text);
       if (initial) { face.emotion = initial.emotion; face.intensity = initial.intensity; face.revision = 1; }
       const judgeOptions = { mode, role: opts.faceReply ? "reply" : opts.role, signal };
       const judgement = emotionModule ? emotionModule.judgeEmotion(text, judgeOptions)
         : import("./emotion/index.js").then((loaded) => {
-          session.localAvatarSession.emotionModule = loaded;
+          if (session.localAvatarSession) session.localAvatarSession.emotionModule = loaded;
           return loaded.judgeEmotion(text, judgeOptions);
         });
       judgement.then((value) => {
@@ -3242,6 +3620,8 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     currentAbort = greetAbort;
     isProcessing = true;
     turnState.isAgentSpeaking = true;
+    agentTurnGeneration += 1;
+    clearTurnHold("greeting");
     let greetingStarted = false;
     try {
       await speakSentence(greeting, greetAbort.signal, {
@@ -3318,6 +3698,8 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
     },
     close() {
       stopped = true;
+      clearTurnHold(null);
+      for (const controller of turnJudgeControllers) controller.abort();
       if (faceMode) { clearTimeout(faceListenTimer); faceCueGeneration += 1; }
       floorClient?.close("pipeline_close");
       if (currentAbort) {
@@ -3424,6 +3806,19 @@ function createPipeline(session, turnState, onAudio, config, options = {}) {
       handleGatewaySessionReply,
       handleGatewayAnnounceInjected,
       getGateState: () => gateState,
+      getTurnJudgeState: () => ({
+        hold: turnHold ? {
+          text: turnHold.text,
+          speakerId: turnHold.speakerId,
+          continuationArrived: turnHold.continuationArrived,
+          extended: turnHold.extended,
+          deadline: turnHold.deadline,
+          cap: turnHold.cap,
+        } : null,
+        agentTurnGeneration,
+        decisionGeneration,
+        turnJudgeLoaded: turnJudgeModule !== null,
+      }),
       getPendingQueueLength: () => pendingQueue.length,
       getFloorState: () => floorClient ? {
         state: floorClient.state,

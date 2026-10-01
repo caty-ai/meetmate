@@ -94,6 +94,8 @@
     "greeting": "[warm] こんにちは！よろしくお願いします！",
     "emotionTags": true,
     "wakeWords": ["エージェント名", "your-agent"],
+    "replyTrigger": "wake",
+    "replyJudge": { "addressedMin": 0.75, "finishedMin": 0.75, "continuationWaitMs": 3000, "timeoutMs": 800, "contextLines": 6 },
     "keyterms": ["エージェント名", "YourAgent"],
     "sttWakeVariants": [],
     "ackVariants": ["[soft voice] 了解、すぐ取りかかるね。"],
