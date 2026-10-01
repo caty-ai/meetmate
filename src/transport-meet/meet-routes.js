@@ -910,7 +910,11 @@ function startNgrokDetection() {
   if (ngrokDetectionStarted) return;
   ngrokDetectionStarted = true;
   refreshNgrokDetection({
-    onUnrelatedTunnels: (port) => console.log(`ℹ️  ngrok トンネルを検出しましたが、このサーバー（ポート ${port}）向けではないため使いません。自分のトンネルの場合は、設定画面で「公開オリジン」か「ngrok ドメイン」を設定してください。`),
+    onUnrelatedTunnels: (port) => {
+      // A usable public_origin already provides the callback, so the advice would be noise.
+      if (publicOriginWsUrl(getEffectiveValue("public_origin"))) return;
+      console.log(`ℹ️  ngrok トンネルを検出しましたが、このサーバー（ポート ${port}）向けではないため使いません。自分のトンネルの場合は、設定画面で「公開オリジン」か「ngrok ドメイン」を設定してください。`);
+    },
   }).then((url) => {
     if (url) console.log(`🌐  ngrok WSS URL 検出: ${url}`);
   }).catch(() => {});

@@ -262,18 +262,23 @@ test("#197 join error causes prefix supplied diagnostic IDs and preserve legacy 
 
 test("#279 non-loopback settings hint names the local settings page and copies its URL", () => {
   const { localSettingsHint } = require("../public/app.js");
-  assert.deepEqual(localSettingsHint({ settingsPort: 5030 }, ""), {
+  assert.equal(localSettingsHint.length, 1, "only the readiness payload can supply a port");
+  assert.deepEqual(localSettingsHint({ settingsPort: 5030 }), {
     text: "設定画面は、meetmate を動かしている PC でだけ開けます。その PC で localhost:5030/settings を開いてください",
     url: "http://127.0.0.1:5030/settings",
   });
-  // A non-loopback view has no usable location.port; the readiness port wins, then the default.
-  assert.equal(localSettingsHint({ settingsPort: 6123 }, "443").url, "http://127.0.0.1:6123/settings");
-  assert.equal(localSettingsHint(null, "8080").url, "http://127.0.0.1:8080/settings");
-  for (const state of [null, undefined, {}, { settingsPort: "invalid" }, { settingsPort: 70000 }]) {
-    assert.deepEqual(localSettingsHint(state, ""), {
-      text: "設定画面は、meetmate を動かしている PC でだけ開けます。その PC で localhost:5005/settings を開いてください",
-      url: "http://127.0.0.1:5005/settings",
-    });
+  assert.equal(localSettingsHint({ settingsPort: "6123" }).url, "http://127.0.0.1:6123/settings");
+  // Without a server-reported port the hint names no address: no default, and a second argument
+  // (the tunnel's or proxy's location.port on such a view) is ignored.
+  for (const state of [null, undefined, {}, { settingsPort: "invalid" }, { settingsPort: "" }, { settingsPort: null },
+    { settingsPort: 0 }, { settingsPort: -1 }, { settingsPort: 5005.5 }, { settingsPort: 65536 }, { settingsPort: 70000 }]) {
+    for (const hint of [localSettingsHint(state), localSettingsHint(state, "8453")]) {
+      assert.deepEqual(hint, {
+        text: "設定画面は、meetmate を動かしている PC でだけ開けます。その PC で、起動時に表示される「Settings UI」の URL を開いてください",
+        url: null,
+      }, JSON.stringify(state));
+      assert.doesNotMatch(hint.text, /\d/);
+    }
   }
 
   const html = fs.readFileSync(path.join(__dirname, "..", "public", "index.html"), "utf8");
@@ -286,6 +291,10 @@ test("#279 the 設定 entry toggles the hint on a non-loopback view and stays a 
   const source = fs.readFileSync(require.resolve("../public/app.js"), "utf8");
   const init = source.match(/function initSettingsEntry\(\) \{[\s\S]*?\n  }/)[0];
   assert.doesNotMatch(init, /innerHTML|insertAdjacentHTML|location\.(?:href|assign|replace)|window\.open/);
+  // The page must actually run it: exactly one call, in the top-level init sequence. Without it
+  // the non-loopback view silently falls back to the link that answers 404.
+  assert.equal((source.match(/(?<!function )\binitSettingsEntry\(/g) || []).length, 1, "one call besides the definition");
+  assert.match(source, /\n  initTheme\(\);\n  initSettingsEntry\(\);\n/);
 
   function element(tag) {
     const listeners = {};
@@ -297,6 +306,7 @@ test("#279 the 設定 entry toggles the hint on a non-loopback view and stays a 
       click() { listeners.click(); },
     };
   }
+  // The context has no `location`: reading location.port would throw here.
   function run(loopback) {
     const settingsLink = Object.assign(element("a"), {
       className: "settings-link", textContent: "⚙ 設定", replacement: null,
@@ -304,15 +314,15 @@ test("#279 the 設定 entry toggles the hint on a non-loopback view and stays a 
     });
     const settingsHintEl = Object.assign(element("p"), { id: "settingsHint", hidden: true });
     const copied = [];
-    require("node:vm").runInNewContext(`${init}; initSettingsEntry()`, {
+    const context = {
       settingsLink, settingsHintEl, localSettingsHint,
-      readinessState: { settingsPort: 5030 },
-      location: { port: "" },
+      readinessState: null,
       isLoopbackView: () => loopback,
       navigator: { clipboard: { writeText: (value) => copied.push(value) } },
       document: { createElement: element, createTextNode: (text) => ({ text }) },
-    });
-    return { settingsLink, settingsHintEl, copied };
+    };
+    require("node:vm").runInNewContext(`${init}; initSettingsEntry()`, context);
+    return { settingsLink, settingsHintEl, copied, context };
   }
 
   const local = run(true);
@@ -330,6 +340,19 @@ test("#279 the 設定 entry toggles the hint on a non-loopback view and stays a 
   assert.deepEqual(toggle.attributes, { "aria-expanded": "false", "aria-controls": "settingsHint" });
   assert.equal(remote.settingsHintEl.hidden, true);
 
+  // Readiness has not reported a port yet: the text alone, no address and no copy button.
+  toggle.click();
+  assert.equal(remote.settingsHintEl.hidden, false);
+  assert.equal(toggle.attributes["aria-expanded"], "true");
+  assert.deepEqual(remote.settingsHintEl.children, [
+    { text: "設定画面は、meetmate を動かしている PC でだけ開けます。その PC で、起動時に表示される「Settings UI」の URL を開いてください" },
+  ]);
+  toggle.click();
+  assert.equal(remote.settingsHintEl.hidden, true);
+  assert.equal(toggle.attributes["aria-expanded"], "false");
+
+  // A later readiness load is picked up the next time the hint is opened.
+  remote.context.readinessState = { settingsPort: 5030 };
   toggle.click();
   assert.equal(remote.settingsHintEl.hidden, false);
   assert.equal(toggle.attributes["aria-expanded"], "true");

@@ -268,11 +268,16 @@ function localSettingsUrlFor(fieldId, readinessState, fallbackPort) {
 }
 
 // #279: the settings page answers 404 to a non-loopback view, so the header entry explains where
-// it lives instead of navigating there.
-function localSettingsHint(readinessState, fallbackPort) {
-  const port = settingsPortFromReadiness(readinessState, fallbackPort);
+// it lives instead of navigating there. Only the server-reported port is named: on such a view
+// location.port belongs to the tunnel or proxy, so an unknown port yields no address at all.
+function localSettingsHint(readinessState) {
+  const lead = "設定画面は、meetmate を動かしている PC でだけ開けます。";
+  const port = Number(readinessState?.settingsPort);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    return { text: `${lead}その PC で、起動時に表示される「Settings UI」の URL を開いてください`, url: null };
+  }
   return {
-    text: `設定画面は、meetmate を動かしている PC でだけ開けます。その PC で localhost:${port}/settings を開いてください`,
+    text: `${lead}その PC で localhost:${port}/settings を開いてください`,
     url: `http://127.0.0.1:${port}/settings`,
   };
 }
@@ -750,13 +755,17 @@ if (typeof document !== "undefined") (function () {
     toggle.addEventListener("click", () => {
       const show = settingsHintEl.hidden;
       if (show) {
-        const hint = localSettingsHint(readinessState, location.port);
-        const copy = document.createElement("button");
-        copy.type = "button";
-        copy.className = "readiness-copy";
-        copy.textContent = "URLをコピー";
-        copy.addEventListener("click", () => navigator.clipboard?.writeText(hint.url));
-        settingsHintEl.replaceChildren(document.createTextNode(hint.text), copy);
+        const hint = localSettingsHint(readinessState);
+        const nodes = [document.createTextNode(hint.text)];
+        if (hint.url) {
+          const copy = document.createElement("button");
+          copy.type = "button";
+          copy.className = "readiness-copy";
+          copy.textContent = "URLをコピー";
+          copy.addEventListener("click", () => navigator.clipboard?.writeText(hint.url));
+          nodes.push(copy);
+        }
+        settingsHintEl.replaceChildren(...nodes);
       }
       settingsHintEl.hidden = !show;
       toggle.setAttribute("aria-expanded", String(show));

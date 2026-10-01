@@ -688,6 +688,24 @@ test("#279 boot detection reports another app's tunnels once and never prints th
   await boot([OTHER_APP_TUNNEL], { ngrokDomain: "meetmate.example" });
   assert.deepEqual(notices(), []);
   assert.deepEqual(detections(), ["🌐  ngrok WSS URL 検出: wss://meetmate.example"]);
+
+  // A usable public_origin already provides the callback: no advice to set what is set.
+  const configured = await boot([OTHER_APP_TUNNEL], { ngrokDomain: null, publicOrigin: "https://public.example:8443" });
+  assert.deepEqual(notices(), []);
+  assert.deepEqual(detections(), []);
+  assert.equal((await invoke(configured, "GET", "/info")).body.publicWsUrl, "wss://public.example:8443");
+  assert.equal(logs.some((line) => line.includes("other-app")), false);
+
+  // An unusable public_origin provides nothing, so the advice still applies.
+  for (const settings of [
+    { ngrokDomain: null, publicOrigin: "http://public.example" },
+    { ngrokDomain: null, preDotenvEnv: { PUBLIC_ORIGIN: "not a url" } },
+  ]) {
+    const routes = await boot([OTHER_APP_TUNNEL], settings);
+    assert.deepEqual(notices(), [notice]);
+    assert.equal((await invoke(routes, "GET", "/info")).body.publicWsUrl, "");
+    assert.equal(logs.some((line) => line.includes("other-app")), false);
+  }
 });
 
 test("join rejects PENDING but permits settled soft readiness failures", { concurrency: false }, async (t) => {

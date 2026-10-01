@@ -164,6 +164,7 @@ test("#279 ngrokTunnelTargetsPort accepts only a loopback target on exactly this
     "http://192.168.1.10:5005", "192.168.1.10:5005", "http://0.0.0.0:5005", "0.0.0.0:5005",
     "http://host.docker.internal:5005", "host.docker.internal:5005", "http://example.com:5005",
     "http://127.0.0.2:5005", "http://[::2]:5005", "::1:5005", "http://::1:5005",
+    "http://[::ffff:127.0.0.1]:5005", "http://127.0.0.1.evil.example:5005",
     // other schemes
     "file:///srv/www", "file://localhost:5005", "tcp://localhost:5005", "ws://localhost:5005", "//localhost:5005", "http:/localhost:5005",
     // userinfo and suffix tricks

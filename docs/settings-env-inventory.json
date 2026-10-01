@@ -618,8 +618,8 @@
     {
       "name": "PUBLIC_WSS_URL",
       "references": [
-        "src/transport-meet/meet-routes.js:983",
-        "src/transport-meet/meet-routes.js:984"
+        "src/transport-meet/meet-routes.js:987",
+        "src/transport-meet/meet-routes.js:988"
       ],
       "ux": "deployment-readonly",
       "credentialClass": "none",
