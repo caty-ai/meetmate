@@ -27,7 +27,7 @@ async function unavailableRequest() {
   throw Object.assign(new Error("network unavailable in test"), { code: "ENETUNREACH" });
 }
 
-function availableNgrokHttpGet(publicUrl) {
+function ngrokTunnelsHttpGet(tunnels) {
   return (_url, callback) => {
     const request = new EventEmitter();
     request.setTimeout = () => request;
@@ -35,11 +35,16 @@ function availableNgrokHttpGet(publicUrl) {
     queueMicrotask(() => {
       const response = new EventEmitter();
       callback(response);
-      response.emit("data", JSON.stringify({ tunnels: [{ proto: "https", public_url: publicUrl }] }));
+      response.emit("data", JSON.stringify({ tunnels }));
       response.emit("end");
     });
     return request;
   };
+}
+
+// #279: an agent tunnel counts only when it forwards to this server's listen port (5005 here).
+function availableNgrokHttpGet(publicUrl, addr = "http://localhost:5005") {
+  return ngrokTunnelsHttpGet([{ proto: "https", public_url: publicUrl, config: { addr } }]);
 }
 
 function initialize(options = {}) {
@@ -551,6 +556,156 @@ test("fresh readiness lookup cannot clear the boot-time ngrok latch used by /inf
   assert.equal(recheck.status, 200);
   const after = await invoke(routes, "GET", "/info");
   assert.equal(after.body.publicWsUrl, "wss://abc123.ngrok.app");
+});
+
+// #279: the measured failure — an unrelated app's agent answers on :4040 and forwards elsewhere.
+const OTHER_APP_TUNNEL = { proto: "https", public_url: "https://other-app.ngrok.app", config: { addr: "http://localhost:8081" } };
+const OWN_TUNNEL = { proto: "https", public_url: "https://abc123.ngrok.app", config: { addr: "http://localhost:5005" } };
+
+const infoCases = [
+  { name: "public_origin wins over another app's tunnel",
+    settings: { ngrokDomain: null, publicOrigin: "https://public.example:8443" }, tunnels: [OTHER_APP_TUNNEL], expected: "wss://public.example:8443" },
+  { name: "public_origin wins over an ngrok Host, this server's tunnel and PUBLIC_WSS_URL",
+    settings: { ngrokDomain: null, publicOrigin: "https://public.example:8443" }, tunnels: [OWN_TUNNEL], legacyWss: "wss://legacy.example", host: "viewer.ngrok.app", expected: "wss://public.example:8443" },
+  { name: "public_origin wins over a configured ngrok domain",
+    settings: { ngrokDomain: "meetmate.example", publicOrigin: "https://public.example" }, tunnels: [OTHER_APP_TUNNEL], expected: "wss://public.example" },
+  { name: "without public_origin another app's tunnel is not handed out",
+    settings: { ngrokDomain: null }, tunnels: [OTHER_APP_TUNNEL], expected: "" },
+  { name: "without public_origin a tunnel that reports no config.addr is not handed out",
+    settings: { ngrokDomain: null }, tunnels: [{ proto: "https", public_url: "https://other-app.ngrok.app" }], expected: "" },
+  { name: "without public_origin this server's tunnel is still detected",
+    settings: { ngrokDomain: null }, tunnels: [OWN_TUNNEL], expected: "wss://abc123.ngrok.app" },
+  { name: "this server's tunnel is detected behind another app's",
+    settings: { ngrokDomain: null }, tunnels: [OTHER_APP_TUNNEL, OWN_TUNNEL], expected: "wss://abc123.ngrok.app" },
+  { name: "a configured ngrok domain is unchanged whatever the agent reports",
+    settings: { ngrokDomain: "meetmate.example" }, tunnels: [OTHER_APP_TUNNEL], expected: "wss://meetmate.example" },
+  { name: "an http public_origin falls through to the existing sources",
+    settings: { ngrokDomain: null, publicOrigin: "http://public.example" }, tunnels: [OWN_TUNNEL], expected: "wss://abc123.ngrok.app" },
+  { name: "an unparseable PUBLIC_ORIGIN falls through to the existing sources",
+    settings: { ngrokDomain: null, preDotenvEnv: { PUBLIC_ORIGIN: "not a url" } }, legacyWss: "wss://legacy.example", expected: "wss://legacy.example" },
+  { name: "existing order: an ngrok Host stays ahead of detection and PUBLIC_WSS_URL",
+    settings: { ngrokDomain: null }, tunnels: [OWN_TUNNEL], legacyWss: "wss://legacy.example", host: "viewer.ngrok.app", expected: "wss://viewer.ngrok.app" },
+  { name: "existing order: detection stays ahead of PUBLIC_WSS_URL",
+    settings: { ngrokDomain: null }, tunnels: [OWN_TUNNEL], legacyWss: "wss://legacy.example", expected: "wss://abc123.ngrok.app" },
+  { name: "existing order: PUBLIC_WSS_URL remains the last source, not another app's tunnel",
+    settings: { ngrokDomain: null }, tunnels: [OTHER_APP_TUNNEL], legacyWss: "wss://legacy.example", expected: "wss://legacy.example" },
+];
+
+for (const fixture of infoCases) {
+  test(`#279 /info publicWsUrl: ${fixture.name}`, { concurrency: false }, async (t) => {
+    initialize(fixture.settings);
+    readiness.reset();
+    const previousLegacyWss = process.env.PUBLIC_WSS_URL;
+    if (fixture.legacyWss) process.env.PUBLIC_WSS_URL = fixture.legacyWss;
+    else delete process.env.PUBLIC_WSS_URL;
+    delete require.cache[routesPath];
+    const routes = require(routesPath);
+    t.after(() => {
+      if (previousLegacyWss === undefined) delete process.env.PUBLIC_WSS_URL;
+      else process.env.PUBLIC_WSS_URL = previousLegacyWss;
+      delete require.cache[routesPath];
+      readiness.reset();
+      resolver.resetRuntimeForTest();
+    });
+    await routes.init({
+      detectNgrok: false,
+      loadAvatar: false,
+      instanceId: "this-boot",
+      readinessProbeOptions: { fetchFn: unavailableFetch, requestFn: unavailableRequest, httpGet: unavailableNgrokHttpGet },
+    });
+    await routes._test.refreshNgrokDetection({
+      httpGet: fixture.tunnels ? ngrokTunnelsHttpGet(fixture.tunnels) : unavailableNgrokHttpGet,
+    });
+
+    const info = await invoke(routes, "GET", "/info", null, undefined, fixture.host ? { host: fixture.host } : {});
+    assert.equal(info.status, 200);
+    assert.equal(info.body.publicWsUrl, fixture.expected);
+  });
+}
+
+test("#279 boot detection reports another app's tunnels once and never prints their URL", { concurrency: false }, async (t) => {
+  const http = require("node:http");
+  const originalGet = http.get;
+  const originalLog = console.log;
+  const logs = [];
+  t.after(() => {
+    http.get = originalGet;
+    console.log = originalLog;
+    delete require.cache[routesPath];
+    readiness.reset();
+    resolver.resetRuntimeForTest();
+  });
+  console.log = (...args) => logs.push(args.map(String).join(" "));
+
+  async function boot(tunnels, settings = { ngrokDomain: null }) {
+    logs.length = 0;
+    initialize(settings);
+    readiness.reset();
+    delete require.cache[routesPath];
+    const routes = require(routesPath);
+    http.get = tunnels ? ngrokTunnelsHttpGet(tunnels) : unavailableNgrokHttpGet;
+    await routes.init({
+      detectNgrok: true,
+      loadAvatar: false,
+      instanceId: "this-boot",
+      readinessProbeOptions: { fetchFn: unavailableFetch, requestFn: unavailableRequest, httpGet: http.get },
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    return routes;
+  }
+  const notice = "ℹ️  ngrok トンネルを検出しましたが、このサーバー（ポート 5005）向けではないため使いません。自分のトンネルの場合は、設定画面で「公開オリジン」か「ngrok ドメイン」を設定してください。";
+  const notices = () => logs.filter((line) => line.includes("向けではないため使いません"));
+  const detections = () => logs.filter((line) => line.includes("ngrok WSS URL 検出"));
+
+  for (const tunnels of [[OTHER_APP_TUNNEL], [{ proto: "https", public_url: "https://other-app.ngrok.app" }]]) {
+    const routes = await boot(tunnels);
+    assert.deepEqual(notices(), [notice]);
+    assert.deepEqual(detections(), []);
+    assert.equal((await invoke(routes, "GET", "/info")).body.publicWsUrl, "");
+    // Later lookups (readiness recheck, join identity, a manual refresh) stay silent.
+    assert.equal((await invoke(routes, "POST", "/readiness/recheck", null, "198.51.100.51")).status, 200);
+    await routes._test.resolvePublicOrigin({ httpGet: http.get, submittedHost: "other-app.ngrok.app" });
+    await routes._test.refreshNgrokDetection({ httpGet: http.get });
+    await routes.init({ detectNgrok: true, loadAvatar: false });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(notices(), [notice]);
+    assert.equal(logs.some((line) => line.includes("other-app")), false, "the other app's public URL is never logged");
+  }
+
+  for (const tunnels of [[OWN_TUNNEL], [OTHER_APP_TUNNEL, OWN_TUNNEL]]) {
+    const routes = await boot(tunnels);
+    assert.deepEqual(notices(), []);
+    assert.deepEqual(detections(), ["🌐  ngrok WSS URL 検出: wss://abc123.ngrok.app"]);
+    assert.equal((await invoke(routes, "GET", "/info")).body.publicWsUrl, "wss://abc123.ngrok.app");
+  }
+
+  for (const tunnels of [[], null]) {
+    await boot(tunnels);
+    assert.deepEqual(notices(), []);
+    assert.deepEqual(detections(), []);
+  }
+
+  await boot([OTHER_APP_TUNNEL], { ngrokDomain: "meetmate.example" });
+  assert.deepEqual(notices(), []);
+  assert.deepEqual(detections(), ["🌐  ngrok WSS URL 検出: wss://meetmate.example"]);
+
+  // A usable public_origin already provides the callback: no advice to set what is set.
+  const configured = await boot([OTHER_APP_TUNNEL], { ngrokDomain: null, publicOrigin: "https://public.example:8443" });
+  assert.deepEqual(notices(), []);
+  assert.deepEqual(detections(), []);
+  assert.equal((await invoke(configured, "GET", "/info")).body.publicWsUrl, "wss://public.example:8443");
+  assert.equal(logs.some((line) => line.includes("other-app")), false);
+
+  // An unusable public_origin provides nothing, so the advice still applies.
+  for (const settings of [
+    { ngrokDomain: null, publicOrigin: "http://public.example" },
+    { ngrokDomain: null, preDotenvEnv: { PUBLIC_ORIGIN: "not a url" } },
+  ]) {
+    const routes = await boot([OTHER_APP_TUNNEL], settings);
+    assert.deepEqual(notices(), [notice]);
+    assert.equal((await invoke(routes, "GET", "/info")).body.publicWsUrl, "");
+    assert.equal(logs.some((line) => line.includes("other-app")), false);
+  }
 });
 
 test("join rejects PENDING but permits settled soft readiness failures", { concurrency: false }, async (t) => {

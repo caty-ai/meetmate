@@ -260,6 +260,139 @@ test("#197 join error causes prefix supplied diagnostic IDs and preserve legacy 
 });
 
 
+test("#279 non-loopback settings hint names the local settings page and copies its URL", () => {
+  const { localSettingsHint } = require("../public/app.js");
+  assert.equal(localSettingsHint.length, 1, "only the readiness payload can supply a port");
+  assert.deepEqual(localSettingsHint({ settingsPort: 5030 }), {
+    text: "設定画面は、meetmate を動かしている PC でだけ開けます。その PC で localhost:5030/settings を開いてください",
+    url: "http://127.0.0.1:5030/settings",
+  });
+  assert.equal(localSettingsHint({ settingsPort: "6123" }).url, "http://127.0.0.1:6123/settings");
+  // Without a server-reported port the hint names no address: no default, and a second argument
+  // (the tunnel's or proxy's location.port on such a view) is ignored.
+  for (const state of [null, undefined, {}, { settingsPort: "invalid" }, { settingsPort: "" }, { settingsPort: null },
+    { settingsPort: 0 }, { settingsPort: -1 }, { settingsPort: 5005.5 }, { settingsPort: 65536 }, { settingsPort: 70000 }]) {
+    for (const hint of [localSettingsHint(state), localSettingsHint(state, "8453")]) {
+      assert.deepEqual(hint, {
+        text: "設定画面は、meetmate を動かしている PC でだけ開けます。その PC で、起動時に表示される「Settings UI」の URL を開いてください",
+        url: null,
+      }, JSON.stringify(state));
+      assert.doesNotMatch(hint.text, /\d/);
+    }
+  }
+
+  const html = fs.readFileSync(path.join(__dirname, "..", "public", "index.html"), "utf8");
+  assert.match(html, /<a class="settings-link" href="\/settings">⚙ 設定<\/a>/, "the loopback view keeps the plain link");
+  assert.match(html, /<p class="settings-hint" id="settingsHint" hidden><\/p>/, "the hint starts hidden and empty");
+});
+
+test("#279 the 設定 entry toggles the hint on a non-loopback view and stays a link on loopback", () => {
+  const { localSettingsHint } = require("../public/app.js");
+  const source = fs.readFileSync(require.resolve("../public/app.js"), "utf8");
+  const init = source.match(/function initSettingsEntry\(\) \{[\s\S]*?\n  }/)[0];
+  assert.doesNotMatch(init, /innerHTML|insertAdjacentHTML|location\.(?:href|assign|replace)|window\.open/);
+  // The page must actually run it: exactly one call, in the top-level init sequence. Without it
+  // the non-loopback view silently falls back to the link that answers 404.
+  assert.equal((source.match(/(?<!function )\binitSettingsEntry\(/g) || []).length, 1, "one call besides the definition");
+  assert.match(source, /\n  initTheme\(\);\n  initSettingsEntry\(\);\n/);
+
+  function element(tag) {
+    const listeners = {};
+    return {
+      tag, type: "", className: "", textContent: "", hidden: false, attributes: {}, children: [],
+      setAttribute(name, value) { this.attributes[name] = value; },
+      addEventListener(name, listener) { listeners[name] = listener; },
+      replaceChildren(...nodes) { this.children = nodes; },
+      click() { listeners.click(); },
+    };
+  }
+  // The context has no `location`: reading location.port would throw here.
+  function run(loopback) {
+    const settingsLink = Object.assign(element("a"), {
+      className: "settings-link", textContent: "⚙ 設定", replacement: null,
+      replaceWith(node) { this.replacement = node; },
+    });
+    const settingsHintEl = Object.assign(element("p"), { id: "settingsHint", hidden: true });
+    const copied = [];
+    const context = {
+      settingsLink, settingsHintEl, localSettingsHint,
+      readinessState: null,
+      isLoopbackView: () => loopback,
+      navigator: { clipboard: { writeText: (value) => copied.push(value) } },
+      document: { createElement: element, createTextNode: (text) => ({ text }) },
+    };
+    require("node:vm").runInNewContext(`${init}; initSettingsEntry()`, context);
+    return { settingsLink, settingsHintEl, copied, context };
+  }
+
+  const local = run(true);
+  assert.equal(local.settingsLink.replacement, null);
+  assert.equal(local.settingsHintEl.hidden, true);
+  assert.deepEqual(local.settingsHintEl.children, []);
+
+  const remote = run(false);
+  const toggle = remote.settingsLink.replacement;
+  assert.equal(toggle.tag, "button");
+  assert.equal(toggle.type, "button");
+  assert.equal(toggle.className, "settings-link");
+  assert.equal(toggle.textContent, "⚙ 設定");
+  assert.equal(Object.hasOwn(toggle, "href"), false);
+  assert.deepEqual(toggle.attributes, { "aria-expanded": "false", "aria-controls": "settingsHint" });
+  assert.equal(remote.settingsHintEl.hidden, true);
+
+  // Readiness has not reported a port yet: the text alone, no address and no copy button.
+  toggle.click();
+  assert.equal(remote.settingsHintEl.hidden, false);
+  assert.equal(toggle.attributes["aria-expanded"], "true");
+  assert.deepEqual(remote.settingsHintEl.children, [
+    { text: "設定画面は、meetmate を動かしている PC でだけ開けます。その PC で、起動時に表示される「Settings UI」の URL を開いてください" },
+  ]);
+  toggle.click();
+  assert.equal(remote.settingsHintEl.hidden, true);
+  assert.equal(toggle.attributes["aria-expanded"], "false");
+
+  // A later readiness load is picked up the next time the hint is opened.
+  remote.context.readinessState = { settingsPort: 5030 };
+  toggle.click();
+  assert.equal(remote.settingsHintEl.hidden, false);
+  assert.equal(toggle.attributes["aria-expanded"], "true");
+  const [text, copy] = remote.settingsHintEl.children;
+  assert.equal(remote.settingsHintEl.children.length, 2);
+  assert.deepEqual(text, { text: "設定画面は、meetmate を動かしている PC でだけ開けます。その PC で localhost:5030/settings を開いてください" });
+  assert.equal(copy.tag, "button");
+  assert.equal(copy.type, "button");
+  assert.equal(copy.textContent, "URLをコピー");
+  copy.click();
+  assert.deepEqual(remote.copied, ["http://127.0.0.1:5030/settings"]);
+
+  toggle.click();
+  assert.equal(remote.settingsHintEl.hidden, true);
+  assert.equal(toggle.attributes["aria-expanded"], "false");
+});
+
+test("#279 a stale readiness result is an informational row, not a warning", () => {
+  const { readinessDisplayRows } = require("../public/app.js");
+  const stale = { id: "attendee", code: "CONNECTED", ok: true, stale: true, diagnosticId: null };
+  assert.deepEqual(readinessDisplayRows({ systems: [stale] }), [
+    { kind: "info", text: "attendee: 前回の確認から時間が経っています（参加時に自動で確認し直します）" },
+  ]);
+  // Only the stale notice changed kind: blocker, pending and failure rows keep theirs. A blocked
+  // system that is also stale keeps its blocker row and, as before, adds the stale notice.
+  assert.deepEqual(readinessDisplayRows({
+    blockers: [{ system: "soniox", code: "AUTH_FAILED", message: "認証情報を確認してください", fieldId: "soniox_api_key" }],
+    systems: [
+      { id: "soniox", code: "AUTH_FAILED", ok: false, stale: true },
+      { id: "llm", code: "PENDING", ok: false, stale: true },
+      { id: "tunnel", code: "TIMEOUT", ok: false, stale: true },
+      { id: "fish-audio", code: "CONNECTED", ok: true, stale: false },
+      stale,
+    ],
+  }).map((row) => row.kind), ["blocker", "info", "pending", "warning", "info"]);
+
+  const css = fs.readFileSync(path.join(__dirname, "..", "public", "style.css"), "utf8");
+  assert.match(css, /\.readiness-line\.info \{ color: var\(--ink-muted\); \}/);
+});
+
 test("#215 dashboard join reuses the join-token credential path", async () => {
   const cases = [
     { statuses: [200], expectedTokens: [undefined], prompts: 0, stored: [] },

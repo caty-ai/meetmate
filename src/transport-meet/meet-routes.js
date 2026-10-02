@@ -903,12 +903,19 @@ function startBotImageLoad() {
  *
  * Keep this documentation expanded: direct environment reads below are
  * line-pinned by docs/settings-env-inventory.json and its contract test.
- * The implementation intentionally leaves /info resolution unchanged.
+ * /info resolves public_origin first, then the Host/latch/PUBLIC_WSS_URL
+ * order it always had (#279).
  */
 function startNgrokDetection() {
   if (ngrokDetectionStarted) return;
   ngrokDetectionStarted = true;
-  refreshNgrokDetection().then((url) => {
+  refreshNgrokDetection({
+    onUnrelatedTunnels: (port) => {
+      // A usable public_origin already provides the callback, so the advice would be noise.
+      if (publicOriginWsUrl(getEffectiveValue("public_origin"))) return;
+      console.log(`ℹ️  ngrok トンネルを検出しましたが、このサーバー（ポート ${port}）向けではないため使いません。自分のトンネルの場合は、設定画面で「公開オリジン」か「ngrok ドメイン」を設定してください。`);
+    },
+  }).then((url) => {
     if (url) console.log(`🌐  ngrok WSS URL 検出: ${url}`);
   }).catch(() => {});
 }
@@ -969,7 +976,11 @@ async function handleHttp(req, res) {
   if (req.method === "GET" && url.pathname === "/info") {
     let publicWsUrl = "";
     const host = req.headers.host || "";
-    if (host.includes("ngrok")) {
+    // #279: same snapshot as resolveLocalAvatarPublicOrigin, so the callback and face page agree.
+    const configuredWsUrl = publicOriginWsUrl(getEffectiveValue("public_origin"));
+    if (configuredWsUrl) {
+      publicWsUrl = configuredWsUrl;
+    } else if (host.includes("ngrok")) {
       publicWsUrl = `wss://${host}`;
     } else if (detectedNgrokUrl) {
       publicWsUrl = detectedNgrokUrl;
@@ -1717,10 +1728,42 @@ async function lookupNgrokUrl(options = {}) {
   }
   try {
     const tunnels = JSON.parse(await readNgrokTunnels(options));
-    const httpsTunnel = tunnels.tunnels?.find((tunnel) => {
+    const httpsTunnels = tunnels.tunnels?.filter((tunnel) => {
       try { return new URL(tunnel.public_url).protocol === "https:"; } catch { return false; }
-    });
-    return httpsTunnel ? httpsTunnel.public_url.replace(/^https:/, "wss:") : "";
+    }) || [];
+    // #279: the agent on :4040 may belong to another app; only a tunnel that forwards to this
+    // server may become its callback address. server.listen has not run yet at boot detection,
+    // so the port is the same expression src/server.js listens on, not the runtime field.
+    const port = Number(getEffectiveValue("server_port")) || 5005;
+    const ownTunnel = httpsTunnels.find((tunnel) => ngrokTunnelTargetsPort(tunnel, port));
+    if (!ownTunnel && httpsTunnels.length > 0) options.onUnrelatedTunnels?.(port);
+    return ownTunnel ? ownTunnel.public_url.replace(/^https:/, "wss:") : "";
+  } catch {
+    return "";
+  }
+}
+
+const NGROK_ADDR_URL = /^(https?):\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::([1-9]\d{0,4}))?\/?$/i;
+const NGROK_ADDR_HOST_PORT = /^(?:(?:localhost|127\.0\.0\.1|\[::1\]):)?([1-9]\d{0,4})$/i;
+
+// #279: true only when the ngrok agent forwards this tunnel (`config.addr`) to a loopback host on
+// exactly `port`. Whole-string forms only: a URL, host:port, or a bare port; anything else is false.
+function ngrokTunnelTargetsPort(tunnel, port) {
+  const addr = tunnel?.config?.addr;
+  if (typeof addr !== "string") return false;
+  const url = NGROK_ADDR_URL.exec(addr);
+  const plain = url ? null : NGROK_ADDR_HOST_PORT.exec(addr);
+  if (!url && !plain) return false;
+  const target = url ? Number(url[2] || (url[1].toLowerCase() === "https" ? 443 : 80)) : Number(plain[1]);
+  return target <= 65535 && target === port;
+}
+
+// #279: the wss:// callback on the configured public origin, or "" when the value is empty,
+// unparseable or not https, so the caller falls through to its other sources.
+function publicOriginWsUrl(value) {
+  try {
+    const parsed = new URL(String(value || "").trim());
+    return parsed.protocol === "https:" && parsed.host ? `wss://${parsed.host}` : "";
   } catch {
     return "";
   }
@@ -2146,6 +2189,8 @@ module.exports = {
     resolvePublicOrigin,
     resolveLocalAvatarPublicOrigin,
     publicOriginCandidates,
+    ngrokTunnelTargetsPort,
+    publicOriginWsUrl,
     readCloudHubState,
     resolveSessionHubConfig,
     readiness,
