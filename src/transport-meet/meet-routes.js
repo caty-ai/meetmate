@@ -1476,13 +1476,16 @@ async function handleHttp(req, res) {
       const attendeePayload = JSON.stringify(botPayload);
       const attendeeResult = await createAttendeeBotWithRetry(attendeePayload, joinTarget);
       if (attendeeResult.statusCode >= 200 && attendeeResult.statusCode < 300) {
-        let parsedBotId = null;
+        let botData = null;
         try {
-          const botData = JSON.parse(attendeeResult.body);
-          if (typeof botData.id === "string" || typeof botData.id === "number") parsedBotId = botData.id;
-          if (botData.id) sessionBotIds.set(sessionId, { botId: botData.id, target: joinTarget });
+          botData = JSON.parse(attendeeResult.body);
         } catch { /* ignore parse errors */ }
+        const responseBotId = botData?.id;
+        const parsedBotId = typeof responseBotId === "string" || typeof responseBotId === "number" ? responseBotId : null;
+        // Assigned before recording the session: a failure there reaches the catch below,
+        // which rolls the bot back with the join-time target.
         launchedBotId = parsedBotId;
+        if (responseBotId) sessionBotIds.set(sessionId, { botId: responseBotId, target: joinTarget });
         console.log("✅  Bot起動成功:", { statusCode: attendeeResult.statusCode, botId: parsedBotId });
         writePlainResponse(
           res,

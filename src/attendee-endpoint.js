@@ -17,6 +17,8 @@ const { scrubLogMessage } = require("./log-scrub");
 const REDACTED = "[REDACTED]";
 const SNAPSHOTS = new Set(["effective", "published"]);
 const CLOUD_HOST_ID = "attendee-cloud";
+// Only an ordinary errno-style code is copied onto a returned error (never one carrying the key).
+const ERRNO_CODE = /^[A-Z][A-Z0-9_]{0,63}$/;
 const credentials = new WeakMap();
 // Per-process salt for the targetId fingerprint; never logged or persisted.
 const fingerprintSalt = crypto.randomBytes(32);
@@ -81,7 +83,10 @@ function buildRequest(target, { method, path, body }) {
 
 function failure(code, message, credential, cause) {
   const error = new Error(removeCredential(String(message), credential));
-  if (cause && typeof cause.code === "string") error.code = cause.code;
+  const causeCode = cause ? cause.code : undefined;
+  if (typeof causeCode === "string" && ERRNO_CODE.test(causeCode) && !(credential && causeCode.includes(credential))) {
+    error.code = causeCode;
+  }
   return { ok: false, code, error };
 }
 
@@ -125,6 +130,8 @@ function attendeeRequest(target, { method, path, body, timeoutMs, timeoutMessage
       if (timeoutMs !== undefined) {
         const message = timeoutMessage || `Attendee request timeout (${timeoutMs}ms)`;
         req.setTimeout(timeoutMs, () => {
+          // Already settled (aborted, failed or answered): the request was handled; destroy at most once.
+          if (settled) return;
           settle(failure("TIMEOUT", message, credential));
           req.destroy?.(new Error(message));
         });

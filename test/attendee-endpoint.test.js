@@ -306,6 +306,79 @@ test("request failures: timeout, abort and network errors settle once and are sc
   }
 });
 
+test("request failures: a timeout after the request already settled does not destroy it again", async () => {
+  const target = targetFor({ apiKey: SENTINEL, baseUrl: HOST });
+  const capture = captureHttps(() => ({ stall: true }));
+  try {
+    const controller = new AbortController();
+    const pending = attendeeRequest(target, { method: "POST", path: "/a", body: "{}", timeoutMs: 50, signal: controller.signal });
+    controller.abort(new Error("leave timeout"));
+    const aborted = await pending;
+    assert.equal(aborted.code, "ABORTED");
+    capture.records[0].onTimeout();
+    assert.equal(capture.records[0].destroyed.length, 1);
+    assert.equal(capture.records[0].destroyed[0].message, "leave timeout");
+  } finally {
+    capture.restore();
+  }
+});
+
+// Every view of a returned failure: serialisation, inspection and each own property of the error.
+function assertFailureCarriesNo(result, sentinel) {
+  assert.equal(result.ok, false);
+  const views = [JSON.stringify(result), util.inspect(result, { showHidden: true, depth: Infinity })];
+  for (const name of Object.getOwnPropertyNames(result.error)) views.push(`${name}=${String(result.error[name])}`);
+  views.push(`code=${String(result.error.code)}`, `stack=${String(result.error.stack)}`, `cause=${String(result.error.cause)}`);
+  for (const view of views) assert.equal(view.includes(sentinel), false, view);
+}
+
+test("custody: no property of a returned failure carries the key, whatever the request error holds", async () => {
+  const target = targetFor({ apiKey: SENTINEL, baseUrl: HOST });
+  const tainted = () => Object.assign(new Error(`connect failed ${SENTINEL}`), {
+    code: `E_${SENTINEL}`,
+    detail: SENTINEL,
+    cause: new Error(SENTINEL),
+  });
+  let capture = captureHttps(() => ({ error: tainted() }));
+  try {
+    const failed = await attendeeRequest(target, { method: "POST", path: "/e", body: "{}" });
+    assert.equal(failed.code, "NETWORK_ERROR");
+    assert.equal(Object.hasOwn(failed.error, "code"), false);
+    assertFailureCarriesNo(failed, SENTINEL);
+
+    const controller = new AbortController();
+    const aborting = attendeeRequest(target, { method: "POST", path: "/a", body: "{}", signal: controller.signal });
+    controller.abort(tainted());
+    const aborted = await aborting;
+    assert.equal(aborted.code, "ABORTED");
+    assertFailureCarriesNo(aborted, SENTINEL);
+  } finally {
+    capture.restore();
+  }
+
+  // A key that itself looks like an errno code: the pattern alone would let it through.
+  const errnoShaped = "SENTINEL_ERRNO_SHAPED_CREDENTIAL";
+  const shapedTarget = targetFor({ apiKey: errnoShaped, baseUrl: HOST });
+  for (const code of [errnoShaped, `E${errnoShaped}_X`]) {
+    capture = captureHttps(() => ({ error: Object.assign(new Error("connect failed"), { code }) }));
+    try {
+      const failed = await attendeeRequest(shapedTarget, { method: "POST", path: "/e", body: "{}" });
+      assert.equal(Object.hasOwn(failed.error, "code"), false, code);
+      assertFailureCarriesNo(failed, errnoShaped);
+    } finally {
+      capture.restore();
+    }
+  }
+
+  capture = captureHttps(() => ({ error: Object.assign(new Error("socket hang up"), { code: "ECONNRESET" }) }));
+  try {
+    const failed = await attendeeRequest(target, { method: "POST", path: "/e", body: "{}" });
+    assert.equal(failed.error.code, "ECONNRESET");
+  } finally {
+    capture.restore();
+  }
+});
+
 // ── scrubbing (T11 unit) ────────────────────────────────────────────────────
 
 test("T11 scrubForTarget: literal-only keeps text byte-identical; generic adds the Token scheme", () => {
@@ -680,6 +753,61 @@ test("T5 session binding: join_failed rollback after bot creation uses the join-
     assertSameRequestShape(leaveRecord.options, expectedOptions(HOST, SENTINEL, "/api/v1/bots/bot-260/leave", "{}"));
     assert.ok(lines.some((line) => line.startsWith("🚪  Attendee bot leave (join_failed): bot-260 → 200")), lines.join("\n"));
   }, { onCreate: switchSettings });
+});
+
+test("T5 recording the session fails after bot creation: rollback leaves with the join-time target", { concurrency: false }, async (t) => {
+  stubSessionIds(t);
+  // No production hook: the session-bot map is module-private, so the insertion is made to
+  // throw by intercepting Map#set for the one value shape it records ({ botId, target }).
+  const originalSet = Map.prototype.set;
+  t.after(() => { Map.prototype.set = originalSet; });
+  await withRoutes(async ({ routes, join, requests, lines }) => {
+    Map.prototype.set = function set(key, value) {
+      if (value && typeof value === "object" && Object.hasOwn(value, "botId") && Object.hasOwn(value, "target")) {
+        throw new Error("session record failed");
+      }
+      return originalSet.call(this, key, value);
+    };
+    let failed;
+    try {
+      failed = await join();
+    } finally {
+      Map.prototype.set = originalSet;
+    }
+    assert.equal(failed.status, 500, failed.text);
+    assert.equal(failed.text, "join-meeting エラー: session record failed");
+    await waitFor(() => requests.some((record) => record.ended && record.options.path.endsWith("/leave")));
+    const leaveRecord = requests.find((record) => record.options.path.endsWith("/leave"));
+    assertSameRequestShape(leaveRecord.options, expectedOptions(HOST, SENTINEL, "/api/v1/bots/bot-260/leave", "{}"));
+    assert.equal(requests.some((record) => record.options.hostname === OTHER_HOST), false);
+    assert.ok(lines.some((line) => line.startsWith("🚪  Attendee bot leave (join_failed): bot-260 → 200")), lines.join("\n"));
+    assert.equal(routes._test.meetingSessions.has(SESSION_ID), false);
+  }, { onCreate: switchSettings });
+});
+
+test("join success branch keeps its outcome for every create-response body shape", { concurrency: false }, async (t) => {
+  stubSessionIds(t);
+  // [create body, bot recorded for the session (leave text), bot left on a join_failed rollback]
+  const shapes = [
+    ["not json", "bot=unknown", false],
+    ["null", "bot=unknown", false],
+    ["5", "bot=unknown", false],
+    ['"bot-260"', "bot=unknown", false],
+    ['{"id":7}', "bot=7", true],
+    ['{"id":{"nested":1}}', "bot=[object Object]", false],
+  ];
+  for (const [body, leaveText, rolledBack] of shapes) {
+    const respond = (record) => (record.options.path === "/api/v1/bots" ? { statusCode: 201, body } : null);
+    await withRoutes(async ({ join, leave }) => {
+      assert.equal((await join()).status, 200, body);
+      const left = await leave();
+      assert.equal(left.text, `退出リクエスト送信: session=${SESSION_ID}, ${leaveText}`, body);
+    }, { respond });
+    await withRoutes(async ({ join, requests }) => {
+      assert.equal((await join({ throwOnSuccessEnd: true })).status, 500, body);
+      assert.equal(requests.some((record) => record.options.path.endsWith("/leave")), rolledBack, body);
+    }, { respond });
+  }
 });
 
 test("T5 rollback before sessionBotIds.set: leave uses the target it is given", { concurrency: false }, async () => {
