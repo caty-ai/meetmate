@@ -61,6 +61,8 @@ npx meetmate start    # เริ่มเซิร์ฟเวอร์แล�
 
 ดูขั้นตอนเดียวกันแบบละเอียดตั้งแต่ API key จนถึงคำทักทายแรกได้ที่ [Setup guide](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md)
 
+**บอทรันที่ไหน** โดยค่าเริ่มต้นบอท Meet/Zoom รันบน Attendee cloud คุณสลับไปใช้ Attendee ที่โฮสต์เอง (มี URL, คีย์ และค่าชดเชยลิปซิงก์แยกของตัวเอง) ได้ใน settings UI — ดูตัวเลขทรัพยากรที่ต้องใช้ เพดาน 15 fps และหมายเหตุเรื่องสัญญาอนุญาตของ Attendee ได้ที่ [Choosing where the bot runs](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#ボットの実行先を選ぶchoosing-where-the-bot-runs)
+
 **ตั้งค่าได้จากเบราว์เซอร์** การตั้งค่าที่ใช้งานประจำทั้งหมดอยู่หลังหน้า settings UI เดียวกันนี้ — คีย์ของผู้ให้บริการ, wake word, ข้อความทักทาย, พรีเซ็ตเสียง, การทดสอบการเชื่อมต่อ — จัดเรียงเป็นแท็บ พร้อมหมายเหตุในแต่ละช่องว่าการเปลี่ยนแปลงจะมีผลทันทีหรือต้องรีสตาร์ท ไม่ต้อง clone repo หรือแก้ JSON เอง มีแต่ความลับของการเชื่อมต่อเกตเวย์เท่านั้นที่ยังอยู่ใน `.env` ในรูปแบบตัวแปรสภาพแวดล้อม
 
 <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-page-basic.png" alt="แท็บ「基本」(พื้นฐาน) ของหน้า settings UI หลังตั้งค่าเสร็จ — แบนเนอร์สีเขียวแจ้งว่าโหลดสำเร็จ พร้อมช่องหลักของเอเจนต์และผู้ให้บริการ LLM" width="100%">

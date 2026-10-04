@@ -32,6 +32,8 @@ const SONIOX_FIELDS = new Set([
   "soniox_max_endpoint_delay_ms", "soniox_endpoint_latency_level",
 ]);
 const DEEPGRAM_FIELDS = new Set(["deepgram_api_key"]);
+// #260: the self-hosted Attendee slot's endpoint and key, shown only when that host is selected.
+const SELF_HOSTED_ATTENDEE_FIELDS = new Set(["attendee_self_hosted_url", "attendee_self_hosted_api_key"]);
 const FISH_TTS_FIELDS = new Set([
   "fish_audio_api_key", "fish_audio_voice_id", "fish_audio_model", "fish_audio_speed", "fish_audio_latency",
 ]);
@@ -56,7 +58,7 @@ const NUMBER_FIELDS = new Set([
   "llm_temperature", "llm_max_tokens", "llm_history_max_turns", "soniox_endpoint_sensitivity",
   "soniox_max_endpoint_delay_ms", "soniox_endpoint_latency_level", "listen_endpointing_ms",
   "listen_utterance_end_ms", "fish_audio_speed", "tts_sample_rate", "gateway_warmup_timeout_ms",
-  "face_timeline_offset_ms",
+  "face_timeline_offset_ms", "face_timeline_offset_ms_self_hosted",
 ]);
 const NULLABLE_NUMBER_FIELDS = new Set([
   "soniox_endpoint_sensitivity", "soniox_max_endpoint_delay_ms", "soniox_endpoint_latency_level",
@@ -71,6 +73,7 @@ const AVATAR_FIELDS = new Set([
   "face_listen_reactions",
   "face_timeline_offset_ms",
   "face_audio_default",
+  "face_timeline_offset_ms_self_hosted",
   "avatar_rig_background_mode",
   "avatar_rig_background_color",
 ]);
@@ -142,6 +145,7 @@ if (typeof module !== "undefined" && module.exports) {
     CLIENT_FIELD_SETS: {
       OPENAI_FIELDS, SONIOX_FIELDS, DEEPGRAM_FIELDS, FISH_TTS_FIELDS, ELEVENLABS_TTS_FIELDS,
       OPENAI_COMPATIBLE_TTS_FIELDS, NULLABLE_NUMBER_FIELDS, TEXTAREA_FIELDS, AVATAR_FIELDS, VOICE_FIELDS,
+      SELF_HOSTED_ATTENDEE_FIELDS,
     },
     clipMatchesCurrentText,
     diffFields,
@@ -170,6 +174,7 @@ if (typeof document !== "undefined") {
       agent_avatar_url: "アイコン URL", avatar_experiment: "アバター表示",
       emotion_judge: "表情の感情判定", face_listen_reactions: "聞き手リアクション（実験）",
       face_timeline_offset_ms: "口パクのタイミング調整（ms）",
+      face_timeline_offset_ms_self_hosted: "口パクのタイミング調整・セルフホストの Attendee（ms）",
       face_audio_default: "声の出し方の既定（フェイス画面の音声）",
       avatar_rig_background_mode: "アバター背景", avatar_rig_background_color: "アバター背景色",
       llm_provider: "LLM プロバイダー", llm_model: "LLM モデル",
@@ -196,7 +201,10 @@ if (typeof document !== "undefined") {
       openai_compatible_tts_source_sample_rate: "OpenAI-compatible TTS サーバー側サンプルレート",
       tts_sample_rate: "サンプルレート", tts_cache_enabled: "音声キャッシュ",
       tts_cache_prewarm: "音声キャッシュの事前生成", attendee_api_key: "Attendee API key",
-      attendee_base_url: "Attendee ホスト名", slack_bot_token: "Slack Bot token",
+      attendee_base_url: "Attendee ホスト名", bot_host: "ボットの実行先",
+      attendee_self_hosted_url: "セルフホストの Attendee URL",
+      attendee_self_hosted_api_key: "セルフホストの Attendee API key",
+      slack_bot_token: "Slack Bot token",
       slack_notifications_enabled: "Slack 通知", slack_notifications_target: "Slack 通知先",
       slack_dm_user_id: "Slack User ID", slack_notify_channel: "Slack 通知チャンネル",
       slack_summary_channel: "Slack サマリーチャンネル", slack_status_channel: "Slack ステータスチャンネル",
@@ -223,6 +231,9 @@ if (typeof document !== "undefined") {
       emotion_judge: "off は感情判定なし。jev は返答文を外部の判定サービスへ送ります。",
       face_listen_reactions: "実験機能。次の face-package 参加から有効です。jev と併用すると相手の発言も判定サービスへ送ります。",
       face_timeline_offset_ms: "-3000〜3000 の整数（既定 300）。口が声より遅れるときは値を下げ（マイナス可）、早いときは上げます。100〜200 ずつ調整してください。次の会議参加から反映されます。",
+      face_timeline_offset_ms_self_hosted: "セルフホストの Attendee を選んでいるときに使う値です。-3000〜3000 の整数（既定 300）。実測では -700 が合ったセルフホスト環境もあります。次の会議参加から反映されます。",
+      bot_host: "会議ボットを動かす Attendee を選びます。接続先・API key・口パクのタイミング調整は実行先ごとに別々に保存され、次の会議参加から反映されます。",
+      attendee_self_hosted_url: "https://host[:port][/base] の形式（末尾の / は付けません）。http:// は同じマシンかプライベートネットワーク内（127.0.0.0/8・10.0.0.0/8・172.16.0.0/12・192.168.0.0/16・100.64.0.0/10 など）の接続先にだけ使えます。",
       face_audio_default: "参加フォームの「声をフェイス画面から流す」チェックの初期値です。触らずに参加すると、この既定値が使われます（フロア調停が有効なときなどは自動で WebSocket になります）。Attendee のリアルタイム音声は 8000 / 16000 / 24000 Hz だけを受け付けるため、サンプルレート（tts_sample_rate）はこのどれかにしてください。フェイス画面の音声を取り込むレートは Attendee サーバー側の設定（WEBPAGE_STREAMER_AUDIO_SAMPLE_RATE。公開版の Attendee は 16 kHz 固定、このモードでは 48 kHz 推奨）で、meetmate からは変更も読み取りもできません。",
       avatar_rig_background_mode: "2.5Dリグとフレームセットの両方に適用され、次回の会議参加から反映されます。画像モードで背景画像が未埋め込みの場合: このビルドには背景画像が埋め込まれていません",
       avatar_rig_background_color: "2.5Dリグとフレームセットの両方で、単色または画像の読み込み失敗時に使う #rrggbb 形式の色です。次回の会議参加から反映されます",
@@ -268,6 +279,13 @@ if (typeof document !== "undefined") {
       page: "フェイス画面から声を流す",
     };
     const FACE_AUDIO_CLOUD_NOTE = "フェイス画面から声を流す設定は、セルフホストの Attendee で利用できます。";
+    const BOT_HOST_OPTION_LABELS = {
+      "": "未選択（従来どおり Attendee ホスト名・API key の設定を使う）",
+      "attendee-cloud": "Attendee cloud（既定）",
+      "attendee-self-hosted": "セルフホストの Attendee",
+    };
+    const ATTENDEE_HTTP_NOTE = "http:// の接続は暗号化されません。同じマシンかプライベートネットワーク内の Attendee にだけ使ってください。";
+    const ATTENDEE_ORIGIN_NOTE = "URL の接続先が保存済みの値から変わりました。保存済みの API key がこのサーバーのものか確認してください。";
     const RIG_BACKGROUND_OPTION_LABELS = {
       solid: "単色",
       image: "埋め込み画像",
@@ -365,6 +383,7 @@ if (typeof document !== "undefined") {
       if (entry.id === "face_audio_default") return FACE_AUDIO_DEFAULT_OPTION_LABELS[value] || fallback;
       if (entry.id === "tts_provider") return TTS_PROVIDER_OPTION_LABELS[value] || fallback;
       if (entry.id === "agent_reply_trigger") return REPLY_TRIGGER_OPTION_LABELS[value] || fallback;
+      if (entry.id === "bot_host") return BOT_HOST_OPTION_LABELS[value] || fallback;
       return fallback;
     }
 
@@ -521,7 +540,8 @@ if (typeof document !== "undefined") {
         wrapper.append(title);
         if (control === "select") {
           input = document.createElement("select");
-          for (const rawOption of entry.options || []) {
+          // #260: an unstored bot_host shows a placeholder, so picking either host (cloud included) stores it.
+          for (const rawOption of [...(entry.id === "bot_host" && value === "" ? [""] : []), ...(entry.options || [])]) {
             const optionData = optionParts(rawOption);
             const option = document.createElement("option");
             option.value = optionData.value;
@@ -560,6 +580,13 @@ if (typeof document !== "undefined") {
       apply.textContent = entry.apply === "live" ? "すぐに反映"
         : entry.apply === "next-join" ? "次の会議参加から反映" : "次回起動時に反映";
       wrapper.append(apply);
+      if (["face_timeline_offset_ms", "face_timeline_offset_ms_self_hosted"].includes(entry.id)) {
+        const inUse = document.createElement("span");
+        inUse.className = "status-badge match is-hidden";
+        inUse.id = `inUse-${entry.id}`;
+        inUse.textContent = "使用中（選択中の実行先）";
+        wrapper.append(inUse);
+      }
       return wrapper;
     }
 
@@ -568,7 +595,8 @@ if (typeof document !== "undefined") {
       loadedValues = {};
       credentialChanges = {};
       for (const entry of manifest) {
-        const value = shownValue(entry, envelope);
+        // #260 (D1c): an unstored bot_host loads as "" so an unrelated save never stores it.
+        const value = entry.id === "bot_host" && !Object.hasOwn(envelope?.fields || {}, "bot_host") ? "" : shownValue(entry, envelope);
         loadedValues[entry.id] = value;
         const target = document.getElementById(fieldContainerId(entry));
         target.append(createField(entry, value));
@@ -576,9 +604,19 @@ if (typeof document !== "undefined") {
       const faceAudioNote = notice("warning", "フェイス画面の音声", FACE_AUDIO_CLOUD_NOTE);
       faceAudioNote.id = "faceAudioCloudNote";
       document.getElementById("avatarFields").append(faceAudioNote);
+      for (const [id, title, message] of [
+        ["attendeeHttpNote", "暗号化されない接続", ATTENDEE_HTTP_NOTE],
+        ["attendeeOriginNote", "API key の確認", ATTENDEE_ORIGIN_NOTE],
+        ["attendeeCustomCloudNote", "Attendee ホスト名", ""],
+      ]) {
+        const attendeeNote = notice("warning", title, message);
+        attendeeNote.id = id;
+        document.getElementById("basicFields").append(attendeeNote);
+      }
       renderEmotionHelp();
       renderAudioClips();
       updateConditionalVisibility();
+      updateAttendeeNotes();
       updateDirtyState();
     }
 
@@ -719,6 +757,7 @@ if (typeof document !== "undefined") {
       const stt = currentProvider("stt_provider", loadedValues.stt_provider);
       const tts = currentProvider("tts_provider", loadedValues.tts_provider);
       const avatar = currentProvider("avatar_experiment", loadedValues.avatar_experiment);
+      const botHost = currentProvider("bot_host", loadedValues.bot_host) === "attendee-self-hosted" ? "attendee-self-hosted" : "attendee-cloud";
       for (const entry of manifest) {
         const field = document.querySelector(`[data-field-id="${entry.id}"]`);
         if (!field) continue;
@@ -728,13 +767,42 @@ if (typeof document !== "undefined") {
           || (FISH_TTS_FIELDS.has(entry.id) && tts !== "fish-audio")
           || (ELEVENLABS_TTS_FIELDS.has(entry.id) && tts !== "elevenlabs")
           || (OPENAI_COMPATIBLE_TTS_FIELDS.has(entry.id) && tts !== "openai-compatible")
-          || (["emotion_judge", "face_listen_reactions", "face_timeline_offset_ms", "face_audio_default"].includes(entry.id) && avatar !== "face-package")
+          || (SELF_HOSTED_ATTENDEE_FIELDS.has(entry.id) && botHost !== "attendee-self-hosted")
+          || (["emotion_judge", "face_listen_reactions", "face_timeline_offset_ms", "face_audio_default", "face_timeline_offset_ms_self_hosted"].includes(entry.id) && avatar !== "face-package")
           || (entry.id === "face_audio_default" && envelope?.attendeeHostKind !== "self-hosted");
         field.classList.toggle("is-hidden", hidden);
       }
       // #274: on Attendee cloud the page-audio default is hidden and this one-line note is shown instead.
       document.getElementById("faceAudioCloudNote")?.classList.toggle("is-hidden",
         avatar !== "face-package" || envelope?.attendeeHostKind === "self-hosted");
+      // #260: the selected host's offset is the one in effect.
+      document.getElementById("inUse-face_timeline_offset_ms")?.classList.toggle("is-hidden", botHost !== "attendee-cloud");
+      document.getElementById("inUse-face_timeline_offset_ms_self_hosted")?.classList.toggle("is-hidden", botHost !== "attendee-self-hosted");
+    }
+
+    function urlOrigin(value) {
+      try { return new URL(String(value || "").trim()).origin; } catch { return ""; }
+    }
+
+    // #260 notes (text only): an http: self-hosted URL; the saved URL's origin changing while a key
+    // is stored; the cloud slot in use with a hostname other than the registry default.
+    function updateAttendeeNotes() {
+      const selfHosted = currentProvider("bot_host", loadedValues.bot_host) === "attendee-self-hosted";
+      const url = String(currentProvider("attendee_self_hosted_url", loadedValues.attendee_self_hosted_url) || "").trim();
+      const keyStored = ["set", "overridden"].includes(envelope?.fields?.attendee_self_hosted_api_key?.state);
+      const savedOrigin = urlOrigin(loadedValues.attendee_self_hosted_url);
+      const cloudHost = String(loadedValues.attendee_base_url || "").trim();
+      const cloudDefault = manifest.find((entry) => entry.id === "attendee_base_url")?.defaultValue;
+      const customCloud = !selfHosted && cloudHost !== "" && typeof cloudDefault === "string"
+        && cloudHost.toLowerCase() !== cloudDefault.toLowerCase();
+      document.getElementById("attendeeHttpNote")?.classList.toggle("is-hidden", !(selfHosted && /^http:/i.test(url)));
+      document.getElementById("attendeeOriginNote")?.classList.toggle("is-hidden",
+        !(selfHosted && keyStored && savedOrigin !== "" && urlOrigin(url) !== savedOrigin));
+      const customNote = document.getElementById("attendeeCustomCloudNote");
+      if (customNote) {
+        customNote.querySelector("p").textContent = `Attendee cloud の枠で、既定以外の Attendee ホスト名（${cloudHost}）を使っています。セルフホストの Attendee には専用の枠があり、「ボットの実行先」で選ぶと URL と API key を別に保存できます。`;
+        customNote.classList.toggle("is-hidden", !customCloud);
+      }
     }
 
     function renderState() {
@@ -1484,12 +1552,14 @@ if (typeof document !== "undefined") {
     form.addEventListener("input", (event) => {
       if (event.target.dataset.settingId) {
         updateConditionalVisibility();
+        updateAttendeeNotes();
         updateDirtyState();
       }
     });
     form.addEventListener("change", (event) => {
       if (event.target.dataset.settingId) {
         updateConditionalVisibility();
+        updateAttendeeNotes();
         updateDirtyState();
       }
     });

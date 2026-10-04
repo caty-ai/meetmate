@@ -131,7 +131,7 @@ function assertSameRequestShape(actual, expected) {
 test("cloud slot target: legacy entries, https/443, frozen, total on missing values", () => {
   const target = targetFor({ apiKey: SENTINEL, baseUrl: HOST, offset: -700 });
   assert.equal(Object.isFrozen(target), true);
-  assert.deepEqual(Object.keys(target).sort(), ["basePath", "configured", "hostId", "hostname", "offsetMs", "port", "protocol", "targetId"]);
+  assert.deepEqual(Object.keys(target).sort(), ["basePath", "configured", "hostId", "hostKind", "hostname", "offsetMs", "port", "protocol", "targetId"]);
   assert.equal(target.hostId, "attendee-cloud");
   assert.equal(target.configured, true);
   assert.equal(target.protocol, "https");
@@ -194,7 +194,7 @@ test("T12 custody: copies, clones, serialisation and inspection never carry the 
     util.inspect(endpoint, { showHidden: true, depth: Infinity }),
   ];
   for (const view of views) assert.equal(view.includes(SENTINEL), false, view);
-  assert.deepEqual(Object.keys(endpoint).sort(), ["attendeeRequest", "resolveBotHostTarget", "scrubForTarget"]);
+  assert.deepEqual(Object.keys(endpoint).sort(), ["attendeeRequest", "isPrivateAddress", "resolveBotHostTarget", "scrubForTarget"]);
 });
 
 test("T12 custody: a copied, cloned or hand-built target cannot make a request", async () => {
@@ -598,6 +598,8 @@ async function withRoutes(run, options = {}) {
       }[key];
     },
     getEffectiveValue: (key) => settings[key],
+    // #260 PR B: a key present in the mutable settings counts as stored (host-kind rule 1).
+    getEffectiveSource: (key) => (Object.hasOwn(settings, key) ? "config" : "default"),
     getPublishedValue: (key) => (key === "server_ngrok_domain" ? "meetmate.example" : ""),
     getRawConfig: () => ({}),
     getStatus: () => ({ meetingReady: true, issues: [] }),
@@ -880,4 +882,341 @@ test("T11 leave and chat response bodies echoing the key reach no log", { concur
       assert.equal(lines.some((line) => line.includes(SENTINEL)), false, lines.join("\n"));
     }, { respond: (record) => (record.options.path === "/api/v1/bots" ? null : { statusCode: 200, body: echo }) });
   }
+});
+
+// ── #260 PR B: the self-hosted slot, the http guard and the fetchFn seam ────────────────────
+
+const dns = require("node:dns");
+const fs = require("node:fs");
+const http = require("node:http");
+
+const SELF_KEY = "SENTINEL-SELF-k4m2";
+const CLOUD_KEY = "SENTINEL-CLOUD-p8q3";
+const SELF_HOST = "attendee.self.example";
+const CLOUD_HOST = "attendee.cloud.example";
+
+// Real resolver runtime with both slots filled; `botHost` undefined leaves bot_host unstored.
+function useSlots({ botHost, selfUrl = `https://${SELF_HOST}:8443/base`, selfKey = SELF_KEY, cloudKey = CLOUD_KEY, cloudHost = CLOUD_HOST } = {}) {
+  const attendee = { apiKey: cloudKey, baseUrl: cloudHost, selfHosted: { url: selfUrl, apiKey: selfKey } };
+  if (botHost !== undefined) attendee.host = botHost;
+  const home = path.join(os.tmpdir(), "meetmate-attendee-endpoint-test");
+  resolver.resetRuntimeForTest();
+  resolver.initializeRuntime({
+    state: { exists: true, valid: true, parsed: { attendee, avatar: { faceTimelineOffsetMs: 300, faceTimelineOffsetMsSelfHosted: -700 } }, revision: "f".repeat(64), fingerprint: "attendee-endpoint-b" },
+    startup: Object.freeze({
+      preDotenvEnv: Object.freeze({}),
+      dotenvSeeds: Object.freeze({}),
+      resolvedHome: home,
+      configPath: path.join(home, "config.json"),
+      connection: Object.freeze({ openclawUrl: "", openclawToken: "", openaiApiKey: "" }),
+    }),
+  });
+}
+
+function slotTarget(options) {
+  useSlots(options);
+  try {
+    return resolveBotHostTarget({ snapshot: "effective" });
+  } finally {
+    resolver.resetRuntimeForTest();
+  }
+}
+
+test("B self-hosted slot: protocol, port, base path, its own offset and kind; absent bot_host is the cloud slot", () => {
+  const self = slotTarget({ botHost: "attendee-self-hosted" });
+  assert.deepEqual({ ...self, targetId: undefined }, {
+    hostId: "attendee-self-hosted", configured: true, protocol: "https", hostname: SELF_HOST, port: 8443,
+    basePath: "/base", offsetMs: -700, hostKind: "self-hosted", targetId: undefined,
+  });
+  assert.equal(self.targetId.includes(SELF_KEY), false);
+  const loopback = slotTarget({ botHost: "attendee-self-hosted", selfUrl: "http://[::1]:8000" });
+  assert.deepEqual([loopback.protocol, loopback.hostname, loopback.port, loopback.basePath], ["http", "::1", 8000, ""]);
+  const defaultPort = slotTarget({ botHost: "attendee-self-hosted", selfUrl: "http://10.0.0.7" });
+  assert.equal(defaultPort.port, 80);
+  for (const botHost of [undefined, "attendee-cloud"]) {
+    const cloud = slotTarget({ botHost });
+    assert.deepEqual([cloud.hostId, cloud.protocol, cloud.hostname, cloud.port, cloud.basePath, cloud.offsetMs], ["attendee-cloud", "https", CLOUD_HOST, 443, "", 300]);
+    assert.equal(cloud.hostKind, botHost === undefined ? "self-hosted" : "cloud", "kind: stored bot_host wins, else the URL rule");
+  }
+  // Total: an empty selected slot is unconfigured, never a throw; the other slot's values never fill it.
+  assert.equal(slotTarget({ botHost: "attendee-self-hosted", selfUrl: "" }).configured, false);
+  assert.equal(slotTarget({ botHost: "attendee-self-hosted", selfKey: "" }).configured, false);
+  assert.equal(slotTarget({ botHost: "attendee-cloud", cloudKey: "" }).configured, false);
+  assert.notEqual(slotTarget({ botHost: "attendee-self-hosted" }).targetId, slotTarget({ botHost: "attendee-cloud" }).targetId);
+});
+
+test("B T4 isolation (direct): each slot's request carries that slot's destination and key only", async () => {
+  const capture = captureHttps();
+  try {
+    for (const [botHost, hostname, port, requestPath, key, other] of [
+      ["attendee-self-hosted", SELF_HOST, 8443, "/base/api/v1/bots", SELF_KEY, CLOUD_KEY],
+      ["attendee-cloud", CLOUD_HOST, 443, "/api/v1/bots", CLOUD_KEY, SELF_KEY],
+    ]) {
+      const target = slotTarget({ botHost });
+      const result = await attendeeRequest(target, { method: "POST", path: "/api/v1/bots", body: "{}" });
+      assert.equal(result.ok, true);
+      const record = capture.records.at(-1);
+      assert.deepEqual([record.options.hostname, record.options.port, record.options.path], [hostname, port, requestPath], botHost);
+      assert.equal(record.options.headers.Authorization, `Token ${key}`, botHost);
+      assert.equal(JSON.stringify(record).includes(other), false, `${botHost} never carries the other slot's key`);
+    }
+  } finally {
+    capture.restore();
+  }
+});
+
+test("B T8 one composer: the native request and the fetchFn request of one target are the same request", async () => {
+  for (const [botHost, selfUrl] of [["attendee-self-hosted", undefined], ["attendee-cloud", undefined], ["attendee-self-hosted", "http://127.0.0.1:8000/sub"]]) {
+    const target = slotTarget({ botHost, selfUrl });
+    const body = JSON.stringify({ meeting_url: "https://meet.google.com/abc-defg-hij" });
+    const capture = captureHttps();
+    const originalHttp = http.request;
+    // Route an http target through the same recorder (the guard leaves an IP literal's options as built).
+    http.request = (options, callback) => https.request(options, callback);
+    let native;
+    try {
+      await attendeeRequest(target, { method: "POST", path: "/api/v1/bots", body });
+      native = capture.records.at(-1).options;
+    } finally {
+      http.request = originalHttp;
+      capture.restore();
+    }
+    let fetched;
+    await attendeeRequest(target, { method: "POST", path: "/api/v1/bots", body, fetchFn: async (url, init) => {
+      fetched = { url, init };
+      return new Response("{}", { status: 201 });
+    } });
+    const port = native.port === (target.protocol === "http" ? 80 : 443) ? "" : `:${native.port}`;
+    assert.equal(fetched.url, `${target.protocol}://${native.hostname}${port}${native.path}`, botHost);
+    assert.equal(fetched.init.method, native.method);
+    assert.deepEqual(fetched.init.headers, native.headers);
+    assert.equal(fetched.init.body, body);
+    assert.equal(fetched.init.redirect, "error", "redirects are never followed");
+  }
+});
+
+test("B fetchFn seam: dispatch only — timeout, network error codes and scrubbed bodies", async () => {
+  const target = slotTarget({ botHost: "attendee-self-hosted" });
+  const echoed = await attendeeRequest(target, { method: "GET", path: "/x", fetchFn: async () => new Response(`echo Token ${SELF_KEY}`, { status: 401 }) });
+  assert.deepEqual(echoed, { ok: true, statusCode: 401, text: "echo Token [REDACTED]" });
+  const refused = await attendeeRequest(target, { method: "GET", path: "/x", fetchFn: async () => {
+    throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } });
+  } });
+  assert.deepEqual([refused.code, refused.error.code], ["NETWORK_ERROR", "ECONNREFUSED"]);
+  const timedOut = await attendeeRequest(target, { method: "GET", path: "/x", timeoutMs: 5, fetchFn: (_url, init) => new Promise((_resolve, reject) => {
+    init.signal.addEventListener("abort", () => reject(init.signal.reason));
+  }) });
+  assert.equal(timedOut.code, "TIMEOUT");
+  const forged = await attendeeRequest({ ...target }, { method: "GET", path: "/x", fetchFn: async () => assert.fail("a copied target never dispatches") });
+  assert.equal(forged.code, "NOT_CONFIGURED");
+});
+
+// Replaces dns.lookup (looked up at call time by the guard) with a scripted answer.
+function scriptDns(answer) {
+  const original = dns.lookup;
+  const calls = [];
+  dns.lookup = (hostname, options, callback) => {
+    calls.push({ hostname, options });
+    queueMicrotask(() => (answer instanceof Error ? callback(answer) : callback(null, answer)));
+  };
+  return { calls, restore: () => { dns.lookup = original; } };
+}
+
+async function withLoopbackServer(run) {
+  const seen = [];
+  const server = http.createServer((req, res) => {
+    seen.push({ url: req.url, authorization: req.headers.authorization, remote: req.socket.remoteAddress });
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end("{}");
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    await run({ port: server.address().port, seen });
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
+test("B T3 http guard: a name connects only when every resolved address is private, to a verified address", async () => {
+  await withLoopbackServer(async ({ port, seen }) => {
+    const cases = [
+      ["private", [{ address: "127.0.0.1", family: 4 }], true],
+      ["public", [{ address: "8.8.8.8", family: 4 }], false],
+      ["mixed", [{ address: "127.0.0.1", family: 4 }, { address: "93.184.216.34", family: 4 }], false],
+      ["mapped public", [{ address: "::ffff:8.8.8.8", family: 6 }], false],
+      ["link-local", [{ address: "169.254.10.1", family: 4 }], false],
+      ["empty", [], false],
+    ];
+    for (const [label, answer, reaches] of cases) {
+      const target = slotTarget({ botHost: "attendee-self-hosted", selfUrl: `http://attendee.internal.test:${port}/root` });
+      const lookup = scriptDns(answer);
+      let result;
+      try {
+        result = await attendeeRequest(target, { method: "GET", path: "/api/v1/bots?page_size=1", timeoutMs: 2_000 });
+      } finally {
+        lookup.restore();
+      }
+      assert.equal(lookup.calls.length, 1, label);
+      assert.equal(lookup.calls[0].hostname, "attendee.internal.test", label);
+      if (reaches) {
+        assert.equal(result.ok, true, `${label}: ${JSON.stringify(result)}`);
+        const request = seen.at(-1);
+        assert.deepEqual([request.url, request.authorization, request.remote], ["/root/api/v1/bots?page_size=1", `Token ${SELF_KEY}`, "127.0.0.1"], label);
+      } else {
+        assert.deepEqual([result.ok, result.code], [false, "DESTINATION_REJECTED"], label);
+        assert.equal(JSON.stringify(result).includes(SELF_KEY), false, label);
+      }
+    }
+    assert.equal(seen.length, 1, "only the all-private answer reached the socket");
+
+    const failing = scriptDns(Object.assign(new Error("getaddrinfo ENOTFOUND attendee.internal.test"), { code: "ENOTFOUND" }));
+    try {
+      const target = slotTarget({ botHost: "attendee-self-hosted", selfUrl: `http://attendee.internal.test:${port}` });
+      const result = await attendeeRequest(target, { method: "GET", path: "/x", timeoutMs: 2_000 });
+      assert.deepEqual([result.code, result.error.code], ["NETWORK_ERROR", "ENOTFOUND"]);
+    } finally {
+      failing.restore();
+    }
+
+    const local = scriptDns([{ address: "203.0.113.9", family: 4 }]);
+    try {
+      const target = slotTarget({ botHost: "attendee-self-hosted", selfUrl: `http://localhost:${port}` });
+      const result = await attendeeRequest(target, { method: "GET", path: "/x", timeoutMs: 2_000 });
+      assert.equal(result.code, "DESTINATION_REJECTED", "localhost takes the guarded path");
+      assert.equal(local.calls[0].hostname, "localhost");
+    } finally {
+      local.restore();
+    }
+    assert.equal(seen.length, 1);
+
+    const literal = slotTarget({ botHost: "attendee-self-hosted", selfUrl: `http://127.0.0.1:${port}` });
+    assert.equal((await attendeeRequest(literal, { method: "GET", path: "/literal", timeoutMs: 2_000 })).ok, true);
+    assert.equal(seen.at(-1).url, "/literal");
+  });
+});
+
+test("B T3 http IP literal: checked against P at request time, before any socket", async (t) => {
+  // The validator already rejects a public http literal; the request-time check is the second line.
+  const values = { bot_host: "attendee-self-hosted", attendee_self_hosted_url: "http://8.8.8.8:8000", attendee_self_hosted_api_key: SELF_KEY };
+  t.mock.method(resolver, "getEffectiveValue", (id) => values[id]);
+  t.mock.method(resolver, "getEffectiveSource", (id) => (Object.hasOwn(values, id) ? "config" : "default"));
+  const target = resolveBotHostTarget({ snapshot: "effective" });
+  const original = http.request;
+  let dispatched = 0;
+  http.request = () => { dispatched += 1; throw new Error("must not dispatch"); };
+  try {
+    const result = await attendeeRequest(target, { method: "GET", path: "/x" });
+    assert.deepEqual([result.ok, result.code], [false, "DESTINATION_REJECTED"]);
+    assert.equal(dispatched, 0);
+  } finally {
+    http.request = original;
+  }
+});
+
+test("B T4/T7 probe: each slot's probe goes to its own endpoint with its own key, native and fetchFn alike", async () => {
+  const probes = require("../src/settings/probes");
+  for (const [botHost, url, key, other] of [
+    ["attendee-self-hosted", `https://${SELF_HOST}:8443/base/api/v1/bots?page_size=1`, SELF_KEY, CLOUD_KEY],
+    ["attendee-cloud", `https://${CLOUD_HOST}/api/v1/bots?page_size=1`, CLOUD_KEY, SELF_KEY],
+  ]) {
+    useSlots({ botHost });
+    const calls = [];
+    try {
+      const outcome = await probes.probeSystem("attendee", {
+        endpoints: { attendee: "https://override.example/never" },
+        fetchFn: async (requestUrl, init) => {
+          calls.push({ url: requestUrl, init });
+          return new Response(`echo ${key}`, { status: 200 });
+        },
+      });
+      assert.deepEqual(outcome, { ok: true, code: "CONNECTED" });
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0].url, url, "options.endpoints never applies to attendee");
+      assert.deepEqual([calls[0].init.method, calls[0].init.headers.Authorization, calls[0].init.redirect], ["GET", `Token ${key}`, "error"]);
+      assert.equal(JSON.stringify(calls).includes(other), false);
+      assert.equal(JSON.stringify(outcome).includes(key), false);
+
+      const capture = captureHttps(() => ({ statusCode: 401, body: key }));
+      try {
+        assert.equal((await probes.probeSystem("attendee", {})).code, "AUTH_FAILED");
+      } finally {
+        capture.restore();
+      }
+      const [native] = capture.records;
+      assert.equal(`https://${native.options.hostname}${native.options.port === 443 ? "" : `:${native.options.port}`}${native.options.path}`, url);
+      assert.deepEqual([native.options.method, native.options.headers.Authorization], ["GET", `Token ${key}`]);
+    } finally {
+      resolver.resetRuntimeForTest();
+    }
+  }
+});
+
+test("B T4 isolation (routes): a self-hosted join's create, chat and leave stay on the self-hosted slot after a switch", { concurrency: false }, async (t) => {
+  stubSessionIds(t);
+  await withRoutes(async ({ join, leave, connect, pipelines, requests, settings }) => {
+    assert.equal((await join()).status, 200);
+    connect();
+    await waitFor(() => pipelines.length === 1);
+    Object.assign(settings, { bot_host: "attendee-cloud" });
+    assert.equal(await pipelines[0].options.onChatMessage("hello"), true);
+    assert.equal((await leave()).status, 200);
+    await waitFor(() => requests.some((record) => record.ended && record.options.path.endsWith("/leave")));
+    const paths = requests.map((record) => record.options.path);
+    assert.deepEqual(paths, ["/base/api/v1/bots", "/base/api/v1/bots/bot-260/send_chat_message", "/base/api/v1/bots/bot-260/leave"]);
+    for (const record of requests) {
+      assert.deepEqual([record.options.hostname, record.options.port, record.options.headers.Authorization], [SELF_HOST, 8443, `Token ${SELF_KEY}`]);
+      assert.equal(JSON.stringify(record).includes(SENTINEL), false, "the cloud key never reaches the self-hosted endpoint");
+    }
+  }, {
+    settings: {
+      bot_host: "attendee-self-hosted",
+      attendee_self_hosted_url: `https://${SELF_HOST}:8443/base`,
+      attendee_self_hosted_api_key: SELF_KEY,
+      face_timeline_offset_ms_self_hosted: -700,
+    },
+    respond: (record) => (record.options.path === "/base/api/v1/bots" ? { statusCode: 201, body: JSON.stringify({ id: "bot-260" }) } : null),
+  });
+});
+
+test("B T4 isolation (routes): a cloud join stays on the cloud slot after a switch to self-hosted", { concurrency: false }, async (t) => {
+  stubSessionIds(t);
+  await withRoutes(async ({ join, leave, requests, settings }) => {
+    assert.equal((await join()).status, 200);
+    Object.assign(settings, { bot_host: "attendee-self-hosted" });
+    assert.equal((await leave()).status, 200);
+    await waitFor(() => requests.some((record) => record.ended && record.options.path.endsWith("/leave")));
+    for (const record of requests) {
+      assert.deepEqual([record.options.hostname, record.options.port, record.options.headers.Authorization], [HOST, 443, `Token ${SENTINEL}`]);
+      assert.equal(JSON.stringify(record).includes(SELF_KEY), false, "the self-hosted key never reaches the cloud endpoint");
+    }
+  }, { settings: {
+    bot_host: "attendee-cloud",
+    attendee_self_hosted_url: `https://${SELF_HOST}:8443/base`,
+    attendee_self_hosted_api_key: SELF_KEY,
+  } });
+});
+
+test("B custody: only src/attendee-endpoint.js reads an Attendee key for a request and composes Authorization", () => {
+  const root = path.join(__dirname, "..", "src");
+  const offenders = [];
+  const walk = (directory) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const file = path.join(directory, entry.name);
+      if (entry.isDirectory()) walk(file);
+      else if (entry.name.endsWith(".js")) {
+        const relative = path.relative(path.join(__dirname, ".."), file);
+        const source = fs.readFileSync(file, "utf8");
+        // agent-profile.js keeps profile.attendeeApiKey exactly as before; it is not a request input (v2.2 §4.3).
+        if ([path.join("src", "attendee-endpoint.js"), path.join("src", "agent-profile.js")].includes(relative)) continue;
+        if (/(?:Value|Source)\("attendee_(?:self_hosted_)?api_key"\)/.test(source)) offenders.push(`${relative}: key read`);
+        if (/`Token \$\{/.test(source)) offenders.push(`${relative}: Token header`);
+        if (/attendeeRequest\([^)]*fetchFn/s.test(source) && relative !== path.join("src", "settings", "probes.js")) offenders.push(`${relative}: fetchFn`);
+      }
+    }
+  };
+  walk(root);
+  assert.deepEqual(offenders, []);
+  const endpointSource = fs.readFileSync(path.join(root, "attendee-endpoint.js"), "utf8");
+  assert.equal(endpointSource.includes("app.attendee.dev"), false, "the endpoint module never compares a hostname itself");
+  assert.equal((endpointSource.match(/Authorization: `Token \$\{credential\}`/g) || []).length, 1);
 });

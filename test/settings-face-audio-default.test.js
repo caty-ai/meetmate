@@ -30,13 +30,14 @@ function startup(directory) {
   });
 }
 
-function settingsDocument({ attendeeBaseUrl = "app.attendee.dev", faceAudioDefault } = {}) {
+// `botHost` (#260 PR B) is stored only when given; every #274 case leaves it out.
+function settingsDocument({ attendeeBaseUrl = "app.attendee.dev", faceAudioDefault, botHost } = {}) {
   return {
     agent: { id: "caty", name: "Caty", displayName: "Caty", wakeWords: ["ケイティ"] },
     llm: { provider: "openclaw", model: "main" },
     stt: { provider: "soniox", sonioxApiKey: "soniox-secret" },
     tts: { provider: "fish-audio", apiKey: "fish-secret", voiceId: "voice-id" },
-    attendee: { apiKey: "attendee-secret", baseUrl: attendeeBaseUrl },
+    attendee: { apiKey: "attendee-secret", baseUrl: attendeeBaseUrl, ...(botHost === undefined ? {} : { host: botHost }) },
     server: { ngrokDomain: "meetmate.example" },
     slack: { notifications: { enabled: false } },
     ...(faceAudioDefault === undefined ? {} : { avatar: { faceAudioDefault } }),
@@ -76,8 +77,8 @@ test("#274 T1 registry row: face_audio_default shape, counts and pins", (t) => {
   for (const bad of ["on", "PAGE", "websocket", true, null]) assert.equal(entry.schema.safeParse(bad).success, false, String(bad));
   const ids = SETTINGS_REGISTRY.map((item) => item.id);
   assert.equal(ids.indexOf("face_audio_default"), ids.indexOf("face_timeline_offset_ms") + 1);
-  assert.equal(SETTINGS_REGISTRY.length, 98);
-  assert.equal(SETTINGS_REGISTRY.filter((item) => item.credential === "class-1").length, 10);
+  assert.equal(SETTINGS_REGISTRY.length, 102);
+  assert.equal(SETTINGS_REGISTRY.filter((item) => item.credential === "class-1").length, 11);
   initRuntime(t);
   const envelope = resolver.buildEnvelope();
   assert.equal(Object.keys(envelope.diagnostics).length, 61);
@@ -147,7 +148,7 @@ test("#274 T2: no other src/ or public/ file compares against app.attendee.dev f
   walk(path.join(ROOT, "src"));
   walk(path.join(ROOT, "public"));
   assert.deepEqual(offenders, []);
-  assert.match(read("src/attendee-host-kind.js"), /#260 replaces this body with the `bot_host` setting; callers do not change\. This is the only host-kind source\./);
+  assert.match(read("src/attendee-host-kind.js"), /#260: a stored `bot_host` decides; with none stored, the pre-#260 URL rule holds\. This is the only host-kind source\./);
 });
 
 // ---- envelope member (§4.1) -------------------------------------------------------------------
@@ -558,4 +559,128 @@ test("#274 T8 docs: fixed 16 kHz reasons, Attendee-side guidance, precedence and
   const example = JSON.parse(read("config.json.example"));
   assert.equal(example.avatar.faceAudioDefault, "");
   assert.match(example._comments["avatar.faceAudioDefault"], /empty \(WebSocket, default\) or page/);
+});
+
+// ---- #260 PR B, T19 / T22 / T23: host kind rule 1 (a stored bot_host) over rule 2 (the URL rule) ----
+
+test("#260 T19 rule 1: a stored bot_host decides on both snapshots whatever attendee_base_url is", (t) => {
+  for (const [botHost, attendeeBaseUrl, expected] of [
+    ["attendee-self-hosted", "app.attendee.dev", "self-hosted"],
+    ["attendee-cloud", SELF_HOSTED_ATTENDEE, "cloud"],
+    ["attendee-self-hosted", SELF_HOSTED_ATTENDEE, "self-hosted"],
+    ["attendee-cloud", "app.attendee.dev", "cloud"],
+  ]) {
+    initRuntime(t, { botHost, attendeeBaseUrl });
+    const label = `${botHost} ${attendeeBaseUrl}`;
+    assert.equal(attendeeHostKind({ snapshot: "effective" }), expected, label);
+    assert.equal(attendeeHostKind({ snapshot: "published" }), expected, label);
+    assert.equal(resolver.buildEnvelope().attendeeHostKind, expected, `${label}: envelope`);
+  }
+  // Published follows a saved bot_host at once (next-join); unstored again -> the URL rule.
+  initRuntime(t, { attendeeBaseUrl: SELF_HOSTED_ATTENDEE });
+  assert.equal(attendeeHostKind({ snapshot: "published" }), "self-hosted");
+  resolver.publishState({ exists: true, valid: true, parsed: settingsDocument({ attendeeBaseUrl: SELF_HOSTED_ATTENDEE, botHost: "attendee-cloud" }), revision: "e".repeat(64) });
+  assert.equal(attendeeHostKind({ snapshot: "published" }), "cloud");
+  assert.equal(attendeeHostKind({ snapshot: "effective" }), "cloud");
+  // The value alone is not "stored": a default-sourced bot_host leaves rule 2 in charge.
+  const value = t.mock.method(resolver, "getEffectiveValue", (id) => ({ bot_host: "attendee-cloud", attendee_base_url: SELF_HOSTED_ATTENDEE })[id]);
+  const source = t.mock.method(resolver, "getEffectiveSource", () => "default");
+  assert.equal(attendeeHostKind({ snapshot: "effective" }), "self-hosted");
+  value.mock.restore();
+  source.mock.restore();
+});
+
+test("#260 T19 { target }: the kind recorded at resolution; exactly one of snapshot / target", (t) => {
+  const { resolveBotHostTarget } = require("../src/attendee-endpoint");
+  initRuntime(t, { botHost: "attendee-self-hosted" });
+  const target = resolveBotHostTarget({ snapshot: "effective" });
+  resolver.publishState({ exists: true, valid: true, parsed: settingsDocument({ botHost: "attendee-cloud" }), revision: "e".repeat(64) });
+  assert.equal(attendeeHostKind({ snapshot: "effective" }), "cloud");
+  assert.equal(attendeeHostKind({ target }), "self-hosted", "the target keeps its join-time kind");
+  for (const bad of [{ snapshot: "effective", target }, {}, { target: null }, { target: { hostKind: "other" } }, { target: "attendee-cloud" }]) {
+    assert.throws(() => attendeeHostKind(bad), TypeError, JSON.stringify(bad));
+  }
+  assert.throws(() => attendeeHostKind(), TypeError);
+});
+
+async function settingsHandlerFor(t, directory, runtimeStartup) {
+  const { createSettingsHandler } = require("../src/settings/routes");
+  const { readConfigState } = require("../src/settings/store");
+  t.after(() => {
+    resolver.resetRuntimeForTest();
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+  resolver.resetRuntimeForTest();
+  resolver.initializeRuntime({ state: readConfigState(runtimeStartup.configPath), startup: runtimeStartup });
+  return createSettingsHandler({ port: 5005, readinessController: HERMETIC_READINESS });
+}
+
+test("#260 T19 an unrelated save leaves bot_host unstored and the kind unchanged; a save naming cloud stores it (D1c)", async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-bot-host-save-"));
+  const runtimeStartup = startup(directory);
+  fs.writeFileSync(runtimeStartup.configPath, `${JSON.stringify(settingsDocument({ attendeeBaseUrl: SELF_HOSTED_ATTENDEE }))}\n`, { mode: 0o600 });
+  const handler = await settingsHandlerFor(t, directory, runtimeStartup);
+  const get = settingsResponse();
+  await handler(settingsRequest("GET", "/api/settings"), get);
+  const envelope = JSON.parse(get.body);
+  assert.equal(envelope.attendeeHostKind, "self-hosted");
+  assert.equal(Object.hasOwn(envelope.fields, "bot_host"), false, "the page sees an unstored bot_host");
+  assert.equal(envelope.sources.bot_host, "default");
+
+  const unrelated = settingsResponse();
+  await handler(settingsRequest("PUT", "/api/settings", { schemaVersion: 1, revision: envelope.revision, fields: { face_audio_default: "page", face_timeline_offset_ms: -200 } }), unrelated);
+  assert.equal(unrelated.status, 200, unrelated.body);
+  const saved = JSON.parse(unrelated.body);
+  assert.equal(saved.attendeeHostKind, "self-hosted", "an unrelated save never flips the kind");
+  assert.equal(Object.hasOwn(JSON.parse(fs.readFileSync(runtimeStartup.configPath, "utf8")).attendee, "host"), false);
+
+  const cloud = settingsResponse();
+  await handler(settingsRequest("PUT", "/api/settings", { schemaVersion: 1, revision: saved.revision, fields: { bot_host: "attendee-cloud" } }), cloud);
+  assert.equal(cloud.status, 200, cloud.body);
+  const explicit = JSON.parse(cloud.body);
+  assert.equal(JSON.parse(fs.readFileSync(runtimeStartup.configPath, "utf8")).attendee.host, "attendee-cloud");
+  assert.deepEqual([explicit.sources.bot_host, explicit.fields.bot_host, explicit.attendeeHostKind], ["config", "attendee-cloud", "cloud"]);
+});
+
+test("#260 T19 bootstrap (D1b): a bootstrap-revision save of another field does not seed bot_host; naming it stores it", async (t) => {
+  for (const named of [false, true]) {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-bot-host-bootstrap-"));
+    const runtimeStartup = Object.freeze({ ...startup(directory), preDotenvEnv: Object.freeze({ ATTENDEE_API_BASE_URL: SELF_HOSTED_ATTENDEE }) });
+    const handler = await settingsHandlerFor(t, directory, runtimeStartup);
+    assert.equal(fs.existsSync(runtimeStartup.configPath), false);
+    assert.equal(Object.hasOwn(resolver.getBootstrapSeedFields(), "bot_host"), false);
+    assert.equal(resolver.buildEnvelope().attendeeHostKind, "self-hosted", "an env-only custom host is self-hosted today");
+    const put = settingsResponse();
+    const fields = { agent_display_name: "Caty", ...(named ? { bot_host: "attendee-cloud" } : {}) };
+    await handler(settingsRequest("PUT", "/api/settings", { schemaVersion: 1, revision: "bootstrap", fields }), put);
+    assert.equal(put.status, 200, put.body);
+    const stored = JSON.parse(fs.readFileSync(runtimeStartup.configPath, "utf8"));
+    assert.equal(stored.attendee?.host, named ? "attendee-cloud" : undefined, `named=${named}`);
+    assert.equal(stored.avatar?.faceTimelineOffsetMsSelfHosted, 300, "every other default is still seeded");
+    assert.equal(JSON.parse(put.body).attendeeHostKind, named ? "cloud" : "self-hosted", `named=${named}`);
+  }
+});
+
+test("#260 T22/T23 settings visibility follows the envelope value under both rules", (t) => {
+  for (const [options, expected] of [
+    [{ botHost: "attendee-self-hosted", attendeeBaseUrl: "app.attendee.dev" }, { field: true, note: false, emotion: true }],
+    [{ botHost: "attendee-cloud", attendeeBaseUrl: SELF_HOSTED_ATTENDEE }, { field: false, note: true, emotion: true }],
+    // T23: a custom legacy hostname and no new setting -> exactly as on 4a2281b (self-hosted: field shown).
+    [{ attendeeBaseUrl: SELF_HOSTED_ATTENDEE }, { field: true, note: false, emotion: true }],
+  ]) {
+    initRuntime(t, options);
+    const hostKind = resolver.buildEnvelope().attendeeHostKind;
+    assert.deepEqual(visibility({ avatar: "face-package", attendeeHostKind: hostKind }), expected, JSON.stringify(options));
+  }
+});
+
+test("#260 T19 GET /info carries the stored bot_host's kind", async (t) => {
+  for (const [options, expected] of [
+    [{ botHost: "attendee-self-hosted", faceAudioDefault: "page" }, "self-hosted"],
+    [{ botHost: "attendee-cloud", attendeeBaseUrl: SELF_HOSTED_ATTENDEE }, "cloud"],
+  ]) {
+    const info = await getInfo(t, options);
+    assert.equal(info.attendeeHostKind, expected, JSON.stringify(options));
+    assert.deepEqual(Object.keys(info), ["ttsProvider", "lang", "publicWsUrl", "ready", "fixedAgentId", "primaryAgent", "attendeeHostKind", "faceAudioDefault"]);
+  }
 });

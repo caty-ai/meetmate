@@ -156,6 +156,13 @@ function assertContractType(type, schema, id) {
     assert.equal(schema.safeParse("x".repeat(129)).success, false, `${id} header token length`);
     assert.equal(schema.safeParse("Authorization").success, false, `${id} reserved header name`);
     assert.equal(schema.safeParse("authorization").success, false, `${id} reserved header name case-insensitive`);
+  } else if (base === "attendee-endpoint-or-empty") {
+    valid = "https://attendee.example.com:8443/base"; invalid = "http://8.8.8.8";
+    assert.equal(schema.safeParse("").success, true, `${id} empty endpoint`);
+    for (const rejected of ["https://user@attendee.example.com", "https://attendee.example.com/?q=1", "https://attendee.example.com/#f", "https://attendee.example.com/base/"]) {
+      assert.equal(schema.safeParse(rejected).success, false, `${id} rejects ${rejected}`);
+    }
+    assert.equal(schema.safeParse("http://192.168.1.20:8000").success, true, `${id} private http`);
   } else if (base === "secret") {
     valid = "secret"; invalid = "";
   } else if (base === "hex-color") {
@@ -214,6 +221,8 @@ test("T12-01 registry metadata and generated mutation/effective surfaces deep-ma
       ["agent_id", { always: true }],
       ["agent_wake_words", { always: true }],
       ["attendee_api_key", { transport: ["meet", "zoom"] }],
+      ["attendee_self_hosted_api_key", { transport: ["meet", "zoom"] }],
+      ["attendee_self_hosted_url", { transport: ["meet", "zoom"] }],
       ["deepgram_api_key", { setting: "stt_provider", equals: "deepgram" }],
       ["discord_bot_token", { transport: ["discord"] }],
       ["elevenlabs_api_key", { setting: "tts_provider", equals: "elevenlabs" }],
@@ -1084,7 +1093,7 @@ test("T12-12 class-1 migration is strict, seed-only, transactional, and value-fr
   assert.equal(res.status, 200, res.body);
   const body = JSON.parse(res.body);
   assert.deepEqual(body.imported, ["soniox_api_key"]);
-  assert.deepEqual(body.skipped, ["attendee_api_key", "deepgram_api_key", "discord_bot_token", "elevenlabs_api_key", "fish_audio_api_key", "hub_room_salt", "hub_token", "openai_compatible_tts_api_key", "slack_bot_token"]);
+  assert.deepEqual(body.skipped, ["attendee_api_key", "attendee_self_hosted_api_key", "deepgram_api_key", "discord_bot_token", "elevenlabs_api_key", "fish_audio_api_key", "hub_room_salt", "hub_token", "openai_compatible_tts_api_key", "slack_bot_token"]);
   assert.equal(res.body.includes("seed-soniox"), false);
   const committed = readConfigState(configPath);
   assert.equal(committed.parsed.stt.sonioxApiKey, "seed-soniox");

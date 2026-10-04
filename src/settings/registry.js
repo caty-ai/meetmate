@@ -1,7 +1,9 @@
 "use strict";
 
+const net = require("node:net");
 const path = require("node:path");
 const { z } = require("zod");
+const { isPrivateAddress } = require("../attendee-endpoint");
 
 const characterLength = (value) => [...value].length;
 const trimmedString = (max) => z.string().trim().min(1).max(max);
@@ -74,6 +76,25 @@ function hostname(allowEmpty = false) {
     if (value !== value.trim() || value.length > 253 || value.includes(":")) return false;
     return /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))*$/i.test(value);
   }, "invalid_hostname");
+}
+
+// #260: the self-hosted Attendee endpoint. Syntactic only (no network): https or http, no
+// user-info, query or fragment, optional port 1-65535, optional base path without a trailing
+// slash. An http IP literal must be in the private set P; an http name (including localhost)
+// is judged against P at connect time by src/attendee-endpoint.js.
+function attendeeEndpoint(allowEmpty = false) {
+  return z.string().refine((value) => {
+    if (allowEmpty && value === "") return true;
+    if (value !== value.trim() || value.length > 2048 || /[?#]/.test(value) || value.endsWith("/")) return false;
+    let parsed;
+    try { parsed = new URL(value); } catch { return false; }
+    if (!["https:", "http:"].includes(parsed.protocol) || !parsed.hostname) return false;
+    if (/^[a-z][a-z0-9+.-]*:\/\/[^/]*@/i.test(value) || parsed.username || parsed.password) return false;
+    if (parsed.port !== "" && (Number(parsed.port) < 1 || Number(parsed.port) > 65535)) return false;
+    const host = parsed.hostname.replace(/^\[(.*)\]$/, "$1");
+    if (parsed.protocol === "http:" && net.isIP(host) && !isPrivateAddress(host)) return false;
+    return true;
+  }, "invalid_attendee_endpoint");
 }
 
 const absolutePath = z.string().refine((value) => value !== "" && path.isAbsolute(value) && !/^https?:/i.test(value), "invalid_absolute_path");
@@ -150,6 +171,7 @@ const SETTINGS_REGISTRY = Object.freeze([
   d("face_listen_reactions", "avatar.faceListenReactions", bool, { apply: "next-join", defaultValue: false, visibleWhen: { id: "avatar_experiment", value: "face-package" } }),
   d("face_timeline_offset_ms", "avatar.faceTimelineOffsetMs", integer(-3000, 3000), { apply: "next-join", defaultValue: 300, visibleWhen: { id: "avatar_experiment", value: "face-package" } }),
   d("face_audio_default", "avatar.faceAudioDefault", z.enum(["", "page"]), { apply: "next-join", defaultValue: "", transferable: true, visibleWhen: { id: "avatar_experiment", value: "face-package" } }),
+  d("face_timeline_offset_ms_self_hosted", "avatar.faceTimelineOffsetMsSelfHosted", integer(-3000, 3000), { apply: "next-join", defaultValue: 300, visibleWhen: { id: "avatar_experiment", value: "face-package" } }),
   d("avatar_rig_background_mode", "avatar.rigBackgroundMode", z.enum(["solid", "image", "chroma"]), { ux: "basic", apply: "live", defaultValue: "solid" }),
   d("avatar_rig_background_color", "avatar.rigBackgroundColor", z.string().regex(/^#[0-9a-f]{6}$/i), { ux: "basic", apply: "live", defaultValue: "#08111f" }),
   d("llm_provider", "llm.provider", z.enum(["openclaw", "openai-compatible"]), { ux: "basic", envAlias: "LLM_PROVIDER", defaultValue: "openclaw" }),
@@ -191,6 +213,9 @@ const SETTINGS_REGISTRY = Object.freeze([
   d("tts_cache_prewarm", "tts.cache.prewarm", bool, { envAlias: "TTS_CACHE_PREWARM", defaultValue: true }),
   d("attendee_api_key", "attendee.apiKey", secret, { ux: "basic", credential: "class-1", envAlias: "ATTENDEE_API_KEY", requiredWhen: { transport: ["meet", "zoom"] } }),
   d("attendee_base_url", "attendee.baseUrl", hostname(), { envAlias: "ATTENDEE_API_BASE_URL", defaultValue: "app.attendee.dev" }),
+  d("bot_host", "attendee.host", z.enum(["attendee-cloud", "attendee-self-hosted"]), { ux: "basic", apply: "next-join", defaultValue: "attendee-cloud", transferable: false }),
+  d("attendee_self_hosted_url", "attendee.selfHosted.url", attendeeEndpoint(true), { ux: "basic", apply: "next-join", defaultValue: "", requiredWhen: { transport: ["meet", "zoom"] }, transferable: false, visibleWhen: { id: "bot_host", value: "attendee-self-hosted" } }),
+  d("attendee_self_hosted_api_key", "attendee.selfHosted.apiKey", secret, { ux: "basic", credential: "class-1", apply: "next-join", requiredWhen: { transport: ["meet", "zoom"] }, visibleWhen: { id: "bot_host", value: "attendee-self-hosted" } }),
   d("slack_bot_token", "slack.botToken", secret, { ux: "basic", credential: "class-1", envAlias: "SLACK_BOT_TOKEN", requiredWhen: { setting: "slack_notifications_enabled", equals: true, explicit: true } }),
   d("slack_notifications_enabled", "slack.notifications.enabled", bool, { ux: "basic", envAlias: "SLACK_NOTIFY_ENABLED", defaultValue: true }),
   d("slack_notifications_target", "slack.notifications.target", z.enum(["dm", "channel"]), { ux: "basic", defaultValue: "dm" }),
@@ -294,5 +319,5 @@ module.exports = {
   ENV_DIAGNOSTICS,
   SETTINGS_REGISTRY,
   REGISTRY_BY_ID,
-  validators: Object.freeze({ absolutePath, clipRecord, hostname, httpsOrigin, secret, stringArray }),
+  validators: Object.freeze({ absolutePath, attendeeEndpoint, clipRecord, hostname, httpsOrigin, secret, stringArray }),
 };

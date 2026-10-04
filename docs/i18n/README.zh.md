@@ -61,6 +61,8 @@ npx meetmate start    # 启动服务器并打印设置界面 URL
 
 从 API 密钥到第一声问候的完整流程，见[设置指南](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md)。
 
+**机器人在哪里运行。** Meet/Zoom 机器人默认运行在 Attendee cloud 上;你可以在设置界面切换到自托管的 Attendee(拥有独立的 URL、密钥和口型偏移)。所需资源、15 fps 上限以及 Attendee 许可说明,见[选择机器人的运行位置](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#ボットの実行先を選ぶchoosing-where-the-bot-runs)。
+
 **在浏览器里配置。** 日常需要调整的一切都在同一个设置界面背后——服务商密钥、唤醒词、问候语、语音预设、连接测试——按标签页分类，每个字段都会注明改动是即时生效还是需要重启。不用克隆仓库，也不用手改 JSON；只有网关 URL/Token 这类连接值（以及少数自动生成的令牌）仍以环境变量的形式留在 `.env` 中。
 
 <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-page-basic.png" alt="设置完成后设置界面的「基本」标签页 — 绿色的加载完成横幅、核心智能体字段和 LLM 提供商" width="100%">

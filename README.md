@@ -62,6 +62,8 @@ One screen, one job: get your agent into the room. This is the dashboard, at `/`
 
 The [Setup guide](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md) walks through the same flow with more detail, from API keys to first hello.
 
+**Where the bot runs.** The Meet/Zoom bot runs on Attendee cloud by default; you can switch to a self-hosted Attendee (its own URL, key and lip-sync offset) in the settings UI — see [Choosing where the bot runs](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#ボットの実行先を選ぶchoosing-where-the-bot-runs) for the resource numbers, the 15 fps ceiling and the Attendee licence note.
+
 **Configure from the browser.** Every day-to-day setting lives behind that same settings UI — vendor keys, the wake word, the greeting, voice presets, connection tests — organized into tabs, with per-field notes on whether a change applies live or needs a restart. There's no repo to clone or JSON to hand-edit; only connection values like the gateway URL/token (and a couple of generated tokens) stay in `.env` as environment values.
 
 <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-page-basic.png" alt="The settings UI's Basic tab after setup is complete — a green loaded banner, core agent fields, and the LLM provider" width="100%">

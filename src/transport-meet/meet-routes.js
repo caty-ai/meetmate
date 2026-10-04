@@ -1215,8 +1215,10 @@ async function handleHttp(req, res) {
         return;
       }
       // #260: the Attendee target is resolved once per join; bot creation, the session's
-      // leave and chat, and rollback all use this one.
+      // leave and chat, and rollback all use this one. The page-audio default is read in the
+      // same synchronous span, so a save during the awaits below changes neither (D2a).
       joinTarget = resolveBotHostTarget({ snapshot: "effective" });
+      const joinFaceAudioDefault = getEffectiveValue("face_audio_default");
 
       if (!meetingUrl || !wsUrl) {
         writePlainResponse(res, 400, "meetingUrl と wsUrl は必須です。");
@@ -1247,14 +1249,14 @@ async function handleHttp(req, res) {
       const allowance = takePublicReadinessAllowance(req.socket?.remoteAddress);
       let identity = { ok: true, code: "CONNECTED" };
       if (allowance.allowed) {
-        await readiness.revalidateForJoin({ transport: joinTransport });
+        await readiness.revalidateForJoin({ transport: joinTransport, target: joinTarget });
         identity = await readinessProbes.checkWsUrlIdentity(wsUrl, {
           ...readinessProbeOptions,
           instanceId: readinessInstanceId,
           resolvePublicOrigin: (identityOptions) => resolvePublicOrigin({ ...readinessProbeOptions, ...identityOptions }),
         });
       }
-      const readinessState = readiness.getReadiness({ transport: joinTransport });
+      const readinessState = readiness.getReadiness({ transport: joinTransport, target: joinTarget });
       const identityBlocker = identity.code === "MISMATCH"
         ? {
             system: "tunnel",
@@ -1303,8 +1305,8 @@ async function handleHttp(req, res) {
       // #274 §3: only an absent faceAudio field consults the settings default, after the hub
       // check above, so a defaulted value never reaches a 400; when it cannot apply the join
       // silently uses the WebSocket path.
-      const faceAudioDefaultSkip = hasFaceAudio || getEffectiveValue("face_audio_default") !== "page" ? null
-        : attendeeHostKind({ snapshot: "effective" }) !== "self-hosted" ? "cloud"
+      const faceAudioDefaultSkip = hasFaceAudio || joinFaceAudioDefault !== "page" ? null
+        : attendeeHostKind({ target: joinTarget }) !== "self-hosted" ? "cloud"
           : avatarExperiment !== "face-package" ? "not-face-package"
             : sessionHubConfig?.enabled === true ? "hub"
               : "";

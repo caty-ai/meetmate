@@ -76,7 +76,11 @@
     "slack.labels.defaultAgentLabel": "Slack fallback agent label.",
     "gateway.displayName": "Gateway events client display name.",
     "soniox.smokeDefaultKeyterms": "Default keyterms for scripts/soniox-smoke.js when WAKE_WORDS is unset.",
-    "avatar.faceAudioDefault": "Page-audio default for face-package joins: empty (WebSocket, default) or page. Applies only with self-hosted Attendee, an explicit face-package join and no floor hub; an explicit join field wins."
+    "avatar.faceAudioDefault": "Page-audio default for face-package joins: empty (WebSocket, default) or page. Applies only with self-hosted Attendee, an explicit face-package join and no floor hub; an explicit join field wins.",
+    "attendee.host": "Bot host: attendee-cloud (default) or attendee-self-hosted. Leave it out to keep the pre-#260 behaviour; set it from the settings UI (applies from the next join).",
+    "attendee.selfHosted.url": "Self-hosted Attendee endpoint: https://host[:port][/base]; http:// only to a private-network address. Used only when attendee.host is attendee-self-hosted. No env alias.",
+    "attendee.selfHosted.apiKey": "Self-hosted Attendee API key (class-1, masked in the UI). Never sent to the Attendee cloud endpoint. No env alias.",
+    "avatar.faceTimelineOffsetMsSelfHosted": "Lip-sync offset in ms (-3000..3000, default 300) used when the self-hosted Attendee is selected; avatar.faceTimelineOffsetMs is the Attendee cloud value."
   },
   "prompts": {
     "voiceSystemAddendum": "",
@@ -242,7 +246,11 @@
   },
   "attendee": {
     "apiKey": "",
-    "baseUrl": "app.attendee.dev"
+    "baseUrl": "app.attendee.dev",
+    "selfHosted": {
+      "url": "",
+      "apiKey": ""
+    }
   },
   "discord": {
     "botToken": "your_discord_bot_token",
@@ -266,6 +274,7 @@
     "emotionJudge": "off",
     "faceListenReactions": false,
     "faceTimelineOffsetMs": 300,
-    "faceAudioDefault": ""
+    "faceAudioDefault": "",
+    "faceTimelineOffsetMsSelfHosted": 300
   }
 }
