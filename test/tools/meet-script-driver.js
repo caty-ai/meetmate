@@ -640,6 +640,7 @@ async function runLive(args) {
   const pendingBarges = new Map();
   let lastChunkArrival = null;
   let botId = null;
+  let chatTarget = null;
   let server = null;
   let client = null;
   let heartbeat = null;
@@ -861,12 +862,15 @@ async function runLive(args) {
         await playPcm(`anchor-${freqHz}hz-${metadata.repetition}`, pcm, metadata, signal);
       },
       sendChat: async (text) => {
-        // attendee-chat reads the base URL at module load and the API key at
-        // call time. Keep this assignment beside the lazy require; revisit if
-        // src/attendee-chat.js changes either coupling.
-        process.env.ATTENDEE_API_BASE_URL = attendeeHost(args.attendeeBase);
+        // attendee-chat takes an Attendee target; src/attendee-endpoint.js resolves it from the
+        // settings snapshot, whose env aliases (ATTENDEE_API_BASE_URL, ATTENDEE_API_KEY) are read
+        // when the settings runtime first loads. Keep this assignment before the first lazy require.
+        if (!chatTarget) {
+          process.env.ATTENDEE_API_BASE_URL = attendeeHost(args.attendeeBase);
+          chatTarget = require("../../src/attendee-endpoint.js").resolveBotHostTarget({ snapshot: "effective" });
+        }
         const { sendAttendeeChatMessage } = require("../../src/attendee-chat.js");
-        return sendAttendeeChatMessage(botId, text, apiKey);
+        return sendAttendeeChatMessage(botId, text, chatTarget);
       },
     });
     await Promise.race([scheduler.run(inputs.script), interrupted, connectionLost]);

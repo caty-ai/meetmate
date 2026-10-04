@@ -2,8 +2,33 @@ const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
 const https = require("node:https");
+const os = require("node:os");
+const path = require("node:path");
 
 const { prepareAttendeeChatMessage, sendAttendeeChatMessage } = require("../src/attendee-chat");
+const { resolveBotHostTarget } = require("../src/attendee-endpoint");
+const resolver = require("../src/settings/resolver");
+
+// A real target (src/attendee-endpoint.js) carrying the given sentinel credential.
+function chatTarget(credential) {
+  const home = path.join(os.tmpdir(), "meetmate-attendee-chat-emoji");
+  resolver.resetRuntimeForTest();
+  resolver.initializeRuntime({
+    state: { exists: true, valid: true, parsed: { attendee: { apiKey: credential, baseUrl: "attendee.test" } }, revision: "c".repeat(64), fingerprint: "chat-emoji" },
+    startup: Object.freeze({
+      preDotenvEnv: Object.freeze({}),
+      dotenvSeeds: Object.freeze({}),
+      resolvedHome: home,
+      configPath: path.join(home, "config.json"),
+      connection: Object.freeze({ openclawUrl: "", openclawToken: "", openaiApiKey: "" }),
+    }),
+  });
+  try {
+    return resolveBotHostTarget({ snapshot: "effective" });
+  } finally {
+    resolver.resetRuntimeForTest();
+  }
+}
 
 describe("prepareAttendeeChatMessage()", () => {
   it("passes through plain text unchanged", () => {
@@ -50,7 +75,7 @@ describe("prepareAttendeeChatMessage()", () => {
 
 describe("sendAttendeeChatMessage() emoji fallback", () => {
   it("resolves false for all-emoji messages without hitting the network", async () => {
-    const ok = await sendAttendeeChatMessage("bot_test_no_network", "👍🎉", "dummy-key");
+    const ok = await sendAttendeeChatMessage("bot_test_no_network", "👍🎉", chatTarget("dummy-key"));
     assert.equal(ok, false);
   });
 
@@ -61,6 +86,7 @@ describe("sendAttendeeChatMessage() emoji fallback", () => {
       { statusCode: 500, body: `token=${sentinel}` },
     ];
     const captured = [];
+    const target = chatTarget("dummy-key");
     const originalRequest = https.request;
     const originalLog = console.log;
     const originalWarn = console.warn;
@@ -85,11 +111,11 @@ describe("sendAttendeeChatMessage() emoji fallback", () => {
     console.warn = (...args) => captured.push(args.join(" "));
 
     try {
-      assert.equal(await sendAttendeeChatMessage("bot_success", "hello", "dummy-key"), true);
+      assert.equal(await sendAttendeeChatMessage("bot_success", "hello", target), true);
       assert.ok(captured.some((line) => line.includes("Attendee chat enqueue request")));
       assert.equal(captured.some((line) => line.includes(sentinel)), false);
 
-      assert.equal(await sendAttendeeChatMessage("bot_failure", "hello", "dummy-key"), false);
+      assert.equal(await sendAttendeeChatMessage("bot_failure", "hello", target), false);
       assert.ok(captured.some((line) => line.includes("Attendee chat message lost")));
       assert.equal(captured.some((line) => line.includes(sentinel)), false);
     } finally {
@@ -115,7 +141,7 @@ describe("sendAttendeeChatMessage() emoji fallback", () => {
     console.error = (...args) => captured.push(args.join(" "));
 
     try {
-      assert.equal(await sendAttendeeChatMessage("bot_error", "hello", apiKey), false);
+      assert.equal(await sendAttendeeChatMessage("bot_error", "hello", chatTarget(apiKey)), false);
     } finally {
       https.request = originalRequest;
       console.error = originalError;
@@ -143,7 +169,7 @@ describe("sendAttendeeChatMessage() emoji fallback", () => {
     console.error = (...args) => captured.push(args.join(" "));
 
     try {
-      assert.equal(await sendAttendeeChatMessage("bot_error", "hello", apiKey), false);
+      assert.equal(await sendAttendeeChatMessage("bot_error", "hello", chatTarget(apiKey)), false);
     } finally {
       https.request = originalRequest;
       console.error = originalError;
