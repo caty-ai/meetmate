@@ -271,8 +271,11 @@ function createReadinessController(options = {}) {
       return cloneRecord(records.get(system));
     }
     const startGeneration = generation(system);
-    let entry;
-    const promise = (async () => {
+    // Installed before probeFn runs, so a probe that throws synchronously still sees (and removes)
+    // its own entry.
+    const entry = { generation: startGeneration, targetId, promise: null };
+    inflight.set(system, entry);
+    entry.promise = (async () => {
       let outcome;
       try {
         outcome = await probeFn(system, { ...dependencies, ...options, ...(target ? { target } : {}) });
@@ -304,9 +307,7 @@ function createReadinessController(options = {}) {
       }
       return cloneRecord(records.get(system));
     })();
-    entry = { generation: startGeneration, targetId, promise };
-    inflight.set(system, entry);
-    return promise;
+    return entry.promise;
   }
 
   function statusFor(options) {

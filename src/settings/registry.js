@@ -79,33 +79,40 @@ function hostname(allowEmpty = false) {
 }
 
 // #260: the self-hosted Attendee endpoint. Syntactic only (no network): https or http, no
-// user-info, query or fragment, optional port 1-65535, optional base path. One trailing slash
-// is accepted and removed from the parsed (stored) value. Nothing the URL parser would rewrite
-// is accepted: no whitespace or control character anywhere, no backslash, and the written path
-// must come back unchanged (no `.` / `..` segment, no empty segment, no percent-encoding
-// rewrite). An http IP literal must be in the private set P; an http name (including
-// localhost) is judged against P at connect time by src/attendee-endpoint.js.
-const withoutTrailingSlash = (value) => (value.endsWith("/") ? value.slice(0, -1) : value);
+// user-info, query or fragment, optional port 1-65535, optional base path. Characters are an
+// allow-list checked before parsing: printable ASCII letters, digits and `- . _ ~ : / [ ] %`
+// only (brackets only around an IPv6 host), so no whitespace, control, non-ASCII (an
+// international host is written as punycode), backslash, `?`, `#` or `@`. The written path must
+// come back from the parser unchanged (no `.` / `..` segment, no empty segment, no
+// percent-encoding rewrite); one trailing slash is accepted. An http IP literal must be in the
+// private set P; an http name (including localhost) is judged against P at connect time by
+// src/attendee-endpoint.js. The parsed (stored) value is one canonical form: lower-case scheme,
+// the host as the parser returns it, the port only when not the scheme's default, the path
+// without a trailing slash — so `new URL(stored)` re-serialises to it.
+const ATTENDEE_ENDPOINT_CHARACTERS = /^[A-Za-z0-9\-._~:/[\]%]*$/;
+
+function canonicalAttendeeEndpoint(value) {
+  if (value.length > 2048 || !ATTENDEE_ENDPOINT_CHARACTERS.test(value)) return null;
+  const body = value.endsWith("/") ? value.slice(0, -1) : value;
+  const written = /^[a-z][a-z0-9+.-]*:\/\/([^/]*)(\/.*)?$/i.exec(body);
+  if (!written || body.endsWith("/")) return null;
+  const writtenPath = written[2] || "";
+  if (writtenPath.includes("//") || /[[\]]/.test(writtenPath)) return null;
+  let parsed;
+  try { parsed = new URL(body); } catch { return null; }
+  if (!["https:", "http:"].includes(parsed.protocol) || !parsed.hostname) return null;
+  if ((parsed.pathname === "/" ? "" : parsed.pathname) !== writtenPath) return null;
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) return null;
+  if (parsed.port !== "" && (Number(parsed.port) < 1 || Number(parsed.port) > 65535)) return null;
+  const host = parsed.hostname.replace(/^\[(.*)\]$/, "$1");
+  if (parsed.protocol === "http:" && net.isIP(host) && !isPrivateAddress(host)) return null;
+  return `${parsed.protocol}//${parsed.host}${writtenPath}`;
+}
 
 function attendeeEndpoint(allowEmpty = false) {
-  return z.string().refine((value) => {
-    if (allowEmpty && value === "") return true;
-    if (value.length > 2048 || /[\x00-\x20\x7f\\?#]/.test(value)) return false;
-    const body = withoutTrailingSlash(value);
-    const written = /^[a-z][a-z0-9+.-]*:\/\/[^/]*(\/.*)?$/i.exec(body);
-    if (!written || body.endsWith("/")) return false;
-    const writtenPath = written[1] || "";
-    if (writtenPath.includes("//")) return false;
-    let parsed;
-    try { parsed = new URL(body); } catch { return false; }
-    if (!["https:", "http:"].includes(parsed.protocol) || !parsed.hostname) return false;
-    if ((parsed.pathname === "/" ? "" : parsed.pathname) !== writtenPath) return false;
-    if (/^[a-z][a-z0-9+.-]*:\/\/[^/]*@/i.test(value) || parsed.username || parsed.password) return false;
-    if (parsed.port !== "" && (Number(parsed.port) < 1 || Number(parsed.port) > 65535)) return false;
-    const host = parsed.hostname.replace(/^\[(.*)\]$/, "$1");
-    if (parsed.protocol === "http:" && net.isIP(host) && !isPrivateAddress(host)) return false;
-    return true;
-  }, "invalid_attendee_endpoint").transform(withoutTrailingSlash);
+  return z.string()
+    .refine((value) => (allowEmpty && value === "") || canonicalAttendeeEndpoint(value) !== null, "invalid_attendee_endpoint")
+    .transform((value) => (value === "" ? "" : canonicalAttendeeEndpoint(value)));
 }
 
 const absolutePath = z.string().refine((value) => value !== "" && path.isAbsolute(value) && !/^https?:/i.test(value), "invalid_absolute_path");

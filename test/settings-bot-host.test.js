@@ -156,15 +156,17 @@ test("T1 registry: the four entries, their shape and order; counts 102 / class-1
 
 // ---- T2 validator and P ------------------------------------------------------------------------
 
+const T2_ACCEPTED = [
+  "", "https://attendee.example.com", "https://attendee.example.com:8443/base/path", "https://8.8.8.8", "https://[2001:db8::1]:8443",
+  "http://127.0.0.1:8000", "http://127.9.9.9", "http://[::1]:8000", "http://10.1.2.3", "http://172.16.0.1", "http://172.31.255.254",
+  "http://192.168.1.20:8000/attendee", "http://100.64.0.1", "http://100.127.255.254", "http://[fc00::1]", "http://[fdab::5]",
+  "http://[::ffff:192.168.1.5]", "http://192.168.1.20:65535", "http://localhost:8000", "http://attendee.internal",
+  "https://attendee.example.com/", "https://attendee.example.com/base/",
+];
+
 test("T2 validator matrix: https anywhere, http only to private literals or names, shape rules", () => {
   const schema = REGISTRY_BY_ID.attendee_self_hosted_url.schema;
-  const accepted = [
-    "", "https://attendee.example.com", "https://attendee.example.com:8443/base/path", "https://8.8.8.8", "https://[2001:db8::1]:8443",
-    "http://127.0.0.1:8000", "http://127.9.9.9", "http://[::1]:8000", "http://10.1.2.3", "http://172.16.0.1", "http://172.31.255.254",
-    "http://192.168.1.20:8000/attendee", "http://100.64.0.1", "http://100.127.255.254", "http://[fc00::1]", "http://[fdab::5]",
-    "http://[::ffff:192.168.1.5]", "http://192.168.1.20:65535", "http://localhost:8000", "http://attendee.internal",
-    "https://attendee.example.com/", "https://attendee.example.com/base/",
-  ];
+  const accepted = T2_ACCEPTED;
   const rejected = [
     "http://8.8.8.8", "http://100.128.0.1", "http://172.32.0.1", "http://[2001:4860:4860::8888]", "http://169.254.1.1",
     "http://[fe80::1]", "http://0.0.0.0", "http://[::]", "http://[::ffff:8.8.8.8]", "http://224.0.0.1",
@@ -250,6 +252,73 @@ test("T2 base path: stored without a trailing slash and carried to the target as
     initMemory(t, { botHost: "attendee-self-hosted", selfUrl: url });
     const target = resolveBotHostTarget({ snapshot: "published" });
     assert.deepEqual([target.basePath, target.port, target.configured], [basePath, port, true], url);
+  }
+});
+
+test("T2 allow-list: non-ASCII (Unicode spaces, zero-width and format characters, a raw IDN host), `@` and path brackets are rejected; punycode is accepted", () => {
+  const schema = REGISTRY_BY_ID.attendee_self_hosted_url.schema;
+  for (const character of [" ", "　", "​", "﻿"]) {
+    for (const value of [`https://attendee${character}.example.com`, `https://attendee.example.com/ba${character}se`, `https://attendee.example.com${character}`]) {
+      assert.equal(schema.safeParse(value).success, false, `rejects ${JSON.stringify(value)}`);
+    }
+  }
+  for (const value of ["https://bücher.example", "https://例え.example/base", "https://attendee.example.com/a[b]", "https://attendee.example.com/@x"]) {
+    assert.equal(schema.safeParse(value).success, false, `rejects ${JSON.stringify(value)}`);
+  }
+  assert.equal(schema.parse("https://xn--bcher-kva.example/"), "https://xn--bcher-kva.example");
+});
+
+// The six sample inputs of the b3 report, with their canonical stored values.
+const T2_CANONICAL = [
+  ["HTTPS://EXAMPLE.COM:443/", "https://example.com"],
+  ["https://host:443", "https://host"],
+  ["http://127.0.0.1:80/", "http://127.0.0.1"],
+  ["https://host:8443/base/", "https://host:8443/base"],
+  ["https://xn--bcher-kva.example/", "https://xn--bcher-kva.example"],
+  ["https://[fd00::1]:8443/x", "https://[fd00::1]:8443/x"],
+  ["http://host:80", "http://host"],
+  ["https://HOST/Base", "https://host/Base"],
+];
+
+test("T2 canonical form: scheme / host case, default port and trailing slash are normalised; path case is kept; storing is idempotent", () => {
+  const schema = REGISTRY_BY_ID.attendee_self_hosted_url.schema;
+  for (const [input, stored] of T2_CANONICAL) assert.equal(schema.parse(input), stored, input);
+  for (const input of [...T2_ACCEPTED, ...T2_CANONICAL.map(([value]) => value)].filter((value) => value !== "")) {
+    const stored = schema.parse(input);
+    assert.equal(schema.parse(stored), stored, `re-validating ${input} keeps ${stored}`);
+    const reparsed = new URL(stored);
+    assert.equal(reparsed.href, reparsed.pathname === "/" ? `${stored}/` : stored, `new URL(${stored}) re-serialises to it`);
+  }
+});
+
+test("T2 canonical form: the stored value, the request URL and targetId come from one form whatever the spelling", async (t) => {
+  const { createSettingsHandler } = require("../src/settings/routes");
+  for (const [input, canonical] of T2_CANONICAL.slice(0, 6)) {
+    const runtimeStartup = initFile(t, { botHost: "attendee-self-hosted" });
+    const handler = createSettingsHandler({ port: 5005, readinessController: { configure() {}, async probeGateSystems() {} } });
+    const get = await call(handler, "GET", "/api/settings");
+    const put = await call(handler, "PUT", "/api/settings", { schemaVersion: 1, revision: get.json.revision, fields: { attendee_self_hosted_url: input } });
+    assert.equal(put.status, 200, put.text);
+    const stored = JSON.parse(fs.readFileSync(runtimeStartup.configPath, "utf8")).attendee.selfHosted.url;
+    assert.equal(stored, canonical, input);
+
+    const seen = [];
+    for (const selfUrl of [input, stored]) {
+      initFile(t, { botHost: "attendee-self-hosted", selfUrl });
+      const calls = [];
+      const probing = createSettingsHandler({
+        port: 5005,
+        readinessController: createReadinessController(),
+        connections: { minIntervalMs: 0, fetchFn: async (requestUrl) => { calls.push(requestUrl); return new Response("{}"); } },
+      });
+      const envelope = (await call(probing, "GET", "/api/settings")).json;
+      await call(probing, "POST", "/api/settings/connections/attendee/test", { revision: envelope.revision });
+      seen.push({ effective: envelope.effective.attendee_self_hosted_url, calls, targetId: resolveBotHostTarget({ snapshot: "published" }).targetId });
+    }
+    assert.deepEqual(seen.map((entry) => entry.effective), [stored, stored], input);
+    assert.deepEqual(seen.map((entry) => entry.calls), [[`${stored}/api/v1/bots?page_size=1`], [`${stored}/api/v1/bots?page_size=1`]], input);
+    assert.equal(seen[0].targetId, seen[1].targetId, `${input} and ${stored} are one target`);
+    t.diagnostic(`b3-row | ${input} | accepted | ${stored} | ${seen[0].calls[0]}`);
   }
 });
 
@@ -448,6 +517,53 @@ test("T10 overlapping probes: a slower probe of an older target does not overwri
   assert.deepEqual([state.ready, state.blockers], [true, []], "the record after both settle is the newer target's");
 });
 
+// A probeFn that is not async, so a throw happens synchronously inside probeSystem.
+function syncThrowController(behaviour, clock) {
+  const calls = [];
+  const controller = createReadinessController({
+    now: () => clock.now,
+    probeFn: (system, options) => {
+      if (system !== "attendee") return { ok: true, code: "CONNECTED" };
+      calls.push(options.target.targetId);
+      return behaviour(options.target);
+    },
+  });
+  return { controller, calls };
+}
+
+test("T10 a probe whose probeFn throws synchronously, overlapping an older target's probe, writes its record and leaves no stale inflight entry", async (t) => {
+  initMemory(t, { botHost: "attendee-cloud" });
+  const clock = { now: 1_000_000 };
+  const first = resolveBotHostTarget({ snapshot: "published" });
+  let releaseFirst;
+  const { controller, calls } = syncThrowController((target) => {
+    if (target.targetId === first.targetId) return new Promise((resolve) => { releaseFirst = () => resolve({ ok: true, code: "CONNECTED" }); });
+    throw new Error("sync failure");
+  }, clock);
+  const slow = controller.probeSystem("attendee", { allowBilling: true });
+  publish({ botHost: "attendee-self-hosted" });
+  const second = resolveBotHostTarget({ snapshot: "published" });
+  await controller.probeSystem("attendee", { allowBilling: true });
+  assert.equal(controller.inspect("attendee")?.code, "PROVIDER_ERROR", "the newer probe's record is written");
+  releaseFirst();
+  await slow;
+  assert.equal(controller.inspect("attendee").code, "PROVIDER_ERROR", "the older probe writes nothing");
+  await controller.probeSystem("attendee", { allowBilling: true, force: true });
+  assert.deepEqual(calls, [first.targetId, second.targetId, second.targetId], "the following probe really runs (inflight is empty)");
+});
+
+test("T10 a probe whose probeFn throws synchronously, without overlap, writes its record and leaves no stale inflight entry", async (t) => {
+  initMemory(t, { botHost: "attendee-self-hosted" });
+  const clock = { now: 1_000_000 };
+  const target = resolveBotHostTarget({ snapshot: "published" });
+  const { controller, calls } = syncThrowController(() => { throw new Error("sync failure"); }, clock);
+  const record = await controller.probeSystem("attendee", { allowBilling: true });
+  assert.equal(record.code, "PROVIDER_ERROR");
+  assert.equal(controller.inspect("attendee").code, "PROVIDER_ERROR");
+  await controller.probeSystem("attendee", { allowBilling: true, force: true });
+  assert.deepEqual(calls, [target.targetId, target.targetId], "the following probe really runs (inflight is empty)");
+});
+
 test("T10 fieldFor points at the selected slot", (t) => {
   const { _test } = require("../src/settings/readiness");
   initMemory(t, {});
@@ -640,6 +756,9 @@ test("T17 UI notes: http URL; origin changed with a stored key; cloud slot with 
   assert.equal(renderAttendee({ ...changed, keyState: "unset" }).originNote, false);
   assert.equal(renderAttendee({ ...changed, url: `${SELF_URL}/deeper`, keyState: "set" }).originNote, false, "same origin, other path");
   assert.equal(renderAttendee({ botHost: "attendee-self-hosted", url: SELF_URL, keyState: "set" }).originNote, false);
+  for (const [loadedUrl, url] of [[SELF_URL, "HTTPS://ATTENDEE.SELF.EXAMPLE:8443/base/"], ["https://host", "https://HOST:443/"], ["http://127.0.0.1", "HTTP://127.0.0.1:80"]]) {
+    assert.equal(renderAttendee({ botHost: "attendee-self-hosted", url, loadedUrl, keyState: "set" }).originNote, false, `${url} is one canonical value with ${loadedUrl}`);
+  }
 
   const custom = renderAttendee({ botHost: "", baseUrl: "attendee.example.com" });
   assert.match(custom.customNote, /既定以外の Attendee ホスト名（attendee\.example\.com）/);
