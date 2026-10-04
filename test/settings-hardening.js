@@ -159,7 +159,7 @@ function assertContractType(type, schema, id) {
   } else if (base === "attendee-endpoint-or-empty") {
     valid = "https://attendee.example.com:8443/base"; invalid = "http://8.8.8.8";
     assert.equal(schema.safeParse("").success, true, `${id} empty endpoint`);
-    for (const rejected of ["https://user@attendee.example.com", "https://attendee.example.com/?q=1", "https://attendee.example.com/#f", "https://attendee.example.com/base/"]) {
+    for (const rejected of ["https://user@attendee.example.com", "https://attendee.example.com/?q=1", "https://attendee.example.com/#f", "https://attendee.example.com/base//"]) {
       assert.equal(schema.safeParse(rejected).success, false, `${id} rejects ${rejected}`);
     }
     assert.equal(schema.safeParse("http://192.168.1.20:8000").success, true, `${id} private http`);

@@ -163,17 +163,72 @@ test("T2 validator matrix: https anywhere, http only to private literals or name
     "http://127.0.0.1:8000", "http://127.9.9.9", "http://[::1]:8000", "http://10.1.2.3", "http://172.16.0.1", "http://172.31.255.254",
     "http://192.168.1.20:8000/attendee", "http://100.64.0.1", "http://100.127.255.254", "http://[fc00::1]", "http://[fdab::5]",
     "http://[::ffff:192.168.1.5]", "http://192.168.1.20:65535", "http://localhost:8000", "http://attendee.internal",
+    "https://attendee.example.com/", "https://attendee.example.com/base/",
   ];
   const rejected = [
     "http://8.8.8.8", "http://100.128.0.1", "http://172.32.0.1", "http://[2001:4860:4860::8888]", "http://169.254.1.1",
     "http://[fe80::1]", "http://0.0.0.0", "http://[::]", "http://[::ffff:8.8.8.8]", "http://224.0.0.1",
     "https://user@attendee.example.com", "https://user:pass@attendee.example.com", "https://attendee.example.com/?q=1",
     "https://attendee.example.com/#frag", "https://attendee.example.com#", "https://attendee.example.com:0", "https://attendee.example.com:65536",
-    " https://attendee.example.com", "https://attendee.example.com ", "https://attendee.example.com/", "https://attendee.example.com/base/",
+    " https://attendee.example.com", "https://attendee.example.com ",
     "ftp://attendee.example.com", "wss://attendee.example.com", "attendee.example.com", `https://a.example/${"x".repeat(2048)}`,
   ];
   for (const value of accepted) assert.equal(schema.safeParse(value).success, true, `accepts ${value}`);
   for (const value of rejected) assert.equal(schema.safeParse(value).success, false, `rejects ${value}`);
+});
+
+test("T2 validator: whitespace, control characters and backslashes are rejected anywhere (the parser would strip or rewrite them)", () => {
+  const schema = REGISTRY_BY_ID.attendee_self_hosted_url.schema;
+  for (const value of [
+    "https://attendee.\nexample.com", "https://attendee.example.com/ba\tse", "https://attendee.\rexample.com", "https://attendee.example.com/a b",
+    "https://attendee.example.com/a\u0000", "https://attendee.\u007fexample.com", "https://attendee.example.com/\n",
+    "https://attendee.example.com\\base", "https:\\\\attendee.example.com", "http://192.168.1.20\\",
+  ]) {
+    assert.equal(schema.safeParse(value).success, false, `rejects ${JSON.stringify(value)}`);
+  }
+});
+
+test("T2 validator: a path the parser would rewrite is rejected (dot segments, empty segments, encoded dots)", () => {
+  const schema = REGISTRY_BY_ID.attendee_self_hosted_url.schema;
+  for (const value of [
+    "https://attendee.example.com/.", "https://attendee.example.com/./", "https://attendee.example.com/..", "https://attendee.example.com/a/../b",
+    "https://attendee.example.com/a/./b", "https://attendee.example.com/a//b", "https://attendee.example.com//", "https://attendee.example.com/base//",
+    "https://attendee.example.com/a/%2e%2e/b", "https://attendee.example.com/%2E", "https://attendee.example.com/caf\u00e9", "https:attendee.example.com",
+    "https:/attendee.example.com", "https:///attendee.example.com",
+  ]) {
+    assert.equal(schema.safeParse(value).success, false, `rejects ${JSON.stringify(value)}`);
+  }
+});
+
+test("T2 trailing slash: accepted and stored without it; same target, no `//` in the request path", async (t) => {
+  const schema = REGISTRY_BY_ID.attendee_self_hosted_url.schema;
+  assert.deepEqual(["https://host/", "https://host/base/", "https://host/base", ""].map((value) => schema.parse(value)),
+    ["https://host", "https://host/base", "https://host/base", ""]);
+  const { createSettingsHandler } = require("../src/settings/routes");
+  for (const [input, stored] of [["https://host/", "https://host"], ["https://host/base/", "https://host/base"]]) {
+    const runtimeStartup = initFile(t, { botHost: "attendee-self-hosted" });
+    const handler = createSettingsHandler({ port: 5005, readinessController: { configure() {}, async probeGateSystems() {} } });
+    const get = await call(handler, "GET", "/api/settings");
+    const put = await call(handler, "PUT", "/api/settings", { schemaVersion: 1, revision: get.json.revision, fields: { attendee_self_hosted_url: input } });
+    assert.equal(put.status, 200, put.text);
+    assert.equal(JSON.parse(fs.readFileSync(runtimeStartup.configPath, "utf8")).attendee.selfHosted.url, stored, input);
+  }
+  const targets = [];
+  for (const selfUrl of [SELF_URL, `${SELF_URL}/`]) {
+    initFile(t, { botHost: "attendee-self-hosted", selfUrl });
+    const calls = [];
+    const handler = createSettingsHandler({
+      port: 5005,
+      readinessController: createReadinessController(),
+      connections: { minIntervalMs: 0, fetchFn: async (requestUrl) => { calls.push(requestUrl); return new Response("{}"); } },
+    });
+    targets.push(resolveBotHostTarget({ snapshot: "published" }).targetId);
+    const envelope = (await call(handler, "GET", "/api/settings")).json;
+    assert.deepEqual([envelope.fields.attendee_self_hosted_url, envelope.effective.attendee_self_hosted_url], [SELF_URL, SELF_URL], selfUrl);
+    await call(handler, "POST", "/api/settings/connections/attendee/test", { revision: envelope.revision });
+    assert.deepEqual(calls, [`${SELF_URL}/api/v1/bots?page_size=1`], selfUrl);
+  }
+  assert.equal(targets[0], targets[1], "the slash and no-slash spellings are one target");
 });
 
 test("T2 private set P: one implementation; mapped addresses unwrapped; everything else outside", () => {
@@ -371,6 +426,26 @@ test("T10 (f)/(g) a missing record, or another target's record whose re-probe do
   assert.deepEqual([state.ready, state.blockers, state.systems.find((system) => system.id === "attendee").code], [false, [], "PENDING"]);
   // Context-free readers (no target) keep today's view of the record.
   assert.equal(stalled.controller.getReadiness().systems.find((system) => system.id === "attendee").code, "AUTH_FAILED");
+});
+
+test("T10 overlapping probes: a slower probe of an older target does not overwrite the newer target's record", async (t) => {
+  initMemory(t, { botHost: "attendee-cloud" });
+  const clock = { now: 1_000_000 };
+  const first = resolveBotHostTarget({ snapshot: "published" });
+  let releaseFirst;
+  const { controller } = idController((target) => (target.targetId === first.targetId
+    ? new Promise((resolve) => { releaseFirst = () => resolve({ ok: false, code: "AUTH_FAILED" }); })
+    : { ok: true, code: "CONNECTED" }), clock);
+  const slow = controller.probeSystem("attendee", { allowBilling: true });
+  publish({ botHost: "attendee-self-hosted" });
+  const second = resolveBotHostTarget({ snapshot: "published" });
+  assert.notEqual(second.targetId, first.targetId);
+  await controller.probeSystem("attendee", { allowBilling: true });
+  releaseFirst();
+  await slow;
+  assert.deepEqual([controller.inspect("attendee").ok, controller.inspect("attendee").code], [true, "CONNECTED"]);
+  const state = controller.getReadiness({ transport: "meet", target: second });
+  assert.deepEqual([state.ready, state.blockers], [true, []], "the record after both settle is the newer target's");
 });
 
 test("T10 fieldFor points at the selected slot", (t) => {

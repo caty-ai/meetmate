@@ -79,22 +79,33 @@ function hostname(allowEmpty = false) {
 }
 
 // #260: the self-hosted Attendee endpoint. Syntactic only (no network): https or http, no
-// user-info, query or fragment, optional port 1-65535, optional base path without a trailing
-// slash. An http IP literal must be in the private set P; an http name (including localhost)
-// is judged against P at connect time by src/attendee-endpoint.js.
+// user-info, query or fragment, optional port 1-65535, optional base path. One trailing slash
+// is accepted and removed from the parsed (stored) value. Nothing the URL parser would rewrite
+// is accepted: no whitespace or control character anywhere, no backslash, and the written path
+// must come back unchanged (no `.` / `..` segment, no empty segment, no percent-encoding
+// rewrite). An http IP literal must be in the private set P; an http name (including
+// localhost) is judged against P at connect time by src/attendee-endpoint.js.
+const withoutTrailingSlash = (value) => (value.endsWith("/") ? value.slice(0, -1) : value);
+
 function attendeeEndpoint(allowEmpty = false) {
   return z.string().refine((value) => {
     if (allowEmpty && value === "") return true;
-    if (value !== value.trim() || value.length > 2048 || /[?#]/.test(value) || value.endsWith("/")) return false;
+    if (value.length > 2048 || /[\x00-\x20\x7f\\?#]/.test(value)) return false;
+    const body = withoutTrailingSlash(value);
+    const written = /^[a-z][a-z0-9+.-]*:\/\/[^/]*(\/.*)?$/i.exec(body);
+    if (!written || body.endsWith("/")) return false;
+    const writtenPath = written[1] || "";
+    if (writtenPath.includes("//")) return false;
     let parsed;
-    try { parsed = new URL(value); } catch { return false; }
+    try { parsed = new URL(body); } catch { return false; }
     if (!["https:", "http:"].includes(parsed.protocol) || !parsed.hostname) return false;
+    if ((parsed.pathname === "/" ? "" : parsed.pathname) !== writtenPath) return false;
     if (/^[a-z][a-z0-9+.-]*:\/\/[^/]*@/i.test(value) || parsed.username || parsed.password) return false;
     if (parsed.port !== "" && (Number(parsed.port) < 1 || Number(parsed.port) > 65535)) return false;
     const host = parsed.hostname.replace(/^\[(.*)\]$/, "$1");
     if (parsed.protocol === "http:" && net.isIP(host) && !isPrivateAddress(host)) return false;
     return true;
-  }, "invalid_attendee_endpoint");
+  }, "invalid_attendee_endpoint").transform(withoutTrailingSlash);
 }
 
 const absolutePath = z.string().refine((value) => value !== "" && path.isAbsolute(value) && !/^https?:/i.test(value), "invalid_absolute_path");

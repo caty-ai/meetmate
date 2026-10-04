@@ -281,8 +281,10 @@ function createReadinessController(options = {}) {
       } finally {
         if (!outcome || typeof outcome.code !== "string") outcome = { ok: false, code: "PROVIDER_ERROR" };
         const current = records.get(system);
+        // A probe that a newer probe (another target) replaced in `inflight` writes nothing.
         if (
           generation(system) === startGeneration
+          && inflight.get(system) === entry
           && !(current?.source === "runtime" && current.ok === false && !options.clearRuntime)
         ) {
           const record = {
