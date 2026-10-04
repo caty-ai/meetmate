@@ -35,8 +35,9 @@ function scrubLogMessage(message, secret) {
     // JSON and single-quoted credential pairs, including scheme-prefixed authorization values.
     .replace(/(["'](?:[a-z_-]*(?:token|secret|password|authorization|credential|private_key)|api(?:\s+|[_-]?)key|private-?key|pass(?:wd)?|session[_-]?id|sid)["']\s*:\s*["'])(?!\[REDACTED\])[^"']*/gi, `$1${REDACTED}`)
     // Authorization headers retain a useful scheme label. Digest parameters were handled above.
-    .replace(/(\b[a-z_-]*authorization\b\s*[:=]\s*(?:bot|bearer|basic)\s+["']?)(?!\[REDACTED\])[^\s,})"']+/gi, `$1${REDACTED}`)
-    .replace(/(\b[a-z_-]*authorization\b\s*[:=]\s*)(?!(?:digest|bot|bearer|basic)\b)(["']?)(?!\[REDACTED\])[^\s,})"']+/gi, `$1$2${REDACTED}`)
+    // `Token` (Attendee) counts as a scheme only after an authorization label, so "token <word>" prose is untouched.
+    .replace(/(\b[a-z_-]*authorization\b\s*[:=]\s*(?:bot|bearer|basic|token)\s+["']?)(?!\[REDACTED\])[^\s,})"']+/gi, `$1${REDACTED}`)
+    .replace(/(\b[a-z_-]*authorization\b\s*[:=]\s*)(?!(?:digest|bot|bearer|basic|token)\b)(["']?)(?!\[REDACTED\])[^\s,})"']+/gi, `$1$2${REDACTED}`)
     // Legacy compound labels keep their broad prefix matching; only new short labels are bounded.
     .replace(/(\b(?:[a-z_-]*(?:token|secret|password|credential|private_key)|api(?:\s+|[_-]?)key|private-?key|pass(?:wd)?|session[_-]?id|sid)\b\s*[:=]\s*(?:(?:bot|bearer|basic)\s+)?["']?)(?!\[REDACTED\])[^\s,})"']+/gi, `$1${REDACTED}`)
     .replace(/\b((?:bot|bearer|basic)\s+)(?!\[REDACTED\])[^\s,})"']+/gi, `$1${REDACTED}`);

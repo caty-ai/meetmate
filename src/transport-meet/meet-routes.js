@@ -23,7 +23,7 @@ const { SessionLifecycle } = require("../session-events");
 const { SlackNotifier } = require("../slack-notifier");
 const { summarizeConversation } = require("../summarizer");
 const { resolveAgentProfile, AgentNotFoundError } = require("../agent-profile");
-const { sendAttendeeChatMessage: sendAttendeeChatMessageShared } = require("../attendee-chat");
+const { sendAttendeeChatMessage } = require("../attendee-chat");
 const gatewayEvents = require("../gateway-events");
 const { recordEvent } = require("../metrics");
 const { scrubLogMessage } = require("../log-scrub");
@@ -50,7 +50,7 @@ const {
 } = require("../settings/resolver");
 
 // Direct environment reads below are line-pinned by settings-env-inventory.json.
-const ATTENDEE_API_BASE_URL = getEffectiveValue("attendee_base_url");
+const { attendeeRequest, resolveBotHostTarget, scrubForTarget } = require("../attendee-endpoint");
 const SESSION_GRACE_CLOSE_MS = Number(process.env.SESSION_GRACE_CLOSE_MS || 15_000);
 const ECHO_LOOP_COOLDOWN_MS = Number(process.env.ECHO_LOOP_COOLDOWN_MS || 300);
 const ECHO_GATE_CLOSED_BYPASS = String(process.env.ECHO_GATE_CLOSED_BYPASS || "false").toLowerCase() === "true";
@@ -78,7 +78,6 @@ function buildConfiguredDelegationResultsSection(results) {
   return buildDelegationResultsSection(results, _resolvedMessages.delegation);
 }
 const DG_KEY = getEffectiveValue("deepgram_api_key");
-const ATTENDEE_API_KEY = getEffectiveValue("attendee_api_key");
 
 // Single-agent mode: resolve profile once at startup from config.json
 let _agentProfile = null;
@@ -115,7 +114,7 @@ let botImageLoadStarted = false;
 const meetingSessions = new Map();
 const activeConnections = new Map();
 const meetLifecycles = new Map();
-const sessionBotIds = new Map(); // sessionId → { botId, attendeeKey }
+const sessionBotIds = new Map(); // sessionId → { botId, target } (the join-time Attendee target)
 const leavingSessionIds = new Set(); // sessions that have been requested to leave (reject reconnections)
 
 let meetSlackNotifier = null;
@@ -434,50 +433,27 @@ function parseRequestBody(req) {
   });
 }
 
-function createAttendeeBot(attendeePayload, agentAttendeeKey) {
-  const apiKey = agentAttendeeKey || ATTENDEE_API_KEY;
+async function createAttendeeBot(attendeePayload, target) {
   const { attendeeTimeoutMs } = runtimeDiagnostics();
-  return new Promise((resolve, reject) => {
-    const options = {
-      hostname: ATTENDEE_API_BASE_URL,
-      port: 443,
-      path: "/api/v1/bots",
-      method: "POST",
-      headers: {
-        Authorization: `Token ${apiKey}`,
-        "Content-Type": "application/json",
-        "Content-Length": Buffer.byteLength(attendeePayload),
-      },
-    };
-
-    const attendeeReq = https.request(options, (attendeeRes) => {
-      let responseData = "";
-      attendeeRes.on("data", (chunk) => {
-        responseData += chunk;
-      });
-      attendeeRes.on("end", () => {
-        resolve({ statusCode: attendeeRes.statusCode || 0, body: responseData });
-      });
-    });
-
-    attendeeReq.setTimeout(attendeeTimeoutMs, () => {
-      attendeeReq.destroy(new Error(`Attendee request timeout (${attendeeTimeoutMs}ms)`));
-    });
-
-    attendeeReq.on("error", reject);
-    attendeeReq.write(attendeePayload);
-    attendeeReq.end();
+  const result = await attendeeRequest(target, {
+    method: "POST",
+    path: "/api/v1/bots",
+    body: attendeePayload,
+    timeoutMs: attendeeTimeoutMs,
+    timeoutMessage: `Attendee request timeout (${attendeeTimeoutMs}ms)`,
   });
+  if (!result.ok) throw result.error;
+  return { statusCode: result.statusCode || 0, body: result.text };
 }
 
-async function createAttendeeBotWithRetry(attendeePayload, agentAttendeeKey) {
+async function createAttendeeBotWithRetry(attendeePayload, target) {
   const { attendeeRetryAttempts, attendeeRetryBaseMs } = runtimeDiagnostics();
   let lastResult = null;
   let lastError = null;
 
   for (let attempt = 1; attempt <= attendeeRetryAttempts; attempt++) {
     try {
-      const result = await createAttendeeBot(attendeePayload, agentAttendeeKey);
+      const result = await createAttendeeBot(attendeePayload, target);
       lastResult = result;
 
       if (result.statusCode >= 200 && result.statusCode < 300) {
@@ -495,7 +471,7 @@ async function createAttendeeBotWithRetry(attendeePayload, agentAttendeeKey) {
       lastError = err;
       if (attempt === attendeeRetryAttempts) break;
       const delay = attendeeRetryBaseMs * Math.pow(2, attempt - 1);
-      console.warn(`⚠️  Attendee API network retry ${attempt}/${attendeeRetryAttempts} in ${delay}ms: ${scrubErrorMessage(err, agentAttendeeKey || ATTENDEE_API_KEY)}`);
+      console.warn(`⚠️  Attendee API network retry ${attempt}/${attendeeRetryAttempts} in ${delay}ms: ${scrubForTarget(target, err && err.message ? err.message : err, { generic: true })}`);
       await sleep(delay);
     }
   }
@@ -649,35 +625,27 @@ function appendToMemory(session) {
  * Request bot to leave the meeting via Attendee API (POST /api/v1/bots/{id}/leave).
  * Resolves on response/error/timeout; unordered callers may ignore the fulfilled promise.
  */
-function requestBotLeave(botId, reason, attendeeKey, timeoutMs = 10_000) {
-  return new Promise((resolve) => {
-    let settled = false;
-    let req = null;
-    let timer = null;
-    const apiKey = attendeeKey || ATTENDEE_API_KEY;
-    const finish = (result) => { if (!settled) { settled = true; clearTimeout(timer); resolve(result); } };
-    const body = JSON.stringify({});
-    const options = { hostname: ATTENDEE_API_BASE_URL, port: 443, path: `/api/v1/bots/${botId}/leave`, method: "POST",
-      headers: { Authorization: `Token ${apiKey}`, "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) } };
-    timer = setTimeout(() => { const error = new Error("leave timeout"); req?.destroy?.(error); finish({ ok: false, error }); }, timeoutMs);
-    timer.unref?.();
-    try {
-      req = https.request(options, (res) => {
-        let data = "";
-        res.on("data", (c) => (data += c));
-        res.on("error", (error) => finish({ ok: false, error }));
-        res.on("end", () => { console.log(`🚪  Attendee bot leave (${reason}): ${botId} → ${res.statusCode} ${require("./local-avatar-session").redactLogValue(data).slice(0, 200)}`); finish({ ok: true, statusCode: res.statusCode }); });
-      });
-      req.on("error", (error) => { console.error(`❌  Attendee bot leave error (${reason}): ${scrubErrorMessage(error, apiKey)}`); finish({ ok: false, error }); });
-      req.setTimeout(timeoutMs, () => { const error = new Error(`Attendee bot leave timeout after ${timeoutMs}ms`); req.destroy?.(error); finish({ ok: false, error }); });
-      req.write(body);
-      req.end();
-    } catch (error) { console.error(`❌  Attendee bot leave error (${reason}): ${scrubErrorMessage(error, apiKey)}`); finish({ ok: false, error }); }
+function requestBotLeave(botId, reason, target, timeoutMs = 10_000) {
+  const deadline = new AbortController();
+  const timer = setTimeout(() => deadline.abort(new Error("leave timeout")), timeoutMs);
+  timer.unref?.();
+  return attendeeRequest(target, {
+    method: "POST",
+    path: `/api/v1/bots/${botId}/leave`,
+    body: JSON.stringify({}),
+    timeoutMs,
+    timeoutMessage: `Attendee bot leave timeout after ${timeoutMs}ms`,
+    signal: deadline.signal,
+  }).then((result) => {
+    clearTimeout(timer);
+    if (!result.ok) {
+      console.error(`❌  Attendee bot leave error (${reason}): ${scrubForTarget(target, result.error.message, { generic: true })}`);
+      return { ok: false, error: result.error };
+    }
+    const body = require("./local-avatar-session").redactLogValue(scrubForTarget(target, result.text, { generic: true })).slice(0, 200);
+    console.log(`🚪  Attendee bot leave (${reason}): ${botId} → ${result.statusCode} ${body}`);
+    return { ok: true, statusCode: result.statusCode };
   });
-}
-
-function sendAttendeeChatMessage(botId, message, attendeeKey) {
-  return sendAttendeeChatMessageShared(botId, message, attendeeKey || ATTENDEE_API_KEY);
 }
 
 function finalizeSessionIfInactive(sessionId) {
@@ -817,7 +785,7 @@ function createHandler(session, turnState, onAudio) {
           console.log(`💬  Bot ID未確定のためchatメッセージを破棄 (sid=${session.id})`);
           return false;
         }
-        return sendAttendeeChatMessage(botInfo.botId, text, botInfo.attendeeKey);
+        return sendAttendeeChatMessage(botInfo.botId, text, botInfo.target);
       },
     });
     return {
@@ -1152,7 +1120,7 @@ async function handleHttp(req, res) {
 
       // Call Attendee API to leave the meeting
       if (botId) {
-        requestBotLeave(botId, "web_ui_leave", botInfo?.attendeeKey);
+        requestBotLeave(botId, "web_ui_leave", botInfo.target);
       }
 
       // Transition lifecycle
@@ -1191,7 +1159,7 @@ async function handleHttp(req, res) {
     let sessionInserted = false;
     let lifecycleCreated = false;
     let launchedBotId = null;
-    let launchedBotAttendeeKey = null;
+    let joinTarget = null;
     try {
       const formData = await parseRequestBody(req);
       if (!checkJoinAuthorization(req, formData)) {
@@ -1246,6 +1214,9 @@ async function handleHttp(req, res) {
         writePlainResponse(res, 409, `既にアクティブなセッションがあります（${activeSids.join(", ")}）。退出してから再度参加してください。`);
         return;
       }
+      // #260: the Attendee target is resolved once per join; bot creation, the session's
+      // leave and chat, and rollback all use this one.
+      joinTarget = resolveBotHostTarget({ snapshot: "effective" });
 
       if (!meetingUrl || !wsUrl) {
         writePlainResponse(res, 400, "meetingUrl と wsUrl は必須です。");
@@ -1435,7 +1406,7 @@ async function handleHttp(req, res) {
         }
         if (localAvatarSession?.mode === "face-package") {
           localAvatarSession.listenReactions = getEffectiveValue("face_listen_reactions");
-          localAvatarSession.timelineOffsetMs = getEffectiveValue("face_timeline_offset_ms");
+          localAvatarSession.timelineOffsetMs = joinTarget.offsetMs;
           if (getEffectiveValue("emotion_judge") !== "off") localAvatarSession.emotionModule = await import("../emotion/index.js");
         }
         session.localAvatarSession = localAvatarSession;
@@ -1502,18 +1473,14 @@ async function handleHttp(req, res) {
         botPayload.voice_agent_settings = { url: localAvatarLaunchUrl };
       }
 
-      // Use the agent's Attendee API key if available
-      const agentAttendeeKey = profile.attendeeApiKey || null;
-
       const attendeePayload = JSON.stringify(botPayload);
-      const attendeeResult = await createAttendeeBotWithRetry(attendeePayload, agentAttendeeKey);
+      const attendeeResult = await createAttendeeBotWithRetry(attendeePayload, joinTarget);
       if (attendeeResult.statusCode >= 200 && attendeeResult.statusCode < 300) {
-        launchedBotAttendeeKey = agentAttendeeKey;
         let parsedBotId = null;
         try {
           const botData = JSON.parse(attendeeResult.body);
           if (typeof botData.id === "string" || typeof botData.id === "number") parsedBotId = botData.id;
-          if (botData.id) sessionBotIds.set(sessionId, { botId: botData.id, attendeeKey: agentAttendeeKey });
+          if (botData.id) sessionBotIds.set(sessionId, { botId: botData.id, target: joinTarget });
         } catch { /* ignore parse errors */ }
         launchedBotId = parsedBotId;
         console.log("✅  Bot起動成功:", { statusCode: attendeeResult.statusCode, botId: parsedBotId });
@@ -1526,7 +1493,7 @@ async function handleHttp(req, res) {
       }
 
       const { redactLogValue } = require("./local-avatar-session");
-      console.error("❌  Bot起動失敗:", attendeeResult.statusCode, redactLogValue(attendeeResult.body));
+      console.error("❌  Bot起動失敗:", attendeeResult.statusCode, redactLogValue(scrubForTarget(joinTarget, attendeeResult.body, { generic: true })));
       closeLocalAvatarSession(session, "bot_launch_failed");
       const failedLifecycle = meetLifecycles.get(sessionId);
       if (failedLifecycle && !failedLifecycle.isTerminal) {
@@ -1554,10 +1521,10 @@ async function handleHttp(req, res) {
         sessionInserted,
         lifecycleCreated,
         botId: launchedBotId,
-        attendeeKey: launchedBotAttendeeKey,
+        target: joinTarget,
       });
-      console.error("❌  /join-meeting error:", scrubErrorMessage(err, undefined));
-      writePlainResponse(res, 500, `join-meeting エラー: ${err.message}`);
+      console.error("❌  /join-meeting error:", scrubForTarget(joinTarget, err && err.message ? err.message : err, { generic: true }));
+      writePlainResponse(res, 500, `join-meeting エラー: ${scrubForTarget(joinTarget, err.message, { generic: false })}`);
       return;
     }
   }
@@ -1670,7 +1637,7 @@ function deleteSessionAndRelease(sessionId) {
   return true;
 }
 
-async function rollbackJoinAttempt({ sessionId, lease, leaseCreated, sessionInserted, lifecycleCreated, botId, attendeeKey }) {
+async function rollbackJoinAttempt({ sessionId, lease, leaseCreated, sessionInserted, lifecycleCreated, botId, target }) {
   if (!leaseCreated) {
     if (sessionInserted) {
       sessionBotIds.delete(sessionId);
@@ -1681,7 +1648,7 @@ async function rollbackJoinAttempt({ sessionId, lease, leaseCreated, sessionInse
   }
   try {
     if (botId) {
-      await requestBotLeave(botId, "join_failed", attendeeKey, 2_000);
+      await requestBotLeave(botId, "join_failed", target, 2_000);
     }
   } finally {
     sessionBotIds.delete(sessionId);
@@ -1943,7 +1910,7 @@ function handleWsConnection(client, req) {
       // Remove bot from meeting via Attendee API (POST /leave)
       const botInfo = sessionBotIds.get(sid);
       if (botInfo?.botId) {
-        requestBotLeave(botInfo.botId, "exit_requested", botInfo.attendeeKey);
+        requestBotLeave(botInfo.botId, "exit_requested", botInfo.target);
       }
 
       try {
