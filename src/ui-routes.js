@@ -113,8 +113,9 @@ function serveLocalAvatar(req, res, url = new URL(req.url || "/", "http://localh
     }
     if (url.pathname === "/local-avatar/face-descriptor") {
       if (req.method !== "POST" || req.headers?.origin !== session.publicOrigin
-        || !session.verifyCapability(readBearerCapability(req.headers?.authorization))) notFound();
-      else writeLocalAvatarJson(res, 200, { mountId: session.mountId, ...session.facePackage.descriptor,
+        || !session.verifyCapability(readBearerCapability(req.headers?.authorization))) { notFound(); return true; }
+      session.recordPageSeen(); // #283 face status
+      writeLocalAvatarJson(res, 200, { mountId: session.mountId, ...session.facePackage.descriptor,
         background: { ...session._background }, listenReactions: session.listenReactions,
         timelineOffsetMs: session.timelineOffsetMs, ...(session.pageAudio === true ? { pageAudio: true } : {}) });
       return true;
@@ -124,7 +125,10 @@ function serveLocalAvatar(req, res, url = new URL(req.url || "/", "http://localh
     }
     fs.readFile(path.join(PUBLIC_DIR, url.pathname.slice(1)), (err, data) => {
       if (err || !session.isLive()) return notFound();
-      if (url.pathname.endsWith(".html")) data = Buffer.from(data.toString("utf8").replace("__VISUAL_ID__", encodeURIComponent(session.visualId)));
+      if (url.pathname.endsWith(".html")) {
+        session.recordPageSeen(); // #283 face status
+        data = Buffer.from(data.toString("utf8").replace("__VISUAL_ID__", encodeURIComponent(session.visualId)));
+      }
       res.writeHead(200, localAvatarHeaders({
         "Content-Type": url.pathname.endsWith(".html") ? "text/html; charset=utf-8" : "application/javascript; charset=utf-8",
         "Content-Length": data.length,
@@ -253,6 +257,8 @@ function serveLocalAvatar(req, res, url = new URL(req.url || "/", "http://localh
     });
     // #266: the heartbeat rides every authenticated poll, including polls answered 204.
     if (state !== null && heartbeat !== undefined) session.recordHeartbeat(heartbeat);
+    // #283: every authenticated poll of the current generation, 204 answers included.
+    if (state !== null) session.recordPoll(url.searchParams.get("generation"));
     if (state === null) {
       writeLocalAvatarPlain(res, 404, "Not Found");
     } else if (state === undefined) {

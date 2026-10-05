@@ -665,14 +665,14 @@ function finalizeSessionIfInactive(sessionId) {
 }
 
 function closeLocalAvatarSession(session, reason) {
+  // #283: the meeting ending its visual side freezes the face status, also with no visual session (S0).
+  stopFaceMonitor(session);
   const localAvatarSession = session?.localAvatarSession;
   if (!localAvatarSession) return;
   session.localAvatarSession = null;
   try {
     localAvatarSession.close(reason);
-  } catch {
-    // The optional visual path must not affect meeting cleanup.
-  }
+  } catch { /* The optional visual path must not affect meeting cleanup. */ }
 }
 
 function resolveLocalAvatarPublicOrigin() {
@@ -1046,6 +1046,8 @@ async function handleHttp(req, res) {
         agentIds: session.config?.agentIds || [],
         agentDisplayNames: session.agents || [],
         ...(floor !== null || session.hubConfig?.mode === "cloud" ? { floor } : {}),
+        // #283: self-hosted face-package sessions only; every other payload is unchanged.
+        ...(session.face ? { face: { ...session.face } } : {}),
       });
     }
     res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
@@ -1422,6 +1424,11 @@ async function handleHttp(req, res) {
       session.lease = lease;
       meetingSessions.set(sessionId, session);
       sessionInserted = true;
+      // #283: face status only for a face-package join on a self-hosted Attendee (D2). A package
+      // that failed to load leaves no visual session: the join proceeds and reports it (D4).
+      if (avatarExperiment === "face-package" && attendeeHostKind({ target: joinTarget }) === "self-hosted") {
+        startFaceMonitor(session, localAvatarSession);
+      }
 
       const lifecycle = new SessionLifecycle(sessionId, "meet", {
         ...(sessionHubConfig?.mode === "cloud" ? {} : { meetingUrl }),
@@ -1518,6 +1525,7 @@ async function handleHttp(req, res) {
       );
       return;
     } catch (err) {
+      stopFaceMonitor(meetingSessions.get(sessionId));
       try { localAvatarSession?.close("join_failed"); } catch { /* visual cleanup is best-effort */ }
       await rollbackJoinAttempt({
         sessionId,
@@ -1637,6 +1645,7 @@ const { sessionUserFor } = require("../session-user");
 function deleteSessionAndRelease(sessionId) {
   const session = meetingSessions.get(sessionId);
   if (!session) return false;
+  stopFaceMonitor(session); // idempotent; normally stopped earlier, when the session started ending
   meetingSessions.delete(sessionId);
   sessionCoordinator.release(session.lease);
   return true;
@@ -1663,6 +1672,97 @@ async function rollbackJoinAttempt({ sessionId, lease, leaseCreated, sessionInse
     } else {
       sessionCoordinator.release(lease);
     }
+  }
+}
+
+// #283 stage 2: did the face arrive? One session-scoped interval derives the state from recorded
+// facts (face-status.js); no per-connection timers, so a superseded WebSocket's late close cannot
+// clear anything. Only face-package joins on a self-hosted Attendee start it.
+const FACE_MONITOR_INTERVAL_MS = 5_000;
+const FACE_ALARM_STATES = new Set(["missing", "stalled", "lost", "unavailable"]);
+const { deriveFaceStatus } = require("./face-status");
+// MM-MMT-513, derived through the registry like the other diagnostic IDs.
+const FACE_STATUS_LOG_CODE = require("../settings/diagnostic-id").diagnosticIdFor("settings", "face_not_arriving");
+let faceMonitorTimers = { setInterval, clearInterval };
+
+function setFaceMonitorTimersForTest(timers) {
+  faceMonitorTimers = timers || { setInterval, clearInterval };
+}
+
+// Holds the visual session given at join: a closed one leaves the lookup table, so it is never
+// looked up again by id. null = the package did not load (S0).
+function startFaceMonitor(session, localAvatarSession) {
+  session.faceMonitor = {
+    avatar: localAvatarSession || null,
+    packageLoaded: Boolean(localAvatarSession),
+    botFirstConnectedAt: null,
+    firstConnectedLogged: false,
+    stopped: false,
+    timer: null,
+  };
+  tickFaceMonitor(session);
+  session.faceMonitor.timer = faceMonitorTimers.setInterval(() => tickFaceMonitor(session), FACE_MONITOR_INTERVAL_MS);
+  session.faceMonitor.timer?.unref?.();
+}
+
+// Called when the session starts ending (leave request, voice exit, the meeting closing its visual
+// session, a failed join); never from a WebSocket close handler. The last face value stays frozen.
+function stopFaceMonitor(session) {
+  const monitor = session?.faceMonitor;
+  if (!monitor || monitor.stopped) return;
+  monitor.stopped = true;
+  if (monitor.timer !== null) faceMonitorTimers.clearInterval(monitor.timer);
+  monitor.timer = null;
+  monitor.avatar = null;
+}
+
+function tickFaceMonitor(session) {
+  const monitor = session.faceMonitor;
+  if (!monitor || monitor.stopped) return;
+  try {
+    // Expiry is lazy (C4): isLive() is what actually closes a visual session past its TTL.
+    monitor.avatar?.isLive();
+    const visual = monitor.avatar?.snapshot() || {};
+    const now = Date.now();
+    const next = deriveFaceStatus(now, {
+      packageLoaded: monitor.packageLoaded,
+      botFirstConnectedAt: monitor.botFirstConnectedAt,
+      botConnectedNow: activeConnections.has(session.id),
+      pageFirstSeenAt: visual.pageFirstSeenAt ?? null,
+      firstConnectedAt: visual.firstConnectedAt ?? null,
+      connectedAt: visual.connectedAt ?? null,
+      lastPollAt: visual.lastPollAt ?? null,
+      closedReason: visual.closedReason ?? null,
+    });
+    const previous = session.face || null;
+    if (previous && previous.state === next.state && previous.reason === next.reason) return;
+    session.face = { state: next.state, reason: next.reason, since: new Date(now).toISOString() };
+    logFaceTransition(session, previous, visual, now);
+  } catch {
+    // The face status is diagnostic only and must not affect the meeting.
+  }
+}
+
+function logFaceTransition(session, previous, visual, now) {
+  const { state, reason } = session.face;
+  const monitor = session.faceMonitor;
+  if (FACE_ALARM_STATES.has(state)) {
+    const since = monitor.botFirstConnectedAt === null
+      ? "bot not connected yet"
+      : `${Math.round((now - monitor.botFirstConnectedAt) / 1000)}s since bot connected`;
+    console.warn(`⚠️  ${FACE_STATUS_LOG_CODE}: face ${state} (reason=${reason}, ${since}, sid=${session.id})`);
+    return;
+  }
+  if (state !== "connected") return;
+  if (!monitor.firstConnectedLogged) {
+    monitor.firstConnectedLogged = true;
+    if (visual.pageFirstSeenAt != null && visual.firstConnectedAt != null) {
+      const seconds = Math.round((visual.firstConnectedAt - visual.pageFirstSeenAt) / 1000);
+      console.log(`🙂  face connected: page seen → ready ${seconds}s (sid=${session.id})`);
+    }
+  }
+  if (previous && FACE_ALARM_STATES.has(previous.state)) {
+    console.log(`🙂  face recovered from ${previous.state} (sid=${session.id})`);
   }
 }
 
@@ -1819,6 +1919,8 @@ function handleWsConnection(client, req) {
   }
 
   console.log(`⇦  Attendee Bot 接続: ${req.socket.remoteAddress} (sid=${sid})`);
+  // #283: the first audio-WS connect only; a reconnect does not move it.
+  if (session.faceMonitor && session.faceMonitor.botFirstConnectedAt === null) session.faceMonitor.botFirstConnectedAt = Date.now();
 
   const lifecycle = meetLifecycles.get(sid);
   if (lifecycle && lifecycle.state !== "in-progress") {
@@ -2174,5 +2276,7 @@ module.exports = {
     PAGE_AUDIO_PATH_PAD_MS,
     PAGE_AUDIO_LEAD_MS,
     ECHO_LOOP_COOLDOWN_MS,
+    FACE_MONITOR_INTERVAL_MS,
+    setFaceMonitorTimersForTest,
   },
 };

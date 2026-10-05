@@ -68,6 +68,10 @@ test("#197 unknown inputs use static or general fallbacks and ignore inherited p
   assert.equal(diagnosticIdFor("soniox", "VALUE_REQUIRED"), "MM-STT-002");
 });
 
+test("#283 the face status log ID is reserved as MM-MMT-513", () => {
+  assert.equal(diagnosticIdFor("settings", "face_not_arriving"), "MM-MMT-513");
+});
+
 test("#197 diagnostic tables are frozen append-only snapshots", () => {
 assert.deepEqual(AREA_BY_SYSTEM, {
   soniox: "STT", deepgram: "STT",
@@ -84,6 +88,7 @@ assert.deepEqual(CAUSE_BY_CODE, {
   UNREACHABLE: "200", TIMEOUT: "201", MISMATCH: "202", PROVIDER_ERROR: "209",
   RESTART_REQUIRED: "300", PENDING: "301",
   gateway_no_response: "510", agent_no_output: "511", stream_no_content: "512",
+  face_not_arriving: "513",
 });
   assert.equal(Object.isFrozen(AREA_BY_SYSTEM), true);
   assert.equal(Object.isFrozen(CAUSE_BY_CODE), true);

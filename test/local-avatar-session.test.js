@@ -1631,3 +1631,119 @@ test("pipeline late judgement is fenced by newer audio, cancellation, or abort",
     });
   }
 });
+
+// ---- #283 stage 2: face status facts (design v3.1 §2.2) --------------------
+
+test("#283 facts: connects describe the current generation, the first connect is kept, and the close reason is stored", () => {
+  let now = 10_000;
+  const issued = createLocalAvatarSession({ publicOrigin: "https://meetmate.example", now: () => now, ttlMs: 60_000 });
+  const auth = { capability: issued.capability, origin: "https://meetmate.example" };
+  const facts = () => pick(issued.session.snapshot(),
+    ["pageFirstSeenAt", "firstConnectedAt", "connectedAt", "connectedGeneration", "lastPollAt", "closedReason"]);
+  assert.deepEqual(facts(), { pageFirstSeenAt: null, firstConnectedAt: null, connectedAt: null,
+    connectedGeneration: 0, lastPollAt: null, closedReason: null });
+  assert.equal(issued.session.recordPoll(1), false, "no poll counts before a connect");
+
+  assert.equal(issued.session.recordPageSeen(), true);
+  now += 500;
+  assert.equal(issued.session.recordPageSeen(), false, "only the first sighting is kept");
+  now += 4_000;
+  const first = issued.session.connect(auth);
+  assert.equal(first.generation, 1);
+  now += 100;
+  assert.equal(issued.session.recordPoll("1"), true, "the generation arrives as a query string");
+  assert.deepEqual(facts(), { pageFirstSeenAt: 10_000, firstConnectedAt: 14_500, connectedAt: 14_500,
+    connectedGeneration: 1, lastPollAt: 14_600, closedReason: null });
+
+  now += 30_000;
+  const second = issued.session.connect(auth);
+  assert.equal(second.generation, 2);
+  assert.deepEqual(facts(), { pageFirstSeenAt: 10_000, firstConnectedAt: 14_500, connectedAt: 44_600,
+    connectedGeneration: 2, lastPollAt: null, closedReason: null }, "a reconnect resets lastPollAt and keeps firstConnectedAt");
+  now += 100;
+  for (const stale of [1, "1", 3, "abc", undefined]) assert.equal(issued.session.recordPoll(stale), false, String(stale));
+  assert.equal(facts().lastPollAt, null, "a poll of another generation never refreshes lastPollAt");
+  assert.equal(issued.session.recordPoll(2), true);
+  assert.equal(facts().lastPollAt, 44_700);
+
+  assert.equal(issued.session.close("leave_requested"), true);
+  assert.equal(facts().closedReason, "leave_requested");
+  now += 100;
+  assert.equal(issued.session.recordPoll(2), false);
+  assert.equal(facts().lastPollAt, 44_700);
+});
+
+test("#283 facts: snapshot() never triggers expiry; isLive() closes with reason expired", () => {
+  let now = 1_000;
+  const issued = createLocalAvatarSession({ publicOrigin: "https://meetmate.example", now: () => now, ttlMs: 50 });
+  issued.session.recordPageSeen();
+  now += 51;
+  const lazy = issued.session.snapshot();
+  assert.equal(lazy.closed, false);
+  assert.equal(lazy.closedReason, null);
+  assert.equal(getLocalAvatarSession(issued.session.visualId), issued.session, "still in the table until something checks");
+  assert.equal(issued.session.isLive(), false);
+  assert.deepEqual(pick(issued.session.snapshot(), ["closed", "closedReason", "pageFirstSeenAt", "firstConnectedAt"]),
+    { closed: true, closedReason: "expired", pageFirstSeenAt: 1_000, firstConnectedAt: null });
+  assert.equal(issued.session.recordPageSeen(), false);
+});
+
+test("#283 routes: valid face-host.html GET and face-descriptor POST record the page; state polls record per generation", async (t) => {
+  const os = require("node:os");
+  const { Writable } = require("node:stream");
+  const { loadPackage } = require("../src/transport-meet/face-package");
+  const { serveLocalAvatar } = require("../src/ui-routes");
+  const origin = "https://meetmate.example";
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "face-status-facts-"));
+  fs.writeFileSync(path.join(root, "face.json"), JSON.stringify({ spec: "face-package/1", entry: "index.html", supports: ["speak", "level"] }));
+  fs.writeFileSync(path.join(root, "index.html"), "<!doctype html>");
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  let now = 50_000;
+  const issue = () => {
+    const issued = createLocalAvatarSession({ publicOrigin: origin, mode: "face-package", facePackage: loadPackage(root),
+      htmlRoute: "/local-avatar/face-host.html", now: () => now });
+    t.after(() => issued.session.close());
+    return issued;
+  };
+  const route = (raw, { method = "GET", headers = {} } = {}) => new Promise((resolve, reject) => {
+    const response = new Writable({ write(_chunk, _encoding, done) { done(); } });
+    response.writeHead = (status) => { response.status = status; };
+    response.on("error", reject);
+    response.on("finish", () => resolve(response.status));
+    assert.equal(serveLocalAvatar({ url: raw, method, headers }, response, new URL(raw, origin)), true);
+  });
+  const auth = (issued, capability = issued.capability) => ({ method: "POST", headers: { authorization: `Bearer ${capability}`, origin } });
+
+  // face-host.js and a rejected descriptor are not page sightings; the HTML is.
+  const host = issue();
+  assert.equal(await route(`/local-avatar/face-host.js?v=${host.session.visualId}`), 200);
+  assert.equal(await route(`/local-avatar/face-descriptor?v=${host.session.visualId}`, auth(host, "wrong")), 404);
+  assert.equal(host.session.snapshot().pageFirstSeenAt, null);
+  assert.equal(await route(`/local-avatar/face-host.html?v=${host.session.visualId}`), 200);
+  assert.equal(host.session.snapshot().pageFirstSeenAt, 50_000);
+
+  // A valid descriptor POST alone also counts.
+  now = 60_000;
+  const descriptor = issue();
+  assert.equal(await route(`/local-avatar/face-descriptor?v=${descriptor.session.visualId}`, auth(descriptor)), 200);
+  assert.equal(descriptor.session.snapshot().pageFirstSeenAt, 60_000);
+
+  // connect, a 204 poll of the current generation, then a stale-generation poll after a reconnect.
+  const v = descriptor.session.visualId;
+  now = 61_000;
+  assert.equal(await route(`/local-avatar/state?connect=1&v=${v}`, auth(descriptor)), 200);
+  now = 61_100;
+  assert.equal(await route(`/local-avatar/state?v=${v}&generation=1&after=999`, auth(descriptor)), 204);
+  assert.equal(descriptor.session.snapshot().lastPollAt, 61_100);
+  now = 62_000;
+  assert.equal(await route(`/local-avatar/state?connect=1&v=${v}`, auth(descriptor)), 200);
+  now = 62_100;
+  assert.equal(await route(`/local-avatar/state?v=${v}&generation=1&after=999`, auth(descriptor)), 404);
+  assert.deepEqual(pick(descriptor.session.snapshot(), ["connectedAt", "connectedGeneration", "lastPollAt", "firstConnectedAt"]),
+    { connectedAt: 62_000, connectedGeneration: 2, lastPollAt: null, firstConnectedAt: 61_000 });
+  // An unauthenticated poll of the current generation does not count either.
+  assert.equal(await route(`/local-avatar/state?v=${v}&generation=2&after=999`, auth(descriptor, "wrong")), 404);
+  assert.equal(descriptor.session.snapshot().lastPollAt, null);
+  assert.equal(await route(`/local-avatar/state?v=${v}&generation=2&after=999`, auth(descriptor)), 204);
+  assert.equal(descriptor.session.snapshot().lastPollAt, 62_100);
+});

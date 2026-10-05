@@ -276,6 +276,36 @@ Amended: the pipeline still decides what is said and when it is cancelled. In th
 `faceAudio=page` mode, the meetmate-owned host page may *play* the reply for page-routed epochs.
 Face packages remain renderer-only and audio-free in every mode. The default path is unchanged.
 
+## Face status on a self-hosted Attendee (#283)
+
+meetmate cannot ask the webpage streamer whether it loaded the face; it watches what the face
+page does. For a meeting joined with the face package on a self-hosted Attendee, `GET
+/active-session` (and MCP `get_active_session`) carries `face: { state, reason, since }`, the join
+form shows one line under the status for the alarm states, and each move into an alarm state logs
+one warning `MM-MMT-513` with the state, the reason and the seconds since the bot connected.
+Attendee cloud, non-face meetings and MCP joins are not watched and their payload has no `face`
+key. The state is re-derived every 5 s and freezes once the meeting starts to leave.
+
+| State / reason | Meaning |
+|---|---|
+| `pending` | The bot has not connected its audio yet. No timeout: a bot that never joins shows only `WS 未接続`. |
+| `loading` | The streamer requested the face page; the package is still getting ready. |
+| `connected` | The face is on. The first time, an info line logs how long the page took to get ready. |
+| `missing` / `page_not_requested` | 30 s after the bot connected, the face page was never requested. The streamer is down, hung or cannot reach meetmate. |
+| `stalled` / `not_ready` | The page was requested 2 minutes ago but the package never became ready. Clears itself if it gets ready later. |
+| `missing` / `page_expired` | The page was requested, never became ready, and its access expired (5 minutes without a request). The face cannot come back in this meeting; leave and join again. |
+| `lost` / `page_stopped` | The face was on, then the page stopped for 20 s while the bot is still connected (streamer stopped or crashed). Clears itself if the page reconnects. |
+| `unavailable` / `package_load_failed` | The face package could not be loaded at join. The meeting runs with the still image; fix the package and join again. |
+
+In every alarm state the meeting shows the still image. On `missing`, check the streamer container
+first (for example `live-check.sh streamer`, if your host has that check): is it running, and
+can it reach meetmate's public origin? If you run the Attendee webpage streamer with Docker
+Compose yourself, give the service a restart policy so it comes back by itself after it exits:
+
+```yaml
+    restart: unless-stopped
+```
+
 ## Backend conversation continuity
 
 If the agent backend is a Hermes `api_server`, it is stateless per request unless

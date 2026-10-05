@@ -15,6 +15,7 @@ const CAUSE_BY_CODE = Object.freeze({
   UNREACHABLE: "200", TIMEOUT: "201", MISMATCH: "202", PROVIDER_ERROR: "209",
   RESTART_REQUIRED: "300", PENDING: "301",
   gateway_no_response: "510", agent_no_output: "511", stream_no_content: "512",
+  face_not_arriving: "513",
 });
 const STATIC_CODES = Object.freeze([
   "VALUE_REQUIRED", "VALUE_INVALID", "PROVIDER_DEPENDENCY_REQUIRED",
