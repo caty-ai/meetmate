@@ -626,6 +626,63 @@ test("T9 voice exit stops the monitor at the request, before the slow WebSocket 
   });
 });
 
+test("T9 a plain bot disconnect: session_end via the finalize grace stops the monitor (retained session, face frozen)", async (t) => {
+  await withRoutes(t, async (harness) => {
+    await joinFace(harness);
+    const client = harness.connectBot();
+    const page = harness.page();
+    page.seen();
+    const generation = page.connect();
+    harness.advance(10_000, () => page.poll(generation));
+    const frozen = await harness.face();
+    assert.equal(frozen.state, "connected");
+
+    // No leave request: the current WebSocket just closes. Retention keeps the session (and so
+    // keeps deleteSessionAndRelease's safety stop out of play): only session_end can stop it.
+    client.emit("close");
+    assert.equal(harness.timers.active.size, 1, "the WebSocket close handler itself stops nothing");
+    await new Promise((resolve) => setTimeout(resolve, 30)); // past SESSION_GRACE_CLOSE_MS
+    assert.equal(page.visual.snapshot().closedReason, "session_end");
+    assert.equal(harness.timers.active.size, 0, "session_end stopped the interval");
+    assert.equal(harness.session().faceMonitor.stopped, true);
+    const before = harness.faceLogs().length;
+    harness.advance(120_000);
+    assert.deepEqual(await harness.face(), frozen);
+    assert.equal(harness.faceLogs().length, before);
+  }, { retainDelegations: true });
+});
+
+test("T9 a stopped monitor ignores a later bot connect (botFirstConnectedAt stays unset)", async (t) => {
+  await withRoutes(t, async (harness) => {
+    await joinFace(harness);
+    harness.routes._test.finalizeSessionIfInactive(SID); // session_end before any bot connected; retained
+    assert.equal(harness.session().faceMonitor.stopped, true);
+    harness.connectBot();
+    assert.equal(harness.session().faceMonitor.botFirstConnectedAt, null);
+    harness.advance(60_000);
+    assert.deepEqual(pick(await harness.face(), ["state", "reason"]), { state: "pending", reason: null });
+    assert.deepEqual(harness.faceLogs(), []);
+  }, { retainDelegations: true });
+});
+
+test("a failing status check logs one warn per session with the error name only", async (t) => {
+  await withRoutes(t, async (harness) => {
+    await joinFace(harness);
+    harness.connectBot();
+    const visual = harness.session().localAvatarSession;
+    visual.snapshot = () => {
+      throw Object.assign(new Error(`https://meetmate.example/local-avatar/face-host.html?v=${visual.visualId}#cap=secret`),
+        { name: "TypeError" });
+    };
+    harness.advance(60_000);
+    assert.deepEqual(harness.faceLogs(), [
+      { level: "warn", text: `⚠️  ${LOG_CODE}: face status check failed (TypeError, sid=${SID})` },
+    ]);
+    assertNoSecrets(harness);
+    assert.equal(harness.timers.active.size, 1, "the monitor keeps running");
+  });
+});
+
 test("T9 an S0 session's leave leaves no interval", async (t) => {
   const missing = path.join(os.tmpdir(), `meetmate-missing-face-${crypto.randomBytes(6).toString("hex")}`);
   await withRoutes(t, async (harness) => {

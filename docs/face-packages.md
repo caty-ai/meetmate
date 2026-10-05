@@ -282,7 +282,9 @@ meetmate cannot ask the webpage streamer whether it loaded the face; it watches 
 page does. For a meeting joined with the face package on a self-hosted Attendee, `GET
 /active-session` (and MCP `get_active_session`) carries `face: { state, reason, since }`, the join
 form shows one line under the status for the alarm states, and each move into an alarm state logs
-one warning `MM-MMT-513` with the state, the reason and the seconds since the bot connected.
+one warning `MM-MMT-513` with the state, the reason and the seconds since the bot connected
+(`bot not connected yet` instead of seconds when it happens before the bot connects, as
+`unavailable` does at join).
 Attendee cloud, non-face meetings and MCP joins are not watched and their payload has no `face`
 key. The state is re-derived every 5 s and freezes once the meeting starts to leave.
 
@@ -292,8 +294,8 @@ key. The state is re-derived every 5 s and freezes once the meeting starts to le
 | `loading` | The streamer requested the face page; the package is still getting ready. |
 | `connected` | The face is on. The first time, an info line logs how long the page took to get ready. |
 | `missing` / `page_not_requested` | 30 s after the bot connected, the face page was never requested. The streamer is down, hung or cannot reach meetmate. |
-| `stalled` / `not_ready` | The page was requested 2 minutes ago but the package never became ready. Clears itself if it gets ready later. |
-| `missing` / `page_expired` | The page was requested, never became ready, and its access expired (5 minutes without a request). The face cannot come back in this meeting; leave and join again. |
+| `stalled` / `not_ready` | The page was requested 2 minutes ago but the package never became ready. Clears itself if it gets ready later. The 2-minute threshold is provisional and will be fixed after the first live measurements of how long a self-hosted face takes to get ready. |
+| `missing` / `page_expired` | The page was requested, never became ready, and its access expired (5 minutes after the page's last authenticated request). The face cannot come back in this meeting; leave and join again. |
 | `lost` / `page_stopped` | The face was on, then the page stopped for 20 s while the bot is still connected (streamer stopped or crashed). Clears itself if the page reconnects. |
 | `unavailable` / `package_load_failed` | The face package could not be loaded at join. The meeting runs with the still image; fix the package and join again. |
 

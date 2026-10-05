@@ -1697,6 +1697,7 @@ function startFaceMonitor(session, localAvatarSession) {
     packageLoaded: Boolean(localAvatarSession),
     botFirstConnectedAt: null,
     firstConnectedLogged: false,
+    failureLogged: false,
     stopped: false,
     timer: null,
   };
@@ -1738,8 +1739,14 @@ function tickFaceMonitor(session) {
     if (previous && previous.state === next.state && previous.reason === next.reason) return;
     session.face = { state: next.state, reason: next.reason, since: new Date(now).toISOString() };
     logFaceTransition(session, previous, visual, now);
-  } catch {
-    // The face status is diagnostic only and must not affect the meeting.
+  } catch (err) {
+    // The face status is diagnostic only and must not affect the meeting. One warning per
+    // session, with the error's name only: a message or stack may carry a URL.
+    if (monitor.failureLogged) return;
+    monitor.failureLogged = true;
+    try {
+      console.warn(`⚠️  ${FACE_STATUS_LOG_CODE}: face status check failed (${String(err?.name || "Error")}, sid=${session.id})`);
+    } catch { /* logging must not throw into the timer */ }
   }
 }
 
@@ -1919,8 +1926,9 @@ function handleWsConnection(client, req) {
   }
 
   console.log(`⇦  Attendee Bot 接続: ${req.socket.remoteAddress} (sid=${sid})`);
-  // #283: the first audio-WS connect only; a reconnect does not move it.
-  if (session.faceMonitor && session.faceMonitor.botFirstConnectedAt === null) session.faceMonitor.botFirstConnectedAt = Date.now();
+  // #283: the first audio-WS connect only; a reconnect does not move it, a stopped monitor stays frozen.
+  const faceMonitor = session.faceMonitor;
+  if (faceMonitor && !faceMonitor.stopped && faceMonitor.botFirstConnectedAt === null) faceMonitor.botFirstConnectedAt = Date.now();
 
   const lifecycle = meetLifecycles.get(sid);
   if (lifecycle && lifecycle.state !== "in-progress") {
