@@ -80,7 +80,9 @@
     "attendee.host": "Bot host: attendee-cloud (default) or attendee-self-hosted. Leave it out to keep the pre-#260 behaviour; set it from the settings UI (applies from the next join).",
     "attendee.selfHosted.url": "Self-hosted Attendee endpoint: https://host[:port][/base]; http:// only to a private-network address. Used only when attendee.host is attendee-self-hosted. No env alias.",
     "attendee.selfHosted.apiKey": "Self-hosted Attendee API key (class-1, masked in the UI). Never sent to the Attendee cloud endpoint. No env alias.",
-    "avatar.faceTimelineOffsetMsSelfHosted": "Lip-sync offset in ms (-3000..3000, default 300) used when the self-hosted Attendee is selected; avatar.faceTimelineOffsetMs is the Attendee cloud value."
+    "avatar.faceTimelineOffsetMsSelfHosted": "Lip-sync offset in ms (-3000..3000, default 300) used when the self-hosted Attendee is selected; avatar.faceTimelineOffsetMs is the Attendee cloud value.",
+    "server.remoteSettingsAccess": "Remote settings access through Tailscale Serve (default false, applies live). Turn it on only on the server (local settings page or this file); server.publicOrigin must be the Serve https://<name>.ts.net address and Serve (HTTP mode, tailnet only) must be the only forwarder to the port. No env alias, never exported.",
+    "server.remoteSettingsLogin": "Optional login pin for remote settings access (default empty = any identity Tailscale Serve vouches for). When set, the Tailscale login must match it, case-insensitively. Set or clear it only on the server. No env alias, never exported."
   },
   "prompts": {
     "voiceSystemAddendum": "",
@@ -260,7 +262,9 @@
   "server": {
     "port": 5005,
     "ngrokDomain": "",
-    "publicOrigin": ""
+    "publicOrigin": "",
+    "remoteSettingsAccess": false,
+    "remoteSettingsLogin": ""
   },
   "summary": {
     "enabled": true

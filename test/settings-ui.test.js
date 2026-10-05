@@ -452,3 +452,92 @@ test("reply trigger (#267) is a basic live select with a trial hint; the judge k
   assert.match(labels.jev, /試験/);
   assert.match(source, /if \(entry\.id === "agent_reply_trigger"\) return REPLY_TRIGGER_OPTION_LABELS\[value\] \|\| fallback;/);
 });
+
+// ---- #288 T9: remote settings access on the settings page ------------------------------------------
+
+test("#288 T9 banner: shown whenever remote access is on, with the origin and the remote-view mark", () => {
+  const { remoteAccessBanner, remoteAccessState } = require("../public/settings.js");
+  const origin = "https://node-a.tailnet-x.ts.net:8453";
+  assert.equal(remoteAccessBanner(remoteAccessState({ remoteAccess: { enabled: false, origin: "", via: "local" } })), null);
+  assert.equal(remoteAccessBanner(remoteAccessState({})), null);
+  const localView = remoteAccessBanner(remoteAccessState({ remoteAccess: { enabled: true, origin, via: "local" } }));
+  assert.equal(localView.title, `外から設定を変えられる状態です（経由: ${origin}）`);
+  assert.doesNotMatch(localView.message, /いま外から開いています/);
+  const remoteView = remoteAccessBanner(remoteAccessState({ remoteAccess: { enabled: true, origin, via: "remote" } }));
+  assert.equal(remoteView.title, `外から設定を変えられる状態です（経由: ${origin}）`);
+  assert.equal(remoteView.message, "いま外から開いています");
+  const source = require("node:fs").readFileSync(require.resolve("../public/settings.js"), "utf8");
+  assert.match(source, /const remoteBanner = remoteAccessBanner\(remoteAccessState\(envelope\)\);\n\s*if \(remoteBanner\) stack\.append\(notice\("warning", remoteBanner\.title, remoteBanner\.message\)\);/);
+});
+
+test("#288 T9 field modes: public_origin and the pin read-only, the switch off-only, only on a remote view", () => {
+  const { remoteAccessState, remoteFieldMode, remoteSafeChanges } = require("../public/settings.js");
+  const remote = remoteAccessState({ remoteAccess: { enabled: true, origin: "https://n.t.ts.net", via: "remote" } });
+  const localView = remoteAccessState({ remoteAccess: { enabled: true, origin: "https://n.t.ts.net", via: "local" } });
+  assert.equal(remoteFieldMode("public_origin", remote, "https://n.t.ts.net"), "readonly");
+  assert.equal(remoteFieldMode("settings_remote_login", remote, ""), "readonly");
+  assert.equal(remoteFieldMode("settings_remote_access", remote, true), "off-only");
+  assert.equal(remoteFieldMode("settings_remote_access", remote, false), "readonly");
+  assert.equal(remoteFieldMode("soniox_api_key", remote, { state: "set" }), "editable");
+  assert.equal(remoteFieldMode("agent_name", remote, "Caty"), "editable");
+  for (const id of ["public_origin", "settings_remote_login", "settings_remote_access"]) {
+    assert.equal(remoteFieldMode(id, localView, true), "editable", id);
+  }
+  // The pin and public_origin never reach a remote PUT; the switch only as false.
+  const edited = { agent_name: "A", public_origin: "https://x.ts.net", settings_remote_login: "", settings_remote_access: true };
+  assert.deepEqual(remoteSafeChanges(edited, remote), { agent_name: "A" });
+  assert.deepEqual(remoteSafeChanges({ settings_remote_access: false }, remote), { settings_remote_access: false });
+  assert.deepEqual(remoteSafeChanges(edited, localView), edited);
+});
+
+test("#288 T9 rendering: read-only and off-only fields carry the note; the cloud connect button is replaced", () => {
+  const vm = require("node:vm");
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const ui = require("../public/settings.js");
+  const source = fs.readFileSync(require.resolve("../public/settings.js"), "utf8");
+  const pick = (name) => source.match(new RegExp(`function ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n    }\\n`))[0];
+  const element = () => ({ children: [], append(...nodes) { this.children.push(...nodes); } });
+  const render = (envelope, id, value) => {
+    const wrapper = element();
+    const input = { disabled: false };
+    vm.runInNewContext(`${pick("applyRemoteFieldMode")} applyRemoteFieldMode(wrapper, input, entry, value);`, {
+      wrapper, input, entry: { id }, value, envelope, document: { createElement: element },
+      remoteFieldMode: ui.remoteFieldMode, remoteAccessState: ui.remoteAccessState, REMOTE_LOCKED_NOTE: ui.REMOTE_LOCKED_NOTE,
+    });
+    return { disabled: input.disabled, notes: wrapper.children.map((node) => node.textContent) };
+  };
+  const remote = { remoteAccess: { enabled: true, origin: "https://n.t.ts.net", via: "remote" } };
+  assert.deepEqual(render(remote, "public_origin", "https://n.t.ts.net"), { disabled: true, notes: ["サーバー本体でだけ変更できます"] });
+  assert.deepEqual(render(remote, "settings_remote_login", ""), { disabled: true, notes: ["サーバー本体でだけ変更できます"] });
+  const offOnly = render(remote, "settings_remote_access", true);
+  assert.equal(offOnly.disabled, false);
+  assert.match(offOnly.notes[0], /オフにすることだけ/);
+  assert.deepEqual(render(remote, "agent_name", "Caty"), { disabled: false, notes: [] });
+  assert.deepEqual(render({ remoteAccess: { enabled: true, origin: "", via: "local" } }, "public_origin", ""), { disabled: false, notes: [] });
+
+  const button = { hidden: false };
+  const note = { hidden: true };
+  vm.runInNewContext(`${pick("applyRemoteView")} applyRemoteView();`, {
+    envelope: remote, connectCloudButton: button, remoteAccessState: ui.remoteAccessState,
+    document: { getElementById: (id) => (id === "cloudConnectLocalOnly" ? note : null) },
+  });
+  assert.deepEqual([button.hidden, note.hidden], [true, false]);
+  const html = fs.readFileSync(path.join(__dirname, "..", "public", "settings.html"), "utf8");
+  assert.match(html, /id="cloudConnectLocalOnly" hidden>[^<]*サーバー本体でだけ/);
+  assert.match(source, /applyRemoteView\(\);\n\s*await loadCloudStatus\(false\);/);
+});
+
+test("#288 T9 save path: remote saves drop locked fields and confirm before turning the switch off", () => {
+  const source = require("node:fs").readFileSync(require.resolve("../public/settings.js"), "utf8");
+  const savePath = source.match(/async function saveSettings\([\s\S]*?\n    }\n\n    function renderConnectionButtons/)?.[0] || "";
+  assert.match(savePath, /const fields = remoteSafeChanges\(pendingChanges\(\), remote\);/);
+  assert.match(savePath, /remote\.remoteView && fields\.settings_remote_access === false\n\s*&& !window\.confirm\([^)]*\)\) return;/);
+  const { _test } = require("../src/settings/routes");
+  const manifest = _test.buildSettingsUiManifest().fields;
+  const switchEntry = manifest.find((field) => field.id === "settings_remote_access");
+  assert.deepEqual([switchEntry.ux, switchEntry.apply, switchEntry.control], ["detail", "live", "boolean"]);
+  const ids = manifest.map((field) => field.id);
+  assert.equal(ids.indexOf("settings_remote_access"), ids.indexOf("public_origin") + 1, "the switch sits next to 公開オリジン");
+  assert.match(source, /settings_remote_access: "前提: Tailscale Serve（HTTP モード・tailnet 内だけ）が、このポートへ転送している唯一のものであること。[^"]*公開オリジンが Tailscale Serve のアドレス/);
+});
