@@ -318,6 +318,47 @@ test("T1 login pin: empty admits any identity; set admits the same login in any 
   assertNotFound(await call(handler(), serve("GET", "/api/settings", { set: { "Tailscale-User-Login": "K@example.com" } })), "non-ASCII fold");
 });
 
+test("T1 login pin: a stored pin the registry rejects keeps the door shut; local is unchanged", async (t) => {
+  for (const pin of [42, null, ["a"], { a: 1 }, true, `${"a".repeat(250)}@example.com`]) {
+    const label = JSON.stringify(pin).slice(0, 24);
+    initFile(t, { remoteSettingsLogin: pin });
+    const settingsHandler = handler();
+    assertNotFound(await call(settingsHandler, serve("GET", "/api/settings")), label);
+    assert.equal((await call(settingsHandler, local("GET", "/api/settings"))).status, 200, label);
+  }
+  for (const pin of [undefined, "", LOGIN]) {
+    initFile(t, { remoteSettingsLogin: pin });
+    assert.equal((await call(handler(), serve("GET", "/api/settings"))).status, 200, String(pin));
+  }
+});
+
+// The store resolves a malformed stored pin to its "" default, so a non-string effective value
+// cannot be produced through config.json; load a fresh routes.js against a resolver whose pin is
+// replaced, and check that only unset / blank / matching pins admit.
+test("T1 login pin: an effective value that is neither a string nor unset is not remote", async (t) => {
+  initFile(t);
+  const routesPath = require.resolve("../src/settings/routes");
+  const resolverModule = require.cache[require.resolve("../src/settings/resolver")];
+  const real = resolverModule.exports;
+  const cached = require.cache[routesPath];
+  const admitWithPin = (pin) => {
+    resolverModule.exports = { ...real, getEffectiveValue: (id) => (id === "settings_remote_login" ? pin : real.getEffectiveValue(id)) };
+    delete require.cache[routesPath];
+    try {
+      return require(routesPath)._test.isRemoteAdminRequest(serve("GET", "/api/settings"));
+    } finally {
+      resolverModule.exports = real;
+      require.cache[routesPath] = cached;
+    }
+  };
+  for (const pin of [undefined, "", "   ", LOGIN, "OWNER@example.com"]) {
+    assert.equal(admitWithPin(pin)?.plane, "remote", String(pin));
+  }
+  for (const pin of [null, 42, true, [LOGIN], { login: LOGIN }, "other@example.org"]) {
+    assert.equal(admitWithPin(pin), null, JSON.stringify(pin));
+  }
+});
+
 test("T1 admission never throws and never reveals the identity header", async (t) => {
   initFile(t);
   const hostile = serve("GET", "/api/settings");
@@ -367,11 +408,25 @@ const ROUTE_TABLE = {
   "POST /api/settings/tts-preview": { url: "/api/settings/tts-preview", body: (revision) => ({ revision }) },
 };
 
+const DISPATCH_LINE = /req\.method === "([A-Z]+)" && (?:url\.pathname === "([^"]+)"|(\w+))\)/g;
+
+function routesSource() {
+  return fs.readFileSync(path.join(ROOT, "src/settings/routes.js"), "utf8");
+}
+
+function handlerBody(source = routesSource()) {
+  return source.slice(source.indexOf("return async function handleSettings"), source.indexOf("\nmodule.exports"));
+}
+
+function countOf(text, pattern) {
+  return [...text.matchAll(pattern)].length;
+}
+
 function handlerRoutes() {
-  const source = fs.readFileSync(path.join(ROOT, "src/settings/routes.js"), "utf8");
-  const body = source.slice(source.indexOf("return async function handleSettings"));
+  const source = routesSource();
+  const body = handlerBody(source);
   const routes = new Set();
-  for (const match of body.matchAll(/req\.method === "([A-Z]+)" && (?:url\.pathname === "([^"]+)"|(\w+))\)/g)) {
+  for (const match of body.matchAll(DISPATCH_LINE)) {
     const [, method, literal, variable] = match;
     if (variable === "staticAsset") {
       const assets = source.match(/const SETTINGS_ASSETS = new Map\(\[([\s\S]*?)\]\);/)[1];
@@ -387,6 +442,78 @@ test("T2 the route table names every route handleSettings dispatches", () => {
   const routes = handlerRoutes();
   assert.ok(routes.size >= 20, "the dispatch parser found the routes");
   assert.deepEqual([...routes].sort(), Object.keys(ROUTE_TABLE).sort());
+});
+
+// The parser above reads one dispatch shape. These counts make any other shape (operands swapped,
+// a switch, a destructured method or pathname, a new matcher) change a number and fail here.
+test("T2 lock: every req.method / url.pathname use and every matcher in handleSettings is accounted for", () => {
+  const body = handlerBody();
+  const dispatch = [...body.matchAll(DISPATCH_LINE)];
+  const literalDispatch = dispatch.filter((match) => match[2] !== undefined).length;
+  // req.method outside a dispatch line:
+  const methodElsewhere = [
+    'if (isAvatarPath && req.method !== "GET") requireSameOrigin', // avatar writes: Origin check before dispatch
+  ];
+  // url.pathname outside a literal dispatch line:
+  const pathnameElsewhere = [
+    'url.pathname === "/settings"', // isSettingsPath (the 404 boundary)
+    'url.pathname === "/api/settings"\n', // isSettingsPath
+    'url.pathname.startsWith("/api/settings/")\n', // isSettingsPath
+    'url.pathname.startsWith("/settings-assets/")', // isSettingsPath
+    'access.plane === "remote" && (url.pathname === "/api/settings" || url.pathname.startsWith("/api/settings/"))', // Sec-Fetch-Site gate (2 uses)
+    'const isAvatarPath = url.pathname === "/api/settings/avatar"', // avatar Origin check
+    '|| url.pathname.startsWith("/api/settings/avatar/")', // avatar Origin check
+    "SETTINGS_ASSETS.get(url.pathname)", // staticAsset dispatch variable
+    "/^\\/api\\/settings\\/avatar\\/frames\\/[^/]+\\/preview$/.test(url.pathname)", // framePreview dispatch variable
+    "const name = parseFrameName(url.pathname)", // framePreview / frameAsset name (2 uses)
+    "/^\\/api\\/settings\\/avatar\\/frames\\/[^/]+$/.test(url.pathname)", // frameAsset dispatch variable
+    "parseFrameName(url.pathname))", // DELETE frameAsset name
+    "url.pathname.match(/^\\/api\\/settings\\/audio\\/([^/]+)$/)", // audioDeleteMatch dispatch variable
+    "url.pathname.match(/^\\/api\\/settings\\/connections\\/([^/]+)\\/test$/)", // connectionMatch dispatch variable
+  ];
+  for (const snippet of [...methodElsewhere, ...pathnameElsewhere]) assert.equal(body.includes(snippet), true, snippet);
+  assert.equal(countOf(body, /req\.method/g), dispatch.length + methodElsewhere.length, "req.method uses = dispatch lines + listed");
+  assert.equal(countOf(body, /\bmethod\b/g), countOf(body, /req\.method/g), "method is only read as req.method");
+  // 14 snippets above, two of which hold two uses each.
+  assert.equal(countOf(body, /url\.pathname/g), literalDispatch + pathnameElsewhere.length + 2, "url.pathname uses = literal dispatch + listed");
+  assert.equal(countOf(body, /\bpathname\b/g), countOf(body, /url\.pathname/g), "pathname is only read as url.pathname");
+  // Matchers: isSettingsPath ×2, Sec-Fetch-Site ×1, isAvatarPath ×1 startsWith; framePreview/frameAsset .test;
+  // audioDeleteMatch/connectionMatch .match; no .exec; error-code prefix check in cloud/connect.
+  assert.equal(countOf(body, /\.startsWith\(/g), 5, ".startsWith( uses");
+  assert.equal(countOf(body, /\.test\(/g), 2, ".test( uses");
+  assert.equal(countOf(body, /\.match\(/g), 2, ".match( uses");
+  assert.equal(countOf(body, /\.exec\(/g), 0, ".exec( uses");
+});
+
+// Every config write in routes.js, named by the function or route that owns it.
+//   importSettings / migrateClass1 / PUT /api/settings — refuseRemoteBootstrap + assertRemoteFieldsAllowed (X1)
+//     on the final field map; both functions take the plane with no default (missing plane throws).
+//   saveServerOwnedCloudFields — fixed hub_* fields only; called from refreshStaleCloudConfig (local
+//     plane only) and monitorCloudConnect (cloud/connect is local-only, X2).
+//   POST cloud/refresh (saveCloudFields) / POST cloud/disconnect (deleteCloudFields) — fixed hub_*
+//     fields only, never a locked row; the bootstrap revision is refused on the remote plane.
+test("T2 lock: the config write call sites in routes.js are exactly the reviewed ones", () => {
+  const source = routesSource();
+  const owner = /function (\w+)\(|const (\w+) = (?:async )?\(|req\.method === "([A-Z]+)" && url\.pathname === "([^"]+)"/g;
+  const sites = [...source.matchAll(/\b(?:saveFields|saveCloudFields|deleteCloudFields|deleteFields)\(/g)].map((call) => {
+    const before = [...source.slice(0, call.index).matchAll(owner)].at(-1);
+    return `${call[0]} in ${before[1] || before[2] || `${before[3]} ${before[4]}`}`;
+  });
+  assert.deepEqual(sites, [
+    "saveFields( in importSettings",
+    "saveFields( in migrateClass1",
+    "saveCloudFields( in saveServerOwnedCloudFields",
+    "saveFields( in PUT /api/settings",
+    "saveCloudFields( in POST /api/settings/cloud/refresh",
+    "deleteCloudFields( in POST /api/settings/cloud/disconnect",
+  ]);
+  assert.equal(countOf(source, /saveServerOwnedCloudFields\(/g), 2, "refreshStaleCloudConfig + monitorCloudConnect");
+  assert.equal(countOf(source, /refreshStaleCloudConfig\(\)/g), 1);
+  assert.equal(source.includes('if (access.plane === "local") await refreshStaleCloudConfig();'), true);
+  assert.equal(countOf(source, /\bimportSettings\(/g), 2, "definition + the import route");
+  assert.equal(countOf(source, /\bmigrateClass1\(/g), 2, "definition + the migrate route");
+  assert.equal(source.includes("importSettings(await readJson(req, JSON_LIMIT), access)"), true);
+  assert.equal(source.includes("migrateClass1(req, settingsOptions, access)"), true);
 });
 
 test("T2 every route answers through the remote plane as it does locally", async (t) => {
@@ -625,6 +752,22 @@ test("T4 X1 import: changing public_origin is refused; the stored value passes; 
   assert.deepEqual(ownExport.json.remoteAccess, { enabled: true, origin: SERVE_ORIGIN, via: "remote" });
   before = configBytes(runtimeStartup);
   assert.equal(JSON.parse(before).agent.name, "Imported");
+});
+
+test("T4 importSettings has no default plane: a missing or unknown plane throws and saves nothing", async (t) => {
+  const runtimeStartup = initFile(t);
+  const before = configBytes(runtimeStartup);
+  const request = (revision) => ({
+    revision,
+    document: { format: "meetmate-settings", version: 1, exportedAt: "2026-10-06T00:00:00.000Z", settings: { agent_language: "en" } },
+  });
+  for (const access of [undefined, null, {}, { plane: "elsewhere", origin: SERVE_ORIGIN }]) {
+    assert.throws(() => _test.importSettings(request(revisionOf(runtimeStartup)), access), /access plane is required/, JSON.stringify(access));
+  }
+  assert.equal(configBytes(runtimeStartup), before);
+  // The same document with the plane passed explicitly does save.
+  _test.importSettings(request(revisionOf(runtimeStartup)), { plane: "local", origin: "" });
+  assert.notEqual(configBytes(runtimeStartup), before);
 });
 
 test("T4 remote revision bootstrap is refused on every route that takes a revision", async (t) => {

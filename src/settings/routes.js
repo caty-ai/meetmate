@@ -11,7 +11,7 @@ const {
   refreshHubConfigIfStale,
 } = require("../cloud-setup");
 const { EMOTION_TAGS } = require("../messages");
-const { MASK, SETTINGS_REGISTRY } = require("./registry");
+const { MASK, REGISTRY_BY_ID, SETTINGS_REGISTRY } = require("./registry");
 const {
   buildEnvelope,
   getBootstrapSeedFields,
@@ -334,7 +334,14 @@ function remoteAdmission(req) {
   if (asciiLower(values.get("x-forwarded-host")) !== allowance.authority) return null;
   const login = values.get("tailscale-user-login").trim();
   if (login === "") return null;
+  // The resolver turns a malformed stored pin into its "" default (any login); a stored value the
+  // registry rejects keeps the door shut until it is corrected on the server.
+  const pinEntry = REGISTRY_BY_ID.settings_remote_login;
+  const storedPin = readPath(getRawConfig(), pinEntry.path);
+  if (storedPin !== undefined && !pinEntry.schema.safeParse(storedPin).success) return null;
   const pin = getEffectiveValue("settings_remote_login");
+  // A pin that is neither unset nor a string is malformed: fail closed rather than admit any login.
+  if (pin !== undefined && typeof pin !== "string") return null;
   if (typeof pin === "string" && pin.trim() !== "" && asciiLower(login) !== asciiLower(pin.trim())) return null;
   if (!isTailnetAddress(values.get("x-forwarded-for"))) return null;
   return Object.freeze({ plane: "remote", origin: allowance.origin });
@@ -493,6 +500,10 @@ function prepareMutationFields(fields, revision) {
 // #288 X1: on the remote plane, the bootstrap revision is refused at every parse site that can
 // see it (it would merge seed fields that never appear in the request).
 function refuseRemoteBootstrap(access, revision) {
+  // No default plane: a caller that forgets to pass it must not fall back to the local rules.
+  if (!access || (access.plane !== "local" && access.plane !== "remote")) {
+    throw new Error("settings access plane is required");
+  }
   if (access.plane === "remote" && revision === "bootstrap") {
     throw settingsError("SETTINGS_REMOTE_FIELD_LOCKED", "This setting can only be changed on the server", 403);
   }
@@ -568,7 +579,7 @@ function sameValue(left, right) {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
-function importSettings(value, access = LOCAL_ACCESS) {
+function importSettings(value, access) {
   const request = parseImportRequest(value);
   const raw = getRawConfig();
   const fields = {};
@@ -595,7 +606,7 @@ function importSettings(value, access = LOCAL_ACCESS) {
   };
 }
 
-async function migrateClass1(req, options, access = LOCAL_ACCESS) {
+async function migrateClass1(req, options, access) {
   const body = parseStrict(revisionOnlySchema, await readJson(req, JSON_LIMIT));
   refuseRemoteBootstrap(access, body.revision);
   const startup = getRuntime().startup;
