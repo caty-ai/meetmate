@@ -925,3 +925,137 @@ test("#274 T5 host switch: a stored page default is used on self-hosted and unus
   assert.deepEqual(logs.filter((line) => line.includes("page audio")),
     ["🔊  page audio on (source=default)", "🔊  page audio default skipped (reason=cloud)"]);
 });
+
+// #260 PR B: the bot host setting through the real join route (re-base delta T20, T22, T23).
+const SELF_KEY = "SENTINEL-SELF-pa1";
+const SELF_ENDPOINT = "https://attendee.self.example:8443";
+
+// Replaces the settings document's attendee and avatar sections and restarts the runtime.
+function rebootAttendee({ attendee = {}, avatar = {} }) {
+  const runtime = resolver.getRuntime();
+  const parsed = structuredClone(runtime.published.raw);
+  parsed.attendee = { ...parsed.attendee, ...attendee };
+  parsed.avatar = { ...parsed.avatar, ...avatar };
+  resolver.initializeRuntime({ state: { exists: true, valid: true, parsed, revision: "b".repeat(64), fingerprint: "page-audio" }, startup: runtime.startup, serverPort: 5005 });
+  return parsed;
+}
+
+// Records every Attendee request's destination and Authorization (the harness mock still answers).
+function captureAttendeeRequests() {
+  const records = [];
+  const inner = https.request;
+  https.request = (requestOptions, callback) => {
+    records.push({ hostname: requestOptions.hostname, port: requestOptions.port, path: requestOptions.path, authorization: requestOptions.headers?.Authorization });
+    return inner(requestOptions, callback);
+  };
+  return records;
+}
+
+async function hostJoin(t, { attendee, avatar, during }) {
+  const logs = [];
+  const log = t.mock.method(console, "log", (...args) => { logs.push(args.join(" ")); });
+  let result;
+  try {
+    await withRoutes(t, async (harness) => {
+      const parsed = rebootAttendee({ attendee, avatar });
+      for (const system of readiness.gateSystems()) readiness.setProbeObservation(system, { ok: true, code: "CONNECTED" });
+      const requests = captureAttendeeRequests();
+      const original = readiness.revalidateForJoin;
+      let changed = false;
+      if (during) {
+        // A save lands at the join's first await, after the target was resolved.
+        readiness.revalidateForJoin = async (options) => {
+          resolver.publishState({ exists: true, valid: true, parsed: { ...parsed, attendee: { ...parsed.attendee, ...during.attendee }, avatar: { ...parsed.avatar, ...during.avatar } }, revision: "c".repeat(64) });
+          readiness.setProbeObservation("attendee", { ok: true, code: "CONNECTED" });
+          changed = true;
+          return original(options);
+        };
+      }
+      let response;
+      try {
+        response = await harness.join({ avatarExperiment: "face-package" });
+      } finally {
+        readiness.revalidateForJoin = original;
+      }
+      const session = harness.routes._test.meetingSessions.get(FIXED_SESSION_ID);
+      result = {
+        status: response.statusCode,
+        text: response.text,
+        changed,
+        create: requests.find((record) => record.path.endsWith("/api/v1/bots")),
+        offset: session?.localAvatarSession?.timelineOffsetMs,
+        pageAudio: session?.localAvatarSession?.pageAudio === true,
+        kindAfter: require("../src/attendee-host-kind").attendeeHostKind({ snapshot: "effective" }),
+        logs: logs.filter((line) => line.includes("page audio")),
+      };
+    }, { hub: HUB_OFF });
+  } finally {
+    log.mock.restore();
+  }
+  return result;
+}
+
+test("#260 T20 one decision per join: a save during the join changes neither destination, key, offset, kind nor the default applied", async (t) => {
+  const selfHosted = { host: "attendee-self-hosted", selfHosted: { url: SELF_ENDPOINT, apiKey: SELF_KEY } };
+  const toSelf = await hostJoin(t, {
+    attendee: { host: "attendee-cloud", selfHosted: selfHosted.selfHosted },
+    avatar: { faceAudioDefault: "", faceTimelineOffsetMs: 250, faceTimelineOffsetMsSelfHosted: -700 },
+    during: { attendee: { host: "attendee-self-hosted" }, avatar: { faceAudioDefault: "page" } },
+  });
+  assert.equal(toSelf.status, 200, toSelf.text);
+  assert.equal(toSelf.changed, true, "the save really landed mid-join");
+  assert.equal(toSelf.kindAfter, "self-hosted", "the settings now say self-hosted");
+  assert.deepEqual(toSelf.create, { hostname: "app.attendee.dev", port: 443, path: "/api/v1/bots", authorization: "Token attendee-secret" });
+  assert.equal(toSelf.offset, 250);
+  assert.equal(toSelf.pageAudio, false);
+  assert.deepEqual(toSelf.logs, [], "the join-time default was empty: no page-audio decision at all");
+
+  const toCloud = await hostJoin(t, {
+    attendee: selfHosted,
+    avatar: { faceAudioDefault: "page", faceTimelineOffsetMs: 250, faceTimelineOffsetMsSelfHosted: -700 },
+    during: { attendee: { host: "attendee-cloud" }, avatar: { faceAudioDefault: "" } },
+  });
+  assert.equal(toCloud.status, 200, toCloud.text);
+  assert.equal(toCloud.changed, true);
+  assert.equal(toCloud.kindAfter, "cloud");
+  assert.deepEqual(toCloud.create, { hostname: "attendee.self.example", port: 8443, path: "/api/v1/bots", authorization: `Token ${SELF_KEY}` });
+  assert.equal(toCloud.offset, -700);
+  assert.equal(toCloud.pageAudio, true);
+  assert.deepEqual(toCloud.logs, ["🔊  page audio on (source=default)"]);
+});
+
+test("#260 T22 #274 under rule 1: self-hosted selected uses page audio on a cloud-default hostname; explicit cloud skips it", async (t) => {
+  const self = await hostJoin(t, {
+    attendee: { host: "attendee-self-hosted", baseUrl: "app.attendee.dev", selfHosted: { url: SELF_ENDPOINT, apiKey: SELF_KEY } },
+    avatar: { faceAudioDefault: "page" },
+  });
+  assert.equal(self.status, 200, self.text);
+  assert.equal(self.pageAudio, true);
+  assert.deepEqual(self.logs, ["🔊  page audio on (source=default)"]);
+  assert.equal(self.create.authorization, `Token ${SELF_KEY}`);
+
+  const cloud = await hostJoin(t, {
+    attendee: { host: "attendee-cloud", baseUrl: SELF_HOSTED_ATTENDEE },
+    avatar: { faceAudioDefault: "page" },
+  });
+  assert.equal(cloud.status, 200, cloud.text);
+  assert.equal(cloud.pageAudio, false);
+  assert.deepEqual(cloud.logs, ["🔊  page audio default skipped (reason=cloud)"]);
+  assert.deepEqual(cloud.create, { hostname: SELF_HOSTED_ATTENDEE, port: 443, path: "/api/v1/bots", authorization: "Token attendee-secret" });
+});
+
+test("#260 T23 Done when 12: a custom legacy hostname and no new setting behave exactly as before", async (t) => {
+  const legacy = await hostJoin(t, {
+    attendee: { baseUrl: SELF_HOSTED_ATTENDEE },
+    avatar: { faceAudioDefault: "page", faceTimelineOffsetMs: -700 },
+  });
+  assert.equal(legacy.status, 200, legacy.text);
+  // destination and key: the legacy entries over https:443, as on 4a2281b
+  assert.deepEqual(legacy.create, { hostname: SELF_HOSTED_ATTENDEE, port: 443, path: "/api/v1/bots", authorization: "Token attendee-secret" });
+  // offset: face_timeline_offset_ms
+  assert.equal(legacy.offset, -700);
+  // host kind: self-hosted (the URL rule), so the page-audio default applies
+  assert.equal(legacy.kindAfter, "self-hosted");
+  assert.equal(legacy.pageAudio, true);
+  assert.deepEqual(legacy.logs, ["🔊  page audio on (source=default)"]);
+});

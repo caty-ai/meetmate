@@ -1,7 +1,9 @@
 "use strict";
 
+const net = require("node:net");
 const path = require("node:path");
 const { z } = require("zod");
+const { isPrivateAddress } = require("../attendee-endpoint");
 
 const characterLength = (value) => [...value].length;
 const trimmedString = (max) => z.string().trim().min(1).max(max);
@@ -74,6 +76,43 @@ function hostname(allowEmpty = false) {
     if (value !== value.trim() || value.length > 253 || value.includes(":")) return false;
     return /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))*$/i.test(value);
   }, "invalid_hostname");
+}
+
+// #260: the self-hosted Attendee endpoint. Syntactic only (no network): https or http, no
+// user-info, query or fragment, optional port 1-65535, optional base path. Characters are an
+// allow-list checked before parsing: printable ASCII letters, digits and `- . _ ~ : / [ ] %`
+// only (brackets only around an IPv6 host), so no whitespace, control, non-ASCII (an
+// international host is written as punycode), backslash, `?`, `#` or `@`. The written path must
+// come back from the parser unchanged (no `.` / `..` segment, no empty segment, no
+// percent-encoding rewrite); one trailing slash is accepted. An http IP literal must be in the
+// private set P; an http name (including localhost) is judged against P at connect time by
+// src/attendee-endpoint.js. The parsed (stored) value is one canonical form: lower-case scheme,
+// the host as the parser returns it, the port only when not the scheme's default, the path
+// without a trailing slash — so `new URL(stored)` re-serialises to it.
+const ATTENDEE_ENDPOINT_CHARACTERS = /^[A-Za-z0-9\-._~:/[\]%]*$/;
+
+function canonicalAttendeeEndpoint(value) {
+  if (value.length > 2048 || !ATTENDEE_ENDPOINT_CHARACTERS.test(value)) return null;
+  const body = value.endsWith("/") ? value.slice(0, -1) : value;
+  const written = /^[a-z][a-z0-9+.-]*:\/\/([^/]*)(\/.*)?$/i.exec(body);
+  if (!written || body.endsWith("/")) return null;
+  const writtenPath = written[2] || "";
+  if (writtenPath.includes("//") || /[[\]]/.test(writtenPath)) return null;
+  let parsed;
+  try { parsed = new URL(body); } catch { return null; }
+  if (!["https:", "http:"].includes(parsed.protocol) || !parsed.hostname) return null;
+  if ((parsed.pathname === "/" ? "" : parsed.pathname) !== writtenPath) return null;
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) return null;
+  if (parsed.port !== "" && (Number(parsed.port) < 1 || Number(parsed.port) > 65535)) return null;
+  const host = parsed.hostname.replace(/^\[(.*)\]$/, "$1");
+  if (parsed.protocol === "http:" && net.isIP(host) && !isPrivateAddress(host)) return null;
+  return `${parsed.protocol}//${parsed.host}${writtenPath}`;
+}
+
+function attendeeEndpoint(allowEmpty = false) {
+  return z.string()
+    .refine((value) => (allowEmpty && value === "") || canonicalAttendeeEndpoint(value) !== null, "invalid_attendee_endpoint")
+    .transform((value) => (value === "" ? "" : canonicalAttendeeEndpoint(value)));
 }
 
 const absolutePath = z.string().refine((value) => value !== "" && path.isAbsolute(value) && !/^https?:/i.test(value), "invalid_absolute_path");
@@ -150,6 +189,7 @@ const SETTINGS_REGISTRY = Object.freeze([
   d("face_listen_reactions", "avatar.faceListenReactions", bool, { apply: "next-join", defaultValue: false, visibleWhen: { id: "avatar_experiment", value: "face-package" } }),
   d("face_timeline_offset_ms", "avatar.faceTimelineOffsetMs", integer(-3000, 3000), { apply: "next-join", defaultValue: 300, visibleWhen: { id: "avatar_experiment", value: "face-package" } }),
   d("face_audio_default", "avatar.faceAudioDefault", z.enum(["", "page"]), { apply: "next-join", defaultValue: "", transferable: true, visibleWhen: { id: "avatar_experiment", value: "face-package" } }),
+  d("face_timeline_offset_ms_self_hosted", "avatar.faceTimelineOffsetMsSelfHosted", integer(-3000, 3000), { apply: "next-join", defaultValue: 300, visibleWhen: { id: "avatar_experiment", value: "face-package" } }),
   d("avatar_rig_background_mode", "avatar.rigBackgroundMode", z.enum(["solid", "image", "chroma"]), { ux: "basic", apply: "live", defaultValue: "solid" }),
   d("avatar_rig_background_color", "avatar.rigBackgroundColor", z.string().regex(/^#[0-9a-f]{6}$/i), { ux: "basic", apply: "live", defaultValue: "#08111f" }),
   d("llm_provider", "llm.provider", z.enum(["openclaw", "openai-compatible"]), { ux: "basic", envAlias: "LLM_PROVIDER", defaultValue: "openclaw" }),
@@ -191,6 +231,9 @@ const SETTINGS_REGISTRY = Object.freeze([
   d("tts_cache_prewarm", "tts.cache.prewarm", bool, { envAlias: "TTS_CACHE_PREWARM", defaultValue: true }),
   d("attendee_api_key", "attendee.apiKey", secret, { ux: "basic", credential: "class-1", envAlias: "ATTENDEE_API_KEY", requiredWhen: { transport: ["meet", "zoom"] } }),
   d("attendee_base_url", "attendee.baseUrl", hostname(), { envAlias: "ATTENDEE_API_BASE_URL", defaultValue: "app.attendee.dev" }),
+  d("bot_host", "attendee.host", z.enum(["attendee-cloud", "attendee-self-hosted"]), { ux: "basic", apply: "next-join", defaultValue: "attendee-cloud", transferable: false }),
+  d("attendee_self_hosted_url", "attendee.selfHosted.url", attendeeEndpoint(true), { ux: "basic", apply: "next-join", defaultValue: "", requiredWhen: { transport: ["meet", "zoom"] }, transferable: false, visibleWhen: { id: "bot_host", value: "attendee-self-hosted" } }),
+  d("attendee_self_hosted_api_key", "attendee.selfHosted.apiKey", secret, { ux: "basic", credential: "class-1", apply: "next-join", requiredWhen: { transport: ["meet", "zoom"] }, visibleWhen: { id: "bot_host", value: "attendee-self-hosted" } }),
   d("slack_bot_token", "slack.botToken", secret, { ux: "basic", credential: "class-1", envAlias: "SLACK_BOT_TOKEN", requiredWhen: { setting: "slack_notifications_enabled", equals: true, explicit: true } }),
   d("slack_notifications_enabled", "slack.notifications.enabled", bool, { ux: "basic", envAlias: "SLACK_NOTIFY_ENABLED", defaultValue: true }),
   d("slack_notifications_target", "slack.notifications.target", z.enum(["dm", "channel"]), { ux: "basic", defaultValue: "dm" }),
@@ -294,5 +337,5 @@ module.exports = {
   ENV_DIAGNOSTICS,
   SETTINGS_REGISTRY,
   REGISTRY_BY_ID,
-  validators: Object.freeze({ absolutePath, clipRecord, hostname, httpsOrigin, secret, stringArray }),
+  validators: Object.freeze({ absolutePath, attendeeEndpoint, clipRecord, hostname, httpsOrigin, secret, stringArray }),
 };

@@ -990,8 +990,8 @@
       "expression": "runtime.startup.{preDotenvEnv,dotenvSeeds}[name]",
       "helper": "per-agent Slack token compatibility lookup",
       "references": [
-        "src/settings/resolver.js:386",
-        "src/settings/resolver.js:388"
+        "src/settings/resolver.js:398",
+        "src/settings/resolver.js:400"
       ],
       "pattern": "^[A-Z0-9_-]+_SLACK_BOT_TOKEN$",
       "names": [],

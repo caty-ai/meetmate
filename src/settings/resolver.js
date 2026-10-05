@@ -27,6 +27,12 @@ const ARRAY_IDS = new Set(["agent_wake_words", "agent_keyterms", "agent_stt_wake
 const BASE10_NUMBER = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
 const CACHE_INVALIDATORS = new Set();
 const DIAGNOSTICS_BY_ID = new Map(ENV_DIAGNOSTICS.map((entry) => [entry.id, entry]));
+// #260: the per-host Attendee entries. An entry of the slot that `bot_host` does not select
+// is never reported missing (absent bot_host = the cloud slot).
+const ATTENDEE_SLOT_ENTRIES = Object.freeze({
+  "attendee-cloud": Object.freeze(["attendee_base_url", "attendee_api_key", "face_timeline_offset_ms"]),
+  "attendee-self-hosted": Object.freeze(["attendee_self_hosted_url", "attendee_self_hosted_api_key", "face_timeline_offset_ms_self_hosted"]),
+});
 let currentRuntime = null;
 
 function deepFreeze(value) {
@@ -249,6 +255,11 @@ function predicateApplies(predicate, values, sources, transport, contextFree) {
   return false;
 }
 
+function unselectedAttendeeSlotEntry(id, botHost) {
+  const selected = botHost === "attendee-self-hosted" ? "attendee-self-hosted" : "attendee-cloud";
+  return Object.entries(ATTENDEE_SLOT_ENTRIES).some(([slot, ids]) => slot !== selected && ids.includes(id));
+}
+
 function buildIssues(runtime, options) {
   const values = {};
   const sources = {};
@@ -278,6 +289,7 @@ function buildIssues(runtime, options) {
       if (hostname && hostname !== "api.openai.com") continue;
     }
     if (entry.id === "slack_bot_token" && meaningful(resolveDynamicSlackToken(runtime))) continue;
+    if (unselectedAttendeeSlotEntry(entry.id, values.bot_host)) continue;
     if (!meaningful(values[entry.id]) || (Array.isArray(values[entry.id]) && values[entry.id].length === 0)) {
       add(entry.id, "VALUE_REQUIRED");
     }
@@ -398,6 +410,11 @@ function getPublishedValue(id) {
   return entry ? runtime.published.resolved.values[id] : undefined;
 }
 
+function getPublishedSource(id) {
+  const runtime = ensureRuntime();
+  return REGISTRY_BY_ID[id] ? runtime.published.resolved.sources[id] : undefined;
+}
+
 function getRawConfig() {
   return clone(ensureRuntime().published.raw);
 }
@@ -409,8 +426,10 @@ function getBootstrapSeedFields() {
     preDotenvEnv: Object.freeze({}),
   };
   const seeded = resolveAll({}, seedStartup).values;
+  // #260 (D1b): never seed `bot_host`; storing it untouched would replace the URL rule of
+  // the host kind for an installation that did not choose a host. A request naming it still stores it.
   return Object.fromEntries(SETTINGS_REGISTRY
-    .filter((entry) => entry.writeSurface === "settings" && seeded[entry.id] !== undefined)
+    .filter((entry) => entry.writeSurface === "settings" && entry.id !== "bot_host" && seeded[entry.id] !== undefined)
     .map((entry) => [entry.id, clone(seeded[entry.id])]));
 }
 
@@ -505,6 +524,7 @@ module.exports = {
   getEffectiveValue,
   getEffectiveSource,
   getRawConfig,
+  getPublishedSource,
   getPublishedValue,
   getRuntime: ensureRuntime,
   getStatus,

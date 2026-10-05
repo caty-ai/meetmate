@@ -75,6 +75,13 @@ Changes apply from the next join; a running meeting keeps its value.
 Observed reference values, judged by eye rather than measured: the Attendee cloud
 bot looks right at 300; one self-hosted Attendee deployment needed -700.
 
+The offset follows the bot host (#260). `face_timeline_offset_ms` is the value for
+Attendee cloud (and for an installation that has not chosen a host);
+`face_timeline_offset_ms_self_hosted` (`avatar.faceTimelineOffsetMsSelfHosted`,
+same range, default 300) is the value for a self-hosted Attendee. The value of the
+host selected by `bot_host` when the meeting starts is the one sent; the settings
+screen marks it "in use". See "Choosing where the bot runs" in the setup guide.
+
 ## Folder and manifest
 
 ```json

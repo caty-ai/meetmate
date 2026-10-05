@@ -1,6 +1,7 @@
 "use strict";
 
 const probes = require("./probes");
+const { resolveBotHostTarget } = require("../attendee-endpoint");
 const { diagnosticIdFor } = require("./diagnostic-id");
 const {
   buildEnvelope,
@@ -45,6 +46,9 @@ const FIELD_SYSTEMS = Object.freeze({
   tts_sample_rate: Object.freeze(["fish-audio", "elevenlabs", "openai-compatible"]),
   attendee_api_key: Object.freeze(["attendee"]),
   attendee_base_url: Object.freeze(["attendee"]),
+  bot_host: Object.freeze(["attendee"]),
+  attendee_self_hosted_url: Object.freeze(["attendee"]),
+  attendee_self_hosted_api_key: Object.freeze(["attendee"]),
   discord_bot_token: Object.freeze(["discord"]),
   discord_guild_allowlist: Object.freeze(["discord"]),
   discord_lcm_ingest_enabled: Object.freeze(["discord"]),
@@ -108,8 +112,11 @@ function legacyNotices() {
   }
 }
 
+// `targetId` (#260) is internal to the controller and never leaves it.
 function cloneRecord(record) {
-  return record ? { ...record } : null;
+  if (!record) return null;
+  const { targetId: _targetId, ...rest } = record;
+  return rest;
 }
 
 function systemsForFields(fieldIds) {
@@ -125,6 +132,11 @@ function fieldFor(system, code, message = "") {
     return String(getPublishedValue("public_origin") || "").trim() ? "public_origin" : "server_ngrok_domain";
   }
   if (system === "discord" && code === "ALLOWLIST_MISMATCH") return "discord_guild_allowlist";
+  // #260: the selected slot's key, or its URL when the endpoint is the likely cause.
+  if (system === "attendee" && getPublishedValue("bot_host") === "attendee-self-hosted") {
+    const missingUrl = code === "NOT_CONFIGURED" && !String(getPublishedValue("attendee_self_hosted_url") || "").trim();
+    return missingUrl || ["UNREACHABLE", "TIMEOUT"].includes(code) ? "attendee_self_hosted_url" : "attendee_self_hosted_api_key";
+  }
   if (system === "openai-compatible") {
     return ["AUTH_FAILED", "PAYMENT_REQUIRED"].includes(code)
       ? "openai_compatible_tts_api_key"
@@ -229,7 +241,7 @@ function createReadinessController(options = {}) {
     const record = { ok, code, source: "runtime", observedAt: now(), generation: nextGeneration };
     records.set(system, record);
     if (ok) backoffUntil.delete(system);
-    else backoffUntil.set(system, now() + FAILURE_BACKOFF_MS);
+    else backoffUntil.set(system, { until: now() + FAILURE_BACKOFF_MS, targetId: undefined });
     return cloneRecord(record);
   }
 
@@ -246,26 +258,37 @@ function createReadinessController(options = {}) {
       return cloneRecord(records.get(system));
     }
     if (probeOptions.clearRuntime) clearRuntime(system);
+    // #260: an attendee probe belongs to one target — the given one (join revalidation), else
+    // the published target at probe start. Its record, inflight entry and backoff carry that id.
+    const { target: givenTarget, ...options } = probeOptions;
+    const target = system === "attendee" ? givenTarget || resolveBotHostTarget({ snapshot: "published" }) : null;
+    const targetId = target ? target.targetId : undefined;
     const currentGeneration = generation(system);
     const existing = inflight.get(system);
-    if (existing?.generation === currentGeneration) return existing.promise;
-    if (!probeOptions.force && records.get(system)?.ok === false && now() < (backoffUntil.get(system) || 0)) {
+    if (existing?.generation === currentGeneration && existing.targetId === targetId) return existing.promise;
+    const backoff = backoffUntil.get(system);
+    if (!options.force && records.get(system)?.ok === false && backoff && backoff.targetId === targetId && now() < backoff.until) {
       return cloneRecord(records.get(system));
     }
     const startGeneration = generation(system);
-    let entry;
-    const promise = (async () => {
+    // Installed before probeFn runs, so a probe that throws synchronously still sees (and removes)
+    // its own entry.
+    const entry = { generation: startGeneration, targetId, promise: null };
+    inflight.set(system, entry);
+    entry.promise = (async () => {
       let outcome;
       try {
-        outcome = await probeFn(system, { ...dependencies, ...probeOptions });
+        outcome = await probeFn(system, { ...dependencies, ...options, ...(target ? { target } : {}) });
       } catch {
         outcome = { ok: false, code: "PROVIDER_ERROR" };
       } finally {
         if (!outcome || typeof outcome.code !== "string") outcome = { ok: false, code: "PROVIDER_ERROR" };
         const current = records.get(system);
+        // A probe that a newer probe (another target) replaced in `inflight` writes nothing.
         if (
           generation(system) === startGeneration
-          && !(current?.source === "runtime" && current.ok === false && !probeOptions.clearRuntime)
+          && inflight.get(system) === entry
+          && !(current?.source === "runtime" && current.ok === false && !options.clearRuntime)
         ) {
           const record = {
             ok: outcome.ok === true,
@@ -274,18 +297,17 @@ function createReadinessController(options = {}) {
             observedAt: now(),
             generation: startGeneration,
             ...(outcome.message ? { message: String(outcome.message) } : {}),
+            ...(targetId !== undefined ? { targetId } : {}),
           };
           records.set(system, record);
           if (record.ok) backoffUntil.delete(system);
-          else backoffUntil.set(system, now() + FAILURE_BACKOFF_MS);
+          else backoffUntil.set(system, { until: now() + FAILURE_BACKOFF_MS, targetId });
         }
         if (inflight.get(system) === entry) inflight.delete(system);
       }
       return cloneRecord(records.get(system));
     })();
-    entry = { generation: startGeneration, promise };
-    inflight.set(system, entry);
-    return promise;
+    return entry.promise;
   }
 
   function statusFor(options) {
@@ -342,15 +364,27 @@ function createReadinessController(options = {}) {
     return blockers;
   }
 
+  // #260: with an expected target id (a join), an attendee record of another target counts as
+  // absent. A record without an id (seeded by setProbeObservation) matches any expected id.
+  function foreignRecord(system, record, expectedId) {
+    return system === "attendee" && expectedId !== undefined
+      && record?.targetId !== undefined && record.targetId !== expectedId;
+  }
+
   function getReadiness(options) {
     const active = gateSystems();
     const restarts = restartBlockers();
     const restartBySystem = new Map(restarts.map((blocker) => [blocker.system, blocker]));
     const staticBySystem = staticIssuesBySystem(options);
+    const expectedId = options?.target?.targetId;
+    const recordFor = (system) => {
+      const record = records.get(system);
+      return foreignRecord(system, record, expectedId) ? undefined : record;
+    };
     const blockers = [];
     const systems = active.map((system) => {
       const restart = restartBySystem.get(system);
-      const record = records.get(system);
+      const record = recordFor(system);
       const code = restart?.code || record?.code || "PENDING";
       const fieldId = restart?.fieldId || fieldFor(system, code, record?.message);
       return {
@@ -377,7 +411,7 @@ function createReadinessController(options = {}) {
     for (const restart of restarts) blockers.push(restart);
     for (const system of active) {
       if (staticBySystem.has(system) || restartBySystem.has(system)) continue;
-      const record = records.get(system);
+      const record = recordFor(system);
       if (!record || !HARD_CODES.has(record.code)) continue;
       blockers.push({
         system,
@@ -404,17 +438,20 @@ function createReadinessController(options = {}) {
     return getReadiness();
   }
 
+  // `options.target` (#260) is the join's target: it is probed as given, never re-resolved,
+  // and an attendee record of another target counts as stale.
   async function revalidateForJoin(options = {}) {
+    const expectedId = options.target?.targetId;
     const systems = gateSystems().filter((system) => {
       if (BILLING_SYSTEMS.has(system)) return false;
       const record = records.get(system);
-      return Boolean(record && (!record.ok || isStale(record)));
+      return Boolean(record && (!record.ok || isStale(record) || foreignRecord(system, record, expectedId)));
     });
     if (!systems.length) return getReadiness(options);
     const budgetMs = options.budgetMs ?? JOIN_REVALIDATION_BUDGET_MS;
     let timer;
     await Promise.race([
-      probeSystems(systems, { trigger: "join", allowBilling: false }),
+      probeSystems(systems, { trigger: "join", allowBilling: false, ...(options.target ? { target: options.target } : {}) }),
       new Promise((resolve) => {
         timer = setTimeout(resolve, budgetMs);
         timer.unref?.();

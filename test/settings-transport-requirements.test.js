@@ -134,7 +134,12 @@ test("T12-07 the real join setup gate passes the derived Meet transport to readi
   }).toString();
   const res = response();
   await require("../src/transport-meet/meet-routes").handleHttp(request(body), res);
-  assert.deepEqual(observed, [{ transport: "meet" }]);
+  // #260: revalidation also receives the join's target (never re-resolved inside readiness).
+  assert.equal(observed.length, 1);
+  assert.deepEqual(Object.keys(observed[0]), ["transport", "target"]);
+  assert.equal(observed[0].transport, "meet");
+  assert.equal(observed[0].target.hostId, "attendee-cloud");
+  assert.equal(Object.isFrozen(observed[0].target), true);
   assert.equal(JSON.parse(res.body).error.code, "MEETING_NOT_READY");
 });
 

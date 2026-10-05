@@ -61,6 +61,8 @@ npx meetmate start    # サーバーを起動し、設定 UI の URL を表示�
 
 同じ流れを API キーの取得から最初の挨拶まで詳しく追った版は[セットアップガイド](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md)にあります。
 
+**ボットの実行先。** Meet/Zoom のボットは既定で Attendee cloud で動きます。設定 UI でセルフホストの Attendee（専用の URL・API key・口パク調整）に切り替えられます。必要なリソースの目安、15 fps の上限、Attendee のライセンスについては[ボットの実行先を選ぶ](https://github.com/caty-ai/meetmate/blob/main/docs/setup-guide.md#ボットの実行先を選ぶchoosing-where-the-bot-runs)を参照してください。
+
 **ブラウザから設定する。** 日常的な調整はすべて同じ設定 UI の裏にあります——ベンダーキー、ウェイクワード、挨拶文、ボイスプリセット、接続テストなど——タブごとに整理され、各項目には変更が即時反映されるか再起動が必要かの注記が付いています。リポジトリをクローンしたり JSON を手編集したりする必要はありません。Gateway の URL/Token のような接続系の値（と自動生成の共有トークン）だけは、環境変数として `.env` に残ります。
 
 <img src="https://raw.githubusercontent.com/caty-ai/meetmate/main/docs/images/settings-page-basic.png" alt="セットアップ完了後の設定 UI の「基本」タブ — 緑色の読み込み完了バナーと、エージェントの主要項目・LLM プロバイダー" width="100%">

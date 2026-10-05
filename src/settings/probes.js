@@ -57,14 +57,13 @@ const DESCRIPTORS = Object.freeze({
     timeoutMs: DEFAULT_FETCH_TIMEOUT_MS,
     transport: "fetchFn",
   }),
+  // #260: classification data only. The request (destination, Authorization) is composed by
+  // src/attendee-endpoint.js for the selected slot; `options.endpoints` does not apply.
   attendee: Object.freeze({
-    endpoint: ({ attendeeBaseUrl }) => `https://${attendeeBaseUrl}/api/v1/bots?page_size=1`,
+    path: "/api/v1/bots?page_size=1",
     method: "GET",
-    credentialId: "attendee_api_key",
-    authScheme: "Token",
-    headers: Object.freeze({ Accept: "application/json" }),
     timeoutMs: DEFAULT_FETCH_TIMEOUT_MS,
-    transport: "fetchFn",
+    transport: "attendeeRequest",
   }),
   llm: Object.freeze({
     endpoint: "chatCompletions",
@@ -159,10 +158,7 @@ function buildFetchProbeRequest(system, options = {}, override = {}) {
     return { outcome: result("NOT_CONFIGURED") };
   }
 
-  const endpointContext = {
-    attendeeBaseUrl: getPublishedValue("attendee_base_url"),
-    openAiTtsBaseUrl,
-  };
+  const endpointContext = { openAiTtsBaseUrl };
   const endpoint = options.endpoints?.[override.endpointKey || system]
     || override.endpoint
     || (typeof descriptor.endpoint === "function" ? descriptor.endpoint(endpointContext) : descriptor.endpoint);
@@ -203,6 +199,24 @@ async function withFetchProbeResponse(system, options = {}, override = {}, consu
   } finally {
     clearTimeout(timer);
   }
+}
+
+// The probe target is `options.target` when given (join revalidation), else the published
+// target of the selected slot (connection test, bootstrap, recheck, settings save).
+async function attendeeProbe(options = {}) {
+  const { attendeeRequest, resolveBotHostTarget } = require("../attendee-endpoint");
+  const target = options.target || resolveBotHostTarget({ snapshot: "published" });
+  const outcome = await attendeeRequest(target, {
+    method: DESCRIPTORS.attendee.method,
+    path: DESCRIPTORS.attendee.path,
+    timeoutMs: options.timeoutMs ?? DESCRIPTORS.attendee.timeoutMs,
+    timeoutMessage: "attendee probe timeout",
+    fetchFn: options.fetchFn,
+  });
+  if (outcome.ok) return classifyStatus(outcome.statusCode, { system: "attendee" });
+  if (outcome.code === "NOT_CONFIGURED" || outcome.code === "TIMEOUT") return result(outcome.code);
+  if (outcome.code === "DESTINATION_REJECTED") return result("UNREACHABLE");
+  return result(networkCode(outcome.error));
 }
 
 async function fetchProbe(system, options = {}) {
@@ -402,6 +416,7 @@ async function probeSystem(system, options = {}) {
   if (system === "llm") return llmProbe(options);
   if (system === "tunnel") return tunnelProbe(options);
   if (system === "discord") return discordProbe(options);
+  if (system === "attendee") return attendeeProbe(options);
   return fetchProbe(system, options);
 }
 
