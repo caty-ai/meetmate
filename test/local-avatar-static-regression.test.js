@@ -445,7 +445,8 @@ test("hybrid-local-l0 snapshots configured rig background settings into the conn
 
     assert.deepEqual(
       visual.connect({ capability, origin: launch.origin }).background,
-      { mode: "chroma", color: "#123456" },
+      // #294: `image` is the picture's cache token; null outside mode image.
+      { mode: "chroma", color: "#123456", image: null },
     );
   }, {
     settingsParsed: staticSettings({

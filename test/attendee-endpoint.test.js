@@ -584,6 +584,7 @@ async function withRoutes(run, options = {}) {
   install(path.join("settings", "avatar-assets.js"), {
     AVATAR_FILE_LIMIT: 64 * 1024 * 1024,
     installUrlCacheAvatar: async () => {},
+    readBackgroundSnapshot: () => null,
     readBundledAvatar: () => { throw new Error("no bundled avatar in test"); },
     readManagedAvatar: () => { throw new Error("no managed avatar in test"); },
   });

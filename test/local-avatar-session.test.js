@@ -58,7 +58,7 @@ test("successful state polling renews the idle TTL beyond twice the maximum life
   });
   const auth = { capability: issued.capability, origin: "https://meetmate.example" };
   const connected = issued.session.connect(auth);
-  assert.deepEqual(connected.background, { mode: "solid", color: "#08111f" });
+  assert.deepEqual(connected.background, { mode: "solid", color: "#08111f", image: null });
   const readArgs = {
     ...auth,
     generation: connected.generation,
@@ -90,7 +90,7 @@ test("connect snapshots an exact validated rig background without extending mark
   const auth = { capability: issued.capability, origin: "https://meetmate.example" };
   try {
     const connected = issued.session.connect(auth);
-    assert.deepEqual(connected.background, { mode: "image", color: "#A1b2C3" });
+    assert.deepEqual(connected.background, { mode: "image", color: "#A1b2C3", image: null });
     const source = issued.session.beginSource();
     assert.equal(issued.session.publishMarker(marker(0), source), true);
     const state = issued.session.readState({
@@ -112,9 +112,50 @@ test("connect snapshots an exact validated rig background without extending mark
       assert.deepEqual(invalid.session.connect({
         capability: invalid.capability,
         origin: "https://meetmate.example",
-      }).background, { mode: "solid", color: "#08111f" });
+      }).background, { mode: "solid", color: "#08111f", image: null });
     } finally {
       invalid.session.close();
+    }
+  }
+});
+
+test("#294 the join-time picture snapshot stays in memory and only its 16-hex token reaches connect state", () => {
+  const bytes = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
+  const snapshot = { bytes, type: "image/jpeg", version: "0123456789abcdef" };
+  const issued = createLocalAvatarSession({
+    publicOrigin: "https://meetmate.example",
+    background: { mode: "image", color: "#123456" },
+    backgroundImage: snapshot,
+  });
+  const auth = { capability: issued.capability, origin: "https://meetmate.example" };
+  try {
+    const connected = issued.session.connect(auth);
+    assert.deepEqual(connected.background, { mode: "image", color: "#123456", image: "0123456789abcdef" });
+    assert.equal(JSON.stringify(connected).includes(bytes.toString("base64")), false);
+    assert.deepEqual(issued.session.backgroundState(), connected.background);
+    assert.deepEqual(issued.session.backgroundImage(), { bytes, type: "image/jpeg" });
+  } finally {
+    issued.session.close();
+  }
+  assert.equal(issued.session.backgroundImage(), null);
+
+  // The snapshot is ignored unless the mode is image and the snapshot is well formed.
+  for (const [background, backgroundImage] of [
+    [{ mode: "solid", color: "#123456" }, snapshot],
+    [{ mode: "chroma", color: "#123456" }, snapshot],
+    [{ mode: "image", color: "#123456" }, null],
+    [{ mode: "image", color: "#123456" }, { ...snapshot, type: "image/webp" }],
+    [{ mode: "image", color: "#123456" }, { ...snapshot, version: "not-a-token" }],
+    [{ mode: "image", color: "#123456" }, { ...snapshot, bytes: Buffer.alloc(0) }],
+    [{ mode: "image", color: "#123456" }, { ...snapshot, bytes: "not bytes" }],
+  ]) {
+    const other = createLocalAvatarSession({ publicOrigin: "https://meetmate.example", background, backgroundImage });
+    try {
+      const state = other.session.connect({ capability: other.capability, origin: "https://meetmate.example" });
+      assert.deepEqual(state.background, { ...background, image: null });
+      assert.equal(other.session.backgroundImage(), null);
+    } finally {
+      other.session.close();
     }
   }
 });

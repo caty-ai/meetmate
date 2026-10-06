@@ -36,7 +36,7 @@ const { attendeeHostKind } = require("../attendee-host-kind");
 const {
   AVATAR_FILE_LIMIT,
   installUrlCacheAvatar,
-  readBundledAvatar,
+  readBackgroundSnapshot, readBundledAvatar,
   readManagedAvatar,
 } = require("../settings/avatar-assets");
 const {
@@ -1387,6 +1387,18 @@ async function handleHttp(req, res) {
         const facePackage = avatarExperiment === "face-package"
           ? (await import("./face-package.js")).loadPackage(getEffectiveValue("face_package_dir"))
           : null;
+        // #294 D5: snapshot the uploaded picture once, only for mode image. The join never
+        // fails because of it; the log carries the error code only, never a path.
+        const backgroundMode = getEffectiveValue("avatar_rig_background_mode");
+        let backgroundImage = null;
+        if (backgroundMode === "image") {
+          try {
+            backgroundImage = readBackgroundSnapshot(getSettingsRuntime().startup.resolvedHome);
+          } catch (error) {
+            const code = /^[A-Z0-9_]{1,64}$/.test(String(error?.code || "")) ? error.code : "UNKNOWN";
+            console.warn(`local-avatar background image unavailable (${code})`);
+          }
+        }
         const issued = avatarExperiment === "face-package" && !facePackage ? null : createLocalAvatarSession({
           mode: avatarExperiment,
           facePackage,
@@ -1394,9 +1406,10 @@ async function handleHttp(req, res) {
           htmlRoute: avatarExperiment === "face-package" ? "/local-avatar/face-host.html"
             : avatarExperiment === LOCAL_AVATAR_FRAMES_EXPERIMENT ? FRAMES_HTML_ROUTE : undefined,
           background: {
-            mode: getEffectiveValue("avatar_rig_background_mode"),
+            mode: backgroundMode,
             color: getEffectiveValue("avatar_rig_background_color"),
           },
+          backgroundImage,
           ...(sessionPageAudio ? { pageAudio: true } : {}),
         });
         localAvatarSession = issued?.session || null;

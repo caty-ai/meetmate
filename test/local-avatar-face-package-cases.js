@@ -8,7 +8,7 @@ const { spawnSync } = require("node:child_process");
 const { loadPackage, LIMITS } = require("../src/transport-meet/face-package");
 const { createLocalAvatarSession } = require("../src/transport-meet/local-avatar-session");
 const { serveLocalAvatar } = require("../src/ui-routes");
-const { createTimeline } = require("../public/local-avatar/face-host");
+const { createTimeline, backgroundMessage } = require("../public/local-avatar/face-host");
 const origin = "https://meetmate.example";
 const defaultManifest = { spec: "face-package/1", entry: "index.html", supports: ["speak", "level", "emotion", "background", "listen", "cue"] };
 function fixture(t, manifest = defaultManifest) {
@@ -737,4 +737,173 @@ test("createTimeline shifts the anchor by the offset and keeps 300 as its defaul
   assert.equal(starts({}), 300);
   assert.equal(starts({ offset: -700 }), -700);
   assert.equal(starts({ offset: 300 }) - starts({ offset: -700 }), 1000);
+});
+
+// ---- #294 D6: host composites the picture; the package only ever hears solid | chroma | transparent ----
+
+const IMAGE_VERSION = "0123456789abcdef";
+
+test("#294 D6 mapping table is built explicitly and never carries the image token", () => {
+  const both = ["speak", "level", "background", "background-transparent"];
+  const opaque = ["speak", "level", "background"];
+  const rows = [
+    [{ mode: "solid", color: "#123456", image: null }, both, { type: "background", mode: "solid", color: "#123456" }],
+    [{ mode: "solid", color: "#123456", image: null }, opaque, { type: "background", mode: "solid", color: "#123456" }],
+    [{ mode: "chroma", color: "#123456", image: null }, both, { type: "background", mode: "chroma", color: "#123456" }],
+    [{ mode: "chroma", color: "#123456", image: null }, opaque, { type: "background", mode: "chroma", color: "#123456" }],
+    [{ mode: "image", color: "#123456", image: IMAGE_VERSION }, both, { type: "background", mode: "transparent" }],
+    [{ mode: "image", color: "#123456", image: IMAGE_VERSION }, opaque, { type: "background", mode: "solid", color: "#123456" }],
+    [{ mode: "image", color: "#123456", image: null }, both, { type: "background", mode: "solid", color: "#123456" }],
+    [{ mode: "image", color: "#123456", image: null }, opaque, { type: "background", mode: "solid", color: "#123456" }],
+    // A stray host field is never forwarded.
+    [{ mode: "solid", color: "#123456", image: IMAGE_VERSION, extra: "x" }, both, { type: "background", mode: "solid", color: "#123456" }],
+  ];
+  for (const [background, supports, expected] of rows) {
+    const message = backgroundMessage(background, supports);
+    assert.deepEqual(message, expected, JSON.stringify([background, supports]));
+    assert.equal(JSON.stringify(message).includes(IMAGE_VERSION), false);
+  }
+  assert.equal(Object.hasOwn(backgroundMessage(rows[4][0], both), "color"), false);
+  // `background` must still be declared for any message to be sent.
+  assert.equal(backgroundMessage(rows[4][0], ["speak", "level", "background-transparent"]), null);
+  assert.equal(backgroundMessage(undefined, both), null);
+  const source = fs.readFileSync(path.join(__dirname, "..", "public/local-avatar/face-host.js"), "utf8");
+  assert.doesNotMatch(source, /\.\.\.background\b/);
+});
+
+test("#294 a real face.json declaring background-transparent survives face-package.js into the descriptor", async (t) => {
+  const bytes = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
+  const snapshot = { bytes, type: "image/jpeg", version: IMAGE_VERSION };
+  const background = { mode: "image", color: "#123456" };
+  const transparentRoot = fixture(t, { ...defaultManifest, supports: [...defaultManifest.supports, "background-transparent"] });
+  assert.equal(loadPackage(transparentRoot).descriptor.supports.includes("background-transparent"), true);
+  const issued = issue(t, transparentRoot, { background, backgroundImage: snapshot });
+  const response = await route(`/local-avatar/face-descriptor?v=${issued.session.visualId}`, auth(issued));
+  assert.equal(response.status, 200);
+  const descriptor = JSON.parse(response.body);
+  assert.equal(descriptor.supports.includes("background-transparent"), true);
+  assert.deepEqual(descriptor.background, { mode: "image", color: "#123456", image: IMAGE_VERSION });
+  assert.equal(response.body.includes(bytes.toString("base64")), false);
+  assert.equal(response.body.includes(issued.capability), false);
+  assert.deepEqual(backgroundMessage(descriptor.background, descriptor.supports), { type: "background", mode: "transparent" });
+
+  const opaque = issue(t, fixture(t), { background, backgroundImage: snapshot });
+  const opaqueDescriptor = JSON.parse((await route(`/local-avatar/face-descriptor?v=${opaque.session.visualId}`, auth(opaque))).body);
+  assert.equal(opaqueDescriptor.supports.includes("background-transparent"), false);
+  assert.deepEqual(backgroundMessage(opaqueDescriptor.background, opaqueDescriptor.supports),
+    { type: "background", mode: "solid", color: "#123456" });
+});
+
+async function runFaceHostBackground({ supports = ["speak", "level", "background", "background-transparent"],
+  background = { mode: "image", color: "#123456", image: IMAGE_VERSION }, backgroundResponse, decode }) {
+  const vm = require("node:vm");
+  const listeners = new Map();
+  const posted = [];
+  const requests = [];
+  const warnings = [];
+  const draws = [];
+  const prepended = [];
+  const appended = [];
+  const canvases = [];
+  const frame = { style: {}, setAttribute(key, value) { this[key] = value; }, contentWindow: { postMessage(data) { posted.push(data); } } };
+  const descriptor = { mountId: "mount", entry: "index.html", supports, background };
+  const state = { kind: "idle", generation: 1, cancelEpoch: 0, outputEpoch: -1, sequence: 1, background };
+  const sandbox = {
+    URLSearchParams,
+    location: { pathname: "/local-avatar/face-host.html", search: "?v=visual", hash: "#cap=synthetic-capability" },
+    history: { replaceState() {} },
+    document: {
+      documentElement: { style: {} },
+      body: { style: {}, append: (element) => appended.push(element), prepend: (element) => prepended.push(element) },
+      createElement: (tag) => {
+        if (tag !== "canvas") return frame;
+        const canvas = { tag, style: {}, getContext: () => ({ clearRect() {}, drawImage: (...args) => draws.push(args) }) };
+        canvases.push(canvas);
+        return canvas;
+      },
+    },
+    addEventListener: (type, listener) => listeners.set(type, listener), setInterval: () => 1, clearInterval() {},
+    setTimeout: () => 1, clearTimeout() {},
+    console: { warn: (...args) => warnings.push(args) },
+    innerWidth: 640, innerHeight: 360, devicePixelRatio: 2,
+    createImageBitmap: decode,
+    fetch: async (url, options) => {
+      requests.push({ url, options });
+      if (url.startsWith("/local-avatar/face-descriptor")) return { ok: true, status: 200, json: async () => descriptor };
+      if (url.startsWith("/local-avatar/background")) return backgroundResponse();
+      return { ok: true, status: 200, json: async () => state };
+    },
+  };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, "..", "public/local-avatar/face-host.js"), "utf8"), sandbox);
+  const flush = async () => { for (let i = 0; i < 6; i++) await new Promise((resolve) => setImmediate(resolve)); };
+  await flush();
+  listeners.get("message")({ source: frame.contentWindow, data: { type: "face-ready" } });
+  await flush();
+  listeners.get("pagehide")();
+  return { frame, posted, requests, warnings, draws, prepended, appended, canvases, html: sandbox.document.documentElement.style,
+    backgroundRequests: requests.filter(({ url }) => url.startsWith("/local-avatar/background")) };
+}
+
+test("#294 face host paints the picture on its own layer under a transparent package, colour until decoded or on failure", async () => {
+  const blob = { picture: true };
+  const okResponse = async () => ({ ok: true, status: 200, blob: async () => blob });
+  const bitmap = { width: 1000, height: 1000 };
+  const decodeOptions = [];
+  const shown = await runFaceHostBackground({ backgroundResponse: okResponse,
+    decode: async (input, options) => { decodeOptions.push(options); assert.equal(input, blob); return bitmap; } });
+  assert.equal(shown.backgroundRequests.length, 1);
+  assert.equal(shown.backgroundRequests[0].url, "/local-avatar/background?v=visual");
+  assert.equal(shown.backgroundRequests[0].options.method, "GET");
+  assert.equal(shown.backgroundRequests[0].options.headers.Authorization, "Bearer synthetic-capability");
+  assert.equal(decodeOptions[0].imageOrientation, "from-image");
+  // Layout: host canvas (z-index 0) first in the DOM, transparent iframe (z-index 1) above it.
+  assert.equal(shown.canvases.length, 1);
+  assert.equal(shown.canvases[0].id, "bg");
+  assert.equal(shown.canvases[0].style.cssText, "position:fixed;inset:0;width:100vw;height:100vh;z-index:0;display:block");
+  assert.deepEqual(shown.prepended, [shown.canvases[0]]);
+  assert.deepEqual(shown.appended, [shown.frame]);
+  assert.match(shown.frame.style.cssText, /^position:fixed;inset:0;z-index:1;background:transparent;border:0;/);
+  assert.equal(shown.frame.style.opacity, "1");
+  // Cover + centred at viewport x devicePixelRatio.
+  assert.equal(shown.canvases[0].width, 1280);
+  assert.equal(shown.canvases[0].height, 720);
+  assert.deepEqual(shown.draws.at(-1), [bitmap, 0, -280, 1280, 1280]);
+  assert.equal(shown.html.background, "#123456");
+  // The package hears only `transparent`, without colour, token, bytes or capability.
+  const sent = shown.posted.filter((data) => data.type === "background");
+  assert.ok(sent.length >= 2, "both init() paths post the mapped message");
+  for (const data of sent) assert.deepEqual({ ...data }, { type: "background", mode: "transparent" });
+  assert.equal(JSON.stringify(shown.posted).includes(IMAGE_VERSION), false);
+  assert.equal(JSON.stringify(shown.posted).includes("synthetic-capability"), false);
+  assert.equal(shown.warnings.length, 0);
+
+  // TypeError on the options bag: one retry without options.
+  const retryOptions = [];
+  const retried = await runFaceHostBackground({ backgroundResponse: okResponse,
+    decode: async (_input, options) => { retryOptions.push(options); if (options) throw new TypeError("unsupported"); return bitmap; } });
+  assert.equal(retryOptions.length, 2);
+  assert.equal(retried.canvases.length, 1);
+
+  // Decode failure: no layer, one warning, the colour stays; the package is still transparent.
+  for (const backgroundResponse of [okResponse, async () => ({ ok: false, status: 404 })]) {
+    const failed = await runFaceHostBackground({ backgroundResponse, decode: async () => { throw new Error("corrupt"); } });
+    assert.equal(failed.backgroundRequests.length, 1);
+    assert.equal(failed.canvases.length, 0);
+    assert.equal(failed.warnings.length, 1);
+    assert.equal(failed.html.background, "#123456");
+    assert.deepEqual({ ...failed.posted.find((data) => data.type === "background") }, { type: "background", mode: "transparent" });
+  }
+
+  // No snapshot: no request, no layer, the package gets the colour.
+  const none = await runFaceHostBackground({ background: { mode: "image", color: "#123456", image: null },
+    backgroundResponse: okResponse, decode: async () => bitmap });
+  assert.equal(none.backgroundRequests.length, 0);
+  assert.equal(none.canvases.length, 0);
+  assert.deepEqual({ ...none.posted.find((data) => data.type === "background") }, { type: "background", mode: "solid", color: "#123456" });
+
+  // Package without background-transparent: colour on the wire (the picture sits under an opaque package).
+  const opaque = await runFaceHostBackground({ supports: ["speak", "level", "background"], backgroundResponse: okResponse, decode: async () => bitmap });
+  for (const data of opaque.posted.filter((item) => item.type === "background")) {
+    assert.deepEqual({ ...data }, { type: "background", mode: "solid", color: "#123456" });
+  }
 });

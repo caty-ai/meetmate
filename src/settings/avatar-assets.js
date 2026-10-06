@@ -8,11 +8,18 @@ const { settingsError } = require("./store");
 
 const AVATAR_FILE_LIMIT = 5 * 1024 * 1024;
 const FRAME_FILE_LIMIT = 10 * 1024 * 1024;
+const BACKGROUND_FILE_LIMIT = 8 * 1024 * 1024;
 const AVATAR_TOTAL_LIMIT = 64 * 1024 * 1024;
 const FRAME_NAMES = Object.freeze(["idle", "talk1", "talk2", "talk3", "blink", "talk_blink"]);
 const FRAME_NAME_SET = new Set(FRAME_NAMES);
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const PNG_IEND = Buffer.from([0, 0, 0, 0, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82]);
+const BACKGROUND_CONTENT_TYPES = Object.freeze(["image/png", "image/jpeg"]);
+const BACKGROUND_EXTENSIONS = Object.freeze({ ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg" });
+// #294 D1: SOF markers. Baseline / extended / progressive Huffman are accepted; lossless,
+// hierarchical and arithmetic-coded frames are rejected.
+const JPEG_SOF_ACCEPTED = new Set([0xc0, 0xc1, 0xc2]);
+const JPEG_SOF_REJECTED = new Set([0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf]);
 const BUNDLED_ASSETS = path.join(__dirname, "..", "..", "assets");
 const RIG_SCRIPT = path.join(__dirname, "..", "..", "public", "local-avatar", "local-avatar.js");
 let urlCacheInstallVetoed = false;
@@ -86,6 +93,7 @@ function managedDirectories(resolvedHome, create = false) {
     assets,
     frames,
     avatar: path.join(assets, "avatar.png"),
+    background: path.join(assets, "avatar-background"),
     source: path.join(assets, ".avatar-source"),
     realAssets,
     realFrames,
@@ -182,6 +190,54 @@ function validatePngBytes(bytes) {
   return { width, height };
 }
 
+// #294 D1: a segment walk, not a decode. Entropy-coded data and APP1 thumbnails are never parsed.
+function validateJpegBytes(bytes) {
+  const invalid = () => avatarError("SETTINGS_AVATAR_JPEG_INVALID");
+  if (!Buffer.isBuffer(bytes) || bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8
+      || bytes[bytes.length - 2] !== 0xff || bytes[bytes.length - 1] !== 0xd9) {
+    throw invalid();
+  }
+  let offset = 2;
+  for (;;) {
+    if (offset >= bytes.length || bytes[offset] !== 0xff) throw invalid();
+    while (offset < bytes.length && bytes[offset] === 0xff) offset += 1;
+    if (offset >= bytes.length) throw invalid();
+    const marker = bytes[offset];
+    offset += 1;
+    if (marker === 0x00 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd9)) throw invalid();
+    if (marker === 0xda || JPEG_SOF_REJECTED.has(marker)) throw invalid();
+    if (offset + 2 > bytes.length) throw invalid();
+    const length = bytes.readUInt16BE(offset);
+    if (length < 2 || offset + length > bytes.length) throw invalid();
+    if (JPEG_SOF_ACCEPTED.has(marker)) {
+      if (length < 7) throw invalid();
+      const height = bytes.readUInt16BE(offset + 3);
+      const width = bytes.readUInt16BE(offset + 5);
+      if (width === 0 || height === 0 || width > 4096 || height > 4096 || width * height > 16_777_216) {
+        throw invalid();
+      }
+      return { width, height };
+    }
+    offset += length;
+  }
+}
+
+function sniffImageType(bytes) {
+  if (!Buffer.isBuffer(bytes)) return null;
+  if (bytes.length >= 8 && bytes.subarray(0, 8).equals(PNG_SIGNATURE)) return "image/png";
+  if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xd8) return "image/jpeg";
+  return null;
+}
+
+function validateImageBytes(bytes, type) {
+  return type === "image/jpeg" ? validateJpegBytes(bytes) : validatePngBytes(bytes);
+}
+
+function readStagedFile(filePath) {
+  const descriptor = fs.openSync(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+  try { return fs.readFileSync(descriptor); } finally { fs.closeSync(descriptor); }
+}
+
 function validatePngFile(filePath) {
   const descriptor = fs.openSync(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
   try { return validatePngBytes(fs.readFileSync(descriptor)); } finally { fs.closeSync(descriptor); }
@@ -189,12 +245,14 @@ function validatePngFile(filePath) {
 
 function existingManagedBytes(managed) {
   let total = 0;
-  try {
-    const stat = lstatNotSymlink(managed.avatar);
-    if (!stat.isFile()) return AVATAR_TOTAL_LIMIT;
-    total += stat.size;
-  } catch (error) {
-    if (error.code !== "ENOENT") return AVATAR_TOTAL_LIMIT;
+  for (const target of [managed.avatar, managed.background]) {
+    try {
+      const stat = lstatNotSymlink(target);
+      if (!stat.isFile()) return AVATAR_TOTAL_LIMIT;
+      total += stat.size;
+    } catch (error) {
+      if (error.code !== "ENOENT") return AVATAR_TOTAL_LIMIT;
+    }
   }
   if (!managed.realFrames) return total;
   for (const name of FRAME_NAMES) {
@@ -354,6 +412,102 @@ async function uploadAsset(req, { resolvedHome, name = null }) {
   }
 }
 
+// #294 D1/D2: PNG or JPEG; the magic bytes decide the type, and the declared content type and
+// extension must agree with them. One extension-less, server-chosen file.
+async function uploadBackground(req, { resolvedHome }) {
+  const managed = managedDirectories(resolvedHome, true);
+  const workDirectory = fs.mkdtempSync(path.join(managed.assets, ".avatar-work-"));
+  fs.chmodSync(workDirectory, 0o700);
+  let stagedPath = null;
+  try {
+    const multipart = await parseMultipart(req, workDirectory, {
+      filePartName: "image",
+      metadataPartName: null,
+      contentTypes: [...BACKGROUND_CONTENT_TYPES],
+      extensions: Object.keys(BACKGROUND_EXTENSIONS),
+      encodedRejectPattern: /%[0-9a-f]{2}/i,
+      maxFileBytes: BACKGROUND_FILE_LIMIT,
+      maxMetadataBytes: 0,
+      errorFactory: multipartErrorFactory,
+    });
+    stagedPath = multipart.filePath;
+    const declaredType = multipart.fileContentType;
+    const extension = Object.keys(BACKGROUND_EXTENSIONS).find((item) => multipart.fileName.endsWith(item));
+    const bytes = readStagedFile(stagedPath);
+    const sniffed = sniffImageType(bytes);
+    if (sniffed && (sniffed !== declaredType || BACKGROUND_EXTENSIONS[extension] !== sniffed)) {
+      throw avatarError("SETTINGS_AVATAR_TYPE_MISMATCH", 415);
+    }
+    const type = sniffed || declaredType;
+    const dimensions = validateImageBytes(bytes, type);
+    const promotion = managedDirectories(resolvedHome, true);
+    const total = existingManagedBytes(promotion);
+    const replacedBytes = existingTargetBytes(promotion.background, promotion.realAssets);
+    if (total - replacedBytes + multipart.fileBytes > AVATAR_TOTAL_LIMIT) {
+      throw avatarError("SETTINGS_AVATAR_TOTAL_LIMIT", 413);
+    }
+    promoteFile(stagedPath, promotion.background, promotion.realAssets, null);
+    stagedPath = null;
+    return {
+      name: "background",
+      type,
+      bytes: multipart.fileBytes,
+      sha256: multipart.fileSha256,
+      ...dimensions,
+    };
+  } finally {
+    unlinkBestEffort(stagedPath);
+    try { fs.rmdirSync(workDirectory); } catch { /* best effort */ }
+  }
+}
+
+// #294 D2: re-sniffed and fully validated on every read; anything else is "no image".
+function readBackground(resolvedHome) {
+  const managed = managedDirectories(resolvedHome, false);
+  const bytes = readOwnedFile(managed.background, managed.realAssets, BACKGROUND_FILE_LIMIT);
+  const type = sniffImageType(bytes);
+  if (!type) throw avatarError("SETTINGS_AVATAR_NOT_FOUND", 404);
+  return { bytes, type, ...validateImageBytes(bytes, type) };
+}
+
+function backgroundPresent(resolvedHome) {
+  try { readBackground(resolvedHome); return true; } catch { return false; }
+}
+
+// #294 D5: the join-time snapshot. `null` when no file exists; any other failure throws so the
+// caller can log its code and fall back.
+function readBackgroundSnapshot(resolvedHome) {
+  let background;
+  try { background = readBackground(resolvedHome); } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  }
+  return {
+    bytes: background.bytes,
+    type: background.type,
+    version: crypto.createHash("sha256").update(background.bytes).digest("hex").slice(0, 16),
+  };
+}
+
+function deleteBackground(resolvedHome) {
+  let managed;
+  try { managed = managedDirectories(resolvedHome, false); } catch (error) {
+    if (error.code === "ENOENT") return { deleted: true };
+    throw error;
+  }
+  try {
+    const stat = lstatNotSymlink(managed.background);
+    if (!stat.isFile() || !isWithin(managed.realAssets, fs.realpathSync(managed.background))) {
+      throw avatarError("SETTINGS_AVATAR_PATH_REJECTED");
+    }
+    unlinkBestEffort(managed.background);
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  fsyncDirectory(managed.assets);
+  return { deleted: true };
+}
+
 function deleteStatic(resolvedHome) {
   urlCacheInstallVetoed = true;
   let managed;
@@ -432,6 +586,23 @@ function inspectRig() {
   }
 }
 
+function inspectBackground(resolvedHome) {
+  const previewUrl = "/api/settings/avatar/background/preview";
+  try {
+    const background = readBackground(resolvedHome);
+    return {
+      present: true,
+      type: background.type,
+      bytes: background.bytes.length,
+      width: background.width,
+      height: background.height,
+      previewUrl,
+    };
+  } catch {
+    return { present: false, type: null, bytes: 0, width: null, height: null, previewUrl };
+  }
+}
+
 function inspectAssets(resolvedHome, avatarUrlConfigured = false) {
   const source = staticSource(resolvedHome, avatarUrlConfigured);
   let staticBytes;
@@ -458,8 +629,14 @@ function inspectAssets(resolvedHome, avatarUrlConfigured = false) {
       previewUrl: "/api/settings/avatar/static/preview",
     },
     frames,
+    background: inspectBackground(resolvedHome),
     rig: inspectRig(),
-    limits: { staticBytes: AVATAR_FILE_LIMIT, frameBytes: FRAME_FILE_LIMIT, totalBytes: AVATAR_TOTAL_LIMIT },
+    limits: {
+      staticBytes: AVATAR_FILE_LIMIT,
+      frameBytes: FRAME_FILE_LIMIT,
+      backgroundBytes: BACKGROUND_FILE_LIMIT,
+      totalBytes: AVATAR_TOTAL_LIMIT,
+    },
   };
 }
 
@@ -496,8 +673,11 @@ function installUrlCacheAvatar(bytes, resolvedHome) {
 module.exports = {
   AVATAR_FILE_LIMIT,
   AVATAR_TOTAL_LIMIT,
+  BACKGROUND_FILE_LIMIT,
   FRAME_FILE_LIMIT,
   FRAME_NAMES,
+  backgroundPresent,
+  deleteBackground,
   deleteFrame,
   deleteFrames,
   deleteStatic,
@@ -505,10 +685,14 @@ module.exports = {
   installUrlCacheAvatar,
   parseFrameName,
   readFrame,
+  readBackground,
+  readBackgroundSnapshot,
   readBundledAvatar,
   readManagedAvatar,
   readStaticPreview,
   uploadAsset,
+  uploadBackground,
+  validateJpegBytes,
   validatePngBytes,
   _test: { existingManagedBytes, managedDirectories, readSourceMarker, writeSourceMarker },
 };

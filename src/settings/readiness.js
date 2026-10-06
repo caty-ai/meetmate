@@ -5,8 +5,10 @@ const { resolveBotHostTarget } = require("../attendee-endpoint");
 const { diagnosticIdFor } = require("./diagnostic-id");
 const {
   buildEnvelope,
+  getEffectiveValue,
   getPublishedValue,
   getRawConfig,
+  getRuntime,
   getStatus,
   registerCacheInvalidator,
 } = require("./resolver");
@@ -112,6 +114,27 @@ function legacyNotices() {
   }
 }
 
+const AVATAR_BACKGROUND_IMAGE_MISSING = Object.freeze({
+  code: "AVATAR_BACKGROUND_IMAGE_MISSING",
+  message: "背景が「画像」ですが、背景画像がアップロードされていません。埋め込み画像があればそれを、なければ背景色で表示します",
+});
+
+function defaultBackgroundPresent() {
+  // Loaded lazily, like the profile module above, so readiness stays import-cheap.
+  const { backgroundPresent } = require("./avatar-assets");
+  return backgroundPresent(getRuntime().startup.resolvedHome);
+}
+
+// #294 D4: never a blocker; any error yields no notice.
+function avatarNotices(backgroundPresent = defaultBackgroundPresent) {
+  try {
+    if (getEffectiveValue("avatar_rig_background_mode") !== "image") return [];
+    return backgroundPresent() === true ? [] : [{ ...AVATAR_BACKGROUND_IMAGE_MISSING }];
+  } catch {
+    return [];
+  }
+}
+
 // `targetId` (#260) is internal to the controller and never leaves it.
 function cloneRecord(record) {
   if (!record) return null;
@@ -186,6 +209,7 @@ function createReadinessController(options = {}) {
   let dependencies = { ...(options.probeOptions || {}) };
   let probeFn = options.probeFn || probes.probeSystem;
   let now = options.now || Date.now;
+  let backgroundPresent = options.backgroundPresent || defaultBackgroundPresent;
   let bootstrapStarted = false;
   const invalidateCallback = (fieldIds) => invalidateFields(fieldIds);
 
@@ -214,6 +238,7 @@ function createReadinessController(options = {}) {
     if (next.probeOptions) dependencies = { ...dependencies, ...next.probeOptions };
     if (typeof next.probeFn === "function") probeFn = next.probeFn;
     if (typeof next.now === "function") now = next.now;
+    if (typeof next.backgroundPresent === "function") backgroundPresent = next.backgroundPresent;
     attachInvalidator();
   }
 
@@ -428,7 +453,7 @@ function createReadinessController(options = {}) {
       setupRequired: !meetingReady,
       systems,
       blockers,
-      notices: legacyNotices(),
+      notices: [...legacyNotices(), ...avatarNotices(backgroundPresent)],
     };
   }
 
@@ -484,6 +509,7 @@ function createReadinessController(options = {}) {
     dependencies = { ...(options.probeOptions || {}) };
     probeFn = options.probeFn || probes.probeSystem;
     now = options.now || Date.now;
+    backgroundPresent = options.backgroundPresent || defaultBackgroundPresent;
     bootstrapStarted = false;
   }
 
@@ -551,6 +577,7 @@ module.exports = {
   runtimeStatus,
   systemsForFields,
   _test: {
+    avatarNotices,
     FAILURE_BACKOFF_MS,
     FAILURE_TTL_MS,
     JOIN_REVALIDATION_BUDGET_MS,

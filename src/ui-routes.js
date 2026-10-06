@@ -116,7 +116,7 @@ function serveLocalAvatar(req, res, url = new URL(req.url || "/", "http://localh
         || !session.verifyCapability(readBearerCapability(req.headers?.authorization))) { notFound(); return true; }
       session.recordPageSeen(); // #283 face status
       writeLocalAvatarJson(res, 200, { mountId: session.mountId, ...session.facePackage.descriptor,
-        background: { ...session._background }, listenReactions: session.listenReactions,
+        background: session.backgroundState(), listenReactions: session.listenReactions,
         timelineOffsetMs: session.timelineOffsetMs, ...(session.pageAudio === true ? { pageAudio: true } : {}) });
       return true;
     }
@@ -192,6 +192,26 @@ function serveLocalAvatar(req, res, url = new URL(req.url || "/", "http://localh
       }));
       res.end(data);
     });
+    return true;
+  }
+
+  if (url.pathname === "/local-avatar/background") {
+    // #294 D5: the join-time picture, from memory only, behind the live session capability.
+    const { getLocalAvatarSession } = require("./transport-meet/local-avatar-session");
+    const session = req.method === "GET" && hasExactQueryKeys(url, ["v"])
+      ? getLocalAvatarSession(url.searchParams.get("v") || "")
+      : null;
+    const capability = readBearerCapability(req.headers?.authorization);
+    const image = session && capability && session.verifyCapability(capability) ? session.backgroundImage() : null;
+    if (!image) {
+      writeLocalAvatarPlain(res, 404, "Not Found");
+      return true;
+    }
+    res.writeHead(200, localAvatarHeaders({
+      "Content-Type": image.type,
+      "Content-Length": image.bytes.length,
+    }));
+    res.end(image.bytes);
     return true;
   }
 

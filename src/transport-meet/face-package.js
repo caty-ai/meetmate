@@ -11,7 +11,7 @@ const TYPES = Object.freeze({
   ".json": "application/json; charset=utf-8", ".png": "image/png", ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg", ".webp": "image/webp", ".psd": "application/octet-stream", ".woff2": "font/woff2",
 });
-const SUPPORTS = new Set(["speak", "level", "emotion", "background", "listen", "cue"]);
+const SUPPORTS = new Set(["speak", "level", "emotion", "background", "background-transparent", "listen", "cue"]);
 const LIMITS = Object.freeze({ manifest: 64 * 1024, files: 2000, depth: 8, path: 200, file: 64 * 1024 ** 2, total: 256 * 1024 ** 2 });
 
 function safePath(value) {

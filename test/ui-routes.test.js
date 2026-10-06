@@ -164,6 +164,64 @@ test("servePublicAsset does not serve non-GET requests for known assets", async 
   assert.equal(res, false);
 });
 
+test("#294 /local-avatar/background serves the join-time bytes only to the live session capability", async () => {
+  const { serveLocalAvatar } = require("../src/ui-routes");
+  const { createLocalAvatarSession } = require("../src/transport-meet/local-avatar-session");
+  const bytes = Buffer.from([0xff, 0xd8, 0xff, 0xdb, 0x00, 0x02, 0xff, 0xd9]);
+  const origin = "https://meetmate.example";
+  const issued = createLocalAvatarSession({
+    publicOrigin: origin,
+    background: { mode: "image", color: "#123456" },
+    backgroundImage: { bytes, type: "image/jpeg", version: "0123456789abcdef" },
+  });
+  const plain = createLocalAvatarSession({ publicOrigin: origin, background: { mode: "image", color: "#123456" } });
+  const call = (url, { method = "GET", authorization } = {}) => new Promise((resolve) => {
+    const res = {
+      writeHead(statusCode, headers) { this.statusCode = statusCode; this.headers = headers; },
+      end(data = "") { resolve({ statusCode: this.statusCode, headers: this.headers, body: Buffer.from(data) }); },
+    };
+    const handled = serveLocalAvatar({ method, url, headers: authorization ? { authorization } : {} }, res, new URL(url, origin));
+    assert.equal(handled, true);
+  });
+  const v = encodeURIComponent(issued.session.visualId);
+  const bearer = `Bearer ${issued.capability}`;
+  try {
+    const ok = await call(`/local-avatar/background?v=${v}`, { authorization: bearer });
+    assert.equal(ok.statusCode, 200);
+    assert.deepEqual(ok.body, bytes);
+    assert.equal(ok.headers["Content-Type"], "image/jpeg");
+    assert.equal(ok.headers["Content-Length"], bytes.length);
+    assert.equal(ok.headers["Cache-Control"], "no-store");
+    assert.equal(ok.headers["X-Content-Type-Options"], "nosniff");
+    assert.match(ok.headers["Content-Security-Policy"], /default-src 'none'/);
+
+    const denied = [
+      [`/local-avatar/background?v=${v}`, {}],
+      [`/local-avatar/background?v=${v}`, { authorization: "Bearer wrong" }],
+      [`/local-avatar/background?v=${v}`, { authorization: issued.capability }],
+      [`/local-avatar/background?v=${v}`, { method: "POST", authorization: bearer }],
+      [`/local-avatar/background?v=${v}`, { method: "HEAD", authorization: bearer }],
+      [`/local-avatar/background?v=${v}&extra=1`, { authorization: bearer }],
+      ["/local-avatar/background", { authorization: bearer }],
+      [`/local-avatar/background/x?v=${v}`, { authorization: bearer }],
+      ["/local-avatar/background?v=absent", { authorization: bearer }],
+      [`/local-avatar/background?v=${encodeURIComponent(plain.session.visualId)}`, { authorization: `Bearer ${plain.capability}` }],
+      [`/local-avatar/background?v=${encodeURIComponent(plain.session.visualId)}`, { authorization: bearer }],
+    ];
+    for (const [url, options] of denied) {
+      const res = await call(url, options);
+      assert.equal(res.statusCode, 404, `${options.method || "GET"} ${url}`);
+      assert.equal(res.body.toString(), "Not Found");
+    }
+    issued.session.close();
+    const closed = await call(`/local-avatar/background?v=${v}`, { authorization: bearer });
+    assert.equal(closed.statusCode, 404);
+  } finally {
+    issued.session.close();
+    plain.session.close();
+  }
+});
+
 function writeMetrics(dir, events) {
   fs.writeFileSync(path.join(dir, "metrics.jsonl"), `${events.map((event) => JSON.stringify(event)).join("\n")}\n`);
 }

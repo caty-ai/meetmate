@@ -125,7 +125,14 @@ async function parseMultipart(req, directory, options) {
       validateFilename(disposition.filename, options);
       const mediaType = String(headers.get("content-type") || "").split(";", 1)[0].trim().toLowerCase();
       if (!allowedTypes.has(mediaType)) fail(options, "MEDIA_TYPE_UNSUPPORTED", 415);
-      source = { ...randomTemp(directory, options), bytes: 0, hash: crypto.createHash("sha256"), closed: false };
+      source = {
+        ...randomTemp(directory, options),
+        bytes: 0,
+        hash: crypto.createHash("sha256"),
+        closed: false,
+        contentType: mediaType,
+        filename: disposition.filename,
+      };
       fileSeen = true;
       current = "file";
       return;
@@ -250,6 +257,8 @@ async function parseMultipart(req, directory, options) {
       filePath: source.path,
       fileBytes: source.bytes,
       fileSha256: source.hash.digest("hex"),
+      fileContentType: source.contentType,
+      fileName: source.filename,
     };
   } catch (error) {
     try { closeSource(); } catch { /* cleanup below */ }

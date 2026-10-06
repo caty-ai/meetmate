@@ -19,6 +19,7 @@ const ENVELOPE_WINDOW_MS = 100;
 const ENVELOPE_HISTORY_MS = 20_000;
 const DEFAULT_BACKGROUND = Object.freeze({ mode: "solid", color: "#08111f" });
 const BACKGROUND_MODES = new Set(["solid", "image", "chroma"]);
+const BACKGROUND_IMAGE_TYPES = new Set(["image/png", "image/jpeg"]);
 // #266 page audio (faceAudio=page only): freshness and queue bounds.
 const AUDIO_ROUTE = "/local-avatar/audio";
 const AUDIO_HEARTBEAT_FRESH_MS = 1000;
@@ -54,6 +55,7 @@ function createLocalAvatarSession(options = {}) {
     retryLimit: options.retryLimit,
     logger: options.logger,
     background: options.background,
+    backgroundImage: options.backgroundImage,
     pageAudio: options.pageAudio === true,
   });
 
@@ -68,7 +70,7 @@ function createLocalAvatarSession(options = {}) {
 }
 
 class LocalAvatarSession {
-  constructor({ visualId, capability, publicOrigin, now, ttlMs, queueLimit, retryLimit, logger, background, mode, facePackage, mountId, pageAudio }) {
+  constructor({ visualId, capability, publicOrigin, now, ttlMs, queueLimit, retryLimit, logger, background, backgroundImage, mode, facePackage, mountId, pageAudio }) {
     this.mode = mode;
     if (mode === "face-package") {
       this.facePackage = facePackage;
@@ -104,7 +106,9 @@ class LocalAvatarSession {
     this._dropped = 0;
     this._envelopeLog = [];
     this._envelopeDropped = 0;
-    this._background = normalizeBackground(background);
+    // #294 D5: the join-time picture lives only in memory; `image` is its cache token.
+    this._backgroundImage = normalizeBackgroundImage(background, backgroundImage);
+    this._background = normalizeBackground(background, this._backgroundImage);
     // #283 face status facts: observations only, they change no page behavior.
     this._pageFirstSeenAt = null;
     this._firstConnectedAt = null;
@@ -112,6 +116,16 @@ class LocalAvatarSession {
     this._connectedGeneration = 0;
     this._lastPollAt = null;
     this._closedReason = null;
+  }
+
+  backgroundState() {
+    return { ...this._background };
+  }
+
+  // #294 D5: bytes for GET /local-avatar/background; the route verifies the capability first.
+  backgroundImage() {
+    if (this._closed || !this._backgroundImage) return null;
+    return { bytes: this._backgroundImage.bytes, type: this._backgroundImage.type };
   }
 
   isLive() {
@@ -156,7 +170,7 @@ class LocalAvatarSession {
         sampleIndex: null,
         sampleRate: null,
       }),
-      background: { ...this._background },
+      background: this.backgroundState(),
     };
   }
 
@@ -503,6 +517,7 @@ class LocalAvatarSession {
     if (this._closed) return false;
     this._closed = true;
     this._closedReason = reason;
+    this._backgroundImage = null;
     this._queue.length = 0;
     this._lastDelivery = null;
     this._capabilityHash.fill(0);
@@ -759,16 +774,26 @@ function toBase64Url(value) {
   return value.toString("base64url");
 }
 
-function normalizeBackground(value) {
-  if (
-    !value
-    || !BACKGROUND_MODES.has(value.mode)
-    || typeof value.color !== "string"
-    || !/^#[0-9a-f]{6}$/i.test(value.color)
-  ) {
-    return { ...DEFAULT_BACKGROUND };
+function isValidBackground(value) {
+  return Boolean(value)
+    && BACKGROUND_MODES.has(value.mode)
+    && typeof value.color === "string"
+    && /^#[0-9a-f]{6}$/i.test(value.color);
+}
+
+function normalizeBackground(value, image = null) {
+  if (!isValidBackground(value)) return { ...DEFAULT_BACKGROUND, image: null };
+  return { mode: value.mode, color: value.color, image: image ? image.version : null };
+}
+
+function normalizeBackgroundImage(background, value) {
+  if (!isValidBackground(background) || background.mode !== "image" || !value
+      || !Buffer.isBuffer(value.bytes) || value.bytes.length === 0
+      || !BACKGROUND_IMAGE_TYPES.has(value.type)
+      || typeof value.version !== "string" || !/^[0-9a-f]{16}$/.test(value.version)) {
+    return null;
   }
-  return { mode: value.mode, color: value.color };
+  return { bytes: value.bytes, type: value.type, version: value.version };
 }
 
 function clampInteger(value, fallback, minimum, maximum) {

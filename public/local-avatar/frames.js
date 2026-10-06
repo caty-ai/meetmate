@@ -3,6 +3,7 @@
 
   const STATE_ROUTE = "/local-avatar/state";
   const FRAME_ROUTE = "/local-avatar/frames";
+  const BACKGROUND_ROUTE = "/local-avatar/background";
   const FRAME_NAMES = Object.freeze(["idle", "talk1", "talk2", "talk3", "blink", "talk_blink"]);
   const MAX_RECONNECTS = 6;
   const BASE_BACKOFF_MS = 250;
@@ -59,6 +60,7 @@ const FRAMES_BACKGROUND_BASE64URL = "";
   let framesBackground;
   let framesBackgroundBitmap = null;
   let framesBackgroundDecodeStarted = false;
+  let framesUploadedBackgroundStarted = false;
 
   function randomBetween(minimum, maximum) {
     return minimum + (Math.random() * (maximum - minimum));
@@ -249,16 +251,55 @@ const FRAMES_BACKGROUND_BASE64URL = "";
     }
   }
 
+  function startEmbeddedFramesBackground() {
+    if (FRAMES_BACKGROUND_BASE64URL && !framesBackgroundDecodeStarted) {
+      framesBackgroundDecodeStarted = true;
+      decodeFramesBackground();
+    }
+  }
+
+  async function decodeBackgroundBlob(blob) {
+    try {
+      return await createImageBitmap(blob, { imageOrientation: "from-image" });
+    } catch (error) {
+      if (error?.name !== "TypeError") throw error;
+      return createImageBitmap(blob);
+    }
+  }
+
+  // #294 D5: uploaded picture -> build-time embed -> colour. One attempt, one warning, no retry loop.
+  async function loadUploadedFramesBackground() {
+    try {
+      const response = await fetch(backgroundUrl(), {
+        method: "GET",
+        headers: { Authorization: `Bearer ${capability}` },
+        cache: "no-store",
+        credentials: "omit",
+        referrerPolicy: "no-referrer",
+      });
+      if (!response.ok) throw new Error("background rejected");
+      framesBackgroundBitmap = await decodeBackgroundBlob(await response.blob());
+      repaintCurrentFrame();
+    } catch {
+      console.warn("local avatar uploaded background unavailable; using the fallback");
+      startEmbeddedFramesBackground();
+    }
+  }
+
   function setFramesBackground(value) {
     const previous = framesBackground;
     const validMode = value && ["solid", "image", "chroma"].includes(value.mode);
     const validColor = value && typeof value.color === "string" && /^#[0-9a-f]{6}$/i.test(value.color);
+    const image = validMode && validColor && value.mode === "image" && typeof value.image === "string"
+      && /^[0-9a-f]{16}$/.test(value.image) ? value.image : null;
     framesBackground = validMode && validColor
-      ? { mode: value.mode, color: value.color }
-      : { mode: "solid", color: "#08111f" };
-    if (framesBackground.mode === "image" && FRAMES_BACKGROUND_BASE64URL && !framesBackgroundDecodeStarted) {
-      framesBackgroundDecodeStarted = true;
-      decodeFramesBackground();
+      ? { mode: value.mode, color: value.color, image }
+      : { mode: "solid", color: "#08111f", image: null };
+    if (framesBackground.mode === "image" && framesBackground.image && !framesUploadedBackgroundStarted) {
+      framesUploadedBackgroundStarted = true;
+      loadUploadedFramesBackground();
+    } else if (framesBackground.mode === "image" && !framesUploadedBackgroundStarted) {
+      startEmbeddedFramesBackground();
     }
     if (!previous || previous.mode !== framesBackground.mode || previous.color !== framesBackground.color) repaintCurrentFrame();
   }
@@ -495,6 +536,11 @@ const FRAMES_BACKGROUND_BASE64URL = "";
   function frameUrl(name) {
     const search = new URLSearchParams({ v: visualId });
     return `${FRAME_ROUTE}/${name}.png?${search.toString()}`;
+  }
+
+  function backgroundUrl() {
+    const search = new URLSearchParams({ v: visualId });
+    return `${BACKGROUND_ROUTE}?${search.toString()}`;
   }
 
   async function requestState(parameters) {

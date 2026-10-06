@@ -19815,15 +19815,61 @@ const RIG_BACKGROUND_BASE64URL = "";
     }
   }
 
+  const RIG_UPLOADED_BACKGROUND_ROUTE = "/local-avatar/background";
+  let rigUploadedBackgroundStarted = false;
+
+  function rigBackgroundUrl() {
+    const search = new URLSearchParams({ v: visualId });
+    return `${RIG_UPLOADED_BACKGROUND_ROUTE}?${search.toString()}`;
+  }
+
+  function startEmbeddedRigBackground() {
+    if (RIG_BACKGROUND_BASE64URL && !rigBackgroundDecodeStarted) {
+      rigBackgroundDecodeStarted = true;
+      decodeRigBackground();
+    }
+  }
+
+  async function decodeRigBackgroundBlob(blob) {
+    try {
+      return await createImageBitmap(blob, { imageOrientation: "from-image" });
+    } catch (error) {
+      if (error?.name !== "TypeError") throw error;
+      return createImageBitmap(blob);
+    }
+  }
+
+  // #294 D5: uploaded picture -> build-time embed -> colour. One attempt, one warning, no retry loop.
+  async function loadUploadedRigBackground() {
+    try {
+      const response = await fetch(rigBackgroundUrl(), {
+        method: "GET",
+        headers: { Authorization: `Bearer ${capability}` },
+        cache: "no-store",
+        credentials: "omit",
+        referrerPolicy: "no-referrer",
+      });
+      if (!response.ok) throw new Error("background rejected");
+      rigBackgroundBitmap = await decodeRigBackgroundBlob(await response.blob());
+    } catch {
+      console.warn("local avatar uploaded background unavailable; using the fallback");
+      startEmbeddedRigBackground();
+    }
+  }
+
   function setRigBackground(value) {
     const validMode = value && ["solid", "image", "chroma"].includes(value.mode);
     const validColor = value && typeof value.color === "string" && /^#[0-9a-f]{6}$/i.test(value.color);
+    const image = validMode && validColor && value.mode === "image" && typeof value.image === "string"
+      && /^[0-9a-f]{16}$/.test(value.image) ? value.image : null;
     rigBackground = validMode && validColor
-      ? { mode: value.mode, color: value.color }
-      : { mode: "solid", color: "#08111f" };
-    if (rigBackground.mode === "image" && RIG_BACKGROUND_BASE64URL && !rigBackgroundDecodeStarted) {
-      rigBackgroundDecodeStarted = true;
-      decodeRigBackground();
+      ? { mode: value.mode, color: value.color, image }
+      : { mode: "solid", color: "#08111f", image: null };
+    if (rigBackground.mode === "image" && rigBackground.image && !rigUploadedBackgroundStarted) {
+      rigUploadedBackgroundStarted = true;
+      loadUploadedRigBackground();
+    } else if (rigBackground.mode === "image" && !rigUploadedBackgroundStarted) {
+      startEmbeddedRigBackground();
     }
   }
 

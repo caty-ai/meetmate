@@ -107,8 +107,8 @@ manifest query must contain at least one pair. Percent escapes and `+` are rejec
 `viewport` is optional and advisory, with integer width/height from 1 to 8192.
 `supports` is an array of at most 32 strings, each matching
 `^[a-z][a-z0-9-]{0,31}$` (1–32 characters, no trailing newline). Known v1 values are
-`speak`, `level`, `emotion`, `background`, `listen`, and `cue`; `speak` and `level`
-are required. Hosts ignore unknown well-formed values for forward compatibility,
+`speak`, `level`, `emotion`, `background`, `background-transparent`, `listen`, and
+`cue`; `speak` and `level` are required. Hosts ignore unknown well-formed values for forward compatibility,
 dropping them from the normalized descriptor and `host-init`; they never enable
 new message types. Non-string or malformed entries and oversized arrays invalidate
 the manifest. The 32-entry limit applies before filtering or deduplication.
@@ -145,7 +145,7 @@ the protocol. Another host may implement the same messages through its own adapt
 | Host → package | `speak-emotion` | `id`, `emotion`, `intensity`; updates the active segment |
 | Host → package | `level` | `id`, `v` in 0..1; visual envelope on the playback clock |
 | Host → package | `speak-end` | `id`, `reason: "end"` or `"interrupt"` |
-| Host → package | `background` | `mode: "solid"`, `"image"`, or `"chroma"`; `color: "#rrggbb"` |
+| Host → package | `background` | `mode: "solid"` or `"chroma"` with `color: "#rrggbb"`; or `mode: "transparent"` (no colour, only to packages declaring `background-transparent`) |
 | Host → package | `listen-start`, `listen-end` | `id`; listening interval, experimental |
 | Host → package | `cue` | `id`, `emotion`, `intensity`; one listening reaction, experimental |
 
@@ -172,6 +172,32 @@ comes from explicit synthesis completion and the final sample position, never a
 silent envelope. Levels run at roughly 30 Hz over 100 ms envelope windows, with a
 300 ms initial playback offset and forward re-anchoring after synthesis gaps.
 No PCM, text, output epoch, filesystem path or capability is sent to the package.
+
+### Background (`background`, `background-transparent`)
+
+A `background` message is sent only to packages that declare `background`. The
+posted modes are exactly `solid | chroma | transparent`. The meetmate setting
+`avatar_rig_background_mode` also has a host-side value `image` (the operator's
+uploaded picture); it never crosses the protocol and is rewritten by this table.
+The message is built field by field — the host state is never spread into it.
+
+| Host setting | Package declares `background-transparent` | Posted message |
+|---|---|---|
+| `solid` | either | `{type: "background", mode: "solid", color}` |
+| `chroma` | either | `{type: "background", mode: "chroma", color}` |
+| `image`, picture present for this meeting | yes | `{type: "background", mode: "transparent"}` (no `color`) |
+| `image`, picture present for this meeting | no | `{type: "background", mode: "solid", color}` — the picture stays hidden under the opaque package |
+| `image`, no picture | either | `{type: "background", mode: "solid", color}` |
+
+For `transparent`, the host draws the picture itself on a full-viewport canvas
+(`z-index: 0`, cover and centred, redrawn on resize) placed before the package iframe
+(`position: fixed; inset: 0; z-index: 1; background: transparent`). The host page
+colour stays underneath as the fallback until the picture has decoded, and if it
+fails to load. A package that declares `background-transparent` must, on
+`mode: "transparent"`, clear its own page and canvases with alpha (transparent
+`html`/`body`, WebGL `alpha: true`, clear colour `[0, 0, 0, 0]`) so the host layer
+shows through, and must handle `transparent` before treating any message as a colour.
+No picture bytes, URL, cache token or capability is sent to the package.
 
 ## Serving boundary
 

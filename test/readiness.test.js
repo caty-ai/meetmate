@@ -404,3 +404,65 @@ test("#197 readiness IDs cover pending, connected, hard, static and restart stat
   assert.ok(required);
   assert.equal(required.diagnosticId, "MM-STT-002");
 });
+
+const BACKGROUND_NOTICE = {
+  code: "AVATAR_BACKGROUND_IMAGE_MISSING",
+  message: "背景が「画像」ですが、背景画像がアップロードされていません。埋め込み画像があればそれを、なければ背景色で表示します",
+};
+
+test("#294 mode image without a valid upload adds one non-blocking notice; anything else adds none", async () => {
+  let present = false;
+  const controller = readiness.createReadinessController({
+    probeFn: async () => ({ ok: true, code: "CONNECTED" }),
+    backgroundPresent: () => present,
+  });
+  initialize(document({ avatar: { rigBackgroundMode: "image" } }));
+  await controller.bootstrap();
+  const missing = controller.getReadiness();
+  assert.deepEqual(missing.notices, [BACKGROUND_NOTICE]);
+  assert.equal(missing.ready, true, "never a blocker");
+  assert.deepEqual(missing.blockers, []);
+  assert.deepEqual((await controller.recheckPublic()).notices, [BACKGROUND_NOTICE]);
+
+  present = true;
+  assert.deepEqual(controller.getReadiness().notices, []);
+
+  present = false;
+  for (const mode of ["solid", "chroma"]) {
+    initialize(document({ avatar: { rigBackgroundMode: mode } }));
+    assert.deepEqual(controller.getReadiness().notices, [], mode);
+  }
+
+  // Legacy notices come first, then the avatar notice.
+  const parsed = document({ agents: [{}], avatar: { rigBackgroundMode: "image" } });
+  initialize(parsed);
+  assert.deepEqual(controller.getReadiness().notices.map((notice) => notice.code),
+    ["AGENTS_KEY_UNSUPPORTED", "AVATAR_BACKGROUND_IMAGE_MISSING"]);
+
+  // Any error in the presence check yields no avatar notice and leaves readiness intact.
+  initialize(document({ avatar: { rigBackgroundMode: "image" } }));
+  controller.configure({ backgroundPresent: () => { throw new Error("disk unavailable"); } });
+  const failing = controller.getReadiness();
+  assert.deepEqual(failing.notices, []);
+  assert.equal(failing.ready, true);
+});
+
+test("#294 the default presence check reads the managed picture through the D2 rules", (t) => {
+  const fs = require("node:fs");
+  const os = require("node:os");
+  const path = require("node:path");
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-readiness-background-"));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  resolver.resetRuntimeForTest();
+  resolver.initializeRuntime({
+    state: { exists: true, valid: true, parsed: document({ avatar: { rigBackgroundMode: "image" } }), revision: "c".repeat(64), fingerprint: "c" },
+    startup: Object.freeze({ ...startup(), resolvedHome: home, configPath: path.join(home, "config.json") }),
+  });
+  const { avatarNotices } = readiness._test;
+  assert.deepEqual(avatarNotices(), [BACKGROUND_NOTICE], "no assets directory");
+  fs.mkdirSync(path.join(home, "assets"), { mode: 0o700 });
+  fs.writeFileSync(path.join(home, "assets", "avatar-background"), Buffer.from("not an image"), { mode: 0o600 });
+  assert.deepEqual(avatarNotices(), [BACKGROUND_NOTICE], "unsniffable file counts as absent");
+  fs.copyFileSync(path.join(__dirname, "..", "assets", "avatar.png"), path.join(home, "assets", "avatar-background"));
+  assert.deepEqual(avatarNotices(), []);
+});

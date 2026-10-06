@@ -3,11 +3,21 @@
 (() => {
   "use strict";
   const EMOTIONS = new Set([null, "joy", "trust", "fear", "surprise", "sadness", "disgust", "anger", "anticipation"]);
-  const SUPPORTS = new Set(["speak", "level", "emotion", "background", "listen", "cue"]);
+  const SUPPORTS = new Set(["speak", "level", "emotion", "background", "background-transparent", "listen", "cue"]);
   function normalizeSupports(values) {
     if (!Array.isArray(values) || values.length > 32
       || values.some((v) => typeof v !== "string" || !/^[a-z][a-z0-9-]{0,31}(?![\s\S])/.test(v))) throw new Error("supports");
     return [...new Set(values.filter((v) => SUPPORTS.has(v)))];
+  }
+  // #294 D6: the only background message a package ever receives, built field by field and
+  // never by spreading host state. Host mode `image` never crosses the protocol: a package that
+  // declares `background-transparent` gets `transparent` (no colour) while the host paints the
+  // picture underneath; any other package gets the colour.
+  function backgroundMessage(background, supports) {
+    if (!background || typeof background !== "object" || !supports.includes("background")) return null;
+    if (background.mode === "image" && typeof background.image === "string" && background.image
+      && supports.includes("background-transparent")) return { type: "background", mode: "transparent" };
+    return { type: "background", mode: background.mode === "chroma" ? "chroma" : "solid", color: background.color };
   }
   const integer = (v) => Number.isSafeInteger(v) && v >= 0;
   const validEmotion = (v) => EMOTIONS.has(v.emotion) && Number.isFinite(v.intensity) && v.intensity >= 0 && v.intensity <= 1;
@@ -256,7 +266,7 @@
     return { begin, feed, frame, observe, stop, position, heartbeat, scheduled: () => nodes.length, cursor: () => cursor };
   }
 
-  if (typeof module !== "undefined" && module.exports) { module.exports = { createTimeline, createPlayer }; return; }
+  if (typeof module !== "undefined" && module.exports) { module.exports = { createTimeline, createPlayer, backgroundMessage }; return; }
 
   const visualId = new URLSearchParams(location.search).get("v") || "";
   const capability = new URLSearchParams(location.hash.slice(1)).get("cap") || "";
@@ -267,9 +277,13 @@
   frame.setAttribute("sandbox", "allow-scripts");
   frame.setAttribute("allow", "");
   // opacity, not visibility: Chrome throttles rAF in hidden cross-origin frames, so a package waiting for its first frame would never send face-ready.
-  frame.style.cssText = "border:0;width:100vw;height:100vh;display:block;opacity:0";
+  // #294 D6: the iframe sits above the host picture layer (z-index 0) and never paints its own backdrop.
+  frame.style.cssText = "position:fixed;inset:0;z-index:1;background:transparent;border:0;width:100vw;height:100vh;display:block;opacity:0";
   let descriptor, timeline, ready = false, sequence = -1, generation = 0, background;
   let stopped = false, reconnects = 0, timer;
+  // #294 D6: host-side picture layer, created once a picture has decoded. Until then (and on any
+  // failure) the <html> colour underneath stays visible.
+  let backgroundLayer = null, backgroundBitmap = null, backgroundToken = null;
   // Page audio (descriptor.pageAudio only): { context, player, stream, endedAt }. PCM stays in this page.
   let audio = null;
   // An opaque-origin iframe requires '*'. Only non-secret visual protocol data
@@ -279,6 +293,55 @@
     method: "POST", headers: { Authorization: `Bearer ${capability}` },
     credentials: "omit", cache: "no-store", referrerPolicy: "no-referrer", ...extra,
   });
+  // `request()` is POST-only; the picture is a plain authenticated GET.
+  const getAsset = (route) => fetch(`${route}?${new URLSearchParams({ v: visualId })}`, {
+    method: "GET", headers: { Authorization: `Bearer ${capability}` },
+    credentials: "omit", cache: "no-store", referrerPolicy: "no-referrer",
+  });
+  async function decodeBackground(blob) {
+    try { return await createImageBitmap(blob, { imageOrientation: "from-image" }); } catch (error) {
+      if (error?.name !== "TypeError") throw error;
+      return createImageBitmap(blob);
+    }
+  }
+  // Cover + centred, at viewport x devicePixelRatio.
+  function drawBackground() {
+    if (!backgroundLayer || !backgroundBitmap) return;
+    const ratio = Number(globalThis.devicePixelRatio) > 0 ? globalThis.devicePixelRatio : 1;
+    const width = Math.max(1, Math.round((Number(globalThis.innerWidth) || 1) * ratio));
+    const height = Math.max(1, Math.round((Number(globalThis.innerHeight) || 1) * ratio));
+    backgroundLayer.width = width;
+    backgroundLayer.height = height;
+    const context = backgroundLayer.getContext("2d");
+    if (!context) return;
+    const scale = Math.max(width / backgroundBitmap.width, height / backgroundBitmap.height);
+    const drawWidth = backgroundBitmap.width * scale;
+    const drawHeight = backgroundBitmap.height * scale;
+    context.clearRect(0, 0, width, height);
+    context.drawImage(backgroundBitmap, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight);
+  }
+  async function showBackground(value) {
+    const token = value?.mode === "image" && typeof value.image === "string" && /^[0-9a-f]{16}$/.test(value.image) ? value.image : null;
+    if (!token || token === backgroundToken) return;
+    backgroundToken = token;
+    try {
+      const response = await getAsset("/local-avatar/background");
+      if (!response.ok) throw new Error("background");
+      const bitmap = await decodeBackground(await response.blob());
+      if (stopped) return;
+      if (!backgroundLayer) {
+        backgroundLayer = document.createElement("canvas");
+        backgroundLayer.id = "bg";
+        backgroundLayer.style.cssText = "position:fixed;inset:0;width:100vw;height:100vh;z-index:0;display:block";
+        document.body.prepend(backgroundLayer);
+      }
+      backgroundBitmap = bitmap;
+      drawBackground();
+    } catch {
+      globalThis.console?.warn?.("face host: background image unavailable; using the background colour");
+    }
+  }
+  addEventListener("resize", drawBackground);
   // (B) stream stop: abort the fetch and stop every scheduled node; the mouth goes idle.
   function stopStream() {
     if (!audio?.stream) return;
@@ -317,7 +380,8 @@
     post({ type: "host-init", spec: "face-package/1", supports: descriptor.supports,
       ...(descriptor.viewport ? { viewport: descriptor.viewport } : {}),
       ...(descriptor.quality ? { quality: descriptor.quality } : {}) });
-    if (background && descriptor.supports.includes("background")) post({ type: "background", ...background });
+    const message = backgroundMessage(background, descriptor.supports);
+    if (message) post(message);
   }
   addEventListener("message", (event) => {
     const data = event.data;
@@ -348,6 +412,7 @@
       generation = state.generation;
       background = state.background;
       if (background?.color && /^#[0-9a-f]{6}$/i.test(background.color)) document.documentElement.style.background = background.color;
+      void showBackground(background);
       init();
       if (!timeline.accept(state)) throw new Error("state");
       sequence = state.sequence;
@@ -396,6 +461,7 @@
       if (descriptor.background) {
         background = descriptor.background;
         document.documentElement.style.background = background.color;
+        void showBackground(background);
       }
       frame.src = `/local-avatar/pkg/${descriptor.mountId}/${descriptor.entry}${descriptor.query ? `?${descriptor.query}` : ""}`;
       document.body.append(frame);

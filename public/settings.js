@@ -283,7 +283,7 @@ if (typeof document !== "undefined") {
       bot_host: "会議ボットを動かす Attendee を選びます。接続先・API key・口パクのタイミング調整は実行先ごとに別々に保存され、次の会議参加から反映されます。",
       attendee_self_hosted_url: "https://host[:port][/base] の形式（末尾の / は付けても構いません。保存時に外します）。使える文字は半角英数字と - . _ ~ : / [ ] % だけで、国際化ドメイン名は xn-- で始まる punycode で書きます。空白・バックスラッシュ・「.」「..」や「//」を含むパスは使えません。http:// は同じマシンかプライベートネットワーク内（127.0.0.0/8・10.0.0.0/8・172.16.0.0/12・192.168.0.0/16・100.64.0.0/10 など）の接続先にだけ使えます。",
       face_audio_default: "参加フォームの「声をフェイス画面から流す」チェックの初期値です。触らずに参加すると、この既定値が使われます（フロア調停が有効なときなどは自動で WebSocket になります）。Attendee のリアルタイム音声は 8000 / 16000 / 24000 Hz だけを受け付けるため、サンプルレート（tts_sample_rate）はこのどれかにしてください。フェイス画面の音声を取り込むレートは Attendee サーバー側の設定（WEBPAGE_STREAMER_AUDIO_SAMPLE_RATE。公開版の Attendee は 16 kHz 固定、このモードでは 48 kHz 推奨）で、meetmate からは変更も読み取りもできません。",
-      avatar_rig_background_mode: "2.5Dリグとフレームセットの両方に適用され、次回の会議参加から反映されます。画像モードで背景画像が未埋め込みの場合: このビルドには背景画像が埋め込まれていません",
+      avatar_rig_background_mode: "2.5Dリグとフレームセットの両方に適用され、次回の会議参加から反映されます。「画像」: アップロードした背景画像を使います。未アップロードのときは、ビルドに埋め込んだ画像があればそれを、なければ背景色を使います。",
       avatar_rig_background_color: "2.5Dリグとフレームセットの両方で、単色または画像の読み込み失敗時に使う #rrggbb 形式の色です。次回の会議参加から反映されます",
       task_extraction_enabled: "会議終了時に TODO を抽出します。",
       streaming_equivalent_enabled: "OpenAI-compatible の互換ストリーミング動作を使います。",
@@ -336,9 +336,11 @@ if (typeof document !== "undefined") {
     const ATTENDEE_ORIGIN_NOTE = "URL の接続先が保存済みの値から変わりました。保存済みの API key がこのサーバーのものか確認してください。";
     const RIG_BACKGROUND_OPTION_LABELS = {
       solid: "単色",
-      image: "埋め込み画像",
+      image: "画像",
       chroma: "クロマキー",
     };
+    const AVATAR_BACKGROUND_IMAGE_MISSING_NOTE = "背景が「画像」ですが、背景画像がアップロードされていません。埋め込み画像があればそれを、なければ背景色で表示します";
+    const AVATAR_BACKGROUND_FILE_LIMIT = 8 * 1024 * 1024;
     const REPLY_TRIGGER_OPTION_LABELS = {
       wake: "Wake Word で呼ばれたときだけ（既定）",
       jev: "話しかけられたと判定したとき（試験）",
@@ -372,6 +374,11 @@ if (typeof document !== "undefined") {
     const avatarStaticFile = document.getElementById("avatarStaticFile");
     const uploadStaticAvatarButton = document.getElementById("uploadStaticAvatar");
     const avatarStaticPreview = document.getElementById("avatarStaticPreview");
+    const avatarBackgroundFile = document.getElementById("avatarBackgroundFile");
+    const uploadAvatarBackgroundButton = document.getElementById("uploadAvatarBackground");
+    const avatarBackgroundPreview = document.getElementById("avatarBackgroundPreview");
+    // #294: null until /api/settings/avatar answers; the selector notice stays hidden until then.
+    let avatarBackgroundPresent = null;
     const connectCloudButton = document.getElementById("connectCloud");
     const refreshCloudButton = document.getElementById("refreshCloud");
     const disconnectCloudButton = document.getElementById("disconnectCloud");
@@ -671,6 +678,12 @@ if (typeof document !== "undefined") {
       const faceAudioNote = notice("warning", "フェイス画面の音声", FACE_AUDIO_CLOUD_NOTE);
       faceAudioNote.id = "faceAudioCloudNote";
       document.getElementById("avatarFields").append(faceAudioNote);
+      // #294 D4: the readiness notice, shown under the アバター背景 selector.
+      const backgroundNote = notice("warning", "背景画像", AVATAR_BACKGROUND_IMAGE_MISSING_NOTE);
+      backgroundNote.id = "avatarBackgroundImageNote";
+      const backgroundField = document.querySelector('[data-field-id="avatar_rig_background_mode"]');
+      if (backgroundField) backgroundField.after(backgroundNote);
+      else document.getElementById("avatarFields").append(backgroundNote);
       for (const [id, title, message] of [
         ["attendeeHttpNote", "暗号化されない接続", ATTENDEE_HTTP_NOTE],
         ["attendeeOriginNote", "API key の確認", ATTENDEE_ORIGIN_NOTE],
@@ -683,6 +696,7 @@ if (typeof document !== "undefined") {
       renderEmotionHelp();
       renderAudioClips();
       updateConditionalVisibility();
+      updateAvatarBackgroundNote();
       updateAttendeeNotes();
       updateDirtyState();
     }
@@ -847,6 +861,12 @@ if (typeof document !== "undefined") {
       document.getElementById("inUse-face_timeline_offset_ms_self_hosted")?.classList.toggle("is-hidden", botHost !== "attendee-self-hosted");
     }
 
+    function updateAvatarBackgroundNote() {
+      const mode = currentProvider("avatar_rig_background_mode", loadedValues.avatar_rig_background_mode);
+      document.getElementById("avatarBackgroundImageNote")?.classList.toggle("is-hidden",
+        !(mode === "image" && avatarBackgroundPresent === false));
+    }
+
     function urlOrigin(value) {
       try { return new URL(String(value || "").trim()).origin; } catch { return ""; }
     }
@@ -970,6 +990,8 @@ if (typeof document !== "undefined") {
       if (code === "SETTINGS_AVATAR_RATE_LIMITED") return "アップロードの間隔が短すぎます。少し待ってから再試行してください。";
       if (code === "SETTINGS_AVATAR_FILE_TOO_LARGE") return "画像のファイルサイズが上限を超えています。";
       if (code === "SETTINGS_AVATAR_TOTAL_LIMIT") return "アバター素材の合計 64 MiB 上限を超えています。";
+      if (code === "SETTINGS_AVATAR_TYPE_MISMATCH") return "ファイルの中身が拡張子や形式と一致しません。PNG か JPEG の画像をそのまま選択してください。";
+      if (code === "SETTINGS_AVATAR_JPEG_INVALID") return "JPEG を読み取れませんでした。4096×4096 px 以下の通常の JPEG（ベースラインまたはプログレッシブ）を選択してください。";
       if (code === "SETTINGS_CLOUD_URL_INVALID") return "Caty Cloud URL には有効な https:// URL を指定してください。";
       if (code === "SETTINGS_CLOUD_NOT_CONNECTED") return "Cloud arbitration は接続されていません。";
       if (code === "SETTINGS_CLOUD_CONNECT_IN_PROGRESS") return "クラウド認証はすでに進行中です。開いている認証画面を完了してください。";
@@ -1189,6 +1211,65 @@ if (typeof document !== "undefined") {
       rigStatus.className = `status-badge ${rig.scriptBytes > 0 ? "match" : "mismatch"}`;
       rigStatus.textContent = rig.scriptBytes > 0 ? "利用可能" : "利用不可";
       renderAvatarFrames(assets);
+      renderAvatarBackground(assets.background);
+    }
+
+    // #294: the uploaded background picture card, mirroring the static-avatar card.
+    function renderAvatarBackground(background) {
+      avatarBackgroundPresent = background?.present === true;
+      const status = document.getElementById("avatarBackgroundStatus");
+      status.className = `status-badge ${avatarBackgroundPresent ? "match" : "pending"}`;
+      status.textContent = avatarBackgroundPresent
+        ? `登録済み（${background.type === "image/jpeg" ? "JPEG" : "PNG"}・${background.width}×${background.height}・${formatBytes(background.bytes)}）`
+        : "未登録";
+      if (avatarBackgroundPresent) avatarBackgroundPreview.src = `${background.previewUrl}?t=${Date.now()}`;
+      else avatarBackgroundPreview.removeAttribute("src");
+      updateAvatarBackgroundNote();
+    }
+
+    function backgroundFileProblem(file) {
+      if (!file) return "PNG または JPEG ファイルを選択してください。";
+      if (!/\.(?:png|jpe?g)$/.test(file.name.toLowerCase())) return ".png / .jpg / .jpeg ファイルを選択してください。";
+      if (file.size > AVATAR_BACKGROUND_FILE_LIMIT) return "背景画像は 8 MiB 以下にしてください。";
+      return "";
+    }
+
+    async function uploadAvatarBackground() {
+      const result = document.getElementById("avatarBackgroundResult");
+      const file = avatarBackgroundFile.files?.[0];
+      const problem = backgroundFileProblem(file);
+      if (problem) { result.textContent = problem; return; }
+      const button = uploadAvatarBackgroundButton;
+      button.disabled = true;
+      const previous = button.textContent;
+      button.textContent = "アップロード中…";
+      result.textContent = "画像を検証しています…";
+      try {
+        // The server-side extension check is case-sensitive; send a lower-case name of the same kind.
+        const extension = file.name.toLowerCase().match(/\.(?:png|jpe?g)$/)[0];
+        const type = extension === ".png" ? "image/png" : "image/jpeg";
+        const formData = new FormData();
+        formData.append("image", new Blob([file], { type }), `background${extension}`);
+        await assetRequest("/api/settings/avatar/background", { method: "POST", body: formData });
+        result.textContent = "背景画像を登録しました。次回の会議参加から使用されます。";
+        await loadAvatarAssets();
+      } catch (error) {
+        result.textContent = error.message;
+      } finally {
+        button.textContent = previous;
+        avatarBackgroundFile.value = "";
+        button.disabled = true;
+      }
+    }
+
+    async function deleteAvatarBackground() {
+      if (!window.confirm("アップロードした背景画像を削除しますか？")) return;
+      const result = document.getElementById("avatarBackgroundResult");
+      try {
+        await jsonRequest("/api/settings/avatar/background", { method: "DELETE" });
+        result.textContent = "背景画像を削除しました。次回の会議参加からは埋め込み画像か背景色を使用します。";
+        await loadAvatarAssets();
+      } catch (error) { result.textContent = error.message; }
     }
 
     async function loadAvatarAssets() {
@@ -1627,6 +1708,7 @@ if (typeof document !== "undefined") {
     form.addEventListener("input", (event) => {
       if (event.target.dataset.settingId) {
         updateConditionalVisibility();
+        updateAvatarBackgroundNote();
         updateAttendeeNotes();
         updateDirtyState();
       }
@@ -1634,6 +1716,7 @@ if (typeof document !== "undefined") {
     form.addEventListener("change", (event) => {
       if (event.target.dataset.settingId) {
         updateConditionalVisibility();
+        updateAvatarBackgroundNote();
         updateAttendeeNotes();
         updateDirtyState();
       }
@@ -1653,6 +1736,15 @@ if (typeof document !== "undefined") {
     playTtsPreviewButton.addEventListener("click", playTtsPreview);
     uploadAudioButton.addEventListener("click", uploadAudioClip);
     uploadStaticAvatarButton.addEventListener("click", uploadStaticAvatar);
+    avatarBackgroundFile.addEventListener("change", () => {
+      const file = avatarBackgroundFile.files?.[0];
+      const problem = backgroundFileProblem(file);
+      uploadAvatarBackgroundButton.disabled = Boolean(problem);
+      document.getElementById("avatarBackgroundResult").textContent = problem;
+      if (!problem) setObjectPreview(avatarBackgroundPreview, file);
+    });
+    uploadAvatarBackgroundButton.addEventListener("click", uploadAvatarBackground);
+    document.getElementById("deleteAvatarBackground").addEventListener("click", deleteAvatarBackground);
     document.getElementById("deleteStaticAvatar").addEventListener("click", deleteStaticAvatar);
     document.getElementById("deleteAvatarFrames").addEventListener("click", deleteAllAvatarFrames);
     document.getElementById("exportSettings").addEventListener("click", exportSettings);
