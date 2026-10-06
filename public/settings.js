@@ -140,6 +140,45 @@ function readinessSummary(data) {
   return systems.map((system) => `${system.id}: ${system.diagnosticId ? `[${system.diagnosticId}] ` : ""}${system.code}`).join(" / ");
 }
 
+// #288: remote settings access. On a remote view these two fields are read-only, and the switch
+// can only be turned off; the server enforces the same rules (403 SETTINGS_REMOTE_FIELD_LOCKED).
+const REMOTE_LOCKED_FIELDS = new Set(["public_origin", "settings_remote_login"]);
+const REMOTE_LOCKED_NOTE = "サーバー本体でだけ変更できます";
+
+function remoteAccessState(envelope) {
+  const access = envelope?.remoteAccess;
+  return {
+    enabled: access?.enabled === true,
+    origin: typeof access?.origin === "string" ? access.origin : "",
+    remoteView: access?.via === "remote",
+  };
+}
+
+function remoteAccessBanner(state) {
+  if (!state.enabled) return null;
+  return {
+    title: `外から設定を変えられる状態です（経由: ${state.origin || "—"}）`,
+    message: state.remoteView ? "いま外から開いています" : "使わないときはオフにしてください。",
+  };
+}
+
+function remoteFieldMode(id, state, loadedValue) {
+  if (!state.remoteView) return "editable";
+  if (REMOTE_LOCKED_FIELDS.has(id)) return "readonly";
+  if (id === "settings_remote_access") return loadedValue === true ? "off-only" : "readonly";
+  return "editable";
+}
+
+function remoteSafeChanges(fields, state) {
+  if (!state.remoteView) return fields;
+  const safe = { ...fields };
+  for (const id of REMOTE_LOCKED_FIELDS) delete safe[id];
+  if (Object.prototype.hasOwnProperty.call(safe, "settings_remote_access") && safe.settings_remote_access !== false) {
+    delete safe.settings_remote_access;
+  }
+  return safe;
+}
+
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     CLIENT_FIELD_SETS: {
@@ -154,6 +193,11 @@ if (typeof module !== "undefined" && module.exports) {
     pendingChangesForValues,
     prefillValues,
     readinessSummary,
+    remoteAccessBanner,
+    remoteAccessState,
+    remoteFieldMode,
+    remoteSafeChanges,
+    REMOTE_LOCKED_NOTE,
     savedFieldsRequireRestart,
     shownValue,
     successfulSaveStatus,
@@ -213,10 +257,14 @@ if (typeof document !== "undefined") {
       summary_enabled: "会議サマリー", gateway_warmup_timeout_ms: "Gateway warmup timeout (ms)",
       gateway_display_name: "Gateway 表示名", server_ngrok_domain: "ngrok ドメイン",
       public_origin: "公開オリジン (https://host:port)",
+      settings_remote_access: "外から設定を変える（Tailscale Serve）",
+      settings_remote_login: "外から設定を変えるログイン（任意）",
       task_extraction_enabled: "タスク抽出", streaming_equivalent_enabled: "ストリーミング相当",
     };
     const HELP = {
       public_origin: "ngrok 以外のトンネル（Tailscale funnel など）で使う公開 HTTPS オリジン。https://host または https://host:port の形式。設定すると ngrok ドメイン・自動検出より優先されます。",
+      settings_remote_access: "前提: Tailscale Serve（HTTP モード・tailnet 内だけ）が、このポートへ転送している唯一のものであること。Funnel や別のトンネル・プロキシを同じポートに向けないでください。公開オリジンが Tailscale Serve のアドレス（https://<名前>.ts.net:<port>）である必要があります。オンにすると、その Serve アドレスに tailnet 内から届く人と端末が、キーや接続先を含むすべての設定を変えられます。オンにできるのはサーバー本体からだけです。",
+      settings_remote_login: "空なら、Tailscale Serve が本人確認したどのログインでも外から開けます。入れると、その Tailscale ログイン（大文字小文字は区別しない）以外は外から開けません。設定・解除はサーバー本体からだけです。",
       agent_wake_words: "1行に1件入力します。カンマ区切りも利用できます。",
       agent_reply_trigger: "試験機能。wake は Wake Word で呼ばれたときだけ返答します（既定）。jev は Wake Word がなくても、自分宛てで言い終わったと判定した発言に返答します。判定のため直近の会議の発言を外部の判定サービスへ送ります。",
       agent_keyterms: "音声認識へ渡す固有名詞などを1行に1件入力します。",
@@ -587,7 +635,26 @@ if (typeof document !== "undefined") {
         inUse.textContent = "使用中（選択中の実行先）";
         wrapper.append(inUse);
       }
+      applyRemoteFieldMode(wrapper, input, entry, value);
       return wrapper;
+    }
+
+    // #288: on a remote view, public_origin and the login pin are read-only and the switch is off-only.
+    function applyRemoteFieldMode(wrapper, input, entry, value) {
+      const mode = remoteFieldMode(entry.id, remoteAccessState(envelope), value);
+      if (mode === "editable") return;
+      if (mode === "readonly") input.disabled = true;
+      const note = document.createElement("small");
+      note.className = "remote-lock-note";
+      note.textContent = mode === "off-only" ? "外からはオフにすることだけができます（オンにできるのはサーバー本体からだけです）" : REMOTE_LOCKED_NOTE;
+      wrapper.append(note);
+    }
+
+    // #288: the cloud "connect" action starts a listener on the server; on a remote view it is replaced by a note.
+    function applyRemoteView() {
+      const remoteView = remoteAccessState(envelope).remoteView;
+      connectCloudButton.hidden = remoteView;
+      document.getElementById("cloudConnectLocalOnly").hidden = !remoteView;
     }
 
     function renderFields() {
@@ -808,6 +875,8 @@ if (typeof document !== "undefined") {
     function renderState() {
       const stack = document.getElementById("settingsState");
       stack.replaceChildren();
+      const remoteBanner = remoteAccessBanner(remoteAccessState(envelope));
+      if (remoteBanner) stack.append(notice("warning", remoteBanner.title, remoteBanner.message));
       if (envelope.setupMode) {
         stack.append(notice("warning", "setup mode", "必須設定を入力して保存し、meetmate を再起動してから Join してください（保存 → 再起動 → Join）。"));
       }
@@ -912,6 +981,8 @@ if (typeof document !== "undefined") {
       if (code === "SETTINGS_CLOUD_REFRESH_FAILED") return "クラウド設定を更新できませんでした。保存済み設定は維持されています。";
       if (code === "SETTINGS_CLOUD_DISCONNECT_FAILED") return "クラウド側の切断に失敗しました。";
       if (code === "SETTINGS_REVISION_CONFLICT") return "設定が別の操作で更新されました。";
+      if (code === "SETTINGS_REMOTE_FIELD_LOCKED") return `${REMOTE_LOCKED_NOTE}。`;
+      if (code === "SETTINGS_REMOTE_LOCAL_ONLY") return "この操作はサーバー本体でだけ行えます。";
       const details = Array.isArray(body?.error?.details)
         ? body.error.details.map((detail) => detail.path).filter(Boolean).join(", ") : "";
       return details ? `${fallback} (${details})` : body?.error?.message || fallback;
@@ -929,6 +1000,7 @@ if (typeof document !== "undefined") {
         renderFields();
         renderState();
         renderDiagnostics();
+        applyRemoteView();
         await loadCloudStatus(false);
         await loadAvatarAssets();
         applyHashDeepLink();
@@ -1211,8 +1283,11 @@ if (typeof document !== "undefined") {
 
     async function saveSettings(event) {
       event.preventDefault();
-      const fields = pendingChanges();
+      const remote = remoteAccessState(envelope);
+      const fields = remoteSafeChanges(pendingChanges(), remote);
       if (!Object.keys(fields).length) return;
+      if (remote.remoteView && fields.settings_remote_access === false
+          && !window.confirm("外から設定を変える機能をオフにします。保存すると、この画面は次の操作から開けなくなります（サーバー本体で再びオンにするまで）。よろしいですか？")) return;
       saveButton.disabled = true;
       saveButton.textContent = "保存中…";
       try {

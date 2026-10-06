@@ -112,9 +112,9 @@ async function call(handler, method, url, body) {
 
 // ---- T1 registry -------------------------------------------------------------------------------
 
-test("T1 registry: the four entries, their shape and order; counts 102 / class-1 11; no existing entry changed", () => {
+test("T1 registry: the four entries, their shape and order; counts 104 / class-1 11; no existing entry changed", () => {
   const ids = SETTINGS_REGISTRY.map((entry) => entry.id);
-  assert.equal(SETTINGS_REGISTRY.length, 102);
+  assert.equal(SETTINGS_REGISTRY.length, 104);
   assert.equal(SETTINGS_REGISTRY.filter((entry) => entry.credential === "class-1").length, 11);
   const shape = (id) => {
     const { schema: _schema, ...rest } = REGISTRY_BY_ID[id];
@@ -796,7 +796,7 @@ test("T18 docs: the setup-guide section with its facts, the README pointers, the
   assert.match(contract, /\| `bot_host` \| `attendee\.host` \| `enum\(attendee-cloud,attendee-self-hosted\)` \/ `attendee-cloud` \| basic \| none \| next-join \| none \| false \|/);
   assert.match(contract, /\| `attendee_self_hosted_url` \| `attendee\.selfHosted\.url` \| `attendee-endpoint-or-empty` \/ empty \| basic \| none \| next-join \| none \| false \|/);
   assert.match(contract, /\| `attendee_self_hosted_api_key` \| `attendee\.selfHosted\.apiKey` \| `secret` \| basic \| class-1 \| next-join \| none \| default \|/);
-  assert.match(contract, /The registry contains exactly 102 rows\./);
+  assert.match(contract, /The registry contains exactly 104 rows\./);
   assert.match(contract, /`attendee\.selfHosted\.apiKey` \(`attendee_self_hosted_api_key`\) is a class-1 credential/);
   assert.match(contract, /an entry of the Attendee slot that `bot_host` does not select is never reported missing/);
   assert.match(contract, /\| `attendee` \| optional gate \| the selected slot's endpoint with that slot's class-1 key \|/);

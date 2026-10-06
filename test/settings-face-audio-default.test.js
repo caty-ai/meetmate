@@ -77,7 +77,7 @@ test("#274 T1 registry row: face_audio_default shape, counts and pins", (t) => {
   for (const bad of ["on", "PAGE", "websocket", true, null]) assert.equal(entry.schema.safeParse(bad).success, false, String(bad));
   const ids = SETTINGS_REGISTRY.map((item) => item.id);
   assert.equal(ids.indexOf("face_audio_default"), ids.indexOf("face_timeline_offset_ms") + 1);
-  assert.equal(SETTINGS_REGISTRY.length, 102);
+  assert.equal(SETTINGS_REGISTRY.length, 104);
   assert.equal(SETTINGS_REGISTRY.filter((item) => item.credential === "class-1").length, 11);
   initRuntime(t);
   const envelope = resolver.buildEnvelope();

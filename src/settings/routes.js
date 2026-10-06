@@ -2,6 +2,7 @@
 
 const crypto = require("node:crypto");
 const fs = require("node:fs");
+const net = require("node:net");
 const path = require("node:path");
 const { URL } = require("node:url");
 const {
@@ -10,7 +11,7 @@ const {
   refreshHubConfigIfStale,
 } = require("../cloud-setup");
 const { EMOTION_TAGS } = require("../messages");
-const { MASK, SETTINGS_REGISTRY } = require("./registry");
+const { MASK, REGISTRY_BY_ID, SETTINGS_REGISTRY } = require("./registry");
 const {
   buildEnvelope,
   getBootstrapSeedFields,
@@ -71,6 +72,15 @@ const SETTINGS_ASSETS = new Map([
   ["/settings-assets/settings.css", { filename: "settings.css", contentType: "text/css; charset=utf-8" }],
   ["/settings-assets/settings.js", { filename: "settings.js", contentType: "application/javascript; charset=utf-8" }],
 ]);
+// #288: the two planes. A local request is decided by `isLocalAdminRequest` alone; a remote
+// request by `remoteAdmission` (R0–R6). The plane is decided once per request.
+const LOCAL_ACCESS = Object.freeze({ plane: "local", origin: "" });
+const TAILNET_IPV4 = new net.BlockList();
+TAILNET_IPV4.addSubnet("100.64.0.0", 10, "ipv4");
+const TAILNET_IPV6 = new net.BlockList();
+TAILNET_IPV6.addSubnet("fd7a:115c:a1e0::", 48, "ipv6");
+const REMOTE_SINGLE_HEADERS = Object.freeze(["host", "x-forwarded-proto", "x-forwarded-host", "x-forwarded-for", "tailscale-user-login"]);
+const REMOTE_FETCH_SITES = new Set(["same-origin", "none"]);
 
 function writeJson(res, status, body, headers = {}) {
   const bytes = Buffer.from(JSON.stringify(body));
@@ -166,6 +176,9 @@ function writeStaticAsset(res, asset) {
     "Content-Type": asset.contentType,
     "Content-Length": bytes.length,
     "Cache-Control": "no-store",
+    // #288: the settings page is never framed (both planes).
+    "Content-Security-Policy": "frame-ancestors 'none'",
+    "X-Frame-Options": "DENY",
   });
   res.end(bytes);
 }
@@ -174,6 +187,8 @@ function writeError(res, error, requestId) {
   const status = error.status || ({
     SETTINGS_MALFORMED_JSON: 400,
     SETTINGS_ORIGIN_REJECTED: 403,
+    SETTINGS_REMOTE_FIELD_LOCKED: 403,
+    SETTINGS_REMOTE_LOCAL_ONLY: 403,
     SETTINGS_REVISION_CONFLICT: 409,
     SETTINGS_IMPORT_VERSION_UNSUPPORTED: 409,
     SETTINGS_BODY_TOO_LARGE: 413,
@@ -204,6 +219,8 @@ function writeError(res, error, requestId) {
   const messages = {
     SETTINGS_MALFORMED_JSON: "Malformed JSON",
     SETTINGS_ORIGIN_REJECTED: "Request origin rejected",
+    SETTINGS_REMOTE_FIELD_LOCKED: "This setting can only be changed on the server",
+    SETTINGS_REMOTE_LOCAL_ONLY: "This action is only available on the server",
     SETTINGS_REVISION_CONFLICT: "Settings revision changed",
     SETTINGS_IMPORT_VERSION_UNSUPPORTED: "Settings import version is not supported",
     SETTINGS_BODY_TOO_LARGE: "Request body too large",
@@ -263,7 +280,95 @@ function isLocalAdminRequest(req, options) {
   return new Set([`localhost:${port}`, `127.0.0.1:${port}`, `[::1]:${port}`]).has(req.headers.host);
 }
 
-function requireSameOrigin(req, options) {
+function asciiLower(value) {
+  return value.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+}
+
+// R2: the effective (running) public_origin must be a `.ts.net` https origin. `new URL` gives the
+// one normalised form compared below: `host` (lower-case, default :443 dropped) and `origin`.
+function remoteAllowance() {
+  const value = getEffectiveValue("public_origin");
+  if (typeof value !== "string" || value === "") return null;
+  const allowed = new URL(value);
+  if (allowed.protocol !== "https:" || allowed.hostname.length <= ".ts.net".length
+      || !allowed.hostname.endsWith(".ts.net")) return null;
+  return { authority: allowed.host, origin: allowed.origin };
+}
+
+// R6: exactly one IP literal (no list, port, brackets, zone id or whitespace) inside Tailscale's
+// ranges. An IPv4-mapped IPv6 literal is unwrapped and judged as IPv4.
+function isTailnetAddress(value) {
+  if (value.includes("%")) return false;
+  const family = net.isIP(value);
+  if (family === 4) return TAILNET_IPV4.check(value, "ipv4");
+  if (family !== 6) return false;
+  const canonical = new URL(`http://[${value}]/`).hostname;
+  const mapped = /^\[::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})\]$/.exec(canonical);
+  if (mapped) {
+    const high = Number.parseInt(mapped[1], 16);
+    const low = Number.parseInt(mapped[2], 16);
+    return TAILNET_IPV4.check(`${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`, "ipv4");
+  }
+  return TAILNET_IPV6.check(value, "ipv6");
+}
+
+// R0–R6 (#288). Header values are read from `rawHeaders`, where each named header must occur
+// exactly once; a request without `rawHeaders` is never remote. No value is logged or returned.
+function remoteAdmission(req) {
+  if (getEffectiveValue("settings_remote_access") !== true) return null;
+  if (!isLoopback(req.socket?.localAddress) || !isLoopback(req.socket?.remoteAddress)) return null;
+  const allowance = remoteAllowance();
+  if (!allowance) return null;
+  if (!Array.isArray(req.rawHeaders) || req.rawHeaders.length % 2 !== 0) return null;
+  const values = new Map();
+  const counts = new Map();
+  for (let index = 0; index < req.rawHeaders.length; index += 2) {
+    const name = String(req.rawHeaders[index]).toLowerCase();
+    counts.set(name, (counts.get(name) || 0) + 1);
+    values.set(name, String(req.rawHeaders[index + 1]));
+  }
+  if (REMOTE_SINGLE_HEADERS.some((name) => counts.get(name) !== 1)) return null;
+  if (counts.has("forwarded") || Object.prototype.hasOwnProperty.call(req.headers || {}, "forwarded")) return null;
+  if (asciiLower(values.get("host")) !== allowance.authority) return null;
+  if (values.get("x-forwarded-proto") !== "https") return null;
+  if (asciiLower(values.get("x-forwarded-host")) !== allowance.authority) return null;
+  const login = values.get("tailscale-user-login").trim();
+  if (login === "") return null;
+  // The resolver turns a malformed stored pin into its "" default (any login); a stored value the
+  // registry rejects keeps the door shut until it is corrected on the server.
+  const pinEntry = REGISTRY_BY_ID.settings_remote_login;
+  const storedPin = readPath(getRawConfig(), pinEntry.path);
+  if (storedPin !== undefined && !pinEntry.schema.safeParse(storedPin).success) return null;
+  const pin = getEffectiveValue("settings_remote_login");
+  // A pin that is neither unset nor a string is malformed: fail closed rather than admit any login.
+  if (pin !== undefined && typeof pin !== "string") return null;
+  if (typeof pin === "string" && pin.trim() !== "" && asciiLower(login) !== asciiLower(pin.trim())) return null;
+  if (!isTailnetAddress(values.get("x-forwarded-for"))) return null;
+  return Object.freeze({ plane: "remote", origin: allowance.origin });
+}
+
+// Never throws: any failure (an unparsable public_origin, a malformed header) is "not remote".
+function isRemoteAdminRequest(req) {
+  try {
+    return remoteAdmission(req);
+  } catch {
+    return null;
+  }
+}
+
+function classifyRequest(req, options) {
+  if (isLocalAdminRequest(req, options)) return LOCAL_ACCESS;
+  return isRemoteAdminRequest(req);
+}
+
+function requireSameOrigin(req, options, access = LOCAL_ACCESS) {
+  if (access.plane === "remote") {
+    if (req.headers.origin !== access.origin
+        || (req.headers["sec-fetch-site"] && req.headers["sec-fetch-site"] !== "same-origin")) {
+      throw settingsError("SETTINGS_ORIGIN_REJECTED", "Request origin rejected", 403);
+    }
+    return;
+  }
   const port = actualPort(req, options);
   const origins = new Set([`http://localhost:${port}`, `http://127.0.0.1:${port}`, `http://[::1]:${port}`]);
   if (!origins.has(req.headers.origin) || (req.headers["sec-fetch-site"] && req.headers["sec-fetch-site"] !== "same-origin")) {
@@ -392,6 +497,45 @@ function prepareMutationFields(fields, revision) {
   return prepared;
 }
 
+// #288 X1: on the remote plane, the bootstrap revision is refused at every parse site that can
+// see it (it would merge seed fields that never appear in the request).
+function refuseRemoteBootstrap(access, revision) {
+  // No default plane: a caller that forgets to pass it must not fall back to the local rules.
+  if (!access || (access.plane !== "local" && access.plane !== "remote")) {
+    throw new Error("settings access plane is required");
+  }
+  if (access.plane === "remote" && revision === "bootstrap") {
+    throw settingsError("SETTINGS_REMOTE_FIELD_LOCKED", "This setting can only be changed on the server", 403);
+  }
+}
+
+// #288 X1: checked on the final field map handed to saveFields. A remote request may turn the
+// switch off, may carry the stored public_origin unchanged, and may never name the login pin.
+function assertRemoteFieldsAllowed(access, fields) {
+  if (access.plane !== "remote") return;
+  const has = (id) => Object.prototype.hasOwnProperty.call(fields, id);
+  const stored = readPath(getRawConfig(), "server.publicOrigin");
+  if ((has("settings_remote_access") && fields.settings_remote_access !== false)
+      || has("settings_remote_login")
+      || (has("public_origin") && !sameValue(fields.public_origin, stored === undefined ? "" : stored))) {
+    throw settingsError("SETTINGS_REMOTE_FIELD_LOCKED", "This setting can only be changed on the server", 403);
+  }
+}
+
+// #288: value-free remote-access state attached to every envelope the settings handler emits.
+function remoteAccessView(access) {
+  const enabled = getEffectiveValue("settings_remote_access") === true;
+  let origin = "";
+  if (enabled) {
+    try { origin = remoteAllowance()?.origin || ""; } catch { origin = ""; }
+  }
+  return { enabled, origin, via: access.plane };
+}
+
+function envelopeFor(access) {
+  return { ...buildEnvelope(), remoteAccess: remoteAccessView(access) };
+}
+
 function importableEntries() {
   return SETTINGS_REGISTRY.filter((entry) => isImportableSetting(entry) && entry.transferable);
 }
@@ -435,7 +579,7 @@ function sameValue(left, right) {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
-function importSettings(value) {
+function importSettings(value, access) {
   const request = parseImportRequest(value);
   const raw = getRawConfig();
   const fields = {};
@@ -452,16 +596,19 @@ function importSettings(value) {
       imported.push(entry.id);
     }
   }
+  refuseRemoteBootstrap(access, request.revision);
+  assertRemoteFieldsAllowed(access, fields);
   const startup = getRuntime().startup;
   saveFields({ configPath: startup.configPath, revision: request.revision, fields });
   return {
-    ...buildEnvelope(),
+    ...envelopeFor(access),
     import: { imported: imported.sort(), skipped: skipped.sort() },
   };
 }
 
-async function migrateClass1(req, options) {
+async function migrateClass1(req, options, access) {
   const body = parseStrict(revisionOnlySchema, await readJson(req, JSON_LIMIT));
+  refuseRemoteBootstrap(access, body.revision);
   const startup = getRuntime().startup;
   const raw = getRawConfig();
   const fields = {};
@@ -477,10 +624,12 @@ async function migrateClass1(req, options) {
       skipped.push(entry.id);
     }
   }
+  const finalFields = { ...(body.revision === "bootstrap" ? getBootstrapSeedFields() : {}), ...fields };
+  assertRemoteFieldsAllowed(access, finalFields);
   const committed = saveFields({
     configPath: startup.configPath,
     revision: body.revision,
-    fields: { ...(body.revision === "bootstrap" ? getBootstrapSeedFields() : {}), ...fields },
+    fields: finalFields,
   });
   return { imported: imported.sort(), skipped: skipped.sort(), revision: committed.revision };
 }
@@ -635,7 +784,9 @@ function createSettingsHandler(options = {}) {
       || url.pathname.startsWith("/settings-assets/");
     if (!isSettingsPath) return false;
     const requestId = crypto.randomUUID();
-    if (!isLocalAdminRequest(req, settingsOptions)) {
+    // #288: one classification per request — local, remote (R0–R6), or the unchanged 404.
+    const access = classifyRequest(req, settingsOptions);
+    if (!access) {
       req.resume?.();
       res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8", Connection: "close" });
       res.end("Not Found");
@@ -643,9 +794,15 @@ function createSettingsHandler(options = {}) {
     }
 
     try {
+      // #288: remote API requests from a browser context other than same-origin / a typed address.
+      const fetchSite = req.headers["sec-fetch-site"];
+      if (access.plane === "remote" && (url.pathname === "/api/settings" || url.pathname.startsWith("/api/settings/"))
+          && fetchSite !== undefined && !REMOTE_FETCH_SITES.has(fetchSite)) {
+        throw settingsError("SETTINGS_ORIGIN_REJECTED", "Request origin rejected", 403);
+      }
       const isAvatarPath = url.pathname === "/api/settings/avatar"
         || url.pathname.startsWith("/api/settings/avatar/");
-      if (isAvatarPath && req.method !== "GET") requireSameOrigin(req, settingsOptions);
+      if (isAvatarPath && req.method !== "GET") requireSameOrigin(req, settingsOptions, access);
 
       const staticAsset = SETTINGS_ASSETS.get(url.pathname);
       if (req.method === "GET" && staticAsset) {
@@ -653,37 +810,46 @@ function createSettingsHandler(options = {}) {
         return true;
       }
       if (req.method === "GET" && url.pathname === "/api/settings") {
-        writeJson(res, 200, buildEnvelope());
+        writeJson(res, 200, envelopeFor(access));
         return true;
       }
       if (req.method === "PUT" && url.pathname === "/api/settings") {
-        requireSameOrigin(req, settingsOptions);
+        requireSameOrigin(req, settingsOptions, access);
         const mutation = parseStrict(settingsMutationSchema, await readJson(req, JSON_LIMIT));
+        refuseRemoteBootstrap(access, mutation.revision);
+        const fields = prepareMutationFields(mutation.fields, mutation.revision);
+        assertRemoteFieldsAllowed(access, fields);
         const startup = getRuntime().startup;
         const committed = saveFields({
           configPath: startup.configPath,
           revision: mutation.revision,
-          fields: prepareMutationFields(mutation.fields, mutation.revision),
+          fields,
         });
-        writeJson(res, 200, buildEnvelope());
+        writeJson(res, 200, envelopeFor(access));
         schedulePostSaveProbes();
         return true;
       }
       if (req.method === "POST" && url.pathname === "/api/settings/migrate-env-class1") {
-        requireSameOrigin(req, settingsOptions);
-        writeJson(res, 200, await migrateClass1(req, settingsOptions));
+        requireSameOrigin(req, settingsOptions, access);
+        writeJson(res, 200, await migrateClass1(req, settingsOptions, access));
         schedulePostSaveProbes();
         return true;
       }
 
       if (req.method === "GET" && url.pathname === "/api/settings/cloud/status") {
-        await refreshStaleCloudConfig();
+        // #288: a remote status read never refreshes or saves (use POST cloud/refresh).
+        if (access.plane === "local") await refreshStaleCloudConfig();
         writeJson(res, 200, cloudStatus());
         return true;
       }
       if (req.method === "POST" && url.pathname === "/api/settings/cloud/connect") {
-        requireSameOrigin(req, settingsOptions);
+        // #288 X2: the OAuth callback listener binds the server's loopback; start it only locally.
+        if (access.plane !== "local") {
+          throw settingsError("SETTINGS_REMOTE_LOCAL_ONLY", "This action is only available on the server", 403);
+        }
+        requireSameOrigin(req, settingsOptions, access);
         const body = parseStrict(cloudConnectRequestSchema, await readJson(req, CONNECTION_JSON_LIMIT));
+        refuseRemoteBootstrap(access, body.revision);
         if (pendingCloud) {
           throw settingsError("SETTINGS_CLOUD_CONNECT_IN_PROGRESS", "Cloud connection is already in progress", 409);
         }
@@ -714,8 +880,9 @@ function createSettingsHandler(options = {}) {
         return true;
       }
       if (req.method === "POST" && url.pathname === "/api/settings/cloud/refresh") {
-        requireSameOrigin(req, settingsOptions);
+        requireSameOrigin(req, settingsOptions, access);
         const body = parseStrict(revisionOnlySchema, await readJson(req, CONNECTION_JSON_LIMIT));
+        refuseRemoteBootstrap(access, body.revision);
         assertCommittedRevision(body.revision);
         const state = cloudState();
         if (!state.cloudUrl || !state.hubToken) {
@@ -742,8 +909,9 @@ function createSettingsHandler(options = {}) {
         return true;
       }
       if (req.method === "POST" && url.pathname === "/api/settings/cloud/disconnect") {
-        requireSameOrigin(req, settingsOptions);
+        requireSameOrigin(req, settingsOptions, access);
         const body = parseStrict(cloudDisconnectRequestSchema, await readJson(req, CONNECTION_JSON_LIMIT));
+        refuseRemoteBootstrap(access, body.revision);
         assertCommittedRevision(body.revision);
         const state = cloudState();
         let disconnected = { ok: true };
@@ -781,8 +949,8 @@ function createSettingsHandler(options = {}) {
         return true;
       }
       if (req.method === "POST" && url.pathname === "/api/settings/import") {
-        requireSameOrigin(req, settingsOptions);
-        writeJson(res, 200, importSettings(await readJson(req, JSON_LIMIT)));
+        requireSameOrigin(req, settingsOptions, access);
+        writeJson(res, 200, importSettings(await readJson(req, JSON_LIMIT), access));
         schedulePostSaveProbes();
         return true;
       }
@@ -840,13 +1008,13 @@ function createSettingsHandler(options = {}) {
       }
 
       if (req.method === "POST" && url.pathname === "/api/settings/audio") {
-        requireSameOrigin(req, settingsOptions);
+        requireSameOrigin(req, settingsOptions, access);
         writeJson(res, 200, await uploadAudio(req, options.audio || options));
         return true;
       }
       const audioDeleteMatch = url.pathname.match(/^\/api\/settings\/audio\/([^/]+)$/);
       if (req.method === "DELETE" && audioDeleteMatch) {
-        requireSameOrigin(req, settingsOptions);
+        requireSameOrigin(req, settingsOptions, access);
         const body = parseStrict(sha256RevisionOnlySchema, await readJson(req, JSON_LIMIT));
         writeJson(res, 200, await deleteAudio(audioDeleteMatch[1], body.revision, options.audio || options));
         return true;
@@ -854,7 +1022,7 @@ function createSettingsHandler(options = {}) {
 
       const connectionMatch = url.pathname.match(/^\/api\/settings\/connections\/([^/]+)\/test$/);
       if (req.method === "POST" && connectionMatch) {
-        requireSameOrigin(req, settingsOptions);
+        requireSameOrigin(req, settingsOptions, access);
         if (!PROVIDERS.has(connectionMatch[1])) {
           throw settingsError("SETTINGS_VALIDATION_FAILED", "Request validation failed", 422);
         }
@@ -886,7 +1054,7 @@ function createSettingsHandler(options = {}) {
       }
 
       if (req.method === "POST" && url.pathname === "/api/settings/tts-preview") {
-        requireSameOrigin(req, settingsOptions);
+        requireSameOrigin(req, settingsOptions, access);
         const startedAt = Date.now();
         let byteCount = 0;
         let outcomeCode = "SETTINGS_PREVIEW_FAILED";
@@ -933,6 +1101,7 @@ module.exports = {
     createConnectionLimiter,
     createPreviewLimiter,
     importSettings,
+    isRemoteAdminRequest,
     parseImportRequest,
     readJson,
     renderSettingsHtml,

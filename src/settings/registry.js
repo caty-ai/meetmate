@@ -260,6 +260,11 @@ const SETTINGS_REGISTRY = Object.freeze([
   d("server_port", "server.port", integer(1, 65535), { ux: "deployment-readonly", envAlias: "PORT", defaultValue: 5005, writeSurface: "none" }),
   d("server_ngrok_domain", "server.ngrokDomain", hostname(true), { defaultValue: "" }),
   d("public_origin", "server.publicOrigin", httpsOrigin(true), { envAlias: "PUBLIC_ORIGIN", defaultValue: "" }),
+  // #288: remote settings access through the operator's Tailscale Serve origin. Off by default,
+  // live, never exported or imported, no environment alias; only a local-admin request turns it on.
+  d("settings_remote_access", "server.remoteSettingsAccess", bool, { apply: "live", defaultValue: false, transferable: false }),
+  // #288: optional login pin; "" admits any identity Serve vouches for (so not trimmedString's min(1)).
+  d("settings_remote_login", "server.remoteSettingsLogin", z.string().trim().max(254), { apply: "live", defaultValue: "", transferable: false }),
   d("resolved_home", null, absolutePath, { ux: "deployment-readonly", envAlias: "AI_MEET_HOME", writeSurface: "none" }),
   d("task_extraction_enabled", "features.taskExtractionEnabled", bool, { defaultValue: true }),
   d("streaming_equivalent_enabled", "features.streamingEquivalentEnabled", bool, { defaultValue: true }),
