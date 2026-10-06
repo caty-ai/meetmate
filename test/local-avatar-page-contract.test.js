@@ -40,8 +40,10 @@ test("shipped local avatar page is a dependency-free 1280x720 Canvas surface", (
     assert.equal(shipped.includes(token), false, `forbidden browser capability found: ${token}`);
   }
 
-  assert.deepEqual([...script.matchAll(/fetch\(([^,]+)/g)].map((match) => match[1].trim()), ["stateUrl(parameters)"]);
+  // #294: the only other request is the capability-gated GET of the join-time background picture.
+  assert.deepEqual([...script.matchAll(/fetch\(([^,]+)/g)].map((match) => match[1].trim()), ["rigBackgroundUrl()", "stateUrl(parameters)"]);
   assert.match(script, /const STATE_ROUTE = "\/local-avatar\/state"/);
+  assert.match(script, /const RIG_UPLOADED_BACKGROUND_ROUTE = "\/local-avatar\/background"/);
   assert.doesNotMatch(script, /(?:src|href)\s*=\s*["'](?!\/local-avatar\/)/i);
   assert.match(script, /\/\* @rig-bg-begin \*\/[\s\S]*?\/\* @rig-bg-end \*\//);
   assert.match(script, /const RIG_BACKGROUND_BASE64URL = "[A-Za-z0-9_-]*";/);

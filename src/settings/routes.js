@@ -31,14 +31,17 @@ const {
 } = require("./store");
 const { deleteAudio, previewTts, uploadAudio } = require("./audio");
 const {
+  deleteBackground,
   deleteFrame,
   deleteFrames,
   deleteStatic,
   inspectAssets,
   parseFrameName,
+  readBackground,
   readFrame,
   readStaticPreview,
   uploadAsset,
+  uploadBackground,
 } = require("./avatar-assets");
 const probes = require("./probes");
 const readiness = require("./readiness");
@@ -102,14 +105,18 @@ function writeWav(res, bytes) {
   res.end(bytes);
 }
 
-function writePng(res, bytes) {
+function writeImage(res, bytes, type) {
   res.writeHead(200, {
-    "Content-Type": "image/png",
+    "Content-Type": type,
     "Content-Length": bytes.length,
     "Cache-Control": "no-store",
     "X-Content-Type-Options": "nosniff",
   });
   res.end(bytes);
+}
+
+function writePng(res, bytes) {
+  writeImage(res, bytes, "image/png");
 }
 
 function safeEmbeddedJson(value) {
@@ -966,6 +973,14 @@ function createSettingsHandler(options = {}) {
         }
         return true;
       }
+      if (req.method === "GET" && url.pathname === "/api/settings/avatar/background/preview") {
+        let background;
+        try { background = readBackground(getRuntime().startup.resolvedHome); } catch {
+          throw settingsError("SETTINGS_AVATAR_NOT_FOUND", "Avatar asset was not found", 404);
+        }
+        writeImage(res, background.bytes, background.type);
+        return true;
+      }
       const framePreview = /^\/api\/settings\/avatar\/frames\/[^/]+\/preview$/.test(url.pathname);
       if (req.method === "GET" && framePreview) {
         try {
@@ -982,6 +997,18 @@ function createSettingsHandler(options = {}) {
         }
         const stored = await uploadAsset(req, { resolvedHome: getRuntime().startup.resolvedHome });
         writeJson(res, 200, { static: stored, sha256: stored.sha256 });
+        return true;
+      }
+      if (req.method === "POST" && url.pathname === "/api/settings/avatar/background") {
+        if (!takeAvatarUploadAllowance()) {
+          throw settingsError("SETTINGS_AVATAR_RATE_LIMITED", "Avatar uploads are rate limited", 429);
+        }
+        const stored = await uploadBackground(req, { resolvedHome: getRuntime().startup.resolvedHome });
+        writeJson(res, 200, { background: stored });
+        return true;
+      }
+      if (req.method === "DELETE" && url.pathname === "/api/settings/avatar/background") {
+        writeJson(res, 200, deleteBackground(getRuntime().startup.resolvedHome));
         return true;
       }
       const frameAsset = /^\/api\/settings\/avatar\/frames\/[^/]+$/.test(url.pathname);

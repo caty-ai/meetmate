@@ -103,9 +103,10 @@ test("frame avatar page is an isolated dependency-free 1280x720 Canvas surface",
 
   assert.deepEqual(
     [...script.matchAll(/fetch\(([^,]+)/g)].map((match) => match[1].trim()),
-    ["stateUrl(parameters)", "frameUrl(name)"],
+    ["backgroundUrl()", "stateUrl(parameters)", "frameUrl(name)"],
   );
   assert.match(script, /const STATE_ROUTE = "\/local-avatar\/state"/);
+  assert.match(script, /const BACKGROUND_ROUTE = "\/local-avatar\/background"/);
   assert.match(script, /headers: \{ Authorization: `Bearer \$\{capability\}` \}/);
   assert.doesNotMatch(script, /(?:src|href)\s*=\s*["'](?!\/local-avatar\/)/i);
 });
@@ -329,6 +330,90 @@ test("late image decode repaints idle without a frame-name change and decodes on
     assert.equal(backgroundDecodeCalls, 1);
   } finally {
     fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
+test("#294 uploaded image background: capability GET, from-image decode, cover draw, then embed, then colour", async () => {
+  const marker = frameMarker({ sequence: 2, sampleIndex: 0 });
+  const imageVersion = "0123456789abcdef";
+  const uploadedBlob = { uploaded: true };
+  const okFetch = async () => ({ ok: true, status: 200, blob: async () => uploadedBlob });
+  const uploaded = { width: 1600, height: 900 };
+
+  // Uploaded picture present: one Bearer GET of the fixed route, decoded with EXIF orientation, drawn cover.
+  const decodeOptions = [];
+  const shown = await runFramesBackgroundPage(shippedFramesScript(), { mode: "image", color: "#123456", image: imageVersion },
+    async (blob, options) => { decodeOptions.push(options); assert.equal(blob, uploadedBlob); return uploaded; },
+    { backgroundFetch: okFetch });
+  assert.equal(shown.backgroundRequests.length, 1);
+  assert.equal(shown.backgroundRequests[0].url, "/local-avatar/background?v=abcdefghijklmnop");
+  assert.equal(shown.backgroundRequests[0].options.method, "GET");
+  assert.equal(shown.backgroundRequests[0].options.headers.Authorization, "Bearer secret");
+  assert.equal(shown.backgroundRequests[0].options.credentials, "omit");
+  assert.equal(shown.backgroundRequests[0].url.includes(imageVersion), false);
+  assert.equal(decodeOptions.length, 1);
+  assert.equal(decodeOptions[0].imageOrientation, "from-image");
+  shown.draws.length = 0;
+  assert.equal(shown.sandbox.__localAvatarFramesContract.acceptState(marker, 1_000), true);
+  assert.deepEqual(shown.draws[0], ["image", uploaded, ...coverVector(1600, 900)]);
+  assert.equal(shown.warnings.length, 0);
+
+  // createImageBitmap rejecting the options bag with a TypeError is retried once without options.
+  const retryOptions = [];
+  const retried = await runFramesBackgroundPage(shippedFramesScript(), { mode: "image", color: "#123456", image: imageVersion },
+    async (_blob, options) => {
+      retryOptions.push(options);
+      if (options) throw new TypeError("imageOrientation unsupported");
+      return uploaded;
+    },
+    { backgroundFetch: okFetch });
+  assert.equal(retryOptions.length, 2);
+  assert.equal(retryOptions[1], undefined);
+  retried.draws.length = 0;
+  assert.equal(retried.sandbox.__localAvatarFramesContract.acceptState(marker, 1_000), true);
+  assert.deepEqual(retried.draws[0], ["image", uploaded, ...coverVector(1600, 900)]);
+
+  // Decode failure (not a TypeError): one warning, no retry, no embed in the shipped page -> colour.
+  let failedDecodes = 0;
+  const failed = await runFramesBackgroundPage(shippedFramesScript(), { mode: "image", color: "#654321", image: imageVersion },
+    async () => { failedDecodes += 1; throw new Error("corrupt"); },
+    { backgroundFetch: okFetch });
+  assert.equal(failedDecodes, 1);
+  assert.equal(failed.backgroundRequests.length, 1);
+  assert.equal(failed.warnings.length, 1);
+  assert.equal(JSON.stringify(failed.warnings).includes("secret"), false);
+  failed.draws.length = 0;
+  assert.equal(failed.sandbox.__localAvatarFramesContract.acceptState(marker, 1_000), true);
+  assert.deepEqual(failed.draws[0], ["fill", "#654321", 0, 0, 1280, 720]);
+
+  // Route 404 with a build-time embed: the embed is decoded and drawn instead.
+  const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-frames-uploaded-bg-"));
+  try {
+    const generatedFrames = path.join(temporaryDirectory, "frames.js");
+    execFileSync(process.execPath, [GENERATOR, "--background", BACKGROUND_FILE, "--out",
+      path.join(temporaryDirectory, "local-avatar.js"), "--frames-out", generatedFrames], { cwd: ROOT });
+    const embedded = { width: 640, height: 480 };
+    const fallback = await runFramesBackgroundPage(fs.readFileSync(generatedFrames, "utf8"),
+      { mode: "image", color: "#123456", image: imageVersion },
+      async (blob) => { assert.equal(blob instanceof Blob, true); return embedded; },
+      { backgroundFetch: async () => ({ ok: false, status: 404 }) });
+    assert.equal(fallback.backgroundRequests.length, 1);
+    assert.equal(fallback.warnings.length, 1);
+    fallback.draws.length = 0;
+    assert.equal(fallback.sandbox.__localAvatarFramesContract.acceptState(marker, 1_000), true);
+    assert.deepEqual(fallback.draws[0], ["image", embedded, ...coverVector(640, 480)]);
+  } finally {
+    fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+  }
+
+  // No snapshot token, or a non-image mode: the route is never requested.
+  for (const background of [
+    { mode: "image", color: "#123456", image: null },
+    { mode: "solid", color: "#123456", image: imageVersion },
+    { mode: "chroma", color: "#123456", image: imageVersion },
+  ]) {
+    const page = await runFramesBackgroundPage(shippedFramesScript(), background, undefined, { backgroundFetch: okFetch });
+    assert.equal(page.backgroundRequests.length, 0, JSON.stringify(background));
   }
 });
 
@@ -1062,6 +1147,66 @@ test("hybrid-local-frames joins only on pipeline TTS providers with a public HTT
   );
 });
 
+test("#294 join snapshots the uploaded picture only for mode image and never fails because of it", { concurrency: false }, async (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "meetmate-join-background-"));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(home, "assets"), { mode: 0o700 });
+  const target = path.join(home, "assets", "avatar-background");
+  const picture = fs.readFileSync(BACKGROUND_FILE);
+  const expectedToken = crypto.createHash("sha256").update(picture).digest("hex").slice(0, 16);
+  const sessions = () => [...require("../src/transport-meet/local-avatar-session")._test.sessions.values()];
+
+  async function joinWith(mode) {
+    const warnings = [];
+    const originalWarn = console.warn;
+    console.warn = (...args) => warnings.push(args.join(" "));
+    let result;
+    try {
+      await withMeetRoutes(async (harness) => {
+        const join = await harness.join({ avatarExperiment: "hybrid-local-frames" });
+        assert.equal(join.statusCode, 200, join.text);
+        const [session] = sessions();
+        result = { state: session.backgroundState(), image: session.backgroundImage() };
+        assert.equal((await harness.leave()).statusCode, 200);
+      }, { resolvedHome: home, avatar: { rigBackgroundMode: mode, rigBackgroundColor: "#123456" } });
+    } finally {
+      console.warn = originalWarn;
+    }
+    return { ...result, warnings: warnings.filter((line) => line.includes("background")) };
+  }
+
+  // Missing file: the chain falls back on the page; nothing to log.
+  let joined = await joinWith("image");
+  assert.deepEqual(joined.state, { mode: "image", color: "#123456", image: null });
+  assert.equal(joined.image, null);
+  assert.deepEqual(joined.warnings, []);
+
+  // Present: bytes held in memory, only the 16-hex token is in the state.
+  fs.writeFileSync(target, picture, { mode: 0o600 });
+  joined = await joinWith("image");
+  assert.deepEqual(joined.state, { mode: "image", color: "#123456", image: expectedToken });
+  assert.deepEqual(joined.image, { bytes: picture, type: "image/png" });
+
+  // Not image mode: the file is never read.
+  for (const mode of ["solid", "chroma"]) {
+    joined = await joinWith(mode);
+    assert.deepEqual(joined.state, { mode, color: "#123456", image: null });
+    assert.equal(joined.image, null);
+  }
+
+  // Unreadable / corrupt: the join still succeeds, one log line with the code only (no path).
+  fs.writeFileSync(target, Buffer.from("not an image at all"), { mode: 0o600 });
+  joined = await joinWith("image");
+  assert.equal(joined.state.image, null);
+  assert.deepEqual(joined.warnings, ["local-avatar background image unavailable (SETTINGS_AVATAR_NOT_FOUND)"]);
+  fs.rmSync(target);
+  fs.symlinkSync(BACKGROUND_FILE, target);
+  joined = await joinWith("image");
+  assert.equal(joined.state.image, null);
+  assert.deepEqual(joined.warnings, ["local-avatar background image unavailable (SETTINGS_AVATAR_PATH_REJECTED)"]);
+  assert.equal(joined.warnings.some((line) => line.includes(home) || line.includes("assets")), false);
+});
+
 test("settled soft readiness failures do not block an ordinary Join", { concurrency: false }, async () => {
   await withMeetRoutes(async ({ join, leave }) => {
     const readiness = require("../src/settings/readiness");
@@ -1296,7 +1441,13 @@ test("frames join keeps size diagnostics guarded, lazy, and rejection-safe", () 
   );
 });
 
-async function withMeetRoutes(fn, { ttsProvider = "fish-audio", ngrokDomain = "meetmate.example", hostHttpGet = null } = {}) {
+async function withMeetRoutes(fn, {
+  ttsProvider = "fish-audio",
+  ngrokDomain = "meetmate.example",
+  hostHttpGet = null,
+  resolvedHome = "/tmp/meetmate-frames-home",
+  avatar = null,
+} = {}) {
   const settingsResolver = require("../src/settings/resolver");
   const routesPath = require.resolve("../src/transport-meet/meet-routes");
   const src = path.join(__dirname, "..", "src");
@@ -1343,13 +1494,14 @@ async function withMeetRoutes(fn, { ttsProvider = "fish-audio", ngrokDomain = "m
         server: { ngrokDomain },
         slack: { notifications: { enabled: false } },
         llm: { provider: "openclaw", model: "test" },
+        ...(avatar ? { avatar } : {}),
       },
     },
     startup: Object.freeze({
       preDotenvEnv: Object.freeze({}),
       dotenvSeeds: Object.freeze({}),
-      resolvedHome: "/tmp/meetmate-frames-home",
-      configPath: "/tmp/meetmate-frames-home/config.json",
+      resolvedHome,
+      configPath: path.join(resolvedHome, "config.json"),
       connection: Object.freeze({
         provider: "openclaw",
         openclawUrl: "http://gateway.invalid",
@@ -1661,9 +1813,16 @@ async function runFramesPage({
   return { sandbox, drawCalls, timers, clock, frameRequests, stateRequests };
 }
 
-async function runFramesBackgroundPage(script, background, decodeBackground = async () => ({ width: 640, height: 480 })) {
+async function runFramesBackgroundPage(
+  script,
+  background,
+  decodeBackground = async () => ({ width: 640, height: 480 }),
+  { backgroundFetch = null } = {},
+) {
   const draws = [];
   const errors = [];
+  const warnings = [];
+  const backgroundRequests = [];
   const timers = [];
   let fillStyle = null;
   const initial = {
@@ -1683,7 +1842,7 @@ async function runFramesBackgroundPage(script, background, decodeBackground = as
     Blob,
     Math: sandboxMath,
     Date: { now: () => 0 },
-    console: { error: (...args) => errors.push(args) },
+    console: { error: (...args) => errors.push(args), warn: (...args) => warnings.push(args) },
     location: {
       pathname: "/local-avatar/frames.html",
       search: "?v=abcdefghijklmnop",
@@ -1704,21 +1863,25 @@ async function runFramesBackgroundPage(script, background, decodeBackground = as
         }),
       }),
     },
-    fetch: async (url) => {
+    fetch: async (url, options) => {
       if (url.startsWith("/local-avatar/state?")) return { ok: true, status: 200, json: async () => initial };
+      if (url.startsWith("/local-avatar/background?")) {
+        backgroundRequests.push({ url, options });
+        if (backgroundFetch) return backgroundFetch(url, options);
+      }
       const name = /\/([^/?]+)\.png\?/.exec(url)?.[1] || "";
       return { ok: true, status: 200, blob: async () => ({ name }) };
     },
-    createImageBitmap: async (blob) => (blob && blob.name
+    createImageBitmap: async (blob, options) => (blob && blob.name
       ? { frame: blob.name, width: 640, height: 640 }
-      : decodeBackground(blob)),
+      : decodeBackground(blob, options)),
     setTimeout: (fn, ms) => timers.push({ fn, ms, cleared: false }),
     clearTimeout: (id) => { if (timers[id - 1]) timers[id - 1].cleared = true; },
   };
   vm.createContext(sandbox);
   vm.runInContext(script, sandbox, { filename: SCRIPT_FILE });
   await settleMicrotasks();
-  return { sandbox, draws, errors, timers };
+  return { sandbox, draws, errors, warnings, backgroundRequests, timers };
 }
 
 async function runFramesVisualPage(script, {

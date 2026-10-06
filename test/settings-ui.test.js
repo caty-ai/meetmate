@@ -267,9 +267,35 @@ test("avatar settings mount exactly once in panel-avatar with pinned labels and 
   assert.match(js, /avatar_rig_background_color: "アバター背景色"/);
   assert.match(js, /2\.5Dリグとフレームセットの両方に適用され/);
   assert.match(js, /solid: "単色"/);
-  assert.match(js, /image: "埋め込み画像"/);
+  // #294 D4: the option is 「画像」 and the help states the upload -> embed -> colour chain.
+  assert.match(js, /image: "画像"/);
+  assert.doesNotMatch(js, /埋め込み画像"/);
   assert.match(js, /chroma: "クロマキー"/);
-  assert.match(js, /このビルドには背景画像が埋め込まれていません/);
+  assert.match(js, /アップロードした背景画像を使います。未アップロードのときは、ビルドに埋め込んだ画像があればそれを、なければ背景色を使います。/);
+  assert.doesNotMatch(js, /このビルドには背景画像が埋め込まれていません/);
+});
+
+test("#294 背景画像 card: upload / preview / delete next to アバター背景, notice under the selector, error copy", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const html = fs.readFileSync(path.join(__dirname, "..", "public", "settings.html"), "utf8");
+  const js = fs.readFileSync(path.join(__dirname, "..", "public", "settings.js"), "utf8");
+  const panel = html.match(/<section id="panel-avatar"[\s\S]*?<\/section>\s*<\/section>/)?.[0] || "";
+  const card = panel.match(/<article class="avatar-card" aria-labelledby="backgroundAvatarTitle">[\s\S]*?<\/article>/)?.[0] || "";
+  assert.match(card, /<h3 id="backgroundAvatarTitle">背景画像<\/h3>/);
+  assert.match(card, /<img class="avatar-preview" id="avatarBackgroundPreview"/);
+  assert.match(card, /<input id="avatarBackgroundFile" type="file" accept="image\/png,image\/jpeg,\.png,\.jpg,\.jpeg">/);
+  assert.match(card, /id="uploadAvatarBackground" type="button" disabled>/);
+  assert.match(card, /id="deleteAvatarBackground" type="button">/);
+  assert.match(card, /8 MiB 以下、4096×4096 px 以下/);
+  assert.match(js, /"\/api\/settings\/avatar\/background", \{ method: "POST", body: formData \}/);
+  assert.match(js, /"\/api\/settings\/avatar\/background", \{ method: "DELETE" \}/);
+  // The readiness wording, under the アバター背景 selector, only for mode image with no valid upload.
+  assert.match(js, /const AVATAR_BACKGROUND_IMAGE_MISSING_NOTE = "背景が「画像」ですが、背景画像がアップロードされていません。埋め込み画像があればそれを、なければ背景色で表示します";/);
+  assert.match(js, /querySelector\('\[data-field-id="avatar_rig_background_mode"\]'\)/);
+  assert.match(js, /!\(mode === "image" && avatarBackgroundPresent === false\)/);
+  assert.match(js, /code === "SETTINGS_AVATAR_TYPE_MISMATCH"\) return "[^"]+"/);
+  assert.match(js, /code === "SETTINGS_AVATAR_JPEG_INVALID"\) return "[^"]+"/);
 });
 
 test("main UI parses both setup and readiness 503 envelopes", () => {

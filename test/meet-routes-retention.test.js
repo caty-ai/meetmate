@@ -232,6 +232,7 @@ async function withRetentionRoutes(run) {
   installMock(previousCache, path.join(src, "settings", "avatar-assets.js"), {
     AVATAR_FILE_LIMIT: 64 * 1024 * 1024,
     installUrlCacheAvatar: async () => {},
+    readBackgroundSnapshot: () => null,
     readBundledAvatar: () => {
       throw new Error("no bundled avatar in test");
     },

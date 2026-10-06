@@ -372,4 +372,236 @@ test("avatar mutation chokepoint, loopback concealment, PNG gates, total cap, an
   assert.equal(res.status, 413, res.body.toString());
 });
 
-module.exports = { imageMultipart, multipart, png };
+// ---- #294 operator-uploaded background picture --------------------------------------------------
+
+function jpegSegment(marker, payload) {
+  const header = Buffer.alloc(4);
+  header[0] = 0xff;
+  header[1] = marker;
+  header.writeUInt16BE(payload.length + 2, 2);
+  return Buffer.concat([header, payload]);
+}
+
+function jpeg({ width = 320, height = 240, sof = 0xc0, before = [], after = [], sofLength = null } = {}) {
+  const frame = Buffer.alloc(9);
+  frame[0] = 8;
+  frame.writeUInt16BE(height, 1);
+  frame.writeUInt16BE(width, 3);
+  frame[5] = 1;
+  frame[6] = 1;
+  frame[7] = 0x11;
+  const sofSegment = jpegSegment(sof, frame);
+  if (sofLength !== null) sofSegment.writeUInt16BE(sofLength, 2);
+  return Buffer.concat([
+    Buffer.from([0xff, 0xd8]),
+    jpegSegment(0xe0, Buffer.from("JFIF\0\x01\x01\0\0\x01\0\x01\0\0", "latin1")),
+    ...before,
+    sofSegment,
+    ...after,
+    jpegSegment(0xda, Buffer.from([1, 1, 0, 0, 0x3f, 0])),
+    Buffer.from([0x12, 0x34, 0xff, 0x00, 0x56]),
+    Buffer.from([0xff, 0xd9]),
+  ]);
+}
+
+function errorCode(res) {
+  return JSON.parse(res.body).error.code;
+}
+
+const BACKGROUND_URL = "/api/settings/avatar/background";
+
+test("#294 JPEG validator walks segments only and pins the D1 accept / reject cases", () => {
+  const { validateJpegBytes } = require("../src/settings/avatar-assets");
+  assert.deepEqual(validateJpegBytes(jpeg()), { width: 320, height: 240 });
+  assert.deepEqual(validateJpegBytes(jpeg({ sof: 0xc1 })), { width: 320, height: 240 });
+  assert.deepEqual(validateJpegBytes(jpeg({ sof: 0xc2, width: 4096, height: 4096 })), { width: 4096, height: 4096 });
+  // Fill bytes before a marker are skipped.
+  const filled = jpeg();
+  const withFill = Buffer.concat([filled.subarray(0, 2), Buffer.from([0xff, 0xff]), filled.subarray(2)]);
+  assert.deepEqual(validateJpegBytes(withFill), { width: 320, height: 240 });
+  // An APP1 thumbnail carrying its own SOI / SOF is skipped by length, never parsed.
+  const thumbnail = Buffer.concat([Buffer.from("Exif\0\0", "latin1"), jpeg({ width: 9999, height: 9999 })]);
+  assert.deepEqual(validateJpegBytes(jpeg({ before: [jpegSegment(0xe1, thumbnail)] })), { width: 320, height: 240 });
+
+  const reject = (bytes, label) => assert.throws(() => validateJpegBytes(bytes),
+    (error) => error.code === "SETTINGS_AVATAR_JPEG_INVALID" && error.status === 422, label);
+  const good = jpeg();
+  reject(Buffer.concat([Buffer.from([0x00]), good.subarray(1)]), "no SOI");
+  reject(good.subarray(0, good.length - 1), "no EOI");
+  reject(Buffer.concat([good, Buffer.from([0x00])]), "bytes after EOI");
+  for (const marker of [0x01, 0xd0, 0xd7, 0xd8, 0xd9]) {
+    reject(Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, marker]), good.subarray(2)]), `standalone ${marker.toString(16)} before SOF`);
+  }
+  reject(Buffer.concat([Buffer.from([0xff, 0xd8]), jpegSegment(0xda, Buffer.from([1, 1, 0, 0, 0x3f, 0])), good.subarray(2)]), "SOS before SOF");
+  for (const sof of [0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf]) reject(jpeg({ sof }), `SOF ${sof.toString(16)}`);
+  for (const [width, height] of [[0, 240], [320, 0], [4097, 240], [320, 4097]]) reject(jpeg({ width, height }), `${width}x${height}`);
+  reject(jpeg({ sofLength: 1 }), "segment length < 2");
+  reject(jpeg({ sofLength: 5 }), "SOF payload too short");
+  reject(jpeg({ sofLength: 60000 }), "segment past the end");
+  reject(Buffer.from([0xff, 0xd8, 0xff, 0xd9]), "no SOF");
+  reject(Buffer.concat([Buffer.from([0xff, 0xd8]), Buffer.from("garbage!"), Buffer.from([0xff, 0xd9])]), "not a marker");
+});
+
+test("#294 background upload accepts PNG and JPEG into one server-chosen file with previews and delete", async (t) => {
+  const setup = fixture(t);
+  const target = path.join(setup.directory, "assets", "avatar-background");
+  const pngBytes = png(800, 600);
+  let res = await upload(setup.handler, BACKGROUND_URL, pngBytes, { filename: "client-chosen.png", chunkSize: 5 });
+  assert.equal(res.status, 200, res.body.toString());
+  const stored = JSON.parse(res.body).background;
+  assert.deepEqual(stored, {
+    name: "background", type: "image/png", bytes: pngBytes.length,
+    sha256: crypto.createHash("sha256").update(pngBytes).digest("hex"), width: 800, height: 600,
+  });
+  assert.deepEqual(fs.readFileSync(target), pngBytes);
+  assert.equal(fs.statSync(target).mode & 0o777, 0o600);
+  assert.equal(fs.existsSync(path.join(setup.directory, "assets", "client-chosen.png")), false);
+  assert.equal(fs.existsSync(path.join(setup.directory, "assets", ".avatar-source")), false, "no source marker");
+
+  let preview = await invoke(setup.handler, request("GET", `${BACKGROUND_URL}/preview`));
+  assert.equal(preview.status, 200);
+  assert.equal(preview.headers["Content-Type"], "image/png");
+  assert.equal(preview.headers["Content-Length"], pngBytes.length);
+  assert.equal(preview.headers["Cache-Control"], "no-store");
+  assert.equal(preview.headers["X-Content-Type-Options"], "nosniff");
+  assert.deepEqual(preview.body, pngBytes);
+
+  for (const filename of ["photo.jpg", "photo.jpeg"]) {
+    setup.advance();
+    const jpegBytes = jpeg({ width: 1920, height: 1080 });
+    res = await upload(setup.handler, BACKGROUND_URL, jpegBytes, { filename, contentType: "image/jpeg" });
+    assert.equal(res.status, 200, res.body.toString());
+    assert.equal(JSON.parse(res.body).background.type, "image/jpeg");
+    assert.deepEqual(fs.readFileSync(target), jpegBytes);
+  }
+  // Exactly one managed picture file; no extension variants or backups are left behind.
+  assert.deepEqual(fs.readdirSync(path.join(setup.directory, "assets")).filter((name) => name.includes("background")), ["avatar-background"]);
+  preview = await invoke(setup.handler, request("GET", `${BACKGROUND_URL}/preview`));
+  assert.equal(preview.headers["Content-Type"], "image/jpeg");
+
+  const inspected = JSON.parse((await invoke(setup.handler, request("GET", "/api/settings/avatar"))).body);
+  assert.deepEqual(inspected.background, {
+    present: true, type: "image/jpeg", bytes: fs.statSync(target).size, width: 1920, height: 1080,
+    previewUrl: "/api/settings/avatar/background/preview",
+  });
+  assert.equal(inspected.limits.backgroundBytes, 8 * 1024 * 1024);
+
+  // A file that no longer sniffs / validates reads as absent everywhere.
+  const kept = fs.readFileSync(target);
+  fs.writeFileSync(target, Buffer.from("GIF89a not supported"));
+  assert.equal(JSON.parse((await invoke(setup.handler, request("GET", "/api/settings/avatar"))).body).background.present, false);
+  preview = await invoke(setup.handler, request("GET", `${BACKGROUND_URL}/preview`));
+  assert.equal(preview.status, 404);
+  assert.equal(errorCode(preview), "SETTINGS_AVATAR_NOT_FOUND");
+  fs.writeFileSync(target, kept);
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const deleted = await invoke(setup.handler, request("DELETE", BACKGROUND_URL));
+    assert.equal(deleted.status, 200, deleted.body.toString());
+    assert.deepEqual(JSON.parse(deleted.body), { deleted: true });
+  }
+  assert.equal(fs.existsSync(target), false);
+  assert.equal((await invoke(setup.handler, request("GET", `${BACKGROUND_URL}/preview`))).status, 404);
+  assert.deepEqual(JSON.parse((await invoke(setup.handler, request("GET", "/api/settings/avatar"))).body).background,
+    { present: false, type: null, bytes: 0, width: null, height: null, previewUrl: "/api/settings/avatar/background/preview" });
+});
+
+test("#294 background upload rejects type, magic mismatch, malformed, oversize and total, keeping the previous picture", async (t) => {
+  const setup = fixture(t);
+  const target = path.join(setup.directory, "assets", "avatar-background");
+  const original = jpeg();
+  let res = await upload(setup.handler, BACKGROUND_URL, original, { filename: "a.jpg", contentType: "image/jpeg" });
+  assert.equal(res.status, 200, res.body.toString());
+
+  const cases = [
+    ["webp declared", png(), { filename: "a.png", contentType: "image/webp" }, 415, "SETTINGS_MEDIA_TYPE_UNSUPPORTED"],
+    ["gif extension", png(), { filename: "a.gif", contentType: "image/png" }, 422, "SETTINGS_AVATAR_FILENAME_REJECTED"],
+    ["png bytes as jpeg", png(), { filename: "a.jpg", contentType: "image/jpeg" }, 415, "SETTINGS_AVATAR_TYPE_MISMATCH"],
+    ["png bytes with .jpg name", png(), { filename: "a.jpg", contentType: "image/png" }, 415, "SETTINGS_AVATAR_TYPE_MISMATCH"],
+    ["jpeg bytes as png", jpeg(), { filename: "a.png", contentType: "image/png" }, 415, "SETTINGS_AVATAR_TYPE_MISMATCH"],
+    ["jpeg bytes with .png name", jpeg(), { filename: "a.png", contentType: "image/jpeg" }, 415, "SETTINGS_AVATAR_TYPE_MISMATCH"],
+    ["malformed jpeg", jpeg({ sof: 0xc3 }), { filename: "a.jpg", contentType: "image/jpeg" }, 422, "SETTINGS_AVATAR_JPEG_INVALID"],
+    ["oversized jpeg", jpeg({ width: 5000 }), { filename: "a.jpg", contentType: "image/jpeg" }, 422, "SETTINGS_AVATAR_JPEG_INVALID"],
+    ["garbage as jpeg", Buffer.from("not an image"), { filename: "a.jpg", contentType: "image/jpeg" }, 422, "SETTINGS_AVATAR_JPEG_INVALID"],
+    ["malformed png", Buffer.concat([png().subarray(0, 12), Buffer.from("IDAT"), png().subarray(16)]), { filename: "a.png" }, 422, "SETTINGS_AVATAR_PNG_INVALID"],
+    ["garbage as png", Buffer.from("not an image"), { filename: "a.png" }, 422, "SETTINGS_AVATAR_PNG_INVALID"],
+    ["over 8 MiB", Buffer.alloc(8 * 1024 * 1024 + 1), { filename: "a.png", chunkSize: 256 * 1024 }, 413, "SETTINGS_AVATAR_FILE_TOO_LARGE"],
+  ];
+  for (const [label, bytes, options, status, code] of cases) {
+    setup.advance();
+    res = await upload(setup.handler, BACKGROUND_URL, bytes, options);
+    assert.equal(res.status, status, `${label}: ${res.body}`);
+    assert.equal(errorCode(res), code, label);
+    assert.deepEqual(fs.readFileSync(target), original, `${label} keeps the previous picture`);
+  }
+  assert.deepEqual(fs.readdirSync(path.join(setup.directory, "assets")).filter((name) => name.startsWith(".avatar-work-")), []);
+
+  // Same rate-limit bucket as the static avatar.
+  setup.advance();
+  res = await upload(setup.handler, BACKGROUND_URL, png());
+  assert.equal(res.status, 200, res.body.toString());
+  res = await upload(setup.handler, "/api/settings/avatar/static", png());
+  assert.equal(res.status, 429);
+
+  // Same mutation gate: cross-origin writes are refused.
+  for (const method of ["POST", "DELETE"]) {
+    const body = imageMultipart(png());
+    const refused = await invoke(setup.handler, request(method, BACKGROUND_URL, body.bytes, {
+      "content-type": `multipart/form-data; boundary=${body.boundary}`, origin: "https://evil.example",
+    }));
+    assert.equal(refused.status, 403, method);
+  }
+
+  // The picture counts toward the 64 MiB total, and the total caps it.
+  const frames = path.join(setup.directory, "assets", "avatar-frames");
+  for (const name of ["idle", "talk1", "talk2", "talk3", "blink", "talk_blink"]) {
+    const frame = path.join(frames, `${name}.png`);
+    fs.writeFileSync(frame, Buffer.alloc(1));
+    fs.truncateSync(frame, 10 * 1024 * 1024);
+  }
+  setup.advance();
+  res = await upload(setup.handler, BACKGROUND_URL, png(256, 256, 4 * 1024 * 1024));
+  assert.equal(res.status, 413, res.body.toString());
+  assert.equal(errorCode(res), "SETTINGS_AVATAR_TOTAL_LIMIT");
+  fs.truncateSync(target, 3 * 1024 * 1024);
+  setup.advance();
+  res = await upload(setup.handler, "/api/settings/avatar/static", png(256, 256, 2 * 1024 * 1024));
+  assert.equal(res.status, 413, res.body.toString());
+  assert.equal(errorCode(res), "SETTINGS_AVATAR_TOTAL_LIMIT");
+});
+
+test("#294 join snapshot: present, missing, unreadable; the picture is never exported", async (t) => {
+  const { readBackgroundSnapshot } = require("../src/settings/avatar-assets");
+  const setup = fixture(t, { rigBackgroundMode: "image", rigBackgroundColor: "#123456" });
+  assert.equal(readBackgroundSnapshot(setup.directory), null, "no assets directory yet");
+  const bytes = jpeg();
+  const res = await upload(setup.handler, BACKGROUND_URL, bytes, { filename: "a.jpg", contentType: "image/jpeg" });
+  assert.equal(res.status, 200, res.body.toString());
+  const snapshot = readBackgroundSnapshot(setup.directory);
+  assert.deepEqual(snapshot, {
+    bytes, type: "image/jpeg", version: crypto.createHash("sha256").update(bytes).digest("hex").slice(0, 16),
+  });
+  assert.match(snapshot.version, /^[0-9a-f]{16}$/);
+
+  const target = path.join(setup.directory, "assets", "avatar-background");
+  fs.writeFileSync(target, Buffer.from([0xff, 0xd8, 0x00]));
+  assert.throws(() => readBackgroundSnapshot(setup.directory), (error) => error.code === "SETTINGS_AVATAR_JPEG_INVALID");
+  fs.rmSync(target);
+  fs.symlinkSync(path.join(setup.directory, "config.json"), target);
+  assert.throws(() => readBackgroundSnapshot(setup.directory), (error) => error.code === "SETTINGS_AVATAR_PATH_REJECTED");
+  fs.rmSync(target);
+  assert.equal(readBackgroundSnapshot(setup.directory), null);
+  fs.writeFileSync(target, bytes);
+
+  const exported = await invoke(setup.handler, request("GET", "/api/settings/export"));
+  assert.equal(exported.status, 200);
+  const document = JSON.parse(exported.body);
+  assert.equal(document.settings.avatar_rig_background_mode, "image");
+  assert.equal(document.settings.avatar_rig_background_color, "#123456");
+  assert.deepEqual(Object.keys(document.settings).filter((key) => /background/.test(key)).sort(),
+    ["avatar_rig_background_color", "avatar_rig_background_mode"]);
+  assert.equal(exported.body.includes(bytes.toString("base64")), false);
+  assert.equal(exported.body.includes("avatar-background"), false);
+});
+
+module.exports = { imageMultipart, jpeg, multipart, png };
