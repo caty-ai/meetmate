@@ -27,6 +27,20 @@ function floorRecoveryHint(reason) {
   return FLOOR_RECOVERY_HINTS[reason] || "";
 }
 
+// #283: the face status line, alarm states only (keyed by state/reason).
+const FACE_STATUS_LINES = Object.freeze({
+  "missing/page_not_requested": "顔のページが届いていません。会議では静止画になっています（配信用の箱が動いていない可能性があります）。",
+  "missing/page_expired": "顔の準備が時間内に終わらず、この参加では顔を出せなくなりました。会議では静止画のままです。",
+  "stalled/not_ready": "顔の準備が終わりません。会議では静止画のままです。",
+  "lost/page_stopped": "顔のページが途中で止まりました。会議では静止画になっています。",
+  "unavailable/package_load_failed": "顔パッケージを読み込めませんでした。静止画で参加しています。",
+});
+
+function faceStatusLine(face) {
+  const key = face && typeof face === "object" ? `${face.state}/${face.reason}` : "";
+  return Object.hasOwn(FACE_STATUS_LINES, key) ? FACE_STATUS_LINES[key] : "";
+}
+
 async function requestWithJoinToken({ path, init, joinToken, fetchImpl, promptImpl, storeToken }) {
   const send = (token) => {
     const normalizedToken = typeof token === "string" ? token.trim() : "";
@@ -413,6 +427,7 @@ if (typeof module !== "undefined" && module.exports) module.exports = {
   faceAudioAvailable,
   faceAudioDefaultChecked,
   faceAudioJoinInputs,
+  faceStatusLine,
   avatarExperimentLabel,
   buildDiscordJoinBody,
   buildMeetJoinFormData,
@@ -469,6 +484,11 @@ if (typeof document !== "undefined") (function () {
   const activeWsEl = document.getElementById("activeWs");
   const activeAgentsEl = document.getElementById("activeAgents");
   const activeFloorEl = document.getElementById("activeFloor");
+  // #283: one line under the status row, created here so the page markup stays unchanged.
+  const activeFaceEl = document.createElement("div");
+  activeFaceEl.id = "activeFace";
+  activeFaceEl.className = "active-url is-hidden";
+  activeFloorEl.parentElement.after(activeFaceEl);
   const elapsedTimerEl = document.getElementById("elapsedTimer");
   const leaveBtn = document.getElementById("leaveBtn");
   const continueWithoutFloorBtn = document.getElementById("continueWithoutFloorBtn");
@@ -929,6 +949,7 @@ if (typeof document !== "undefined") (function () {
     activeAgentsEl.textContent = "エージェント: -";
     activeFloorEl.classList.add("is-hidden");
     continueWithoutFloorBtn.classList.add("is-hidden");
+    renderFaceStatus(null);
     stopElapsedTimer();
     if (Date.now() < endedShownUntilMs) return;
     activeCard.classList.add("is-hidden");
@@ -952,6 +973,12 @@ if (typeof document !== "undefined") (function () {
     );
   }
 
+  function renderFaceStatus(face) {
+    const line = faceStatusLine(face);
+    activeFaceEl.textContent = line;
+    activeFaceEl.classList.toggle("is-hidden", !line);
+  }
+
   function renderMeetActiveBanner(session) {
     const startedAtMs = parseStartedAt(session.startedAt);
     hasActiveSession = true;
@@ -968,6 +995,7 @@ if (typeof document !== "undefined") (function () {
       : fallbackName;
     activeAgentsEl.textContent = `エージェント: ${names}`;
     renderFloorStatus(session.floor);
+    renderFaceStatus(session.face);
     activeCard.classList.remove("is-hidden", "ended");
     startElapsedTimer(startedAtMs);
     endedShownUntilMs = 0;
@@ -1001,6 +1029,7 @@ if (typeof document !== "undefined") (function () {
     activeWsEl.textContent = discordConnectionLine(status);
     activeAgentsEl.textContent = `Discord 状態: ${status?.ok === false ? "エラー" : "OK"} / 設定: ${status?.configured ? "完了" : "未完了"}`;
     renderFloorStatus(null);
+    renderFaceStatus(null);
     activeCard.classList.remove("is-hidden", "ended");
     if (previousTransport !== "discord" || activeStartedAtMs === null) {
       startElapsedTimer(parseStartedAt(session.startedAt));

@@ -105,6 +105,13 @@ class LocalAvatarSession {
     this._envelopeLog = [];
     this._envelopeDropped = 0;
     this._background = normalizeBackground(background);
+    // #283 face status facts: observations only, they change no page behavior.
+    this._pageFirstSeenAt = null;
+    this._firstConnectedAt = null;
+    this._connectedAt = null;
+    this._connectedGeneration = 0;
+    this._lastPollAt = null;
+    this._closedReason = null;
   }
 
   isLive() {
@@ -128,6 +135,11 @@ class LocalAvatarSession {
     if (origin !== this.publicOrigin || !this.verifyCapability(capability)) return null;
 
     this._generation += 1;
+    const now = this._now();
+    this._firstConnectedAt ??= now;
+    this._connectedAt = now;
+    this._connectedGeneration = this._generation;
+    this._lastPollAt = null;
     this._queue.length = 0;
     this._lastDelivery = null;
     this._lastSampleIndex = -1;
@@ -445,6 +457,20 @@ class LocalAvatarSession {
     if (this._audio.stream === stream) this._audio.stream = null;
   }
 
+  // #283: the first valid face-host.html GET or face-descriptor POST.
+  recordPageSeen() {
+    if (this._closed || this._pageFirstSeenAt !== null) return false;
+    this._pageFirstSeenAt = this._now();
+    return true;
+  }
+
+  // #283: an authenticated state poll (200 or 204); a poll of an older generation never counts.
+  recordPoll(generation) {
+    if (this._closed || this._generation === 0 || toPositiveInteger(generation) !== this._generation) return false;
+    this._lastPollAt = this._now();
+    return true;
+  }
+
   readState({ capability, origin, generation, afterSequence }) {
     if (origin !== this.publicOrigin || !this.verifyCapability(capability)) return null;
     if (toPositiveInteger(generation) !== this._generation) return null;
@@ -476,6 +502,7 @@ class LocalAvatarSession {
   close(reason = "session_end") {
     if (this._closed) return false;
     this._closed = true;
+    this._closedReason = reason;
     this._queue.length = 0;
     this._lastDelivery = null;
     this._capabilityHash.fill(0);
@@ -515,6 +542,12 @@ class LocalAvatarSession {
       retryLimit: this._retryLimit,
       dropped: this._dropped,
       envelopeDropped: this._envelopeDropped,
+      pageFirstSeenAt: this._pageFirstSeenAt,
+      firstConnectedAt: this._firstConnectedAt,
+      connectedAt: this._connectedAt,
+      connectedGeneration: this._connectedGeneration,
+      lastPollAt: this._lastPollAt,
+      closedReason: this._closedReason,
     };
   }
 

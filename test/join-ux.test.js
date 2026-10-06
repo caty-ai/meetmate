@@ -393,6 +393,45 @@ test("#279 a stale readiness result is an informational row, not a warning", () 
   assert.match(css, /\.readiness-line\.info \{ color: var\(--ink-muted\); \}/);
 });
 
+test("#283 T10 the face status line renders each alarm state and clears when the state leaves the alarm set", () => {
+  const { faceStatusLine } = require("../public/app.js");
+  const alarms = [
+    [{ state: "missing", reason: "page_not_requested" }, "顔のページが届いていません。会議では静止画になっています（配信用の箱が動いていない可能性があります）。"],
+    [{ state: "missing", reason: "page_expired" }, "顔の準備が時間内に終わらず、この参加では顔を出せなくなりました。会議では静止画のままです。"],
+    [{ state: "stalled", reason: "not_ready" }, "顔の準備が終わりません。会議では静止画のままです。"],
+    [{ state: "lost", reason: "page_stopped" }, "顔のページが途中で止まりました。会議では静止画になっています。"],
+    [{ state: "unavailable", reason: "package_load_failed" }, "顔パッケージを読み込めませんでした。静止画で参加しています。"],
+  ];
+  const quiet = [undefined, null, "missing", { state: "pending", reason: null }, { state: "loading", reason: null },
+    { state: "connected", reason: null }, { state: "missing", reason: "unknown" }, { state: "constructor", reason: "x" }];
+  for (const [face, text] of alarms) assert.equal(faceStatusLine({ ...face, since: "2026-10-06T00:00:00.000Z" }), text, face.reason);
+  for (const face of quiet) assert.equal(faceStatusLine(face), "", JSON.stringify(face));
+
+  // The banner function itself, run against a fake line element: shown for alarms, hidden on recovery.
+  const source = fs.readFileSync(require.resolve("../public/app.js"), "utf8");
+  const render = source.match(/function renderFaceStatus\(face\) \{[\s\S]*?\n  }/)[0];
+  assert.match(source, /renderFloorStatus\(session\.floor\);\n    renderFaceStatus\(session\.face\);/);
+  assert.doesNotMatch(render, /innerHTML|insertAdjacentHTML/);
+  const classes = new Set(["active-url", "is-hidden"]);
+  const activeFaceEl = {
+    textContent: "",
+    classList: { toggle(name, on) { if (on) classes.add(name); else classes.delete(name); } },
+  };
+  const context = { activeFaceEl, faceStatusLine };
+  require("node:vm").runInNewContext(render, context);
+  for (const [face, text] of alarms) {
+    context.renderFaceStatus(face);
+    assert.equal(activeFaceEl.textContent, text);
+    assert.equal(classes.has("is-hidden"), false);
+    context.renderFaceStatus({ state: "connected", reason: null });
+    assert.equal(activeFaceEl.textContent, "");
+    assert.equal(classes.has("is-hidden"), true, `${face.reason} clears on recovery`);
+  }
+  context.renderFaceStatus(alarms[0][0]);
+  context.renderFaceStatus(undefined); // an out-of-scope payload has no face key
+  assert.equal(classes.has("is-hidden"), true);
+});
+
 test("#215 dashboard join reuses the join-token credential path", async () => {
   const cases = [
     { statuses: [200], expectedTokens: [undefined], prompts: 0, stored: [] },
